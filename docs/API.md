@@ -406,12 +406,23 @@ invites; quick match remains open to strangers by design.
     POST {"id":..., "action":"remove", "peer":...}
       -> {"ok":true}                        declines a request or removes
                                             an existing friendship
+
+Removal is always immediate and silent: the client performs it WITHOUT
+a confirmation dialog (auto-confirmed), the server notifies nobody, and
+no celebration effect (confetti etc.) accompanies it - celebrations are
+reserved for a completed handshake.
     POST {"id":..., "action":"list"}
       -> {"ok":true,"friends":[{"id":"deadbeef","state":"accepted",
           "outgoing":false,"name":"KAI","online":true,"latency":31}]}
           name/online/latency filled only for accepted entries; a
           pending entry with "outgoing":false is a request awaiting MY
           acceptance.
+
+Rate limit: a client whose UNANSWERED requests exceed a threshold
+(default 15 per hour, admin-configurable) is banned from making friend
+requests for a while (default 1 h), ALL of its pending requests are
+deleted, and the incident is logged as an alert. Banned requests answer
+429 `friend requests banned`. Normal use never gets close.
 
 Poll list (or rely on hello) while the friends screen is open to notice
 incoming requests. Caveat until the session-token work lands: ids are

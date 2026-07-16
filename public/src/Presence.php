@@ -31,17 +31,6 @@ final class Presence
         return (int)$st->fetchColumn() > time();
     }
 
-    /** Average reported latency of currently online players, or null. */
-    public static function avgLatency(): ?int
-    {
-        $st = Db::get()->prepare(
-            'SELECT AVG(latency) FROM players WHERE last_seen > ? AND latency IS NOT NULL'
-        );
-        $st->execute([time() - FOK_ONLINE_WINDOW]);
-        $avg = $st->fetchColumn();
-        return $avg === null ? null : (int)round((float)$avg);
-    }
-
     public static function touchDuel(string $id, string $peer): void
     {
         [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];

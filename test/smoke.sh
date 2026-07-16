@@ -273,6 +273,22 @@ expect "request pending after QR screen closed" '"state":"pending"' "$R"
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php" > /dev/null
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 curl -s "$BASE/api/poll.php?id=$ID1" > /dev/null
+
+# Mass friend requests: alert + timed ban + purge of the spammer's pendings.
+for i in $(seq 10 26); do
+    R=$(curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"aa0000$i\"}" "$BASE/api/friend.php")
+done
+expect "friend-request spam banned" 'banned' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"aa000099\"}" "$BASE/api/friend.php")
+expect "banned client stays banned" '429' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"list\"}" "$BASE/api/friend.php")
+if echo "$R" | grep -q '"state":"pending"'; then
+    echo "FAIL spammer pendings not purged: $R"; fail=1
+else
+    echo "ok   spammer pending requests purged"
+fi
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"again?\"}" "$BASE/api/signal.php")
 expect "invite blocked again after removal" '403' "$R"
@@ -332,8 +348,8 @@ else
     expect "admin stats" '"ok":true' "$R"
     expect "admin stats registered" "$(strict '"registered":2')" "$R"
     expect "admin stats db rows" '"db_rows":' "$R"
-    expect "admin stats avg latency" '"avg_latency":' "$R"
     expect "admin stats friendships" '"friendships":' "$R"
+    expect "admin stats pending friendships" '"friendships_pending":' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
     expect "backup via GET rejected" '"error":"POST only"' "$R"
@@ -345,6 +361,7 @@ else
     expect "alerts list" '"ok":true' "$R"
     expect "failed login raised alert" '"type":"admin-fail"' "$R"
     expect "bogus client event logged" '"type":"bogus"' "$R"
+    expect "friend spam logged" '"type":"friend-spam"' "$R"
 
     R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_seen")
     expect "alerts mark seen" '"ok":true' "$R"

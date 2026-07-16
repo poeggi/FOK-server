@@ -86,7 +86,10 @@ final class Db
         if ($v < 7) {
             $pdo->exec('ALTER TABLE players ADD COLUMN accept_until INTEGER NOT NULL DEFAULT 0');
         }
-        $pdo->exec('PRAGMA user_version = 7');
+        if ($v < 8) {
+            $pdo->exec('ALTER TABLE players ADD COLUMN friend_ban_until INTEGER NOT NULL DEFAULT 0');
+        }
+        $pdo->exec('PRAGMA user_version = 8');
     }
 
     // A database commissioned from scratch starts with the same default

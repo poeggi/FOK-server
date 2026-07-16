@@ -63,12 +63,36 @@ if (!Util::isValidId($peer) || $peer === $id) {
 
 switch ($action) {
     case 'request':
+        $st = Db::get()->prepare('SELECT friend_ban_until FROM players WHERE id = ?');
+        $st->execute([$id]);
+        if ((int)$st->fetchColumn() > time()) {
+            Util::fail('friend requests banned', 429);
+        }
         $r = Friends::request($id, $peer);
         if ($r['changed'] && $r['state'] === 'pending' && Presence::isAutoAccepting($peer)) {
             // The peer is on the QR/add-friend screen: consent is implied,
             // the handshake completes immediately.
             Friends::forceAccept($id, $peer);
             $r['state'] = 'accepted';
+        }
+        if ($r['changed'] && $r['state'] === 'pending') {
+            // Mass-requesting spam: alert, ban for a while, and purge
+            // every pending request the spammer created.
+            $db = Db::get();
+            $st = $db->prepare(
+                "SELECT COUNT(*) FROM friends WHERE requester = ? AND state = 'pending' AND created > ?"
+            );
+            $st->execute([$id, time() - 3600]);
+            if ((int)$st->fetchColumn() > Settings::int('friend_req_max')) {
+                $ban = Settings::int('friend_ban_seconds');
+                $db->prepare('UPDATE players SET friend_ban_until = ? WHERE id = ?')
+                    ->execute([time() + $ban, $id]);
+                $st = $db->prepare("DELETE FROM friends WHERE requester = ? AND state = 'pending'");
+                $st->execute([$id]);
+                Alerts::raise('friend-spam',
+                    "Friend-request spam: $id banned for {$ban}s, " . $st->rowCount() . ' pending requests purged');
+                Util::fail('friend request spam - banned', 429);
+            }
         }
         if ($r['changed']) {
             $event = $r['state'] === 'accepted' ? 'accepted' : 'request';

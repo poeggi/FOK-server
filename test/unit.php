@@ -87,7 +87,6 @@ Presence::touch('bbbbbbbb', '5.6.7.8', 20);
 Presence::touch('aaaaaaaa', '1.2.3.9');
 $info = Presence::infoOf(['aaaaaaaa']);
 ok($info['aaaaaaaa']['latency'] === 40, 'latency kept when a report omits it');
-ok(Presence::avgLatency() === 30, 'average latency over online players');
 
 // Presence: names are recorded and kept
 Presence::touch('aaaaaaaa', '1.2.3.9', null, 'ALPHA');

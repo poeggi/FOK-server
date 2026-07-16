@@ -35,12 +35,15 @@ switch ($action) {
         $friendships = (int)$db->query(
             "SELECT COUNT(*) FROM friends WHERE state = 'accepted'"
         )->fetchColumn();
+        $friendshipsPending = (int)$db->query(
+            "SELECT COUNT(*) FROM friends WHERE state = 'pending'"
+        )->fetchColumn();
         Util::jsonOut([
             'ok' => true,
             'counts' => $counts,
             'relaying' => $relaying,
             'friendships' => $friendships,
-            'avg_latency' => Presence::avgLatency(),
+            'friendships_pending' => $friendshipsPending,
             'scores_total' => $scoreCount,
             'db_rows' => $dbRows,
             'load' => $load,
