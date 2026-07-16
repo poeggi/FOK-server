@@ -5,8 +5,25 @@ This is the contract: anything not documented here is not part of the API
 and may change without notice.
 
 - Base URL: `https://fok-server.poggensee.it`
+- Staging instance (same API, own database): `.../staging`
 - Server source of truth: this repo, `public/api/`
-- API version: matches FOK_VERSION in `public/src/Config.php`
+
+## Versioning
+
+Two versions exist and both are exposed by `GET /api/version.php`:
+
+    {"ok":true, "server":"0.4.1", "api":1, "env":"live"}
+
+- `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
+  every release and is informational.
+- `api` (FOK_API_VERSION) is THE CONTRACT version of this document. It
+  bumps only on breaking changes (fields removed, semantics changed);
+  additive changes never bump it.
+
+Clients MUST check `api` at startup (version.php, or the `api` field
+that every hello response carries) and disable online features with a
+friendly notice when it is newer than what they were built against,
+rather than misbehave against an incompatible server.
 
 ## Conventions
 
@@ -54,6 +71,7 @@ Response:
 
     {
       "ok": true,
+      "api": 1,                   contract version, see Versioning
       "now": 1784182417,          server time, unix seconds
       "online": 3,                players seen in the last 60 s
       "playing": 2,               players currently in 1:1 games
@@ -274,8 +292,10 @@ it later without any server change:
 
 Notes:
 
-- Undelivered signals expire after 120 s; an unanswered invite can be
-  considered stale after that.
+- Undelivered signals expire after 30 s - after that they are gone for
+  good. An unanswered invite is stale after 30 s, and signals only
+  reliably arrive while the recipient is actively polling (multiplayer
+  screen open); an idle client on the 30 s hello cadence can miss them.
 - Use a public STUN server (e.g. stun:stun.l.google.com:19302) in the
   RTCPeerConnection config. There is no TURN relay; if P2P fails, report
   "connection failed" to the user.

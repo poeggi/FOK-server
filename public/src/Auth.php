@@ -23,7 +23,7 @@ final class Auth
             'httponly' => true,
             'samesite' => 'Lax',
             'secure' => (($_SERVER['HTTPS'] ?? '') !== ''),
-            'path' => '/admin/',
+            'path' => (FOK_ENV === 'staging' ? '/staging' : '') . '/admin/',
         ]);
         session_start();
     }

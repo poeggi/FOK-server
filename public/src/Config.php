@@ -1,16 +1,26 @@
 <?php
 declare(strict_types=1);
 
-const FOK_VERSION = '0.3.0';
+// Implementation version: bumps with every release.
+const FOK_SERVER_VERSION = '0.4.1';
+// Contract version: bumps ONLY on breaking API changes (removed fields,
+// changed semantics). Additive changes do not bump it. Clients pin this.
+const FOK_API_VERSION = 1;
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 
-// Data lives one level ABOVE the docroot so it is never web-accessible.
-// FOK_DATA_DIR env var overrides the location (used by the test suite).
+// The staging environment is a full copy of public/ in the staging/
+// subdirectory of the live docroot; it runs against its own data dir.
 define('FOK_DOCROOT', dirname(__DIR__));
-define('FOK_DATA_DIR', getenv('FOK_DATA_DIR') ?: dirname(FOK_DOCROOT) . '/fok-server-data');
+define('FOK_ENV', basename(FOK_DOCROOT) === 'staging' ? 'staging' : 'live');
+
+// Data lives ABOVE the (live) docroot so it is never web-accessible.
+// FOK_DATA_DIR env var overrides the location (used by the test suite).
+define('FOK_DATA_DIR', getenv('FOK_DATA_DIR') ?: (FOK_ENV === 'staging'
+    ? dirname(FOK_DOCROOT, 2) . '/fok-server-data-staging'
+    : dirname(FOK_DOCROOT) . '/fok-server-data'));
 define('FOK_DB_FILE', FOK_DATA_DIR . '/fok.db');
 define('FOK_ADMIN_HASH_FILE', FOK_DATA_DIR . '/admin.hash');
 define('FOK_BACKUP_DIR', FOK_DATA_DIR . '/backups');
@@ -19,8 +29,9 @@ define('FOK_BACKUP_DIR', FOK_DATA_DIR . '/backups');
 const FOK_ONLINE_WINDOW = 60;
 // A duel counts as running while either peer refreshed it within this window.
 const FOK_DUEL_WINDOW = 60;
-// Undelivered signaling messages expire after this many seconds.
-const FOK_SIGNAL_TTL = 120;
+// Undelivered signaling messages expire after this many seconds;
+// after that they are gone for good.
+const FOK_SIGNAL_TTL = 30;
 const FOK_SIGNAL_MAX_PAYLOAD = 16384;
 // Chat messages are hard-capped much lower than SDP payloads.
 const FOK_CHAT_MAX_LEN = 120;

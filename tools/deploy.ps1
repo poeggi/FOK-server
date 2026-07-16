@@ -4,11 +4,17 @@
 #   ~/.fok-server-deploy.json  ->  { "host": "...", "user": "...", "pass": "..." }
 #
 # Usage:
-#   .\deploy.ps1              upload everything under public/
+#   .\deploy.ps1 -Staging     upload everything to the staging subdirectory
+#   .\deploy.ps1              upload everything to the LIVE webroot
 #   .\deploy.ps1 -Only api    upload only public/api/
+#
+# Workflow: ALWAYS deploy to staging first and run the remote smoke test
+# against it (see README "Staging and deploy"); deploy live only after
+# staging passes.
 
 param(
-    [string]$Only = ''
+    [string]$Only = '',
+    [switch]$Staging
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,14 +28,16 @@ $cred = Get-Content $credFile -Raw | ConvertFrom-Json
 $root = Join-Path $PSScriptRoot '..\public' | Resolve-Path
 $base = if ($Only) { Join-Path $root $Only | Resolve-Path } else { $root }
 
+$prefix = if ($Staging) { 'staging/' } else { '' }
 $files = Get-ChildItem -Path $base -Recurse -File
 $done = 0
 foreach ($f in $files) {
     $rel = $f.FullName.Substring($root.Path.Length + 1) -replace '\\', '/'
-    $url = "ftp://$($cred.host)/$rel"
+    $url = "ftp://$($cred.host)/$prefix$rel"
     & curl.exe -sS --ssl-reqd --user "$($cred.user):$($cred.pass)" --ftp-create-dirs -T $f.FullName $url
     if ($LASTEXITCODE -ne 0) { Write-Error "Upload failed: $rel" }
     $done++
-    Write-Host "  $rel"
+    Write-Host "  $prefix$rel"
 }
-Write-Host "Deployed $done file(s) to $($cred.host)"
+$target = if ($Staging) { 'STAGING' } else { 'LIVE' }
+Write-Host "Deployed $done file(s) to $($cred.host) [$target]"

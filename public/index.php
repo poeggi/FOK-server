@@ -38,6 +38,7 @@ $scores = Scores::top();
     <?php endforeach; ?>
   </table>
   <?php endif; ?>
+  <footer class="muted">FOK-server v<?= FOK_SERVER_VERSION ?> (API v<?= FOK_API_VERSION ?>)<?= FOK_ENV === 'staging' ? ' STAGING' : '' ?></footer>
 </main>
 </body>
 </html>

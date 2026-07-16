@@ -31,3 +31,39 @@ jobs:
             echo "- Unit tests (test/unit.php)"
             echo "- HTTP smoke test against php -S (test/smoke.sh)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    env:
+      FTP_HOST: ${{ secrets.FTP_HOST }}
+      FTP_USER: ${{ secrets.FTP_USER }}
+      FTP_PASS: ${{ secrets.FTP_PASS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        run: bash tools/deploy.sh staging
+
+      - name: Smoke test staging
+        env:
+          SMOKE_BASE: https://fok-server.poggensee.it/staging
+          FOK_ADMIN_USER: ${{ secrets.FOK_ADMIN_USER }}
+          FOK_ADMIN_PASS: ${{ secrets.FOK_ADMIN_PASS }}
+        run: bash test/smoke.sh
+
+      - name: Deploy to live
+        run: bash tools/deploy.sh
+
+      - name: Verify live
+        run: |
+          want=$(grep -oE "FOK_SERVER_VERSION = '[^']+'" public/src/Config.php | cut -d"'" -f2)
+          got=$(curl -s https://fok-server.poggensee.it/api/version.php)
+          echo "expect server $want, got: $got"
+          echo "$got" | grep -q "\"server\":\"$want\""
+          echo "$got" | grep -q '"env":"live"'
+          echo "Live is up on v$want" >> "$GITHUB_STEP_SUMMARY"

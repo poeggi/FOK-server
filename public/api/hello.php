@@ -40,6 +40,7 @@ if ($duelWith !== null) {
 
 $out = [
     'ok' => true,
+    'api' => FOK_API_VERSION,
     'now' => time(),
     'signals' => Signals::take($id),
 ] + Presence::counts();

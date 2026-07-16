@@ -55,12 +55,20 @@ test/smoke.sh for the HTTP behavior).
 
 ## Workflow
 
+- The server is PRODUCTION and must stay up. Deploying == pushing to
+  main: GitHub Actions runs checks, deploys staging, smokes it, then
+  deploys live and verifies the reported version (see README "Staging
+  and deploy"). Do NOT run manual deploys except in emergencies, and
+  then always staging first (tools/deploy.ps1 -Staging + remote smoke
+  before tools/deploy.ps1).
+- Bump FOK_SERVER_VERSION with every release commit - the live-verify
+  step compares it against what the deployed server reports.
 - bash test/checks.sh runs everything CI runs (needs php CLI; the
   pre-commit hook in .githooks/ does this automatically and skips
   gracefully when php is missing).
-- After deploying, verify against the live server with curl; the smoke
-  test only covers php -S, and .htaccess behavior (src/ blocking,
-  HTTPS redirect) exists only on the real Apache.
+- The smoke test only covers php -S; .htaccess behavior (src/ blocking,
+  HTTPS redirect) exists only on the real Apache, so staging verifies
+  those too.
 - One-time server maintenance (writing admin.hash, resetting the db)
   is done by uploading a temporary PHP script via FTPS, invoking it
   once over HTTPS, and deleting it immediately.

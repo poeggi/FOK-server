@@ -42,11 +42,25 @@ final class Db
         $v = (int)$pdo->query('PRAGMA user_version')->fetchColumn();
         if ($v < 1) {
             self::schemaV1($pdo);
+            self::seed($pdo);
         }
         if ($v < 2) {
             self::schemaV2($pdo);
         }
         $pdo->exec('PRAGMA user_version = 2');
+    }
+
+    // A database commissioned from scratch starts with the same default
+    // entry the FOK-snake local top 10 ships with, but with 82 points.
+    private static function seed(PDO $pdo): void
+    {
+        if ((int)$pdo->query('SELECT COUNT(*) FROM scores')->fetchColumn() > 0) {
+            return;
+        }
+        $pdo->prepare(
+            'INSERT INTO scores (player_id, name, score, level, diff, color, shop_items, validated, created)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)'
+        )->execute(['00000000', 'SNAKE PLISSKEN', 82, 1, 1, 0, '{}', gmmktime(0, 0, 0, 11, 26, 1997)]);
     }
 
     private static function schemaV2(PDO $pdo): void

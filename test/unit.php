@@ -57,9 +57,12 @@ ok($rank === 1, 'first score ranks 1');
 $rank = Scores::submit('bbbbbbbb', '', 200, 4, 1, 0, '{}', null, null);
 ok($rank === 1, 'higher score takes rank 1');
 $top = Scores::top();
-ok(count($top) === 2, 'two entries');
+ok(count($top) === 3, 'two submissions plus the seed entry');
 ok($top[0]['name'] === 'ANONYMOUS', 'empty name becomes ANONYMOUS');
 ok($top[1]['name'] === 'TESTER', 'name is trimmed');
+ok($top[2]['name'] === 'SNAKE PLISSKEN', 'fresh db seeded with default entry');
+ok($top[2]['score'] === 82, 'seed entry has 82 points');
+ok($top[2]['date'] === '26.11.97', 'seed entry keeps the classic date');
 foreach (['rank', 'player_id', 'name', 'score', 'level', 'diff', 'color', 'shopItems', 'date', 'created'] as $field) {
     ok(array_key_exists($field, $top[0]), "entry has $field");
 }
@@ -67,7 +70,7 @@ ok($top[1]['color'] === 5, 'color preserved');
 ok(is_object($top[1]['shopItems']) && $top[1]['shopItems']->hat === 1, 'shopItems preserved as object');
 ok(preg_match('/^\d{2}\.\d{2}\.\d{2}$/', $top[0]['date']) === 1, 'date is DD.MM.YY');
 $long = Scores::submit('aaaaaaaa', str_repeat('X', 40), 1, 1, 1, 0, '{}', null, null);
-ok(mb_strlen(Scores::top()[2]['name']) === FOK_MAX_NAME_LEN, 'name capped at max length');
+ok(mb_strlen(Scores::top()[3]['name']) === FOK_MAX_NAME_LEN, 'name capped at max length');
 
 // Presence: targeted online check
 $online = Presence::onlineOf(['aaaaaaaa', 'cccccccc']);
@@ -162,7 +165,7 @@ ok(is_file(FOK_BACKUP_DIR . '/' . $name), 'backup file exists');
 Db::get()->exec('DELETE FROM scores');
 ok(Scores::top() === [], 'scores wiped');
 Backup::restore(FOK_BACKUP_DIR . '/' . $name);
-ok(count(Scores::top()) === 3, 'restore brings scores back');
+ok(count(Scores::top()) === 4, 'restore brings scores back');
 $bad = $tmp . '/not-a-db';
 file_put_contents($bad, 'hello world');
 $threw = false;

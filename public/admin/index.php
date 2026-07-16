@@ -31,8 +31,13 @@ $loggedIn = Auth::isLoggedIn();
 </head>
 <body>
 <header>
-  <h1><img class="logo" src="../assets/logo.svg" alt="" width="22" height="22"> FOK-server <span>admin</span></h1>
-  <?php if ($loggedIn): ?><nav><a href="index.php?do=logout">Logout</a></nav><?php endif; ?>
+  <h1><img class="logo" src="../assets/logo.svg" alt="" width="22" height="22"> FOK-server <span>admin<?= FOK_ENV === 'staging' ? ' (STAGING)' : '' ?></span></h1>
+  <?php if ($loggedIn): ?>
+  <nav>
+    <button id="viewtoggle" type="button" title="Settings">&#9881;</button>
+    <a href="index.php?do=logout">Logout</a>
+  </nav>
+  <?php endif; ?>
 </header>
 <?php if (!$loggedIn): ?>
 <main class="login">
@@ -46,7 +51,9 @@ $loggedIn = Auth::isLoggedIn();
 </main>
 <?php else: ?>
 <main id="dashboard" class="dashboard"></main>
+<main id="settings" class="dashboard hidden"></main>
 <script src="../assets/admin.js"></script>
 <?php endif; ?>
+<footer class="muted">FOK-server v<?= FOK_SERVER_VERSION ?> (API v<?= FOK_API_VERSION ?>)<?= FOK_ENV === 'staging' ? ' STAGING' : '' ?></footer>
 </body>
 </html>

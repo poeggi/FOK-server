@@ -18,7 +18,7 @@ final class Signals
     {
         $db = Db::get();
         $st = $db->prepare('SELECT COUNT(*) FROM signals WHERE to_id = ? AND created >= ?');
-        $st->execute([$to, time() - FOK_SIGNAL_TTL]);
+        $st->execute([$to, time() - Settings::int('signal_ttl')]);
         if ((int)$st->fetchColumn() >= Settings::int('mailbox_cap')) {
             return false;
         }
@@ -40,7 +40,7 @@ final class Signals
     public static function take(string $to): array
     {
         $db = Db::get();
-        $db->prepare('DELETE FROM signals WHERE created < ?')->execute([time() - FOK_SIGNAL_TTL]);
+        $db->prepare('DELETE FROM signals WHERE created < ?')->execute([time() - Settings::int('signal_ttl')]);
         $st = $db->prepare('SELECT id, from_id, type, payload, created FROM signals WHERE to_id = ? ORDER BY id');
         $st->execute([$to]);
         $rows = $st->fetchAll();

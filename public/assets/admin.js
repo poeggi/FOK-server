@@ -1,9 +1,11 @@
 'use strict';
 
 /*
- * FOK-server admin dashboard.
- * Each dashboard card is a self-contained module: { id, title, refresh(el) }.
- * To extend the admin UI, append a module to MODULES; nothing else to touch.
+ * FOK-server admin UI.
+ * Each card is a self-contained module: { id, title, view, refresh(el) }.
+ * view selects the screen: 'dash' (default dashboard) or 'settings' (the
+ * gear menu with configuration and backup/restore). To extend the admin
+ * UI, append a module to MODULES; nothing else to touch.
  */
 
 const API = 'api.php';
@@ -48,6 +50,7 @@ const MODULES = [
             stat('Playing 1:1', d.counts.playing);
             stat('Users registered', d.counts.registered);
             stat('Scores stored', d.scores_total);
+            stat('DB entries', d.db_rows);
             stat('DB size', fmtBytes(d.db_size));
             box.append(grid);
             box.append(el('p', 'muted', 'Server v' + d.server_version + ', PHP ' + d.php +
@@ -84,6 +87,7 @@ const MODULES = [
     {
         id: 'config',
         title: 'Configuration',
+        view: 'settings',
         async refresh(box) {
             const d = await api('settings');
             box.replaceChildren();
@@ -113,6 +117,25 @@ const MODULES = [
                 refreshModule('config');
             };
             box.append(form);
+
+            const row2 = el('div', 'exportrow');
+            const exp = el('a', '', 'Export config');
+            exp.href = API + '?action=config_export';
+            const impLabel = el('label', '', 'Import config: ');
+            const impFile = el('input');
+            impFile.type = 'file';
+            impFile.accept = '.json';
+            impLabel.append(impFile);
+            impFile.onchange = async () => {
+                if (!impFile.files.length) return;
+                if (!confirm('Apply this configuration to the server?')) { impFile.value = ''; return; }
+                const body = form({ config: await impFile.files[0].text() });
+                const res = await api('config_import', { method: 'POST', body });
+                alert(res.ok ? 'Config imported.' : 'Failed: ' + res.error);
+                refreshModule('config');
+            };
+            row2.append(exp, impLabel);
+            box.append(row2);
         },
     },
     {
@@ -190,7 +213,8 @@ const MODULES = [
     },
     {
         id: 'backup',
-        title: 'Backup and restore',
+        title: 'Backup and restore (database incl. config)',
+        view: 'settings',
         async refresh(box) {
             const d = await api('backup_list');
             box.replaceChildren();
@@ -251,7 +275,10 @@ function refreshAll() {
     for (const m of MODULES) refreshModule(m.id);
 }
 
-const dash = document.getElementById('dashboard');
+const views = {
+    dash: document.getElementById('dashboard'),
+    settings: document.getElementById('settings'),
+};
 for (const m of MODULES) {
     const card = el('section', 'card');
     const head = el('h2', '', m.title);
@@ -260,8 +287,18 @@ for (const m of MODULES) {
     head.append(btn);
     const box = el('div', 'card-body');
     card.append(head, box);
-    dash.append(card);
+    views[m.view || 'dash'].append(card);
     boxes[m.id] = box;
 }
+
+const toggle = document.getElementById('viewtoggle');
+toggle.onclick = () => {
+    const showSettings = views.settings.classList.contains('hidden');
+    views.settings.classList.toggle('hidden', !showSettings);
+    views.dash.classList.toggle('hidden', showSettings);
+    toggle.classList.toggle('active', showSettings);
+    toggle.title = showSettings ? 'Back to dashboard' : 'Settings';
+};
+
 refreshAll();
 setInterval(() => { refreshModule('stats'); refreshModule('alerts'); }, 30000);

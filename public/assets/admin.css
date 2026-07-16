@@ -29,6 +29,17 @@ header h1 { font-size: 20px; margin: 0; display: flex; align-items: center; gap:
 header .logo { image-rendering: pixelated; }
 header h1 span { color: var(--accent); font-weight: normal; }
 header a { color: var(--muted); }
+header nav { display: flex; align-items: center; gap: 14px; }
+
+#viewtoggle {
+    font-size: 18px;
+    line-height: 1;
+    padding: 4px 9px;
+    background: transparent;
+}
+#viewtoggle.active { border-color: var(--accent); color: var(--accent); }
+
+.hidden { display: none; }
 
 .login { max-width: 320px; margin: 80px auto; }
 .login form { display: flex; flex-direction: column; gap: 12px; }
@@ -66,6 +77,9 @@ button.refresh { float: right; }
     overflow-x: auto;
 }
 
+/* Keep the dashboard on one screen: long card content scrolls inside. */
+#dashboard .card-body { max-height: 34vh; overflow-y: auto; }
+
 .card h2 { margin: 0 0 12px; font-size: 16px; }
 
 .statgrid {
@@ -96,3 +110,7 @@ tr.unseen td { color: var(--danger); }
 .card form > button { margin-top: 10px; }
 
 .restore { margin-top: 12px; }
+
+footer { text-align: center; font-size: 12px; padding: 8px 0 16px; }
+.exportrow { margin-top: 14px; display: flex; align-items: center; gap: 18px; }
+.exportrow a { color: var(--accent); }

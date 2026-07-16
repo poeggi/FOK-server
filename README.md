@@ -16,10 +16,11 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
   relays matchmaking and WebRTC signaling messages (SDP/ICE) through a
   store-and-forward mailbox. The actual game traffic runs peer-to-peer over
   a WebRTC DataChannel for low latency; the server never touches it.
-- Admin interface at /admin/: statistics (online, playing 1:1, registered
-  users with id and ip, per-hour load), top-100 management, database backup
-  (SQLite online backup, download) and restore (upload), an alert feed and
-  a configuration card.
+- Admin interface at /admin/: a one-screen dashboard (statistics: online,
+  playing 1:1, registered users with id and ip, per-hour load; alert feed;
+  top-100 management) plus a settings view behind the gear button with the
+  runtime configuration (incl. JSON export/import) and database backup
+  (SQLite online backup, download) and restore (upload).
 - Monitoring and alerting: inline checks (no daemons on shared hosting)
   raise de-duplicated alerts for excessive traffic, system overload, too
   many connections, client spam (flooding, oversized or repeatedly invalid
@@ -36,6 +37,7 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
     public/           mirrors the webroot 1:1
       index.php       landing page with the global top 100
       api/            JSON endpoints for game clients (CORS-allowlisted)
+        version.php   server + API contract version, environment
         hello.php     heartbeat: presence, counters, signals, friends online
         poll.php      fast signal poll, 204 when idle (matchmaking window)
         match.php     quick-match queue (pair with anyone waiting)
@@ -50,7 +52,8 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
     test/checks.sh    all quality checks: PHP lint, ASCII-only guard,
                       secret-leak guard, strict_types guard, unit tests
                       (test/unit.php), HTTP smoke test (test/smoke.sh)
-    tools/deploy.ps1  FTPS upload of public/
+    tools/deploy.sh   FTPS upload of public/ (used by the CI/CD pipeline)
+    tools/deploy.ps1  manual FTPS upload (emergency fallback)
 
 CI (.github/workflows/ci.yml) runs test/checks.sh on every push and PR.
 Run the same checks before every commit via the hook (once per clone):
@@ -75,17 +78,44 @@ env var, so nothing touches real data:
 Note: php -S does not read .htaccess, so the src/ web block only exists
 on Apache; keep secrets out of src/ regardless.
 
-## Deploy and first-run bootstrap
+## Staging and deploy
 
-    tools/deploy.ps1            upload all of public/ via FTPS
-    tools/deploy.ps1 -Only api  upload one subtree
+The server is PRODUCTION: it must stay up, and update downtime is
+minimized by never deploying untested code to the live webroot. The
+staging environment is a full copy of the app in the staging/
+subdirectory of the live webroot (https://.../staging/) with its OWN
+database and admin hash (../fok-server-data-staging/); the code detects
+this via its directory name (FOK_ENV) and marks the admin UI (STAGING).
 
-The SQLite database creates itself on the first request. The admin
-credential hash does not: write it once by uploading a short-lived PHP
-script that runs password_hash("user:pass", PASSWORD_DEFAULT) into
-../fok-server-data/admin.hash from POSTed values, invoke it once over
-HTTPS, then delete it from the server. Credentials must never exist in
-the repo, in commits, or in plain text on the server.
+Deployment is CI/CD: every push to main runs this pipeline in GitHub
+Actions (.github/workflows/ci.yml), no exceptions and no manual steps:
+
+    1. checks             full local test suite (test/checks.sh)
+    2. deploy to staging  tools/deploy.sh staging (FTPS, secrets in Actions)
+    3. smoke staging      test/smoke.sh against the staging URL
+    4. deploy to live     only if staging passed
+    5. verify live        version.php must report the pushed version + live
+
+So "deploy" == "git push to main" (which the pre-commit hook already
+gates locally). The remote smoke run uses random player IDs and removes
+its test data afterwards. The live upload itself takes a few seconds
+(plain FTPS file copy); with staging already verified, that window is
+the only exposure. Deploys are serialized (concurrency group), so two
+pushes never interleave uploads.
+
+Manual fallback (emergencies only, same staging-first rule):
+tools/deploy.ps1 -Staging, then tools/deploy.ps1; -Only api uploads one
+subtree. Credentials: ~/.fok-server-deploy.json locally, FTP_*/FOK_ADMIN_*
+secrets in GitHub Actions.
+
+First-run bootstrap: the SQLite database creates and seeds itself on
+the first request (a fresh top 100 starts with the classic
+SNAKE PLISSKEN entry at 82 points). The admin credential hash does not:
+write it once by uploading a short-lived PHP script that runs
+password_hash("user:pass", PASSWORD_DEFAULT) into the data dir from
+POSTed values, invoke it once over HTTPS, then delete it. Credentials
+must never exist in the repo, in commits, or in plain text on the
+server. Staging needs its own one-time hash bootstrap.
 
 ## Security notes
 
@@ -102,6 +132,8 @@ the repo, in commits, or in plain text on the server.
 
 ## API sketch
 
+    GET  /api/version.php
+      -> {"ok":true,"server":"0.4.0","api":1,"env":"live"}
     POST /api/hello.php  {"id":"cafe0001", "duel_with":"deadbeef"?, "friends":[...]?}
       -> {"ok":true,"now":...,"online":n,"playing":n,"registered":n,
           "signals":[{"from":"...","type":"invite","payload":"..."},...],
@@ -118,5 +150,6 @@ the repo, in commits, or in plain text on the server.
       -> {"ok":true}   (chat payloads capped at 120 bytes; matchmaking
                         payloads carry the player profile - see docs/API.md)
 
-Signals are delivered through the recipient's next hello poll. Clients poll
-slowly (~30 s) when idle and fast (~1-2 s) while matchmaking/signaling.
+Signals are delivered through the recipient's next hello or poll.php poll.
+Clients poll slowly (~30 s) when idle and fast (~1-2 s) while
+matchmaking/signaling.

@@ -24,14 +24,21 @@ switch ($action) {
             $load[$r['bucket']][$r['metric']] = (int)$r['value'];
         }
         $scoreCount = (int)$db->query('SELECT COUNT(*) FROM scores')->fetchColumn();
+        $dbRows = 0;
+        foreach (['players', 'scores', 'signals', 'duels', 'mm_queue', 'counters',
+            'alerts', 'settings', 'admin_fails', 'ipcount'] as $table) {
+            $dbRows += (int)$db->query("SELECT COUNT(*) FROM $table")->fetchColumn();
+        }
         Util::jsonOut([
             'ok' => true,
             'counts' => $counts,
             'scores_total' => $scoreCount,
+            'db_rows' => $dbRows,
             'load' => $load,
             'db_size' => is_file(FOK_DB_FILE) ? filesize(FOK_DB_FILE) : 0,
             'php' => PHP_VERSION,
-            'server_version' => FOK_VERSION,
+            'server_version' => FOK_SERVER_VERSION,
+            'env' => FOK_ENV,
             'now' => time(),
         ]);
 
@@ -75,6 +82,37 @@ switch ($action) {
         Util::jsonOut(['ok' => true]);
 
     case 'settings':
+        Util::jsonOut(['ok' => true, 'settings' => Settings::all()]);
+
+    case 'config_export':
+        $map = [];
+        foreach (Settings::all() as $s) {
+            $map[$s['key']] = $s['value'];
+        }
+        header('Content-Type: application/json');
+        header('Content-Disposition: attachment; filename="fok-config.json"');
+        echo json_encode($map, JSON_PRETTY_PRINT);
+        exit;
+
+    case 'config_import':
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            Util::fail('POST only', 405);
+        }
+        $map = json_decode((string)($_POST['config'] ?? ''), true);
+        if (!is_array($map) || $map === []) {
+            Util::fail('invalid config JSON');
+        }
+        foreach ($map as $key => $value) {
+            if (!is_string($key) || !isset(Settings::DEFS[$key])) {
+                Util::fail("unknown setting $key");
+            }
+            if (!is_int($value) || $value < 0 || $value > 1000000000) {
+                Util::fail("invalid value for $key");
+            }
+        }
+        foreach ($map as $key => $value) {
+            Settings::set($key, $value);
+        }
         Util::jsonOut(['ok' => true, 'settings' => Settings::all()]);
 
     case 'settings_save':
