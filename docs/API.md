@@ -51,6 +51,53 @@ rather than misbehave against an incompatible server.
   server.
 - Timestamps are unix seconds (UTC).
 
+## Time synchronization and PTS
+
+Online games need one clock both players agree on - for starting levels
+simultaneously, playing music/sfx in perfect sync, and ordering events.
+That shared clock is the SERVER clock in milliseconds; a timestamp on
+it is called the PTS (presentation timestamp).
+
+### GET /api/time.php - clock sync (REQUIRED before starting a game)
+
+    GET /api/time.php  ->  {"ok":true, "t": 1784190295123}
+
+The endpoint touches no database, so its latency is minimal and stable.
+Clients MUST sync when initiating an online game (and should re-sync
+periodically during long sessions):
+
+    1. Record local time t0 (performance.now()).
+    2. GET /api/time.php -> t. Record local time t1 on arrival.
+    3. rtt = t1 - t0;  offset = t + rtt/2 - t1_wallclock
+    4. Repeat ~5 times, keep the offset from the sample with the
+       LOWEST rtt. localToPts(x) = x + offset.
+
+Both clients now share a PTS base accurate to roughly rtt/2 (a few ms
+on typical connections) - enough for frame- and audio-level sync.
+
+### Using PTS
+
+- EVERY message the peers exchange (DataChannel game packets, chat,
+  and the pts field on server signals) carries the sender's current
+  PTS, so the receiver can order events and measure staleness.
+- Scheduled actions send a FUTURE PTS as a heads-up: e.g. the offerer
+  announces "level starts at PTS X" with X at least 200 ms ahead, so
+  both clients trigger the start (music, READY/GO, first tick) at the
+  same wall-clock instant using their local offset.
+- A confirming "start" message follows at the actual start. Receivers
+  must understand its PTS refers to a moment ALREADY IN THE PAST when
+  it arrives - it verifies the schedule, it does not trigger anything.
+- Same pattern for anything that must be simultaneous: music cues,
+  countdowns, sudden-death onset.
+
+### Server-side PTS validation
+
+Endpoints that accept a `pts` field (signal.php, scores.php) reject
+values in the future beyond a small sync tolerance (default 500 ms,
+admin-configurable) with 400 `bogus pts: in the future`; the incident
+is counted and logged as a bogus-client alert in the admin UI. Clients
+must never fabricate PTS values - send your synced now.
+
 ## POST /api/hello.php - heartbeat and poll
 
 The single periodic request a client makes. It (a) registers/refreshes

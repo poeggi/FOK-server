@@ -75,6 +75,7 @@ if (isset($body['inputs'])) {
     }
 }
 $name = is_string($body['name'] ?? null) ? $body['name'] : '';
+Util::checkPts($body['pts'] ?? null, "player $id");
 
 Presence::touch($id, Util::clientIp());
 $recent = Db::get()->prepare('SELECT COUNT(*) FROM scores WHERE player_id = ? AND created > ?');

@@ -10,7 +10,9 @@ require_once __DIR__ . '/../src/Signals.php';
  * POST {"id": sender, "to": recipient,
  *       "type": invite|accept|decline|offer|answer|ice|bye|chat,
  *       "payload": string, opaque to the server (SDP/ICE JSON, profile
- *       JSON on matchmaking types, plain text capped at 120 bytes for chat)}
+ *       JSON on matchmaking types, plain text capped at 120 bytes for chat),
+ *       "pts": int ms on the shared clock (optional but expected once the
+ *       client is time-synced; future-dated values are rejected + logged)}
  * Delivery happens through the recipient's hello.php or poll.php poll.
  */
 Util::cors();
@@ -34,6 +36,7 @@ $max = $type === 'chat' ? Settings::int('chat_max_len') : FOK_SIGNAL_MAX_PAYLOAD
 if (!is_string($payload) || strlen($payload) > $max) {
     Util::fail('invalid payload');
 }
+Util::checkPts($body['pts'] ?? null, "player $id");
 
 Presence::touch($id, Util::clientIp());
 if (!Signals::send($id, $to, $type, $payload)) {

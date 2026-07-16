@@ -19,6 +19,32 @@ final class Util
         return $_SERVER['REMOTE_ADDR'] ?? '?';
     }
 
+    public static function nowMs(): int
+    {
+        return (int)round(microtime(true) * 1000);
+    }
+
+    /**
+     * Validates a client-sent PTS (shared-clock timestamp, ms): events
+     * dated in the future beyond the sync tolerance are rejected and
+     * logged as a bogus client event.
+     */
+    public static function checkPts(mixed $pts, string $who): ?int
+    {
+        if ($pts === null) {
+            return null;
+        }
+        if (!is_int($pts) || $pts < 0) {
+            self::fail('invalid pts');
+        }
+        if ($pts > self::nowMs() + Settings::int('pts_tolerance_ms')) {
+            self::bump('bogus');
+            Alerts::raise('bogus', "Bogus client event: future PTS from $who (" . self::clientIp() . ')');
+            self::fail('bogus pts: in the future');
+        }
+        return $pts;
+    }
+
     public static function cors(): void
     {
         $origin = $_SERVER['HTTP_ORIGIN'] ?? '';

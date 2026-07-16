@@ -100,6 +100,25 @@ R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application
     -d "{\"id\":\"$ID1\",\"name\":\"SPAM\",\"score\":1,\"level\":1,\"diff\":1}" "$BASE/api/scores.php")
 expect "score submissions throttled" '429' "$R"
 
+R=$(curl -s "$BASE/api/time.php")
+expect "time sync endpoint" '"t":' "$R"
+NOW_MS=$(echo "$R" | grep -oE '"t":[0-9]+' | cut -d: -f2)
+if [ "${#NOW_MS}" -eq 13 ]; then echo "ok   time is in milliseconds"; else echo "FAIL time not ms: $NOW_MS"; fail=1; fi
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"synced\",\"pts\":$NOW_MS}" "$BASE/api/signal.php")
+expect "signal with valid pts" '"ok":true' "$R"
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+
+FUTURE_MS=$((NOW_MS + 60000))
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"cheat\",\"pts\":$FUTURE_MS}" "$BASE/api/signal.php")
+expect "future pts rejected as bogus" 'bogus pts' "$R"
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"name\":\"CHEAT\",\"score\":9,\"level\":1,\"diff\":1,\"pts\":$FUTURE_MS}" "$BASE/api/scores.php")
+expect "future pts rejected on scores" 'bogus pts' "$R"
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"play?\"}" "$BASE/api/signal.php")
 expect "signal send" '"ok":true' "$R"
@@ -215,6 +234,7 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=alerts")
     expect "alerts list" '"ok":true' "$R"
     expect "failed login raised alert" '"type":"admin-fail"' "$R"
+    expect "bogus client event logged" '"type":"bogus"' "$R"
 
     R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_seen")
     expect "alerts mark seen" '"ok":true' "$R"

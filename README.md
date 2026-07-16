@@ -38,6 +38,7 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
       index.php       landing page with the global top 100
       api/            JSON endpoints for game clients (CORS-allowlisted)
         version.php   server + API contract version, environment
+        time.php      millisecond clock sync (shared PTS base for games)
         hello.php     heartbeat: presence, counters, signals, friends online
         poll.php      fast signal poll, 204 when idle (matchmaking window)
         match.php     quick-match queue (pair with anyone waiting)
@@ -133,7 +134,9 @@ server. Staging needs its own one-time hash bootstrap.
 ## API sketch
 
     GET  /api/version.php
-      -> {"ok":true,"server":"0.4.0","api":1,"env":"live"}
+      -> {"ok":true,"server":"0.6.0","api":1,"env":"live"}
+    GET  /api/time.php
+      -> {"ok":true,"t":<server ms>}   clock sync for the shared PTS base
     POST /api/hello.php  {"id":"cafe0001", "duel_with":"deadbeef"?, "friends":[...]?}
       -> {"ok":true,"now":...,"online":n,"playing":n,"registered":n,
           "signals":[{"from":"...","type":"invite","payload":"..."},...],
