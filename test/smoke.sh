@@ -211,10 +211,14 @@ else
 
     VER=$(grep -oE "FOK_SERVER_VERSION = '[^']+'" public/src/Config.php | cut -d"'" -f2)
     R=$(curl -s -i -b "$COOKIES" "$BASE/admin/index.php")
-    expect "admin page is no-store" 'Cache-Control: no-store' "$R"
+    H=$(echo "$R" | grep -i '^cache-control' || true)
+    expect "admin page is no-store" 'no-store' "$H"
     expect "admin has gear button" 'id="viewtoggle"' "$R"
     expect "admin has settings view" 'id="settings"' "$R"
     expect "admin assets cache-busted" "admin.js?v=$VER" "$R"
+
+    R=$(curl -s "$BASE/assets/admin.css?v=$VER")
+    expect "hidden class wins the cascade" 'display: none !important' "$R"
 
     R=$(curl -s "$BASE/assets/admin.js?v=$VER")
     N=$(echo "$R" | grep -c "view: 'settings'" || true)
