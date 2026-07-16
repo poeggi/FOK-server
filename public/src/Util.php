@@ -25,9 +25,10 @@ final class Util
     }
 
     /**
-     * Validates a client-sent PTS (shared-clock timestamp, ms): events
-     * dated in the future beyond the sync tolerance are rejected and
-     * logged as a bogus client event.
+     * Validates a client-sent PTS (server-clock timestamp, ms). Clients
+     * report events that already happened, so by the time a PTS arrives
+     * it must lie in the past - a future value means a broken sync or a
+     * fabricated event and is rejected and logged as bogus.
      */
     public static function checkPts(mixed $pts, string $who): ?int
     {
@@ -37,7 +38,7 @@ final class Util
         if (!is_int($pts) || $pts < 0) {
             self::fail('invalid pts');
         }
-        if ($pts > self::nowMs() + Settings::int('pts_tolerance_ms')) {
+        if ($pts > self::nowMs()) {
             self::bump('bogus');
             Alerts::raise('bogus', "Bogus client event: future PTS from $who (" . self::clientIp() . ')');
             self::fail('bogus pts: in the future');

@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.6.0';
+const FOK_SERVER_VERSION = '0.6.1';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
 const FOK_API_VERSION = 1;
@@ -39,10 +39,6 @@ const FOK_CHAT_MAX_LEN = 120;
 // poll_wait_max setting; it must stay small enough that concurrent
 // handshakes cannot exhaust the shared-hosting FPM worker pool.
 const FOK_POLL_CHECK_USEC = 150000;
-
-// How far in the future a client-sent PTS may lie before it is rejected
-// as bogus (allows for clock-sync error, roughly one RTT).
-const FOK_PTS_TOLERANCE_MS = 500;
 
 // Abuse caps (HTTP 429): pending signals per recipient, score submissions
 // per player within the rate window.

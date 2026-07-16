@@ -115,6 +115,11 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"cheat\",\"pts\":$FUTURE_MS}" "$BASE/api/signal.php")
 expect "future pts rejected as bogus" 'bogus pts' "$R"
 
+NEAR_MS=$((NOW_MS + 2000))
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"early\",\"pts\":$NEAR_MS}" "$BASE/api/signal.php")
+expect "near-future pts also rejected (zero tolerance)" 'bogus pts' "$R"
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"name\":\"CHEAT\",\"score\":9,\"level\":1,\"diff\":1,\"pts\":$FUTURE_MS}" "$BASE/api/scores.php")
 expect "future pts rejected on scores" 'bogus pts' "$R"

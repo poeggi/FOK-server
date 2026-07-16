@@ -55,8 +55,12 @@ rather than misbehave against an incompatible server.
 
 Online games need one clock both players agree on - for starting levels
 simultaneously, playing music/sfx in perfect sync, and ordering events.
-That shared clock is the SERVER clock in milliseconds; a timestamp on
-it is called the PTS (presentation timestamp).
+There is exactly ONE PTS reality: the SERVER clock in milliseconds. The
+server imposes it and never adjusts to anyone; each client measures its
+own offset and adjusts itself. All sync work is client-side - the
+server does zero per-client computation, which is what makes this
+scale. A timestamp on this clock is called the PTS (presentation
+timestamp).
 
 ### GET /api/time.php - clock sync (REQUIRED before starting a game)
 
@@ -80,10 +84,15 @@ on typical connections) - enough for frame- and audio-level sync.
 - EVERY message the peers exchange (DataChannel game packets, chat,
   and the pts field on server signals) carries the sender's current
   PTS, so the receiver can order events and measure staleness.
-- Scheduled actions send a FUTURE PTS as a heads-up: e.g. the offerer
-  announces "level starts at PTS X" with X at least 200 ms ahead, so
-  both clients trigger the start (music, READY/GO, first tick) at the
-  same wall-clock instant using their local offset.
+- Clients report REALITY, not predictions: a message's PTS is the
+  moment the event actually happened, stamped and sent as soon as
+  possible. By the time it arrives anywhere, that PTS is already in
+  the past.
+- The only future PTS values that exist are SCHEDULES between peers,
+  and they stay on the DataChannel (never sent to the server): the
+  offerer announces "level starts at PTS X" with X at least 200 ms
+  ahead, so both clients trigger the start (music, READY/GO, first
+  tick) at the same wall-clock instant using their local offset.
 - A confirming "start" message follows at the actual start. Receivers
   must understand its PTS refers to a moment ALREADY IN THE PAST when
   it arrives - it verifies the schedule, it does not trigger anything.
@@ -92,11 +101,13 @@ on typical connections) - enough for frame- and audio-level sync.
 
 ### Server-side PTS validation
 
-Endpoints that accept a `pts` field (signal.php, scores.php) reject
-values in the future beyond a small sync tolerance (default 500 ms,
-admin-configurable) with 400 `bogus pts: in the future`; the incident
-is counted and logged as a bogus-client alert in the admin UI. Clients
-must never fabricate PTS values - send your synced now.
+Client PTS can NEVER be in the future - no tolerance. Endpoints that
+accept a `pts` field (signal.php, scores.php) reject any value ahead
+of the server clock with 400 `bogus pts: in the future`; the incident
+is counted and logged as a bogus-client alert in the admin UI. If an
+honest client gets this rejection its clock sync has drifted: re-sync
+via time.php immediately (min-RTT sampling keeps the offset error at a
+few ms, comfortably below any real network transit time).
 
 ## POST /api/hello.php - heartbeat and poll
 
