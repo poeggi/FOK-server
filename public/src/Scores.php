@@ -9,7 +9,7 @@ final class Scores
     public static function top(int $limit = FOK_TOP_SCORES): array
     {
         $st = Db::get()->prepare(
-            'SELECT id, player_id, name, score, level, diff, validated, created
+            'SELECT id, player_id, name, score, level, diff, color, shop_items, validated, created
              FROM scores ORDER BY score DESC, created ASC LIMIT ?'
         );
         $st->execute([$limit]);
@@ -19,8 +19,13 @@ final class Scores
             $row['score'] = (int)$row['score'];
             $row['level'] = (int)$row['level'];
             $row['diff'] = (int)$row['diff'];
+            $row['color'] = (int)$row['color'];
+            $row['shopItems'] = json_decode($row['shop_items']) ?? new stdClass();
+            unset($row['shop_items']);
             $row['validated'] = (int)$row['validated'];
             $row['created'] = (int)$row['created'];
+            // Same DD.MM.YY format the FOK-snake local top 10 stores.
+            $row['date'] = gmdate('d.m.y', $row['created']);
         }
         return $rows;
     }
@@ -30,16 +35,16 @@ final class Scores
      * verbatim so scores can later be sanity-checked by deterministic
      * re-simulation; until then entries carry validated = 0.
      */
-    public static function submit(string $playerId, string $name, int $score, int $level, int $diff, ?int $seed, ?string $inputs): int
+    public static function submit(string $playerId, string $name, int $score, int $level, int $diff, int $color, string $shopItems, ?int $seed, ?string $inputs): int
     {
         $name = mb_substr(trim($name), 0, FOK_MAX_NAME_LEN);
         if ($name === '') {
             $name = 'ANONYMOUS';
         }
         Db::get()->prepare(
-            'INSERT INTO scores (player_id, name, score, level, diff, seed, inputs, validated, created)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)'
-        )->execute([$playerId, $name, $score, $level, $diff, $seed, $inputs, time()]);
+            'INSERT INTO scores (player_id, name, score, level, diff, color, shop_items, seed, inputs, validated, created)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)'
+        )->execute([$playerId, $name, $score, $level, $diff, $color, $shopItems, $seed, $inputs, time()]);
 
         $rank = Db::get()->prepare('SELECT COUNT(*) FROM scores WHERE score > ?');
         $rank->execute([$score]);

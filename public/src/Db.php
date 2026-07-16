@@ -41,18 +41,20 @@ final class Db
             last_seen INTEGER NOT NULL,
             hello_count INTEGER NOT NULL DEFAULT 0
         )');
-        $pdo->exec('CREATE TABLE IF NOT EXISTS scores (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS scores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             player_id TEXT NOT NULL,
             name TEXT NOT NULL,
             score INTEGER NOT NULL,
             level INTEGER NOT NULL,
             diff INTEGER NOT NULL DEFAULT 1,
+            color INTEGER NOT NULL DEFAULT 0,
+            shop_items TEXT NOT NULL DEFAULT '{}',
             seed INTEGER,
             inputs TEXT,
             validated INTEGER NOT NULL DEFAULT 0,
             created INTEGER NOT NULL
-        )');
+        )");
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_scores_rank ON scores (score DESC, created ASC)');
         $pdo->exec('CREATE TABLE IF NOT EXISTS signals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -55,7 +55,7 @@ It is never web-accessible and never part of this repo.
           "signals":[{"from":"...","type":"invite","payload":"..."},...]}
     GET  /api/scores.php
       -> {"ok":true,"scores":[{"rank":1,"name":"...","score":...,...}]}
-    POST /api/scores.php {"id","name","score","level","diff","seed"?,"inputs"?}
+    POST /api/scores.php {"id","name","score","level","diff","color"?,"shopItems"?,"seed"?,"inputs"?}
       -> {"ok":true,"rank":n,"top":bool}
     POST /api/signal.php {"id","to","type":"invite|accept|decline|offer|answer|ice|bye","payload"}
       -> {"ok":true}

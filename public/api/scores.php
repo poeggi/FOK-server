@@ -43,6 +43,20 @@ if (!is_int($level) || $level < 1 || $level > 99) {
 if (!is_int($diff) || $diff < 0 || $diff > 3) {
     Util::fail('invalid diff');
 }
+$color = $body['color'] ?? 0;
+if (!is_int($color) || $color < 0 || $color > 255) {
+    Util::fail('invalid color');
+}
+$shopItems = '{}';
+if (isset($body['shopItems'])) {
+    if (!is_array($body['shopItems'])) {
+        Util::fail('invalid shopItems');
+    }
+    $shopItems = json_encode((object)$body['shopItems']);
+    if ($shopItems === false || strlen($shopItems) > 2048) {
+        Util::fail('invalid shopItems');
+    }
+}
 $seed = $body['seed'] ?? null;
 if ($seed !== null && (!is_int($seed) || $seed < 0 || $seed > 0xFFFFFFFF)) {
     Util::fail('invalid seed');
@@ -57,7 +71,7 @@ if (isset($body['inputs'])) {
 $name = is_string($body['name'] ?? null) ? $body['name'] : '';
 
 Presence::touch($id, Util::clientIp());
-$rank = Scores::submit($id, $name, $score, $level, $diff, $seed, $inputs);
+$rank = Scores::submit($id, $name, $score, $level, $diff, $color, $shopItems, $seed, $inputs);
 Util::bump('score_submit');
 
 Util::jsonOut(['ok' => true, 'rank' => $rank, 'top' => $rank <= FOK_TOP_SCORES]);
