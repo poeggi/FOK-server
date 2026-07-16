@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.10.0';
+const FOK_SERVER_VERSION = '0.10.1';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
 // v2: friendship-gated status and invites, ms hello.now, friend

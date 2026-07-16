@@ -52,6 +52,7 @@ const MODULES = [
             stat('Playing 1:1', d.counts.playing);
             stat('Relaying', d.relaying);
             stat('Users registered', d.counts.registered);
+            stat('Friendships', d.friendships);
             stat('Avg latency', d.avg_latency === null ? 'n/a' : d.avg_latency + ' ms');
             stat('Scores stored', d.scores_total);
             stat('DB entries', d.db_rows);

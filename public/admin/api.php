@@ -32,10 +32,14 @@ switch ($action) {
         $relaying = (int)$db->query(
             'SELECT COUNT(DISTINCT pair) FROM relay WHERE created > ' . (time() - 30)
         )->fetchColumn();
+        $friendships = (int)$db->query(
+            "SELECT COUNT(*) FROM friends WHERE state = 'accepted'"
+        )->fetchColumn();
         Util::jsonOut([
             'ok' => true,
             'counts' => $counts,
             'relaying' => $relaying,
+            'friendships' => $friendships,
             'avg_latency' => Presence::avgLatency(),
             'scores_total' => $scoreCount,
             'db_rows' => $dbRows,

@@ -315,6 +315,7 @@ else
     expect "admin stats registered" "$(strict '"registered":2')" "$R"
     expect "admin stats db rows" '"db_rows":' "$R"
     expect "admin stats avg latency" '"avg_latency":' "$R"
+    expect "admin stats friendships" '"friendships":' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
     expect "backup via GET rejected" '"error":"POST only"' "$R"
