@@ -13,9 +13,12 @@ if [ -z "${FTP_HOST:-}" ] || [ -z "${FTP_USER:-}" ] || [ -z "${FTP_PASS:-}" ]; t
     exit 1
 fi
 
-# src/ uploads FIRST: shared classes and schema migrations must land
-# before the endpoints that depend on them, so the seconds-long deploy
-# window can never serve new endpoints against old code.
+# Upload order matters during the seconds-long deploy window:
+# 1. src/    shared classes + schema migrations before their consumers
+# 2. assets/ versioned-immutable files before any HTML that references
+#            their new ?v= URL (else a mid-window fetch caches old
+#            content under the new URL for a year)
+# 3. rest    endpoints and pages last
 count=0
 while IFS= read -r f; do
     rel="${f#public/}"
@@ -23,5 +26,6 @@ while IFS= read -r f; do
         -T "$f" "ftp://$FTP_HOST/$prefix$rel"
     count=$((count + 1))
     echo "  $prefix$rel"
-done < <({ find public/src -type f | sort; find public -type f -not -path 'public/src/*' | sort; })
+done < <({ find public/src -type f | sort; find public/assets -type f | sort; \
+    find public -type f -not -path 'public/src/*' -not -path 'public/assets/*' | sort; })
 echo "Deployed $count file(s) [${prefix:+staging}${prefix:-live}]"

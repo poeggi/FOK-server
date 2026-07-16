@@ -29,14 +29,17 @@ $root = Join-Path $PSScriptRoot '..\public' | Resolve-Path
 $base = if ($Only) { Join-Path $root $Only | Resolve-Path } else { $root }
 
 $prefix = if ($Staging) { 'staging/' } else { '' }
-# src/ uploads first: shared classes and schema migrations must land
-# before the endpoints that depend on them (mid-deploy consistency).
+# Upload order: src/ (classes + migrations before consumers), then
+# assets/ (immutable ?v= files before HTML referencing them), then rest.
 $srcDir = Join-Path $root 'src'
+$assetDir = Join-Path $root 'assets'
 $files = if ($Only) {
     Get-ChildItem -Path $base -Recurse -File
 } else {
     @(Get-ChildItem -Path $srcDir -Recurse -File) +
-    @(Get-ChildItem -Path $base -Recurse -File | Where-Object { $_.FullName -notlike "$srcDir*" })
+    @(Get-ChildItem -Path $assetDir -Recurse -File) +
+    @(Get-ChildItem -Path $base -Recurse -File |
+        Where-Object { $_.FullName -notlike "$srcDir*" -and $_.FullName -notlike "$assetDir*" })
 }
 $done = 0
 foreach ($f in $files) {
