@@ -6,7 +6,7 @@ require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Scores.php';
 
 /**
- * GET  -> {"ok": true, "scores": [top 100]}
+ * GET (optional ?limit=1..100) -> {"ok": true, "scores": [top entries]}
  * POST {"id", "name", "score", "level", "diff", "seed"?, "inputs"?}
  * seed + inputs are the deterministic replay material; they are stored
  * verbatim for the future server-side sanity check (anti-spoofing).
@@ -15,7 +15,11 @@ Util::cors();
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
 
 if ($method === 'GET') {
-    $scores = Scores::top();
+    $limit = (int)($_GET['limit'] ?? FOK_TOP_SCORES);
+    if ($limit < 1 || $limit > FOK_TOP_SCORES) {
+        $limit = FOK_TOP_SCORES;
+    }
+    $scores = Scores::top($limit);
     foreach ($scores as &$row) {
         unset($row['id'], $row['validated']);
     }

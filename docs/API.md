@@ -39,7 +39,10 @@ Request:
 
     {
       "id": "c0ffee42",           required, player ID
-      "duel_with": "deadbeef"     optional, peer ID while a 1:1 game runs
+      "duel_with": "deadbeef",    optional, peer ID while a 1:1 game runs
+      "friends": ["deadbeef"]     optional, up to 64 IDs to check (send the
+                                  friend list when the multiplayer screen
+                                  is open)
     }
 
 Response:
@@ -52,7 +55,8 @@ Response:
       "registered": 17,           total known player IDs
       "signals": [                pending messages for "id", oldest first
         {"from": "deadbeef", "type": "invite", "payload": "", "created": 1784182410}
-      ]
+      ],
+      "friends_online": {"deadbeef": true}   only when "friends" was sent
     }
 
 Rules:
@@ -79,6 +83,9 @@ waiting for or performing matchmaking/signaling; stop when the
 DataChannel opens or the attempt is abandoned.
 
 ## GET /api/scores.php - global top 100
+
+Optional `?limit=N` (1..100, default 100) caps the number of entries,
+e.g. `?limit=10` for a lazily loaded scores page.
 
 Response:
 
@@ -111,7 +118,8 @@ Request:
 
     {
       "id": "c0ffee42",           required, player ID
-      "name": "KAI",              required, display name (trimmed, max 16 chars)
+      "name": "KAI",              required, display name (trimmed, max 15
+                                  chars = MAX_NAME in the client)
       "score": 4200,              required, int 0..1000000000
       "level": 7,                 required, int 1..99
       "diff": 2,                  optional, int 0..3, default 1
@@ -159,17 +167,36 @@ Types (fixed set, anything else is rejected):
     ice       ICE candidate                       payload: JSON-encoded RTCIceCandidate
     bye       leave / abort the session           payload: ""
 
+## POST /api/match.php - quick match (pair with anyone waiting)
+
+For "play with anyone" (as opposed to inviting a specific friend ID).
+
+Request: `{"id": "c0ffee42", "action": "seek"}` - poll at ~1-2 Hz while
+the user waits. Responses:
+
+    {"ok":true, "waiting":true}                          keep polling
+    {"ok":true, "matched":"deadbeef", "role":"offerer"}  you create offer + seed
+    {"ok":true, "matched":"deadbeef", "role":"answerer"} wait for the offer
+
+`{"action": "cancel"}` leaves the queue (also automatic after 10 s
+without a seek poll). After a match both sides continue at step 3 of the
+1:1 flow below, with the "offerer" acting as A.
+
 ## 1:1 game flow (the intended sequence)
 
 Player A wants to play with player B (A knows B's ID, e.g. from the
-friend list):
+friend list; the hello `friends` field tells A whether B is online):
 
     1. A -> signal {type: "invite", to: B}; A starts polling poll.php (~1 s).
-    2. B sees the invite in its hello poll. UI asks the user.
-       B -> signal accept (or decline, which ends the flow).
-    3. A (on accept) creates an RTCPeerConnection with a DataChannel
-       (unreliable, unordered: maxRetransmits 0, ordered false),
-       A -> signal offer with the local description.
+    2. B sees the invite in its hello poll (within ~30 s; within ~1 s if
+       B is on the multiplayer screen and therefore polling poll.php).
+       UI asks the user. B -> signal accept (or decline, ending the flow).
+    3. A (on accept) generates the 32-bit duel seed, creates an
+       RTCPeerConnection with a DataChannel (unreliable, unordered:
+       maxRetransmits 0, ordered false), and sends
+       signal offer with payload = JSON {"sdp": <description>, "seed": n}.
+       The offerer ALWAYS generates the seed; both clients start the
+       deterministic duel sim from it (startDuel(seed)).
     4. B sets the remote description, answers: B -> signal answer.
     5. Both sides exchange ice messages as candidates arrive.
     6. When the DataChannel opens on both ends, BOTH clients stop

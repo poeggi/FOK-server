@@ -81,6 +81,22 @@ expect "poll drained back to 204" '204' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"deadbeef","duel_with":"cafe0001"}' "$BASE/api/hello.php")
 expect "duel counted" '"playing":2' "$R"
 
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"id":"deadbeef","friends":["cafe0001","aaaa0000"]}' "$BASE/api/hello.php")
+expect "friends online reported" '"cafe0001":true' "$R"
+expect "unknown friend offline" '"aaaa0000":false' "$R"
+
+R=$(curl -s "$BASE/api/scores.php?limit=1")
+expect "scores limit works" '"scores":[{' "$R"
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"deadbeef","action":"seek"}' "$BASE/api/match.php")
+expect "first seeker waits" '"waiting":true' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"cafe0001","action":"seek"}' "$BASE/api/match.php")
+expect "second seeker matched" '"matched":"deadbeef"' "$R"
+expect "second seeker answers" '"role":"answerer"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"deadbeef","action":"seek"}' "$BASE/api/match.php")
+expect "first seeker offers" '"role":"offerer"' "$R"
+
 R=$(curl -s "$BASE/admin/api.php?action=stats")
 expect "admin api needs login" '"error":"not logged in"' "$R"
 

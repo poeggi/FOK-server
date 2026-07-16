@@ -25,6 +25,22 @@ final class Presence
         )->execute([$a, $b, $now, $now]);
     }
 
+    /** @return array map of id => true for the given ids that are online */
+    public static function onlineOf(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $st = Db::get()->prepare("SELECT id FROM players WHERE id IN ($ph) AND last_seen > ?");
+        $st->execute([...$ids, time() - FOK_ONLINE_WINDOW]);
+        $online = [];
+        foreach ($st->fetchAll() as $row) {
+            $online[$row['id']] = true;
+        }
+        return $online;
+    }
+
     public static function counts(): array
     {
         $db = Db::get();

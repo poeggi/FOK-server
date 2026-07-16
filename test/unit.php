@@ -15,6 +15,7 @@ require_once __DIR__ . '/../public/src/Scores.php';
 require_once __DIR__ . '/../public/src/Signals.php';
 require_once __DIR__ . '/../public/src/Auth.php';
 require_once __DIR__ . '/../public/src/Backup.php';
+require_once __DIR__ . '/../public/src/Matchmaking.php';
 
 $tests = 0;
 function ok(bool $cond, string $what): void
@@ -67,6 +68,25 @@ ok(is_object($top[1]['shopItems']) && $top[1]['shopItems']->hat === 1, 'shopItem
 ok(preg_match('/^\d{2}\.\d{2}\.\d{2}$/', $top[0]['date']) === 1, 'date is DD.MM.YY');
 $long = Scores::submit('aaaaaaaa', str_repeat('X', 40), 1, 1, 1, 0, '{}', null, null);
 ok(mb_strlen(Scores::top()[2]['name']) === FOK_MAX_NAME_LEN, 'name capped at max length');
+
+// Presence: targeted online check
+$online = Presence::onlineOf(['aaaaaaaa', 'cccccccc']);
+ok(isset($online['aaaaaaaa']), 'known player reported online');
+ok(!isset($online['cccccccc']), 'unknown player not online');
+ok(Presence::onlineOf([]) === [], 'empty friend list is fine');
+
+// Matchmaking: first seeker waits, second gets matched, roles assigned
+ok((Matchmaking::seek('11111111')['waiting'] ?? false) === true, 'first seeker waits');
+$m = Matchmaking::seek('22222222');
+ok(($m['matched'] ?? '') === '11111111', 'second seeker matched with first');
+ok(($m['role'] ?? '') === 'answerer', 'newcomer is answerer');
+$m = Matchmaking::seek('11111111');
+ok(($m['matched'] ?? '') === '22222222', 'first seeker learns match on next poll');
+ok(($m['role'] ?? '') === 'offerer', 'longer-waiting seeker is offerer');
+ok((Matchmaking::seek('11111111')['waiting'] ?? false) === true, 'queue empty after delivery');
+Matchmaking::cancel('11111111');
+ok((Matchmaking::seek('33333333')['waiting'] ?? false) === true, 'cancelled seeker not matched');
+Matchmaking::cancel('33333333');
 
 // Signals: mailbox drains exactly once, order preserved
 ok(!Signals::any('bbbbbbbb'), 'any() false on empty mailbox');

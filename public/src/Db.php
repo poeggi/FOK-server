@@ -72,6 +72,13 @@ final class Db
             last_seen INTEGER NOT NULL,
             PRIMARY KEY (a, b)
         )');
+        $pdo->exec('CREATE TABLE IF NOT EXISTS mm_queue (
+            id TEXT PRIMARY KEY,
+            since INTEGER NOT NULL,
+            last_poll INTEGER NOT NULL,
+            matched_with TEXT,
+            role TEXT
+        )');
         $pdo->exec('CREATE TABLE IF NOT EXISTS counters (
             bucket TEXT NOT NULL,
             metric TEXT NOT NULL,

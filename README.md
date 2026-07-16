@@ -24,8 +24,9 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
     public/           mirrors the webroot 1:1
       index.php       landing page with the global top 100
       api/            JSON endpoints for game clients (CORS-allowlisted)
-        hello.php     heartbeat: presence, counters, pending signals
+        hello.php     heartbeat: presence, counters, signals, friends online
         poll.php      fast signal poll, 204 when idle (matchmaking window)
+        match.php     quick-match queue (pair with anyone waiting)
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
       admin/          session-protected admin UI + JSON API
@@ -61,10 +62,15 @@ It is never web-accessible and never part of this repo.
 
 ## API sketch
 
-    POST /api/hello.php  {"id":"cafe0001", "duel_with":"deadbeef"?}
+    POST /api/hello.php  {"id":"cafe0001", "duel_with":"deadbeef"?, "friends":[...]?}
       -> {"ok":true,"now":...,"online":n,"playing":n,"registered":n,
-          "signals":[{"from":"...","type":"invite","payload":"..."},...]}
-    GET  /api/scores.php
+          "signals":[{"from":"...","type":"invite","payload":"..."},...],
+          "friends_online":{...}?}
+    GET  /api/poll.php?id=cafe0001
+      -> 204 (nothing pending) | {"ok":true,"signals":[...]}
+    POST /api/match.php  {"id":"cafe0001","action":"seek|cancel"}
+      -> {"ok":true,"waiting":true} | {"ok":true,"matched":"...","role":"..."}
+    GET  /api/scores.php?limit=10
       -> {"ok":true,"scores":[{"rank":1,"name":"...","score":...,...}]}
     POST /api/scores.php {"id","name","score","level","diff","color"?,"shopItems"?,"seed"?,"inputs"?}
       -> {"ok":true,"rank":n,"top":bool}

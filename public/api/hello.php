@@ -7,10 +7,14 @@ require_once __DIR__ . '/../src/Signals.php';
 
 /**
  * Heartbeat and poll endpoint, the client's single periodic request.
- * POST {"id": "8-hex", "duel_with": "8-hex" (optional, while in a 1:1 game)}
- * Returns presence counters plus any pending signaling messages for the
- * caller (drained on read). Clients poll slowly (~30s) when idle and fast
- * (~1-2s) while matchmaking or signaling.
+ * POST {
+ *   "id": "8-hex",
+ *   "duel_with": "8-hex",       optional, while a 1:1 game runs
+ *   "friends": ["8-hex", ...]   optional, ids to check for online status
+ * }
+ * Returns presence counters, pending signaling messages for the caller
+ * (drained on read) and, when friends were sent, which of them are online.
+ * Clients send this every ~30s; fast polling belongs to poll.php.
  */
 Util::cors();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
@@ -34,8 +38,27 @@ if ($duelWith !== null) {
     Presence::touchDuel($id, $duelWith);
 }
 
-Util::jsonOut([
+$out = [
     'ok' => true,
     'now' => time(),
     'signals' => Signals::take($id),
-] + Presence::counts());
+] + Presence::counts();
+
+if (isset($body['friends'])) {
+    $friends = $body['friends'];
+    if (!is_array($friends) || count($friends) > FOK_MAX_FRIENDS) {
+        Util::fail('invalid friends');
+    }
+    foreach ($friends as $f) {
+        if (!Util::isValidId($f)) {
+            Util::fail('invalid friends');
+        }
+    }
+    $online = Presence::onlineOf($friends);
+    $out['friends_online'] = new stdClass();
+    foreach ($friends as $f) {
+        $out['friends_online']->$f = isset($online[$f]);
+    }
+}
+
+Util::jsonOut($out);
