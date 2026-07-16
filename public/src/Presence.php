@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Settings.php';
+require_once __DIR__ . '/Signals.php';
 
 final class Presence
 {
@@ -62,6 +63,36 @@ final class Presence
             ];
         }
         return $out;
+    }
+
+    /**
+     * Removes players not seen for player_ttl_days (0 disables expiry):
+     * their friendships are cancelled and each friend gets a best-effort
+     * 'friend' {event:"expired"} signal (offline friends reconcile their
+     * list against friend.php on next start). Scores remain as history.
+     * @return int number of players removed
+     */
+    public static function expireStale(): int
+    {
+        $days = Settings::int('player_ttl_days');
+        if ($days < 1) {
+            return 0;
+        }
+        $db = Db::get();
+        $st = $db->prepare('SELECT id FROM players WHERE last_seen < ?');
+        $st->execute([time() - $days * 86400]);
+        $expired = array_column($st->fetchAll(), 'id');
+        foreach ($expired as $id) {
+            $st = $db->prepare('SELECT a, b FROM friends WHERE a = ? OR b = ?');
+            $st->execute([$id, $id]);
+            foreach ($st->fetchAll() as $row) {
+                $other = $row['a'] === $id ? $row['b'] : $row['a'];
+                Signals::send($id, $other, 'friend', json_encode(['event' => 'expired', 'from' => $id]));
+            }
+            $db->prepare('DELETE FROM friends WHERE a = ? OR b = ?')->execute([$id, $id]);
+            $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
+        }
+        return count($expired);
     }
 
     public static function counts(): array

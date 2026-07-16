@@ -346,7 +346,8 @@ Types (fixed set, anything else is rejected):
     bye       leave / abort the session           payload: ""
     chat      text message (max 120 bytes total)  payload: plain text
     friend    RESERVED - server-generated only    payload: JSON {"event":
-              (clients cannot send it: 400)         "request"|"accepted",
+              (clients cannot send it: 400)         "request"|"accepted"
+                                                     |"expired",
                                                     "from": "8-hex"}
 
 The 'friend' signal is the friendship NOTIFICATION: the server delivers
@@ -411,6 +412,14 @@ Removal is always immediate and silent: the client performs it WITHOUT
 a confirmation dialog (auto-confirmed), the server notifies nobody, and
 no celebration effect (confetti etc.) accompanies it - celebrations are
 reserved for a completed handshake.
+
+Player expiry: a player not seen for player_ttl_days (default 180,
+admin-configurable, 0 disables) is automatically removed from the
+database and all of its friendships are cancelled. Each friend receives
+a best-effort 'friend' {event:"expired"} notification while online;
+because mailbox signals are short-lived, clients MUST also reconcile
+their local friend list against friend.php list at startup - the server
+list is authoritative. Scores remain as history.
     POST {"id":..., "action":"list"}
       -> {"ok":true,"friends":[{"id":"deadbeef","state":"accepted",
           "outgoing":false,"name":"KAI","online":true,"latency":31}]}

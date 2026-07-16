@@ -28,6 +28,7 @@ final class Settings
         'auto_accept_window' => [60, 'Auto-accept flag validity after a hello (seconds)'],
         'friend_req_max' => [15, 'Ban: unanswered friend requests per hour above'],
         'friend_ban_seconds' => [3600, 'Friend-request ban duration (seconds)'],
+        'player_ttl_days' => [180, 'Remove players not seen for N days (0 = never)'],
         'alert_req_per_min' => [600, 'Alert: total requests per minute above'],
         'alert_load1' => [8, 'Alert: 1-minute system load above'],
         'alert_online' => [200, 'Alert: concurrent online players above'],

@@ -14,7 +14,9 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
   client to query a friend's status (online, latency, name) or send a
   game invite. New requests and acceptances notify the peer via a
   reserved 'friend' signal in its mailbox. Quick match stays open to
-  strangers (the match response carries the opponent's name).
+  strangers (the match response carries the opponent's name). Players
+  not seen for 180 days (configurable) are expired automatically:
+  removed from the database, friendships cancelled, friends notified.
 - Relay fallback: when the P2P DataChannel cannot connect, duels relay
   their (input-level) messages through the server via relay.php long
   polls - degraded latency but works through any firewall; concurrent

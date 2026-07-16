@@ -129,6 +129,24 @@ ok(!Presence::isAutoAccepting('bbbbbbbb'), 'hello without the flag clears auto-a
 Presence::touch('bbbbbbbb', '5.6.7.8');
 ok(!Presence::isAutoAccepting('bbbbbbbb'), 'null leaves the cleared flag untouched');
 
+// Player expiry: stale players removed, friendships cancelled + notified
+Settings::set('player_ttl_days', 1);
+Presence::touch('dddd0001', '9.9.9.1');
+Presence::touch('eeee0002', '9.9.9.2');
+Friends::request('dddd0001', 'eeee0002');
+Friends::accept('eeee0002', 'dddd0001');
+Db::get()->prepare('UPDATE players SET last_seen = ? WHERE id = ?')
+    ->execute([time() - 2 * 86400, 'dddd0001']);
+ok(Presence::expireStale() === 1, 'stale player expired');
+ok(Presence::infoOf(['dddd0001']) === [], 'expired player gone from the database');
+ok(!Friends::isFriend('dddd0001', 'eeee0002'), 'friendship cancelled on expiry');
+$got = Signals::take('eeee0002');
+ok(count($got) === 1 && $got[0]['type'] === 'friend' && str_contains($got[0]['payload'], 'expired'),
+    'friend notified of the expiry');
+Settings::set('player_ttl_days', 0);
+ok(Presence::expireStale() === 0, 'ttl 0 disables expiry');
+Settings::set('player_ttl_days', 180);
+
 // Matchmaking: first seeker waits, second gets matched, roles assigned
 ok((Matchmaking::seek('11111111')['waiting'] ?? false) === true, 'first seeker waits');
 $m = Matchmaking::seek('22222222');

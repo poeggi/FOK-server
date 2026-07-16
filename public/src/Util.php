@@ -130,6 +130,22 @@ final class Util
         if ($online > Settings::int('alert_online')) {
             Alerts::raise('connections', "Excessive connections: $online players online");
         }
+        // At most once per hour: expire players not seen for the TTL.
+        $db = Db::get();
+        $st = $db->prepare("SELECT value FROM counters WHERE bucket = 'meta' AND metric = 'player_sweep'");
+        $st->execute();
+        $last = (int)$st->fetchColumn();
+        if ($last < time() - 3600) {
+            $db->prepare(
+                "INSERT INTO counters (bucket, metric, value) VALUES ('meta', 'player_sweep', ?)
+                 ON CONFLICT (bucket, metric) DO UPDATE SET value = excluded.value"
+            )->execute([time()]);
+            $n = Presence::expireStale();
+            if ($n > 0) {
+                Alerts::raise('expiry', "Expired $n player(s) not seen for "
+                    . Settings::int('player_ttl_days') . ' days; friendships cancelled');
+            }
+        }
         Db::get()->prepare("DELETE FROM counters WHERE metric = 'req_min' AND bucket < ?")
             ->execute([gmdate('YmdHi', time() - 7200)]);
     }
