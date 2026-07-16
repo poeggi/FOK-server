@@ -23,25 +23,38 @@ final class Friends
         [$a, $b] = $me < $peer ? [$me, $peer] : [$peer, $me];
         $db = Db::get();
         $now = time();
-        $st = $db->prepare('SELECT state, requester FROM friends WHERE a = ? AND b = ?');
-        $st->execute([$a, $b]);
-        $row = $st->fetch();
-        if ($row) {
-            if ($row['state'] === 'accepted') {
-                return ['state' => 'accepted', 'changed' => false];
+        // BEGIN IMMEDIATE serializes the read-decide-write so two crossing
+        // requests (A->B and B->A at once) cannot both insert the same
+        // (a,b) key: one records pending, the other sees it and matches.
+        $db->exec('BEGIN IMMEDIATE');
+        try {
+            $st = $db->prepare('SELECT state, requester FROM friends WHERE a = ? AND b = ?');
+            $st->execute([$a, $b]);
+            $row = $st->fetch();
+            if ($row) {
+                if ($row['state'] === 'accepted') {
+                    $db->exec('COMMIT');
+                    return ['state' => 'accepted', 'changed' => false];
+                }
+                if ($row['requester'] !== $me) {
+                    // The peer asked first; my request answers it.
+                    $db->prepare('UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ?')
+                        ->execute(['accepted', $now, $a, $b]);
+                    $db->exec('COMMIT');
+                    return ['state' => 'accepted', 'changed' => true];
+                }
+                $db->exec('COMMIT');
+                return ['state' => 'pending', 'changed' => false];
             }
-            if ($row['requester'] !== $me) {
-                // The peer asked first; my request answers it.
-                $db->prepare('UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ?')
-                    ->execute(['accepted', $now, $a, $b]);
-                return ['state' => 'accepted', 'changed' => true];
-            }
-            return ['state' => 'pending', 'changed' => false];
+            $db->prepare(
+                'INSERT INTO friends (a, b, state, requester, created, updated) VALUES (?, ?, ?, ?, ?, ?)'
+            )->execute([$a, $b, 'pending', $me, $now, $now]);
+            $db->exec('COMMIT');
+            return ['state' => 'pending', 'changed' => true];
+        } catch (Throwable $e) {
+            $db->exec('ROLLBACK');
+            throw $e;
         }
-        $db->prepare(
-            'INSERT INTO friends (a, b, state, requester, created, updated) VALUES (?, ?, ?, ?, ?, ?)'
-        )->execute([$a, $b, 'pending', $me, $now, $now]);
-        return ['state' => 'pending', 'changed' => true];
     }
 
     /**
