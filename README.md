@@ -11,8 +11,9 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 - Global highscores: top 100 list. Submissions carry the deterministic
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
   be sanity-checked by re-simulation to prevent spoofing (validated flag).
-- 1:1 matchmaking hub: players invite each other by ID; the server relays
-  matchmaking and WebRTC signaling messages (SDP/ICE) through a
+- 1:1 matchmaking hub: players invite each other by ID (with friend
+  online-status checks) or quick-match with anyone waiting; the server
+  relays matchmaking and WebRTC signaling messages (SDP/ICE) through a
   store-and-forward mailbox. The actual game traffic runs peer-to-peer over
   a WebRTC DataChannel for low latency; the server never touches it.
 - Admin interface at /admin/: statistics (online, playing 1:1, registered
@@ -48,6 +49,32 @@ Run the same checks before every commit via the hook (once per clone):
 Runtime data (SQLite db, admin credential hash, backups) lives in
 ../fok-server-data/ ABOVE the docroot, created by the server at first run.
 It is never web-accessible and never part of this repo.
+
+## Local development and tests
+
+Requires the php CLI (with sqlite3). Everything honors the FOK_DATA_DIR
+env var, so nothing touches real data:
+
+    bash test/checks.sh                 all checks, same as CI
+    php test/unit.php                   unit tests only
+    bash test/smoke.sh                  boots php -S and tests over HTTP
+
+    FOK_DATA_DIR=/tmp/fok php -S localhost:8000 -t public   run it locally
+
+Note: php -S does not read .htaccess, so the src/ web block only exists
+on Apache; keep secrets out of src/ regardless.
+
+## Deploy and first-run bootstrap
+
+    tools/deploy.ps1            upload all of public/ via FTPS
+    tools/deploy.ps1 -Only api  upload one subtree
+
+The SQLite database creates itself on the first request. The admin
+credential hash does not: write it once by uploading a short-lived PHP
+script that runs password_hash("user:pass", PASSWORD_DEFAULT) into
+../fok-server-data/admin.hash from POSTed values, invoke it once over
+HTTPS, then delete it from the server. Credentials must never exist in
+the repo, in commits, or in plain text on the server.
 
 ## Security notes
 
