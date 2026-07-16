@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
+require_once __DIR__ . '/../src/Friends.php';
 
 /**
  * Matchmaking / WebRTC signaling relay.
@@ -37,6 +38,12 @@ if (!is_string($payload) || strlen($payload) > $max) {
     Util::fail('invalid payload');
 }
 Util::checkPts($body['pts'] ?? null, "player $id");
+
+// Game invites require a recorded, accepted friendship; quick match
+// (match.php) is the deliberate way to play with strangers.
+if ($type === 'invite' && !Friends::isFriend($id, $to)) {
+    Util::fail('not friends', 403);
+}
 
 Presence::touch($id, Util::clientIp());
 if (!Signals::send($id, $to, $type, $payload)) {

@@ -4,19 +4,22 @@ declare(strict_types=1);
 require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
+require_once __DIR__ . '/../src/Friends.php';
 
 /**
  * Heartbeat and poll endpoint, the client's single periodic request.
  * POST {
  *   "id": "8-hex",
+ *   "name": "PLAYER",           optional, display name; recorded and shown
+ *                               to accepted friends
  *   "duel_with": "8-hex",       optional, while a 1:1 game runs
  *   "latency": int ms,          optional, the client's measured latency
  *                               (mandated regularly, see docs/API.md)
- *   "friends": ["8-hex", ...]   optional, ids to check for online status
+ *   "friends": ["8-hex", ...]   optional, ids to check
  * }
  * Returns presence counters, pending signaling messages for the caller
- * (drained on read) and, when friends were sent, which of them are
- * online plus their last reported latency.
+ * (drained on read) and, for requested friends, online/latency/name -
+ * filled ONLY for ids with an ACCEPTED friendship to the caller.
  * Clients send this every ~30s; fast polling belongs to poll.php.
  */
 Util::cors();
@@ -34,8 +37,18 @@ $latency = $body['latency'] ?? null;
 if ($latency !== null && (!is_int($latency) || $latency < 0 || $latency > 60000)) {
     Util::fail('invalid latency');
 }
+$name = null;
+if (isset($body['name'])) {
+    if (!is_string($body['name'])) {
+        Util::fail('invalid name');
+    }
+    $name = mb_substr(trim($body['name']), 0, FOK_MAX_NAME_LEN);
+    if ($name === '') {
+        $name = null;
+    }
+}
 
-Presence::touch($id, Util::clientIp(), $latency);
+Presence::touch($id, Util::clientIp(), $latency, $name);
 Util::bump('hello');
 
 $duelWith = $body['duel_with'] ?? null;
@@ -63,12 +76,17 @@ if (isset($body['friends'])) {
             Util::fail('invalid friends');
         }
     }
-    $info = Presence::infoOf($friends);
+    // Status is only served for ACCEPTED friendships; everything else
+    // reads as offline/unknown so mere possession of an id leaks nothing.
+    $accepted = Friends::acceptedOf($id, $friends);
+    $info = Presence::infoOf(array_keys($accepted));
     $out['friends_online'] = new stdClass();
     $out['friends_latency'] = new stdClass();
+    $out['friends_name'] = new stdClass();
     foreach ($friends as $f) {
         $out['friends_online']->$f = $info[$f]['online'] ?? false;
         $out['friends_latency']->$f = $info[$f]['latency'] ?? null;
+        $out['friends_name']->$f = $info[$f]['name'] ?? null;
     }
 }
 

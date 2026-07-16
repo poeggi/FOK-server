@@ -17,6 +17,7 @@ require_once __DIR__ . '/../public/src/Auth.php';
 require_once __DIR__ . '/../public/src/Backup.php';
 require_once __DIR__ . '/../public/src/Matchmaking.php';
 require_once __DIR__ . '/../public/src/Starts.php';
+require_once __DIR__ . '/../public/src/Friends.php';
 
 $tests = 0;
 function ok(bool $cond, string $what): void
@@ -87,6 +88,32 @@ Presence::touch('aaaaaaaa', '1.2.3.9');
 $info = Presence::infoOf(['aaaaaaaa']);
 ok($info['aaaaaaaa']['latency'] === 40, 'latency kept when a report omits it');
 ok(Presence::avgLatency() === 30, 'average latency over online players');
+
+// Presence: names are recorded and kept
+Presence::touch('aaaaaaaa', '1.2.3.9', null, 'ALPHA');
+Presence::touch('aaaaaaaa', '1.2.3.9');
+$info = Presence::infoOf(['aaaaaaaa', 'bbbbbbbb']);
+ok($info['aaaaaaaa']['name'] === 'ALPHA', 'name recorded and kept when omitted');
+ok($info['bbbbbbbb']['name'] === null, 'no name until reported');
+
+// Friendships: handshake, auto-match, gating helpers, removal
+ok(Friends::request('aaaaaaaa', 'bbbbbbbb') === 'pending', 'first request is pending');
+ok(Friends::request('aaaaaaaa', 'bbbbbbbb') === 'pending', 'repeat request stays pending');
+ok(!Friends::isFriend('aaaaaaaa', 'bbbbbbbb'), 'pending is not a friendship');
+ok(!Friends::accept('aaaaaaaa', 'bbbbbbbb'), 'requester cannot accept own request');
+$list = Friends::listOf('bbbbbbbb');
+ok(count($list) === 1 && $list[0]['state'] === 'pending' && $list[0]['outgoing'] === false,
+    'peer sees the incoming request');
+ok(Friends::accept('bbbbbbbb', 'aaaaaaaa'), 'peer accepts the request');
+ok(Friends::isFriend('aaaaaaaa', 'bbbbbbbb'), 'accepted friendship recognized both ways');
+ok(Friends::acceptedOf('aaaaaaaa', ['bbbbbbbb', 'cccccccc']) === ['bbbbbbbb' => true],
+    'acceptedOf filters to recorded friends');
+Friends::remove('bbbbbbbb', 'aaaaaaaa');
+ok(!Friends::isFriend('aaaaaaaa', 'bbbbbbbb'), 'removal deletes the friendship');
+ok(Friends::request('11117777', '22227777') === 'pending' &&
+    Friends::request('22227777', '11117777') === 'accepted',
+    'crossing requests auto-match into a friendship');
+Friends::remove('11117777', '22227777');
 
 // Matchmaking: first seeker waits, second gets matched, roles assigned
 ok((Matchmaking::seek('11111111')['waiting'] ?? false) === true, 'first seeker waits');

@@ -5,16 +5,17 @@ require_once __DIR__ . '/Db.php';
 
 final class Presence
 {
-    public static function touch(string $id, string $ip, ?int $latency = null): void
+    public static function touch(string $id, string $ip, ?int $latency = null, ?string $name = null): void
     {
         $now = time();
         Db::get()->prepare(
-            'INSERT INTO players (id, ip, first_seen, last_seen, hello_count, latency)
-             VALUES (?, ?, ?, ?, 1, ?)
+            'INSERT INTO players (id, ip, first_seen, last_seen, hello_count, latency, name)
+             VALUES (?, ?, ?, ?, 1, ?, ?)
              ON CONFLICT (id) DO UPDATE SET ip = excluded.ip, last_seen = excluded.last_seen,
                  hello_count = hello_count + 1,
-                 latency = COALESCE(excluded.latency, players.latency)'
-        )->execute([$id, $ip, $now, $now, $latency]);
+                 latency = COALESCE(excluded.latency, players.latency),
+                 name = COALESCE(excluded.name, players.name)'
+        )->execute([$id, $ip, $now, $now, $latency, $name]);
     }
 
     /** Average reported latency of currently online players, or null. */
@@ -38,14 +39,14 @@ final class Presence
         )->execute([$a, $b, $now, $now]);
     }
 
-    /** @return array map of id => [online: bool, latency: ?int] for known ids */
+    /** @return array map of id => [online: bool, latency: ?int, name: ?string] */
     public static function infoOf(array $ids): array
     {
         if ($ids === []) {
             return [];
         }
         $ph = implode(',', array_fill(0, count($ids), '?'));
-        $st = Db::get()->prepare("SELECT id, last_seen, latency FROM players WHERE id IN ($ph)");
+        $st = Db::get()->prepare("SELECT id, last_seen, latency, name FROM players WHERE id IN ($ph)");
         $st->execute($ids);
         $cutoff = time() - FOK_ONLINE_WINDOW;
         $out = [];
@@ -55,6 +56,7 @@ final class Presence
                 'online' => $online,
                 // A latency is only meaningful while the friend is online.
                 'latency' => $online && $row['latency'] !== null ? (int)$row['latency'] : null,
+                'name' => $row['name'],
             ];
         }
         return $out;

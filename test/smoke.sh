@@ -25,7 +25,9 @@ if [ -n "${SMOKE_BASE:-}" ]; then
     cleanup() { rm -rf "$DATA"; }
 else
     REMOTE=0
-    PORT=8199
+    # Random port: a stale server from an aborted run must never be able
+    # to answer this run's requests.
+    PORT=$((8300 + RANDOM % 500))
     BASE="http://127.0.0.1:$PORT"
     ID1=deadbeef
     ID2=cafe0001
@@ -126,6 +128,25 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"name\":\"CHEAT\",\"score\":9,\"level\":1,\"diff\":1,\"pts\":$FUTURE_MS}" "$BASE/api/scores.php")
 expect "future pts rejected on scores" 'bogus pts' "$R"
 
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"name\":\"SMOKE ONE\"}" "$BASE/api/hello.php" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"name\":\"SMOKE TWO\"}" "$BASE/api/hello.php" > /dev/null
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\"]}" "$BASE/api/hello.php")
+expect "friend status gated before friendship" "\"$ID2\":false" "$R"
+
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"play?\"}" "$BASE/api/signal.php")
+expect "invite blocked without friendship" '403' "$R"
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
+expect "friend request recorded" '"state":"pending"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"action\":\"list\"}" "$BASE/api/friend.php")
+expect "peer sees incoming request" '"outgoing":false' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"action\":\"accept\",\"peer\":\"$ID1\"}" "$BASE/api/friend.php")
+expect "friend request accepted" '"state":"accepted"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"list\"}" "$BASE/api/friend.php")
+expect "friend list carries name" '"name":"SMOKE TWO"' "$R"
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"play?\"}" "$BASE/api/signal.php")
 expect "signal send" '"ok":true' "$R"
@@ -189,16 +210,30 @@ expect "friends online reported" "\"$ID2\":true" "$R"
 expect "unknown friend offline" '"aaaa0000":false' "$R"
 FL=$(echo "$R" | grep -o '"friends_latency":{[^}]*}')
 expect "friend latency reported" "\"$ID2\":31" "$FL"
+FN=$(echo "$R" | grep -o '"friends_name":{[^}]*}')
+expect "friend name reported" "\"$ID2\":\"SMOKE TWO\"" "$FN"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"latency\":99999}" "$BASE/api/hello.php")
 expect "absurd latency rejected" '"error":"invalid latency"' "$R"
 
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\"}" "$BASE/api/start.php")
-S1=$(echo "$R" | grep -oE '"start_pts":[0-9]+' | cut -d: -f2)
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"peer\":\"$ID1\"}" "$BASE/api/start.php")
-S2=$(echo "$R" | grep -oE '"start_pts":[0-9]+' | cut -d: -f2)
+# Both peers request the start near-simultaneously, like real clients.
+# Wait ONLY for the two curls - a bare wait would also wait for the
+# backgrounded php server and hang forever.
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\"}" "$BASE/api/start.php" > "$DATA/s1.json" &
+C1=$!
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"peer\":\"$ID1\"}" "$BASE/api/start.php" > "$DATA/s2.json" &
+C2=$!
+wait "$C1" "$C2"
+S1=$(grep -oE '"start_pts":[0-9]+' "$DATA/s1.json" | cut -d: -f2)
+S2=$(grep -oE '"start_pts":[0-9]+' "$DATA/s2.json" | cut -d: -f2)
 if [ -n "$S1" ] && [ "$S1" = "$S2" ]; then echo "ok   server-issued start identical for both peers"; else echo "FAIL start pts differ: $S1 vs $S2"; fail=1; fi
 if [ "${#S1}" -eq 13 ]; then echo "ok   start pts is milliseconds"; else echo "FAIL start pts not ms: $S1"; fail=1; fi
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
+expect "friendship removed" '"ok":true' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"again?\"}" "$BASE/api/signal.php")
+expect "invite blocked again after removal" '403' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"seek\"}" "$BASE/api/match.php")
 expect "first seeker waits" '"waiting":true' "$R"
@@ -298,6 +333,8 @@ else
                 | grep -o "\"id\":[0-9]*,\"player_id\":\"$ID1\"" | grep -oE '"id":[0-9]+' | cut -d: -f2); do
             curl -s -b "$COOKIES" -X POST -d "id=$sid" "$BASE/admin/api.php?action=delete_score" > /dev/null
         done
+        curl -s -X POST -H 'Content-Type: application/json' \
+            -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php" > /dev/null
         curl -s -b "$COOKIES" -X POST -d "id=$ID1" "$BASE/admin/api.php?action=delete_player" > /dev/null
         curl -s -b "$COOKIES" -X POST -d "id=$ID2" "$BASE/admin/api.php?action=delete_player" > /dev/null
         curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_seen" > /dev/null

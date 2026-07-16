@@ -6,8 +6,13 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 ## What it does
 
 - Presence: clients send periodic heartbeats with their 32-bit player ID
-  (8 lowercase hex chars, the public identity from FOK-snake). The server
-  tracks id, IP, first/last seen.
+  (8 lowercase hex chars, the public identity from FOK-snake), display
+  name and measured latency. The server tracks id, IP, name, latency,
+  first/last seen.
+- Friendships: established THROUGH the server (request/accept handshake,
+  removable); only an accepted, server-recorded friendship entitles a
+  client to query a friend's status (online, latency, name) or send a
+  game invite. Quick match stays open to strangers.
 - Global highscores: top 100 list. Submissions carry the deterministic
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
   be sanity-checked by re-simulation to prevent spoofing (validated flag).
@@ -41,6 +46,7 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
         time.php      millisecond clock sync (shared PTS base for games)
         hello.php     heartbeat: presence, counters, signals, friends online
         poll.php      fast signal poll, 204 when idle (matchmaking window)
+        friend.php    friendship handshake: request/accept/remove/list
         match.php     quick-match queue (pair with anyone waiting)
         start.php     server-issued absolute level-start PTS per pair
         scores.php    GET top 100 / POST submit score
@@ -138,11 +144,14 @@ server. Staging needs its own one-time hash bootstrap.
       -> {"ok":true,"server":"<x.y.z>","api":1,"env":"live"}
     GET  /api/time.php
       -> {"ok":true,"t":<server ms>}   clock sync for the shared PTS base
-    POST /api/hello.php  {"id":"cafe0001", "duel_with":"deadbeef"?,
+    POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
                           "latency":ms?, "friends":[...]?}
       -> {"ok":true,"now":ms,"online":n,"playing":n,"registered":n,
           "signals":[{"from":"...","type":"invite","payload":"..."},...],
-          "friends_online":{...}?, "friends_latency":{...}?}
+          "friends_online":{...}?, "friends_latency":{...}?,
+          "friends_name":{...}?}   (friends_* only real for accepted friends)
+    POST /api/friend.php {"id","action":"request|accept|remove|list","peer"?}
+      -> {"ok":true,"state":...} | {"ok":true,"friends":[...]}
     GET  /api/poll.php?id=cafe0001&wait=8
       -> 204 (nothing pending) | {"ok":true,"signals":[...]}
          (wait=N long-polls: answers ~150 ms after a signal arrives)

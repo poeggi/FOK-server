@@ -148,10 +148,13 @@ keeps the last value).
 
 When both peers are ready (DataChannel open, level loaded), EACH calls
 this endpoint; both receive the IDENTICAL absolute `start_pts` for
-their pair and start the level exactly then. The server chooses the
-lead time: at least 200 ms (start_lead_min_ms setting), scaled up by
-the pair's reported latencies, capped at 3 s - so the answer always
-arrives comfortably before the moment it announces. Once a start has
+their pair and start the level exactly then. Both peers MUST request
+promptly and near-simultaneously once ready (right when the
+DataChannel opens) - the second peer has to fetch the schedule before
+the start moment passes. The server chooses the lead time: at least
+200 ms (start_lead_min_ms setting), scaled up by the pair's reported
+latencies (150 + 2 x worst latency when that exceeds the minimum),
+capped at 3 s. Once a start has
 passed, the next request issues a fresh one (next level, rematch).
 `now` is included for a free clock re-check.
 
@@ -175,6 +178,9 @@ Request:
 
     {
       "id": "c0ffee42",           required, player ID
+      "name": "KAI",              optional, display name (max 15 chars);
+                                  recorded server-side and shown to
+                                  accepted friends
       "duel_with": "deadbeef",    optional, peer ID while a 1:1 game runs
       "latency": 23,              optional, measured latency in ms (the
                                   MANDATED regular report, see Latency
@@ -198,12 +204,14 @@ Response:
         {"from": "deadbeef", "type": "invite", "payload": "", "created": 1784182410}
       ],
       "friends_online": {"deadbeef": true},  only when "friends" was sent
-      "friends_latency": {"deadbeef": 31}    only when "friends" was sent:
-                                             last reported latency (ms) per
-                                             online friend, null when the
-                                             friend is offline or never
-                                             reported - for the overview UI
+      "friends_latency": {"deadbeef": 31},   ms while online, else null
+      "friends_name": {"deadbeef": "KAI"}    last reported display name
     }
+
+The friends_* maps are AUTHORIZATION-GATED: real values are served only
+for ids with an ACCEPTED friendship to the caller (see Friendships);
+any other id reads as offline/null, so possessing an id alone reveals
+nothing.
 
 Rules:
 
@@ -320,6 +328,7 @@ Response: `{"ok": true}`
 Types (fixed set, anything else is rejected):
 
     invite    ask "to" for a 1:1 game            payload: JSON {"profile": <profile>}
+              (requires an ACCEPTED friendship with "to", else 403)
     accept    accept an invite                    payload: JSON {"profile": <profile>}
     decline   decline an invite                   payload: ""
     offer     WebRTC SDP offer                    payload: JSON {"sdp": <RTCSessionDescription>,
@@ -350,6 +359,41 @@ ID), matchmaking messages carry a profile object:
   MUST treat received profile fields as untrusted: clamp name to 15
   chars, clamp color/shopItems to known values, and render as text
   only (canvas/textContent, never HTML).
+
+## POST /api/friend.php - friendships
+
+REQUIREMENT: friendships are established THROUGH THE SERVER, and exist
+only once the server has recorded them. A client-local friend list
+(e.g. FOK-snake's localStorage list) establishes NOTHING by itself -
+status queries and invites against an id the server has no accepted
+friendship record for will not work. Migrating clients must run the
+request/accept handshake below for every local friend.
+
+The server records friendship relations as a mutual handshake. An
+ACCEPTED friendship is what entitles a client to query the friend's
+status (hello's friends_* maps, friend.php list) and to send game
+invites; quick match remains open to strangers by design.
+
+    POST {"id":"c0ffee42", "action":"request", "peer":"deadbeef"}
+      -> {"ok":true,"state":"pending"}      recorded; peer sees it in list
+      -> {"ok":true,"state":"accepted"}     when the peer had already
+                                            requested me (auto-match)
+    POST {"id":..., "action":"accept", "peer":...}
+      -> {"ok":true,"state":"accepted"}     404 without a pending request
+    POST {"id":..., "action":"remove", "peer":...}
+      -> {"ok":true}                        declines a request or removes
+                                            an existing friendship
+    POST {"id":..., "action":"list"}
+      -> {"ok":true,"friends":[{"id":"deadbeef","state":"accepted",
+          "outgoing":false,"name":"KAI","online":true,"latency":31}]}
+          name/online/latency filled only for accepted entries; a
+          pending entry with "outgoing":false is a request awaiting MY
+          acceptance.
+
+Poll list (or rely on hello) while the friends screen is open to notice
+incoming requests. Caveat until the session-token work lands: ids are
+public identities, so friendship gating is privacy hygiene, not
+authentication.
 
 ## POST /api/match.php - quick match (pair with anyone waiting)
 

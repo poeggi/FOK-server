@@ -190,10 +190,11 @@ const MODULES = [
             box.replaceChildren();
             box.append(el('p', 'muted', d.total + ' registered, showing latest ' + d.users.length));
             const table = el('table');
-            table.append(row(['ID', 'IP', 'First', 'Last', 'N', 'Lat', ''], 'th'));
+            table.append(row(['ID', 'Name', 'IP', 'First', 'Last', 'N', 'Lat', ''], 'th'));
             for (const u of d.users) {
                 const online = d.now - u.last_seen <= d.online_window;
-                const r = row([u.id, u.ip, fmtTime(u.first_seen), fmtTime(u.last_seen), u.hello_count,
+                const r = row([u.id, u.name === null ? '-' : u.name, u.ip,
+                    fmtTime(u.first_seen), fmtTime(u.last_seen), u.hello_count,
                     u.latency === null ? '-' : u.latency + ' ms']);
                 if (online) r.classList.add('online');
                 const btn = el('button', 'small', 'delete');

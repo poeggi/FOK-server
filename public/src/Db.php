@@ -59,7 +59,19 @@ final class Db
                 PRIMARY KEY (a, b)
             )');
         }
-        $pdo->exec('PRAGMA user_version = 4');
+        if ($v < 5) {
+            $pdo->exec('ALTER TABLE players ADD COLUMN name TEXT');
+            $pdo->exec('CREATE TABLE IF NOT EXISTS friends (
+                a TEXT NOT NULL,
+                b TEXT NOT NULL,
+                state TEXT NOT NULL,
+                requester TEXT NOT NULL,
+                created INTEGER NOT NULL,
+                updated INTEGER NOT NULL,
+                PRIMARY KEY (a, b)
+            )');
+        }
+        $pdo->exec('PRAGMA user_version = 5');
     }
 
     // A database commissioned from scratch starts with the same default
