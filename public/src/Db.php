@@ -40,11 +40,34 @@ final class Db
     private static function migrate(PDO $pdo): void
     {
         $v = (int)$pdo->query('PRAGMA user_version')->fetchColumn();
-        if ($v >= 1) {
-            return;
+        if ($v < 1) {
+            self::schemaV1($pdo);
         }
-        self::schemaV1($pdo);
-        $pdo->exec('PRAGMA user_version = 1');
+        if ($v < 2) {
+            self::schemaV2($pdo);
+        }
+        $pdo->exec('PRAGMA user_version = 2');
+    }
+
+    private static function schemaV2(PDO $pdo): void
+    {
+        $pdo->exec('CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value INTEGER NOT NULL
+        )');
+        $pdo->exec('CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created INTEGER NOT NULL,
+            seen INTEGER NOT NULL DEFAULT 0
+        )');
+        $pdo->exec('CREATE TABLE IF NOT EXISTS ipcount (
+            ip TEXT NOT NULL,
+            bucket TEXT NOT NULL,
+            value INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (ip, bucket)
+        )');
     }
 
     private static function schemaV1(PDO $pdo): void

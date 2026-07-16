@@ -123,6 +123,38 @@ for ($i = 0; $i < FOK_ADMIN_MAX_FAILS; $i++) {
 ok(!Auth::login('u', 'p', '9.9.9.7'), 'locked out after repeated failures');
 ok(Auth::login('u', 'p', '9.9.9.6'), 'other IP unaffected by lockout');
 
+// Settings: defaults fall through, overrides stick
+ok(Settings::int('mailbox_cap') === FOK_MAILBOX_CAP, 'setting falls back to default');
+Settings::set('chat_max_len', 99);
+ok(Settings::int('chat_max_len') === 99, 'setting override readable');
+$all = Settings::all();
+ok(is_string($all[0]['label']) && $all[0]['label'] !== '', 'settings carry labels');
+$threw = false;
+try {
+    Settings::set('bogus_key', 1);
+} catch (InvalidArgumentException $e) {
+    $threw = true;
+}
+ok($threw, 'unknown setting rejected');
+
+// Alerts: raised by failed admin logins above, de-duplicated, seen-tracking
+ok(Alerts::unseenCount() > 0, 'failed logins raised alerts');
+Alerts::raise('test-x', 'first');
+Alerts::raise('test-x', 'second within cooldown');
+$testX = array_filter(Alerts::recent(), static fn(array $a) => $a['type'] === 'test-x');
+ok(count($testX) === 1, 'same alert type de-duplicated within cooldown');
+Alerts::markSeen();
+ok(Alerts::unseenCount() === 0, 'mark seen clears unseen count');
+Alerts::raise('test-y', 'new after seen');
+ok(Alerts::unseenCount() === 1, 'new alert counts as unseen');
+
+// Auth: lockout threshold is configurable at runtime
+Settings::set('admin_max_fails', 2);
+Auth::login('u', 'wrong', '9.9.9.5');
+Auth::login('u', 'wrong', '9.9.9.5');
+ok(!Auth::login('u', 'p', '9.9.9.5'), 'configured lower lockout threshold applies');
+Settings::set('admin_max_fails', FOK_ADMIN_MAX_FAILS);
+
 // Backup: create produces a valid snapshot, restore brings data back
 $name = Backup::create();
 ok(Backup::isValidName($name), 'backup name has expected format');

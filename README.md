@@ -18,7 +18,18 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
   a WebRTC DataChannel for low latency; the server never touches it.
 - Admin interface at /admin/: statistics (online, playing 1:1, registered
   users with id and ip, per-hour load), top-100 management, database backup
-  (SQLite online backup, download) and restore (upload).
+  (SQLite online backup, download) and restore (upload), an alert feed and
+  a configuration card.
+- Monitoring and alerting: inline checks (no daemons on shared hosting)
+  raise de-duplicated alerts for excessive traffic, system overload, too
+  many connections, client spam (flooding, oversized or repeatedly invalid
+  messages) and admin login failures/lockouts. Alerts are local-only in
+  the admin UI for now; delivery backends (Telegram/SMS/Email) are a
+  marked TODO in src/Alerts.php.
+- Runtime configuration: thresholds and abuse caps (admin lockout, mailbox
+  cap, score throttle, chat length, alert limits) are editable in the
+  admin config card and take effect immediately; code constants are only
+  the defaults.
 
 ## Layout
 
@@ -80,7 +91,9 @@ the repo, in commits, or in plain text on the server.
 
 - Admin credentials exist only as a password_hash() of "user:pass" in
   fok-server-data/admin.hash on the server. Neither the credentials nor the
-  hash are in this repo. Failed logins are rate-limited per IP.
+  hash are in this repo. Excessive failed logins block the source IP
+  (default: 5 fails -> 300 s, configurable in the admin config card) and
+  raise an alert.
 - Deploy credentials live in ~/.fok-server-deploy.json locally, outside the
   repo.
 - Player IDs are public identities (as designed in FOK-snake); a secret

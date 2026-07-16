@@ -18,10 +18,10 @@ and may change without notice.
   429 (rate cap, see below) or 500 (server fault). Clients must treat any
   non-`ok` answer as a soft failure: log it, back off, never crash
   gameplay.
-- Abuse caps returning 429: a recipient's signal mailbox holds at most
-  128 pending messages, and a player may submit at most 10 scores per
-  5 minutes. Normal play never reaches either; on 429, stop and retry
-  later instead of hammering.
+- Abuse caps returning 429 (defaults, admin-configurable): a recipient's
+  signal mailbox holds at most 128 pending messages, and a player may
+  submit at most 10 scores per 5 minutes. Normal play never reaches
+  either; on 429, stop and retry later instead of hammering.
 - Player identity is the FOK-snake player ID: a 32-bit value encoded as
   exactly 8 lowercase hex chars, e.g. `"c0ffee42"` (regex
   `^[0-9a-f]{8}$`). It is a PUBLIC identity, not a secret. A per-session

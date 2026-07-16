@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/Alerts.php';
+require_once __DIR__ . '/Settings.php';
 
 final class Util
 {
@@ -50,16 +52,81 @@ final class Util
 
     public static function fail(string $msg, int $code = 400): never
     {
+        if ($code === 400) {
+            self::noteInvalid();
+        }
         self::jsonOut(['ok' => false, 'error' => $msg], $code);
     }
 
-    // Per-hour counters feed the admin load statistics.
+    // Per-hour counters feed the admin load statistics; the per-minute
+    // request counter feeds the traffic alert.
     public static function bump(string $metric): void
     {
+        $db = Db::get();
         $bucket = gmdate('YmdH');
-        Db::get()->prepare(
+        $db->prepare(
             'INSERT INTO counters (bucket, metric, value) VALUES (?, ?, 1)
              ON CONFLICT (bucket, metric) DO UPDATE SET value = value + 1'
         )->execute([$bucket, $metric]);
+
+        $st = $db->prepare(
+            'INSERT INTO counters (bucket, metric, value) VALUES (?, ?, 1)
+             ON CONFLICT (bucket, metric) DO UPDATE SET value = value + 1
+             RETURNING value'
+        );
+        $st->execute([gmdate('YmdHi'), 'req_min']);
+        $reqPerMin = (int)$st->fetchColumn();
+        // Threshold checks are cheap but not free; sample every 25 requests.
+        if ($reqPerMin % 25 === 0) {
+            self::watch($reqPerMin);
+        }
+    }
+
+    // Inline monitoring - shared hosting has no daemons, so thresholds
+    // are checked while serving regular requests.
+    private static function watch(int $reqPerMin): void
+    {
+        if ($reqPerMin > Settings::int('alert_req_per_min')) {
+            Alerts::raise('traffic', "Excessive traffic: $reqPerMin requests in the current minute");
+        }
+        if (function_exists('sys_getloadavg')) {
+            $load = sys_getloadavg()[0] ?? 0.0;
+            if ($load > Settings::int('alert_load1')) {
+                Alerts::raise('overload', sprintf('System overload: 1-minute load average %.1f', $load));
+            }
+        }
+        require_once __DIR__ . '/Presence.php';
+        $online = Presence::counts()['online'];
+        if ($online > Settings::int('alert_online')) {
+            Alerts::raise('connections', "Excessive connections: $online players online");
+        }
+        Db::get()->prepare("DELETE FROM counters WHERE metric = 'req_min' AND bucket < ?")
+            ->execute([gmdate('YmdHi', time() - 7200)]);
+    }
+
+    // Counts invalid (HTTP 400) requests per IP per minute and alerts on
+    // clients that keep sending garbage (spam, oversized or malformed).
+    private static function noteInvalid(): void
+    {
+        try {
+            $db = Db::get();
+            $st = $db->prepare(
+                'INSERT INTO ipcount (ip, bucket, value) VALUES (?, ?, 1)
+                 ON CONFLICT (ip, bucket) DO UPDATE SET value = value + 1
+                 RETURNING value'
+            );
+            $ip = self::clientIp();
+            $st->execute([$ip, gmdate('YmdHi')]);
+            $n = (int)$st->fetchColumn();
+            if ($n > Settings::int('alert_invalid_per_min')) {
+                Alerts::raise('spam', "Client spam: $n invalid requests this minute from $ip");
+            }
+            if ($n === 1) {
+                $db->prepare('DELETE FROM ipcount WHERE bucket < ?')
+                    ->execute([gmdate('YmdHi', time() - 600)]);
+            }
+        } catch (Throwable $e) {
+            // Monitoring must never turn an invalid request into a 500.
+        }
     }
 }

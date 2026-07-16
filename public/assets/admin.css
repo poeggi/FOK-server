@@ -90,5 +90,9 @@ table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: normal; }
 tr.online td:first-child { color: var(--accent); }
+tr.unseen td { color: var(--danger); }
+
+.card input[type="number"] { width: 90px; padding: 3px 6px; }
+.card form > button { margin-top: 10px; }
 
 .restore { margin-top: 12px; }

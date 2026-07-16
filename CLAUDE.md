@@ -39,6 +39,13 @@ endpoint - it is the contract the FOK-snake client is built against.
 - The admin dashboard is modular: one self-contained object per card in
   MODULES (public/assets/admin.js). Extend by appending a module, never
   by special-casing the framework code.
+- New tunable values go into Settings::DEFS (src/Settings.php) with a
+  label; they then appear in the admin config card automatically. Read
+  them with Settings::int, never a bare constant.
+- New monitored conditions call Alerts::raise(type, message); raising is
+  de-duplicated per type within the alert_cooldown window. External
+  delivery backends (Telegram/SMS/Email) are the marked TODO in
+  src/Alerts.php - implement them as a dispatch step inside raise().
 
 ## When changing the API
 

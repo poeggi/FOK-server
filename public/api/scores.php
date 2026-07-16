@@ -78,8 +78,9 @@ $name = is_string($body['name'] ?? null) ? $body['name'] : '';
 
 Presence::touch($id, Util::clientIp());
 $recent = Db::get()->prepare('SELECT COUNT(*) FROM scores WHERE player_id = ? AND created > ?');
-$recent->execute([$id, time() - FOK_SCORE_RATE_WINDOW]);
-if ((int)$recent->fetchColumn() >= FOK_SCORE_RATE_MAX) {
+$recent->execute([$id, time() - Settings::int('score_rate_window')]);
+if ((int)$recent->fetchColumn() >= Settings::int('score_rate_max')) {
+    Alerts::raise('spam', "Client spam: score submissions throttled for player $id");
     Util::fail('too many submissions', 429);
 }
 $rank = Scores::submit($id, $name, $score, $level, $diff, $color, $shopItems, $seed, $inputs);

@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/Settings.php';
+require_once __DIR__ . '/Alerts.php';
 
 /**
  * Admin authentication. Credentials are NEVER stored in code or repo:
@@ -55,11 +57,18 @@ final class Auth
         }
 
         $fails = $row ? (int)$row['fails'] + 1 : 1;
-        $lock = $fails >= FOK_ADMIN_MAX_FAILS ? $now + FOK_ADMIN_LOCK_SECONDS : 0;
+        $maxFails = Settings::int('admin_max_fails');
+        $lockSeconds = Settings::int('admin_lock_seconds');
+        $lock = $fails >= $maxFails ? $now + $lockSeconds : 0;
         $db->prepare(
             'INSERT INTO admin_fails (ip, fails, locked_until) VALUES (?, ?, ?)
              ON CONFLICT (ip) DO UPDATE SET fails = excluded.fails, locked_until = excluded.locked_until'
         )->execute([$ip, $fails, $lock]);
+        if ($lock > 0) {
+            Alerts::raise('admin-lock', "Admin login: IP $ip blocked for {$lockSeconds}s after $fails failed attempts");
+        } else {
+            Alerts::raise('admin-fail', "Admin login: failed attempt from $ip ($fails recent)");
+        }
         return false;
     }
 

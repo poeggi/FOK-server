@@ -55,6 +55,67 @@ const MODULES = [
         },
     },
     {
+        id: 'alerts',
+        title: 'Alerts',
+        async refresh(box) {
+            const d = await api('alerts');
+            box.replaceChildren();
+            if (!d.alerts.length) { box.append(el('p', 'muted', 'No alerts.')); return; }
+            box.append(el('p', d.unseen ? 'error' : 'muted',
+                d.unseen ? d.unseen + ' unseen alert(s)' : 'All alerts seen.'));
+            const table = el('table');
+            table.append(row(['Time', 'Type', 'Message'], 'th'));
+            for (const a of d.alerts) {
+                const r = row([fmtTime(a.created), a.type, a.message]);
+                if (!a.seen) r.classList.add('unseen');
+                table.append(r);
+            }
+            box.append(table);
+            if (d.unseen) {
+                const btn = el('button', '', 'Mark all seen');
+                btn.onclick = async () => {
+                    await api('alerts_seen', { method: 'POST' });
+                    refreshModule('alerts');
+                };
+                box.append(btn);
+            }
+        },
+    },
+    {
+        id: 'config',
+        title: 'Configuration',
+        async refresh(box) {
+            const d = await api('settings');
+            box.replaceChildren();
+            const form = el('form');
+            const table = el('table');
+            for (const s of d.settings) {
+                const r = el('tr');
+                const label = el('td', '', s.label);
+                const input = el('input');
+                input.type = 'number';
+                input.name = s.key;
+                input.min = '0';
+                input.value = s.value;
+                const val = el('td');
+                val.append(input);
+                r.append(label, val, el('td', 'muted', 'default ' + s.default));
+                table.append(r);
+            }
+            form.append(table);
+            const save = el('button', '', 'Save');
+            save.type = 'submit';
+            form.append(save);
+            form.onsubmit = async (ev) => {
+                ev.preventDefault();
+                const res = await api('settings_save', { method: 'POST', body: new FormData(form) });
+                alert(res.ok ? 'Saved.' : 'Failed: ' + res.error);
+                refreshModule('config');
+            };
+            box.append(form);
+        },
+    },
+    {
         id: 'load',
         title: 'Load (last 24h, per hour UTC)',
         async refresh(box) {
@@ -203,4 +264,4 @@ for (const m of MODULES) {
     boxes[m.id] = box;
 }
 refreshAll();
-setInterval(() => { refreshModule('stats'); }, 30000);
+setInterval(() => { refreshModule('stats'); refreshModule('alerts'); }, 30000);

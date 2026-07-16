@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/Settings.php';
 
 /**
  * Store-and-forward mailbox for matchmaking and WebRTC signaling.
@@ -18,7 +19,7 @@ final class Signals
         $db = Db::get();
         $st = $db->prepare('SELECT COUNT(*) FROM signals WHERE to_id = ? AND created >= ?');
         $st->execute([$to, time() - FOK_SIGNAL_TTL]);
-        if ((int)$st->fetchColumn() >= FOK_MAILBOX_CAP) {
+        if ((int)$st->fetchColumn() >= Settings::int('mailbox_cap')) {
             return false;
         }
         $db->prepare(

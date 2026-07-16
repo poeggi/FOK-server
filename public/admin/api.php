@@ -6,6 +6,8 @@ require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Scores.php';
 require_once __DIR__ . '/../src/Backup.php';
+require_once __DIR__ . '/../src/Alerts.php';
+require_once __DIR__ . '/../src/Settings.php';
 
 Auth::requireLogin();
 
@@ -57,6 +59,39 @@ switch ($action) {
         }
         $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
         Util::jsonOut(['ok' => true]);
+
+    case 'alerts':
+        Util::jsonOut([
+            'ok' => true,
+            'unseen' => Alerts::unseenCount(),
+            'alerts' => Alerts::recent(),
+        ]);
+
+    case 'alerts_seen':
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            Util::fail('POST only', 405);
+        }
+        Alerts::markSeen();
+        Util::jsonOut(['ok' => true]);
+
+    case 'settings':
+        Util::jsonOut(['ok' => true, 'settings' => Settings::all()]);
+
+    case 'settings_save':
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            Util::fail('POST only', 405);
+        }
+        foreach (Settings::DEFS as $key => $def) {
+            if (!isset($_POST[$key])) {
+                continue;
+            }
+            $value = filter_var($_POST[$key], FILTER_VALIDATE_INT);
+            if ($value === false || $value < 0 || $value > 1000000000) {
+                Util::fail("invalid value for $key");
+            }
+            Settings::set($key, $value);
+        }
+        Util::jsonOut(['ok' => true, 'settings' => Settings::all()]);
 
     case 'backup_create':
         // State-changing, so POST-only: a GET could be triggered cross-site

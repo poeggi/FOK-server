@@ -143,6 +143,28 @@ expect "backup via GET rejected" '"error":"POST only"' "$R"
 R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=backup_create")
 expect "admin backup" '"name":"fok-' "$R"
 
+R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=alerts")
+expect "alerts list" '"ok":true' "$R"
+expect "failed login raised alert" '"type":"admin-fail"' "$R"
+
+R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_seen")
+expect "alerts mark seen" '"ok":true' "$R"
+R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=alerts")
+expect "unseen count cleared" '"unseen":0' "$R"
+
+R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
+expect "settings listed" '"key":"admin_max_fails"' "$R"
+
+R=$(curl -s -b "$COOKIES" -X POST -d 'chat_max_len=10' "$BASE/admin/api.php?action=settings_save")
+expect "settings saved" '"ok":true' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"id":"cafe0001","to":"deadbeef","type":"chat","payload":"12345678901"}' "$BASE/api/signal.php")
+expect "lowered chat cap applies live" '"error":"invalid payload"' "$R"
+curl -s -b "$COOKIES" -X POST -d 'chat_max_len=120' "$BASE/admin/api.php?action=settings_save" > /dev/null
+
+R=$(curl -s -b "$COOKIES" -X POST -d 'admin_max_fails=notanumber' "$BASE/admin/api.php?action=settings_save")
+expect "bad setting value rejected" '"error":"invalid value' "$R"
+
 if [ "$fail" -ne 0 ]; then
     echo "SMOKE FAILED"
     exit 1
