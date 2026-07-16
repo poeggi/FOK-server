@@ -49,8 +49,11 @@ rather than misbehave against an incompatible server.
 - Clients must gate ALL calls on the user's offline setting
   (`!cfg.offline` in FOK-snake): when offline is ON, never contact the
   server.
-- Timestamps: `now` and `created` fields are unix SECONDS (UTC); `pts`
-  and time.php's `t` are unix MILLISECONDS (see Time synchronization).
+- Timestamps: ALL timing/sync values are unix MILLISECONDS - `pts`,
+  time.php's `t`, and hello's `now` (the same PTS clock everywhere).
+  Only `created` fields on stored records (scores, relayed signals)
+  are unix SECONDS: they are calendar bookkeeping, never used for
+  timing - format dates from them, do not mix them with PTS.
 
 ## Time synchronization and PTS
 
@@ -137,7 +140,8 @@ Response:
     {
       "ok": true,
       "api": 1,                   contract version, see Versioning
-      "now": 1784182417,          server time, unix seconds
+      "now": 1784182417123,       server PTS clock, unix MILLISECONDS
+                                  (free coarse re-sync on every heartbeat)
       "online": 3,                players seen in the last 60 s
       "playing": 2,               players currently in 1:1 games
       "registered": 17,           total known player IDs

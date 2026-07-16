@@ -41,7 +41,7 @@ if ($duelWith !== null) {
 $out = [
     'ok' => true,
     'api' => FOK_API_VERSION,
-    'now' => time(),
+    'now' => Util::nowMs(),
     'signals' => Signals::take($id),
 ] + Presence::counts();
 

@@ -73,6 +73,8 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"}" "
 expect "hello registers" "$(strict '"registered":1')" "$R"
 expect "hello online" "$(strict '"online":1')" "$R"
 expect "hello carries api version" '"api":' "$R"
+HN=$(echo "$R" | grep -oE '"now":[0-9]+' | cut -d: -f2)
+if [ "${#HN}" -eq 13 ]; then echo "ok   hello now is milliseconds"; else echo "FAIL hello now not ms: $HN"; fail=1; fi
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"XYZ"}' "$BASE/api/hello.php")
 expect "hello rejects bad id" '"error":"invalid id"' "$R"
