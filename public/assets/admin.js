@@ -53,7 +53,7 @@ const MODULES = [
             stat('Relaying', d.relaying);
             stat('Users registered', d.counts.registered);
             stat('Friendships', d.friendships);
-            stat('Pending friendships', d.friendships_pending);
+            stat('Pending FS', d.friendships_pending);
             stat('Scores stored', d.scores_total);
             stat('DB entries', d.db_rows);
             stat('DB size', fmtBytes(d.db_size));
