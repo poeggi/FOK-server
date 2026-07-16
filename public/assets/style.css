@@ -24,6 +24,8 @@ header .logo { image-rendering: pixelated; margin-bottom: 12px; }
 header h1 { font-size: 40px; margin: 0; }
 header h1 span { color: var(--accent); font-weight: normal; }
 header p { color: var(--muted); }
+header .stats { font-size: 14px; }
+header .stats span { color: var(--accent); }
 
 a { color: var(--accent); }
 

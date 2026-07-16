@@ -2,9 +2,11 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/src/Scores.php';
+require_once __DIR__ . '/src/Presence.php';
 
 header('Cache-Control: no-store');
 $scores = Scores::top();
+$counts = Presence::counts();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -20,6 +22,9 @@ $scores = Scores::top();
   <img class="logo" src="assets/logo.svg" alt="" width="72" height="72">
   <h1>FOK<span>-server</span></h1>
   <p>Central game server for <a href="https://poeggi.github.io/FOK-snake/">FOK Snake</a></p>
+  <p class="stats"><span><?= $counts['online'] ?></span> online -
+    <span><?= $counts['playing'] ?></span> playing 1:1 -
+    <span><?= $counts['registered'] ?></span> client ids</p>
 </header>
 <main>
   <h2>Global Top <?= FOK_TOP_SCORES ?></h2>
