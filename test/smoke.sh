@@ -210,7 +210,8 @@ else
     if [[ "$R" == *"failed"* ]]; then echo "FAIL admin login redirected to failed"; fail=1; fi
 
     VER=$(grep -oE "FOK_SERVER_VERSION = '[^']+'" public/src/Config.php | cut -d"'" -f2)
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/index.php")
+    R=$(curl -s -i -b "$COOKIES" "$BASE/admin/index.php")
+    expect "admin page is no-store" 'Cache-Control: no-store' "$R"
     expect "admin has gear button" 'id="viewtoggle"' "$R"
     expect "admin has settings view" 'id="settings"' "$R"
     expect "admin assets cache-busted" "admin.js?v=$VER" "$R"

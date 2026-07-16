@@ -48,6 +48,8 @@ final class Util
 
     public static function cors(): void
     {
+        // Dynamic responses must never be cached by browsers or proxies.
+        header('Cache-Control: no-store');
         $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
         if (in_array($origin, FOK_ALLOWED_ORIGINS, true)) {
             header('Access-Control-Allow-Origin: ' . $origin);
@@ -72,6 +74,7 @@ final class Util
     public static function jsonOut(array $data, int $code = 200): never
     {
         http_response_code($code);
+        header('Cache-Control: no-store');
         header('Content-Type: application/json');
         echo json_encode($data);
         exit;

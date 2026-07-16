@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/src/Scores.php';
 
+header('Cache-Control: no-store');
 $scores = Scores::top();
 ?>
 <!DOCTYPE html>

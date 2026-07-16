@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../src/Auth.php';
 require_once __DIR__ . '/../src/Util.php';
 
+header('Cache-Control: no-store');
 Auth::startSession();
 
 if (($_POST['do'] ?? '') === 'login') {
