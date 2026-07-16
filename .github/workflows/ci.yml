@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: sqlite3, pdo_sqlite, mbstring
+
+      - name: Checks (syntax, ASCII, secrets, consistency, unit, smoke)
+        run: bash test/checks.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## FOK-server CI"
+            echo "- PHP syntax lint over all tracked .php files"
+            echo "- ASCII-only guard over all text sources"
+            echo "- Secret/credential leak guard"
+            echo "- strict_types consistency guard"
+            echo "- Unit tests (test/unit.php)"
+            echo "- HTTP smoke test against php -S (test/smoke.sh)"
+          } >> "$GITHUB_STEP_SUMMARY"

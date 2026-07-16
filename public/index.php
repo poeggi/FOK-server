@@ -11,10 +11,12 @@ $scores = Scores::top();
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FOK-server</title>
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 <header>
+  <img class="logo" src="assets/logo.svg" alt="" width="72" height="72">
   <h1>FOK<span>-server</span></h1>
   <p>Central game server for <a href="https://poeggi.github.io/FOK-snake/">FOK Snake</a></p>
 </header>

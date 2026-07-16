@@ -8,8 +8,9 @@ ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 
 // Data lives one level ABOVE the docroot so it is never web-accessible.
+// FOK_DATA_DIR env var overrides the location (used by the test suite).
 define('FOK_DOCROOT', dirname(__DIR__));
-define('FOK_DATA_DIR', dirname(FOK_DOCROOT) . '/fok-server-data');
+define('FOK_DATA_DIR', getenv('FOK_DATA_DIR') ?: dirname(FOK_DOCROOT) . '/fok-server-data');
 define('FOK_DB_FILE', FOK_DATA_DIR . '/fok.db');
 define('FOK_ADMIN_HASH_FILE', FOK_DATA_DIR . '/admin.hash');
 define('FOK_BACKUP_DIR', FOK_DATA_DIR . '/backups');

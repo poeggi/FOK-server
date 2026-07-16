@@ -31,7 +31,17 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
       assets/         CSS/JS; admin dashboard is modular (see MODULES in
                       assets/admin.js - add a module object to extend it)
       src/            PHP classes, blocked from the web via .htaccess
+    docs/API.md       the client-facing API contract (read this first when
+                      writing a game client)
+    test/checks.sh    all quality checks: PHP lint, ASCII-only guard,
+                      secret-leak guard, strict_types guard, unit tests
+                      (test/unit.php), HTTP smoke test (test/smoke.sh)
     tools/deploy.ps1  FTPS upload of public/
+
+CI (.github/workflows/ci.yml) runs test/checks.sh on every push and PR.
+Run the same checks before every commit via the hook (once per clone):
+
+    git config core.hooksPath .githooks
 
 Runtime data (SQLite db, admin credential hash, backups) lives in
 ../fok-server-data/ ABOVE the docroot, created by the server at first run.

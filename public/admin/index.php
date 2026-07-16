@@ -26,11 +26,12 @@ $loggedIn = Auth::isLoggedIn();
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>FOK-server admin</title>
+<link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
 <link rel="stylesheet" href="../assets/admin.css">
 </head>
 <body>
 <header>
-  <h1>FOK-server <span>admin</span></h1>
+  <h1><img class="logo" src="../assets/logo.svg" alt="" width="22" height="22"> FOK-server <span>admin</span></h1>
   <?php if ($loggedIn): ?><nav><a href="index.php?do=logout">Logout</a></nav><?php endif; ?>
 </header>
 <?php if (!$loggedIn): ?>
