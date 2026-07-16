@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":2, "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":1, "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -194,7 +194,7 @@ Response:
 
     {
       "ok": true,
-      "api": 2,                   contract version, see Versioning
+      "api": 1,                   contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "online": 3,                players seen in the last 60 s
