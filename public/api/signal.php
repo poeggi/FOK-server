@@ -9,12 +9,20 @@ require_once __DIR__ . '/../src/Friends.php';
 /**
  * Matchmaking / WebRTC signaling relay.
  * POST {"id": sender, "to": recipient,
- *       "type": invite|accept|decline|offer|answer|ice|bye|chat,
- *       "payload": string, opaque to the server (SDP/ICE JSON, profile
- *       JSON on matchmaking types, plain text capped at 120 bytes for chat),
+ *       "type": one of Signals::TYPES (invite, invite-relay, accept,
+ *         accept-relay, decline, offer, answer, ice, bye, chat) - the
+ *         reserved 'friend' type is server-generated and rejected here,
+ *       "payload": string, opaque to the server (SDP/ICE/profile JSON;
+ *         plain text capped at chat_max_len for chat, else max 16 KB),
  *       "pts": int ms on the shared clock (optional but expected once the
- *       client is time-synced; future-dated values are rejected + logged)}
- * Delivery happens through the recipient's hello.php or poll.php poll.
+ *         client is time-synced; future-dated values are rejected + logged)}
+ *
+ * Authorization: invite / invite-relay require an accepted friendship
+ * with "to" (403 otherwise); the other types are free-form signaling the
+ * client correlates to its own in-progress handshake. The -relay types
+ * declare hub-relayed play and are capacity-checked here (503 when the
+ * relay-duel cap is reached). Delivery is via the recipient's hello.php
+ * or poll.php poll; a flooded recipient mailbox answers 429.
  */
 Util::cors();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
