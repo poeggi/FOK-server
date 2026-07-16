@@ -108,6 +108,13 @@ on typical connections) - enough for frame- and audio-level sync.
   it arrives - it verifies the schedule, it does not trigger anything.
 - Same pattern for anything that must be simultaneous: music cues,
   countdowns, sudden-death onset.
+- Audio implementation note: for actually-synchronous playback, map
+  PTS to AudioContext.currentTime once and schedule sounds through
+  WebAudio (sample-accurate); never trigger audio from setTimeout
+  (4-50 ms jitter). Compensate AudioContext.outputLatency where the
+  browser exposes it. With the sync above (offset error is a few ms)
+  the audible limit is then the device's own audio stack, not the
+  network.
 
 ### Latency measurement and reporting (MANDATED)
 
