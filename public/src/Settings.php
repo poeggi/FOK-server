@@ -20,6 +20,7 @@ final class Settings
         'score_rate_window' => [FOK_SCORE_RATE_WINDOW, 'Score submission window (seconds)'],
         'chat_max_len' => [FOK_CHAT_MAX_LEN, 'Max chat message bytes'],
         'signal_ttl' => [FOK_SIGNAL_TTL, 'Undelivered signal lifetime (seconds)'],
+        'poll_wait_max' => [8, 'Max long-poll hold (seconds)'],
         'alert_req_per_min' => [600, 'Alert: total requests per minute above'],
         'alert_load1' => [8, 'Alert: 1-minute system load above'],
         'alert_online' => [200, 'Alert: concurrent online players above'],

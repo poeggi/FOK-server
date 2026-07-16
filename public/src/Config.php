@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.4.1';
+const FOK_SERVER_VERSION = '0.5.0';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
 const FOK_API_VERSION = 1;
@@ -35,6 +35,11 @@ const FOK_SIGNAL_TTL = 30;
 const FOK_SIGNAL_MAX_PAYLOAD = 16384;
 // Chat messages are hard-capped much lower than SDP payloads.
 const FOK_CHAT_MAX_LEN = 120;
+// Long-poll mailbox check interval. The hold duration cap is the
+// poll_wait_max setting; it must stay small enough that concurrent
+// handshakes cannot exhaust the shared-hosting FPM worker pool.
+const FOK_POLL_CHECK_USEC = 150000;
+
 // Abuse caps (HTTP 429): pending signals per recipient, score submissions
 // per player within the rate window.
 const FOK_MAILBOX_CAP = 128;

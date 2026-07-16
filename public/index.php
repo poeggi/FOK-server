@@ -12,7 +12,7 @@ $scores = Scores::top();
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FOK-server</title>
 <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
-<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/style.css?v=<?= FOK_SERVER_VERSION ?>">
 </head>
 <body>
 <header>

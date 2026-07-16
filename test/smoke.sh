@@ -140,6 +140,20 @@ expect "poll delivers signal" '"type":"ice"' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID2")
 expect "poll drained back to 204" '204' "$R"
 
+curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"c2\"}" "$BASE/api/signal.php" > /dev/null
+T0=$(date +%s)
+R=$(curl -s "$BASE/api/poll.php?id=$ID2&wait=5")
+T1=$(date +%s)
+expect "long poll returns pending signal" '"type":"ice"' "$R"
+if [ $((T1 - T0)) -le 1 ]; then echo "ok   long poll answers immediately"; else echo "FAIL long poll took $((T1 - T0))s with pending signal"; fail=1; fi
+
+T0=$(date +%s)
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID2&wait=2")
+T1=$(date +%s)
+expect "long poll times out to 204" '204' "$R"
+if [ $((T1 - T0)) -ge 1 ]; then echo "ok   long poll held the request"; else echo "FAIL long poll returned too fast ($((T1 - T0))s)"; fail=1; fi
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"duel_with\":\"$ID2\"}" "$BASE/api/hello.php")
 expect "duel counted" "$(strict '"playing":2')" "$R"
 
@@ -170,6 +184,22 @@ else
         "$BASE/admin/index.php")
     expect "admin login" 'index.php' "$R"
     if [[ "$R" == *"failed"* ]]; then echo "FAIL admin login redirected to failed"; fail=1; fi
+
+    VER=$(grep -oE "FOK_SERVER_VERSION = '[^']+'" public/src/Config.php | cut -d"'" -f2)
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/index.php")
+    expect "admin has gear button" 'id="viewtoggle"' "$R"
+    expect "admin has settings view" 'id="settings"' "$R"
+    expect "admin assets cache-busted" "admin.js?v=$VER" "$R"
+
+    R=$(curl -s "$BASE/assets/admin.js?v=$VER")
+    N=$(echo "$R" | grep -c "view: 'settings'" || true)
+    if [ "$N" -ge 2 ]; then
+        echo "ok   config and backup modules live in the settings view ($N)"
+    else
+        echo "FAIL expected >=2 modules with view: 'settings', found $N"
+        fail=1
+    fi
+    expect "gear toggles the views" 'toggle.onclick' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=stats")
     expect "admin stats" '"ok":true' "$R"

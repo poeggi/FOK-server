@@ -27,7 +27,7 @@ $loggedIn = Auth::isLoggedIn();
 <meta name="robots" content="noindex">
 <title>FOK-server admin</title>
 <link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
-<link rel="stylesheet" href="../assets/admin.css">
+<link rel="stylesheet" href="../assets/admin.css?v=<?= FOK_SERVER_VERSION ?>">
 </head>
 <body>
 <header>
@@ -52,7 +52,7 @@ $loggedIn = Auth::isLoggedIn();
 <?php else: ?>
 <main id="dashboard" class="dashboard"></main>
 <main id="settings" class="dashboard hidden"></main>
-<script src="../assets/admin.js"></script>
+<script src="../assets/admin.js?v=<?= FOK_SERVER_VERSION ?>"></script>
 <?php endif; ?>
 <footer class="muted">FOK-server v<?= FOK_SERVER_VERSION ?> (API v<?= FOK_API_VERSION ?>)<?= FOK_ENV === 'staging' ? ' STAGING' : '' ?></footer>
 </body>

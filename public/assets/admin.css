@@ -45,6 +45,15 @@ header nav { display: flex; align-items: center; gap: 14px; }
 .login form { display: flex; flex-direction: column; gap: 12px; }
 .login label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
 
+.login button {
+    margin-top: 28px;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #10241a;
+    font-weight: 700;
+}
+.login button:hover { filter: brightness(1.15); }
+
 input, button {
     font: inherit;
     color: var(--text);

@@ -94,16 +94,24 @@ Rules:
 
 ## GET /api/poll.php - fast signal poll (matchmaking window only)
 
-    GET /api/poll.php?id=c0ffee42
+    GET /api/poll.php?id=c0ffee42[&wait=8]
 
-    -> 204 No Content                          nothing pending (common case)
+    -> 204 No Content                          nothing pending
     -> 200 {"ok":true,"signals":[...]}         pending messages, drained
 
-The cheap high-frequency poll: a 204 answer has an empty body and costs
-the server a single indexed read with no writes, so 1-2 Hz polling is
-fine. Same drain semantics as hello's `signals`. Use it ONLY while
-waiting for or performing matchmaking/signaling; stop when the
-DataChannel opens or the attempt is abandoned.
+With `wait` (seconds, capped server-side at 8) this is a LONG POLL: the
+server holds the request open and answers the moment a signal arrives,
+checking every 150 ms. This is the lowest-latency delivery path -
+during an active handshake, loop `wait=8` requests back-to-back and a
+relayed signal reaches you in ~150 ms plus network, instead of a full
+poll interval. Without `wait` it degrades to the plain cheap poll (one
+indexed read, 204).
+
+Same drain semantics as hello's `signals`. Use it ONLY while waiting
+for or performing matchmaking/signaling; stop when the DataChannel
+opens or the attempt is abandoned. Remember the server is never in the
+in-game path at all - once the DataChannel is up, peer packets flow
+directly and no server hop exists to optimize.
 
 ## GET /api/scores.php - global top 100
 
@@ -263,7 +271,10 @@ friend list; the hello `friends` field tells A whether B is online):
 The server is NOT polled during gameplay. The DataChannel itself is the
 session:
 
-- Game state updates arrive at the net tick rate (4-15 Hz); every
+- Game state updates arrive at the net tick rate: recommended
+  netInterval = max(2, ticksPerMove) on the 60 Hz engine, i.e. up to
+  the maximum of 30 updates/s on fast levels for snappy correction of
+  mispredictions (the 1280-byte packet cap still applies); every
   received packet proves the peer is alive.
 - When no game packet is due, send a tiny in-band ping every 1 s and
   expect the peer's ping/traffic at the same rate. No packets for ~3 s

@@ -138,8 +138,9 @@ server. Staging needs its own one-time hash bootstrap.
       -> {"ok":true,"now":...,"online":n,"playing":n,"registered":n,
           "signals":[{"from":"...","type":"invite","payload":"..."},...],
           "friends_online":{...}?}
-    GET  /api/poll.php?id=cafe0001
+    GET  /api/poll.php?id=cafe0001&wait=8
       -> 204 (nothing pending) | {"ok":true,"signals":[...]}
+         (wait=N long-polls: answers ~150 ms after a signal arrives)
     POST /api/match.php  {"id":"cafe0001","action":"seek|cancel"}
       -> {"ok":true,"waiting":true} | {"ok":true,"matched":"...","role":"..."}
     GET  /api/scores.php?limit=10
