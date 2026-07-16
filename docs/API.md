@@ -504,19 +504,28 @@ the DataChannel does not open within 5 s of signaling (the default
 fallback timeout; both peers must use the same value), BOTH clients
 fall back to relaying through the server.
 
-THE NO-P2P BIT: a client that already knows P2P will not work for it
-(restrictive network, previous failures on this connection, user
-preference) declares relay mode UP FRONT - the inviter by sending
-`invite-relay` instead of `invite`, or the acceptor by answering
-`accept-relay` instead of `accept`. The declaration is HONORED when
-set by EITHER side: as soon as one of the two signals carried it, the
-game runs through the hub from the start and both peers skip WebRTC
-entirely. The inviter still sends the `offer` signal but with payload
-{"seed": n, "profile": ...} and NO sdp, the acceptor answers with
-{"profile": ...} - then both call start.php and use relay.php
+THE NO-P2P BIT - BOTH MODES COEXIST. Clients implement a "disable P2P"
+setting whose DEFAULT IS OFF:
+
+- Setting OFF (default, the old way): send plain `invite` / `accept`,
+  attempt the P2P DataChannel, and fall back to the relay only after
+  the 5 s timeout. Nothing changes for these clients.
+- Setting ON (the new way): declare relay mode UP FRONT - the inviter
+  by sending `invite-relay` instead of `invite`, or the acceptor by
+  answering `accept-relay` instead of `accept`.
+
+The declaration is HONORED when set by EITHER side, regardless of the
+other side's setting: as soon as one of the two signals carried it,
+the game runs through the hub from the start and both peers skip
+WebRTC entirely. Consequently every client MUST handle RECEIVING
+`invite-relay` and `accept-relay` even when its own setting is off.
+In relay mode the inviter still sends the `offer` signal but with
+payload {"seed": n, "profile": ...} and NO sdp, the acceptor answers
+with {"profile": ...} - then both call start.php and use relay.php
 immediately. The server checks relay capacity at the declaring signal
 itself, so a full relay answers 503 "relay busy" before any game setup
-is wasted. Expect ~200-400 ms one-way
+is wasted. When neither side declared the bit, nothing is checked
+early and the 5 s-fallback path applies unchanged. Expect ~200-400 ms one-way
 latency: relay INPUT events, state hashes and control messages - never
 high-rate state. The local snake stays instant; the remote side trails
 and the prediction/correction model absorbs it. Show a "relay mode"
