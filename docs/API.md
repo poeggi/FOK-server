@@ -84,6 +84,12 @@ on typical connections) - enough for frame- and audio-level sync.
 - EVERY message the peers exchange (DataChannel game packets, chat,
   and the pts field on server signals) carries the sender's current
   PTS, so the receiver can order events and measure staleness.
+- Field size: a full PTS is unix milliseconds - 13 decimal digits,
+  41 bits today (48 bits is safe for centuries; always below JS's
+  2^53). JSON APIs carry it as a plain integer. Inside bit-packed
+  DataChannel packets, save the bits: agree on a match epoch (e.g.
+  the scheduled level-start PTS) and send PTS relative to it -
+  24 bits of relative ms cover 4.6 hours, 32 bits cover 49 days.
 - Clients report REALITY, not predictions: a message's PTS is the
   moment the event actually happened, stamped and sent as soon as
   possible. By the time it arrives anywhere, that PTS is already in
