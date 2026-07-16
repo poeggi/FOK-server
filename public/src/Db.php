@@ -71,7 +71,19 @@ final class Db
                 PRIMARY KEY (a, b)
             )');
         }
-        $pdo->exec('PRAGMA user_version = 5');
+        if ($v < 6) {
+            $pdo->exec('CREATE TABLE IF NOT EXISTS relay (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pair TEXT NOT NULL,
+                from_id TEXT NOT NULL,
+                to_id TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created INTEGER NOT NULL
+            )');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_relay_to ON relay (to_id, from_id, id)');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_relay_pair ON relay (pair, created)');
+        }
+        $pdo->exec('PRAGMA user_version = 6');
     }
 
     // A database commissioned from scratch starts with the same default

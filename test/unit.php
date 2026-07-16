@@ -97,8 +97,10 @@ ok($info['aaaaaaaa']['name'] === 'ALPHA', 'name recorded and kept when omitted')
 ok($info['bbbbbbbb']['name'] === null, 'no name until reported');
 
 // Friendships: handshake, auto-match, gating helpers, removal
-ok(Friends::request('aaaaaaaa', 'bbbbbbbb') === 'pending', 'first request is pending');
-ok(Friends::request('aaaaaaaa', 'bbbbbbbb') === 'pending', 'repeat request stays pending');
+$r = Friends::request('aaaaaaaa', 'bbbbbbbb');
+ok($r['state'] === 'pending' && $r['changed'] === true, 'first request is pending and new');
+$r = Friends::request('aaaaaaaa', 'bbbbbbbb');
+ok($r['state'] === 'pending' && $r['changed'] === false, 'repeat request changes nothing (no re-notification)');
 ok(!Friends::isFriend('aaaaaaaa', 'bbbbbbbb'), 'pending is not a friendship');
 ok(!Friends::accept('aaaaaaaa', 'bbbbbbbb'), 'requester cannot accept own request');
 $list = Friends::listOf('bbbbbbbb');
@@ -110,8 +112,9 @@ ok(Friends::acceptedOf('aaaaaaaa', ['bbbbbbbb', 'cccccccc']) === ['bbbbbbbb' => 
     'acceptedOf filters to recorded friends');
 Friends::remove('bbbbbbbb', 'aaaaaaaa');
 ok(!Friends::isFriend('aaaaaaaa', 'bbbbbbbb'), 'removal deletes the friendship');
-ok(Friends::request('11117777', '22227777') === 'pending' &&
-    Friends::request('22227777', '11117777') === 'accepted',
+$r1 = Friends::request('11117777', '22227777');
+$r2 = Friends::request('22227777', '11117777');
+ok($r1['state'] === 'pending' && $r2['state'] === 'accepted' && $r2['changed'] === true,
     'crossing requests auto-match into a friendship');
 Friends::remove('11117777', '22227777');
 

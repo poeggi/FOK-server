@@ -13,8 +13,12 @@ require_once __DIR__ . '/Db.php';
  */
 final class Friends
 {
-    /** @return string resulting state: 'pending' or 'accepted' */
-    public static function request(string $me, string $peer): string
+    /**
+     * @return array{state: string, changed: bool} state is 'pending' or
+     * 'accepted'; changed is true only when this call created or
+     * completed the relation (callers notify the peer exactly then).
+     */
+    public static function request(string $me, string $peer): array
     {
         [$a, $b] = $me < $peer ? [$me, $peer] : [$peer, $me];
         $db = Db::get();
@@ -24,20 +28,20 @@ final class Friends
         $row = $st->fetch();
         if ($row) {
             if ($row['state'] === 'accepted') {
-                return 'accepted';
+                return ['state' => 'accepted', 'changed' => false];
             }
             if ($row['requester'] !== $me) {
                 // The peer asked first; my request answers it.
                 $db->prepare('UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ?')
                     ->execute(['accepted', $now, $a, $b]);
-                return 'accepted';
+                return ['state' => 'accepted', 'changed' => true];
             }
-            return 'pending';
+            return ['state' => 'pending', 'changed' => false];
         }
         $db->prepare(
             'INSERT INTO friends (a, b, state, requester, created, updated) VALUES (?, ?, ?, ?, ?, ?)'
         )->execute([$a, $b, 'pending', $me, $now, $now]);
-        return 'pending';
+        return ['state' => 'pending', 'changed' => true];
     }
 
     /** Accept a request the peer made; false when there is none. */

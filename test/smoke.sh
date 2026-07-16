@@ -140,10 +140,19 @@ expect "invite blocked without friendship" '403' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
 expect "friend request recorded" '"state":"pending"' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+expect "peer notified of friend request" '"type":"friend"' "$R"
+expect "notification names the requester" "\"from\":\"$ID1\"" "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"action\":\"list\"}" "$BASE/api/friend.php")
 expect "peer sees incoming request" '"outgoing":false' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"action\":\"accept\",\"peer\":\"$ID1\"}" "$BASE/api/friend.php")
 expect "friend request accepted" '"state":"accepted"' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID1")
+expect "requester notified of acceptance" 'accepted' "$R"
+expect "acceptance is a friend signal" '"type":"friend"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"friend\",\"payload\":\"spoof\"}" "$BASE/api/signal.php")
+expect "clients cannot send friend signals" '"error":"invalid type"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"list\"}" "$BASE/api/friend.php")
 expect "friend list carries name" '"name":"SMOKE TWO"' "$R"
 
@@ -229,6 +238,21 @@ S2=$(grep -oE '"start_pts":[0-9]+' "$DATA/s2.json" | cut -d: -f2)
 if [ -n "$S1" ] && [ "$S1" = "$S2" ]; then echo "ok   server-issued start identical for both peers"; else echo "FAIL start pts differ: $S1 vs $S2"; fail=1; fi
 if [ "${#S1}" -eq 13 ]; then echo "ok   start pts is milliseconds"; else echo "FAIL start pts not ms: $S1"; fail=1; fi
 
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"payload\":\"IN:12:up\"}" "$BASE/api/relay.php")
+expect "relay accepts message" '"ok":true' "$R"
+curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"payload\":\"IN:14:left\"}" "$BASE/api/relay.php" > /dev/null
+R=$(curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1&wait=2")
+expect "relay delivers in order" '"payload":"IN:12:up"' "$R"
+expect "relay delivers second message" '"payload":"IN:14:left"' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
+expect "relay drained to 204" '204' "$R"
+BIGPAY=$(printf 'x%.0s' $(seq 1 2049))
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"payload\":\"$BIGPAY\"}" "$BASE/api/relay.php")
+expect "oversized relay payload rejected" '"error":"invalid payload"' "$R"
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
 expect "friendship removed" '"ok":true' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
@@ -240,6 +264,7 @@ expect "first seeker waits" '"waiting":true' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"action\":\"seek\"}" "$BASE/api/match.php")
 expect "second seeker matched" "\"matched\":\"$ID1\"" "$R"
 expect "second seeker answers" '"role":"answerer"' "$R"
+expect "match carries peer name" '"peer_name":"SMOKE ONE"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"seek\"}" "$BASE/api/match.php")
 expect "first seeker offers" '"role":"offerer"' "$R"
 

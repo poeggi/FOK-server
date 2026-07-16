@@ -2,10 +2,12 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.9.0';
+const FOK_SERVER_VERSION = '0.10.0';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
-const FOK_API_VERSION = 1;
+// v2: friendship-gated status and invites, ms hello.now, friend
+// notifications, relay fallback.
+const FOK_API_VERSION = 2;
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');

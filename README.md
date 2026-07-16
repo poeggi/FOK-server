@@ -12,7 +12,13 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 - Friendships: established THROUGH the server (request/accept handshake,
   removable); only an accepted, server-recorded friendship entitles a
   client to query a friend's status (online, latency, name) or send a
-  game invite. Quick match stays open to strangers.
+  game invite. New requests and acceptances notify the peer via a
+  reserved 'friend' signal in its mailbox. Quick match stays open to
+  strangers (the match response carries the opponent's name).
+- Relay fallback: when the P2P DataChannel cannot connect, duels relay
+  their (input-level) messages through the server via relay.php long
+  polls - degraded latency but works through any firewall; concurrent
+  relayed duels are capped to protect the shared-hosting worker pool.
 - Global highscores: top 100 list. Submissions carry the deterministic
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
   be sanity-checked by re-simulation to prevent spoofing (validated flag).
@@ -49,6 +55,7 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
         friend.php    friendship handshake: request/accept/remove/list
         match.php     quick-match queue (pair with anyone waiting)
         start.php     server-issued absolute level-start PTS per pair
+        relay.php     in-duel message relay (P2P fallback), long-polled
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
       admin/          session-protected admin UI + JSON API
@@ -141,7 +148,7 @@ server. Staging needs its own one-time hash bootstrap.
 ## API sketch
 
     GET  /api/version.php
-      -> {"ok":true,"server":"<x.y.z>","api":1,"env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":2,"env":"live"}
     GET  /api/time.php
       -> {"ok":true,"t":<server ms>}   clock sync for the shared PTS base
     POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
@@ -152,6 +159,10 @@ server. Staging needs its own one-time hash bootstrap.
           "friends_name":{...}?}   (friends_* only real for accepted friends)
     POST /api/friend.php {"id","action":"request|accept|remove|list","peer"?}
       -> {"ok":true,"state":...} | {"ok":true,"friends":[...]}
+         (request/accept notify the peer via a reserved 'friend' signal)
+    POST /api/relay.php  {"id","peer","payload","pts"?} -> {"ok":true}
+    GET  /api/relay.php?id=&peer=&wait=8
+      -> {"ok":true,"messages":[...]} | 204   (P2P fallback relay)
     GET  /api/poll.php?id=cafe0001&wait=8
       -> 204 (nothing pending) | {"ok":true,"signals":[...]}
          (wait=N long-polls: answers ~150 ms after a signal arrives)

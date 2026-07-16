@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":1, "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":2, "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -194,7 +194,7 @@ Response:
 
     {
       "ok": true,
-      "api": 1,                   contract version, see Versioning
+      "api": 2,                   contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "online": 3,                players seen in the last 60 s
@@ -339,6 +339,16 @@ Types (fixed set, anything else is rejected):
     ice       ICE candidate                       payload: JSON-encoded RTCIceCandidate
     bye       leave / abort the session           payload: ""
     chat      text message (max 120 bytes total)  payload: plain text
+    friend    RESERVED - server-generated only    payload: JSON {"event":
+              (clients cannot send it: 400)         "request"|"accepted",
+                                                    "from": "8-hex"}
+
+The 'friend' signal is the friendship NOTIFICATION: the server delivers
+it into the peer's mailbox when a friend request is created for them or
+their request gets accepted. It arrives like any other signal (hello or
+poll.php, long-poll included), so an online client learns of a request
+within its poll cadence; an offline client finds the pending entry via
+friend.php list on next start (mailbox signals expire after 30 s).
 
 ## The player profile object
 
@@ -403,8 +413,14 @@ Request: `{"id": "c0ffee42", "action": "seek"}` - poll at ~1-2 Hz while
 the user waits. Responses:
 
     {"ok":true, "waiting":true}                          keep polling
-    {"ok":true, "matched":"deadbeef", "role":"offerer"}  you create offer + seed
-    {"ok":true, "matched":"deadbeef", "role":"answerer"} wait for the offer
+    {"ok":true, "matched":"deadbeef", "role":"offerer",
+     "peer_name":"KAI"}                                  you create offer + seed
+    {"ok":true, "matched":"deadbeef", "role":"answerer",
+     "peer_name":"KAI"}                                  wait for the offer
+
+peer_name is the opponent's latest server-recorded display name (null
+if never reported) - quick match pairs strangers, so the friendship-
+gated name lookups do not apply; the pairing itself is the entitlement.
 
 `{"action": "cancel"}` leaves the queue (also automatic after 10 s
 without a seek poll). After a match both sides continue at step 3 of the
@@ -441,6 +457,36 @@ friend list; the hello `friends` field tells A whether B is online):
        further level or a rematch, both call start.php again.
     7. Either side sends bye (via the DataChannel if open, and via
        signal as fallback) to end the session.
+
+## Relay fallback - when P2P cannot connect
+
+P2P fails for some pairs (symmetric NAT, UDP-blocking firewalls). When
+the DataChannel does not open within ~8 s of signaling, BOTH clients
+fall back to relaying through the server. Expect ~200-400 ms one-way
+latency: relay INPUT events, state hashes and control messages - never
+high-rate state. The local snake stays instant; the remote side trails
+and the prediction/correction model absorbs it. Show a "relay mode"
+indicator so latency self-explains.
+
+    POST /api/relay.php {"id":me, "peer":opponent, "payload":"...",
+                         "pts": ms?}
+      -> {"ok":true}
+      -> 429 "relay backlog full"   receiver stopped fetching; back off
+      -> 503 "relay busy"           concurrent relayed-duel cap reached:
+                                    tell the user the server is full and
+                                    end the match attempt
+
+    GET /api/relay.php?id=me&peer=opponent&wait=8
+      -> {"ok":true,"messages":[{"seq":n,"payload":"...","created":s}]}
+         oldest first, delivered exactly once
+      -> 204 after the hold when nothing arrived (loop wait=8 requests
+         back-to-back while in relay mode, like poll.php)
+
+payload is opaque to the server (max 2 KB, defaults admin-configurable);
+seq is a server-assigned increasing number for ordering. Keep sending
+hello with duel_with during relayed games too. The concurrent-duel cap
+exists because every relayed duel holds server workers with its long
+polls - a capped, honest "busy" beats degrading the server for everyone.
 
 ## In-game liveness (no server involved)
 

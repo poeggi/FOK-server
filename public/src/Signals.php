@@ -11,6 +11,8 @@ require_once __DIR__ . '/Settings.php';
  */
 final class Signals
 {
+    // Client-sendable types. 'friend' is reserved for server-generated
+    // friendship notifications and is deliberately NOT in this list.
     public const TYPES = ['invite', 'accept', 'decline', 'offer', 'answer', 'ice', 'bye', 'chat'];
 
     /** @return bool false when the recipient's mailbox is full (flood cap) */

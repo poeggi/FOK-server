@@ -29,9 +29,13 @@ switch ($action) {
             'alerts', 'settings', 'admin_fails', 'ipcount'] as $table) {
             $dbRows += (int)$db->query("SELECT COUNT(*) FROM $table")->fetchColumn();
         }
+        $relaying = (int)$db->query(
+            'SELECT COUNT(DISTINCT pair) FROM relay WHERE created > ' . (time() - 30)
+        )->fetchColumn();
         Util::jsonOut([
             'ok' => true,
             'counts' => $counts,
+            'relaying' => $relaying,
             'avg_latency' => Presence::avgLatency(),
             'scores_total' => $scoreCount,
             'db_rows' => $dbRows,

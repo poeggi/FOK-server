@@ -11,8 +11,12 @@ require_once __DIR__ . '/../src/Matchmaking.php';
  *
  * seek (poll at ~1-2 Hz while the user waits):
  *   -> {"ok":true, "waiting":true}                        keep polling
- *   -> {"ok":true, "matched":"<peer>", "role":"offerer"}  create offer + seed
- *   -> {"ok":true, "matched":"<peer>", "role":"answerer"} wait for the offer
+ *   -> {"ok":true, "matched":"<peer>", "role":"offerer",
+ *       "peer_name":"KAI"|null}                           create offer + seed
+ *   -> {"ok":true, "matched":"<peer>", "role":"answerer",
+ *       "peer_name":...}                                  wait for the offer
+ * peer_name is the opponent's latest server-recorded display name (quick
+ * match pairs strangers, so the friendship-gated lookups do not apply).
  * cancel: leave the queue -> {"ok":true}
  *
  * A seeker that stops polling for 10 s drops out of the queue. After a
@@ -34,7 +38,12 @@ Presence::touch($id, Util::clientIp());
 
 if ($action === 'seek') {
     Util::bump('match_seek');
-    Util::jsonOut(['ok' => true] + Matchmaking::seek($id));
+    $result = Matchmaking::seek($id);
+    if (isset($result['matched'])) {
+        $info = Presence::infoOf([$result['matched']]);
+        $result['peer_name'] = $info[$result['matched']]['name'] ?? null;
+    }
+    Util::jsonOut(['ok' => true] + $result);
 }
 if ($action === 'cancel') {
     Matchmaking::cancel($id);

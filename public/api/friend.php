@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Friends.php';
+require_once __DIR__ . '/../src/Signals.php';
 
 /**
  * Friendship management. An ACCEPTED friendship entitles both sides to
@@ -16,6 +17,11 @@ require_once __DIR__ . '/../src/Friends.php';
  *   accept  -> {"ok":true,"state":"accepted"} (404 without a pending
  *              request from that peer)
  *   remove  -> {"ok":true}                    (declines or unfriends)
+ *
+ * A new request or an acceptance NOTIFIES the peer: the server puts a
+ * reserved 'friend' signal into the peer's mailbox (payload JSON
+ * {"event":"request"|"accepted","from":"8-hex"}), delivered through the
+ * peer's next hello or poll.php request like any other signal.
  *
  * POST {"id": "8-hex", "action": "list"}
  *   -> {"ok":true,"friends":[{"id","state":"pending|accepted",
@@ -57,11 +63,17 @@ if (!Util::isValidId($peer) || $peer === $id) {
 
 switch ($action) {
     case 'request':
-        Util::jsonOut(['ok' => true, 'state' => Friends::request($id, $peer)]);
+        $r = Friends::request($id, $peer);
+        if ($r['changed']) {
+            $event = $r['state'] === 'accepted' ? 'accepted' : 'request';
+            Signals::send($id, $peer, 'friend', json_encode(['event' => $event, 'from' => $id]));
+        }
+        Util::jsonOut(['ok' => true, 'state' => $r['state']]);
     case 'accept':
         if (!Friends::accept($id, $peer)) {
             Util::fail('no pending request from that peer', 404);
         }
+        Signals::send($id, $peer, 'friend', json_encode(['event' => 'accepted', 'from' => $id]));
         Util::jsonOut(['ok' => true, 'state' => 'accepted']);
     case 'remove':
         Friends::remove($id, $peer);
