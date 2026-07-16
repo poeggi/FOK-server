@@ -27,6 +27,9 @@ endpoint - it is the contract the FOK-snake client is built against.
   (tools/deploy.ps1). No build step, no composer, no dependencies.
 - SQLite via PDO in WAL mode, schema auto-created in src/Db.php. The
   FOK_DATA_DIR env var overrides the data location (tests rely on it).
+- Schema changes go through the migration ladder in Db::migrate (PRAGMA
+  user_version): append a new "if ($v < N)" step with ALTER/CREATE
+  statements that are safe on live data; never edit an existing step.
 - Player IDs are 8 lowercase hex chars (32-bit), validated everywhere
   with Util::isValidId. They are public identities, not secrets.
 - Score entries must keep field parity with the FOK-snake local top-10

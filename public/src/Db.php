@@ -32,7 +32,22 @@ final class Db
         self::$pdo = null;
     }
 
+    /**
+     * Versioned migration ladder on SQLite's user_version pragma.
+     * Rules: never edit an existing step, only append a new
+     * "if ($v < N)" block; each step must be safe on live data.
+     */
     private static function migrate(PDO $pdo): void
+    {
+        $v = (int)$pdo->query('PRAGMA user_version')->fetchColumn();
+        if ($v >= 1) {
+            return;
+        }
+        self::schemaV1($pdo);
+        $pdo->exec('PRAGMA user_version = 1');
+    }
+
+    private static function schemaV1(PDO $pdo): void
     {
         $pdo->exec('CREATE TABLE IF NOT EXISTS players (
             id TEXT PRIMARY KEY,
