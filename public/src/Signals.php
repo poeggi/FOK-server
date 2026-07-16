@@ -19,6 +19,14 @@ final class Signals
         )->execute([$from, $to, $type, $payload, time()]);
     }
 
+    /** Cheapest possible "anything for me?" check: one indexed read, no writes. */
+    public static function any(string $to): bool
+    {
+        $st = Db::get()->prepare('SELECT 1 FROM signals WHERE to_id = ? LIMIT 1');
+        $st->execute([$to]);
+        return $st->fetchColumn() !== false;
+    }
+
     /** Drains and returns all pending messages for a player, oldest first. */
     public static function take(string $to): array
     {

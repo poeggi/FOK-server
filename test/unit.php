@@ -69,7 +69,9 @@ $long = Scores::submit('aaaaaaaa', str_repeat('X', 40), 1, 1, 1, 0, '{}', null, 
 ok(mb_strlen(Scores::top()[2]['name']) === FOK_MAX_NAME_LEN, 'name capped at max length');
 
 // Signals: mailbox drains exactly once, order preserved
+ok(!Signals::any('bbbbbbbb'), 'any() false on empty mailbox');
 Signals::send('aaaaaaaa', 'bbbbbbbb', 'invite', 'hi');
+ok(Signals::any('bbbbbbbb'), 'any() true with pending signal');
 Signals::send('aaaaaaaa', 'bbbbbbbb', 'ice', 'cand1');
 ok(Signals::take('aaaaaaaa') === [], 'no signals for sender');
 $got = Signals::take('bbbbbbbb');

@@ -24,7 +24,8 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
     public/           mirrors the webroot 1:1
       index.php       landing page with the global top 100
       api/            JSON endpoints for game clients (CORS-allowlisted)
-        hello.php     heartbeat + poll: presence, counters, pending signals
+        hello.php     heartbeat: presence, counters, pending signals
+        poll.php      fast signal poll, 204 when idle (matchmaking window)
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
       admin/          session-protected admin UI + JSON API

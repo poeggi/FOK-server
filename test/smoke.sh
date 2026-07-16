@@ -67,6 +67,17 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d '{"id":"deadbeef","to":"cafe0001","type":"hack","payload":""}' "$BASE/api/signal.php")
 expect "signal rejects bad type" '"error":"invalid type"' "$R"
 
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=cafe0001")
+expect "poll empty is 204" '204' "$R"
+
+curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"id":"deadbeef","to":"cafe0001","type":"ice","payload":"cand"}' "$BASE/api/signal.php" > /dev/null
+R=$(curl -s "$BASE/api/poll.php?id=cafe0001")
+expect "poll delivers signal" '"type":"ice"' "$R"
+
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=cafe0001")
+expect "poll drained back to 204" '204' "$R"
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"deadbeef","duel_with":"cafe0001"}' "$BASE/api/hello.php")
 expect "duel counted" '"playing":2' "$R"
 

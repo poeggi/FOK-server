@@ -59,11 +59,24 @@ Rules:
 
 - Signals are DRAINED on delivery: each message is returned exactly once.
   The client must process every element of `signals` immediately.
-- Polling cadence: ~30 s when idle; ~1-2 s while matchmaking or during
-  WebRTC signaling; back to slow once the DataChannel is open.
+- Cadence: send hello every ~30 s, always. It is the heartbeat, not a
+  fast poll; use /api/poll.php for the fast signaling window.
 - While a 1:1 game is running, keep sending `duel_with` at least every
   60 s (the duel counts as over when neither peer refreshed it within
   60 s).
+
+## GET /api/poll.php - fast signal poll (matchmaking window only)
+
+    GET /api/poll.php?id=c0ffee42
+
+    -> 204 No Content                          nothing pending (common case)
+    -> 200 {"ok":true,"signals":[...]}         pending messages, drained
+
+The cheap high-frequency poll: a 204 answer has an empty body and costs
+the server a single indexed read with no writes, so 1-2 Hz polling is
+fine. Same drain semantics as hello's `signals`. Use it ONLY while
+waiting for or performing matchmaking/signaling; stop when the
+DataChannel opens or the attempt is abandoned.
 
 ## GET /api/scores.php - global top 100
 
@@ -151,7 +164,7 @@ Types (fixed set, anything else is rejected):
 Player A wants to play with player B (A knows B's ID, e.g. from the
 friend list):
 
-    1. A -> signal {type: "invite", to: B}; A polls hello fast (~1 s).
+    1. A -> signal {type: "invite", to: B}; A starts polling poll.php (~1 s).
     2. B sees the invite in its hello poll. UI asks the user.
        B -> signal accept (or decline, which ends the flow).
     3. A (on accept) creates an RTCPeerConnection with a DataChannel
@@ -159,13 +172,30 @@ friend list):
        A -> signal offer with the local description.
     4. B sets the remote description, answers: B -> signal answer.
     5. Both sides exchange ice messages as candidates arrive.
-    6. When the DataChannel opens on both ends, gameplay starts and ALL
-       game traffic flows peer-to-peer (see FOK-snake
-       docs/multiplayer-server-prompt.md for the tick sync protocol).
-       Both clients keep polling hello slowly with duel_with set, so the
-       server can count running games.
+    6. When the DataChannel opens on both ends, BOTH clients stop
+       polling poll.php. Gameplay starts and ALL game traffic flows
+       peer-to-peer (see FOK-snake docs/multiplayer-server-prompt.md for
+       the tick sync protocol). Clients keep the normal slow hello
+       heartbeat (~30 s) with duel_with set, so the server can count
+       running games.
     7. Either side sends bye (via the DataChannel if open, and via
        signal as fallback) to end the session.
+
+## In-game liveness (no server involved)
+
+The server is NOT polled during gameplay. The DataChannel itself is the
+session:
+
+- Game state updates arrive at the net tick rate (4-15 Hz); every
+  received packet proves the peer is alive.
+- When no game packet is due, send a tiny in-band ping every 1 s and
+  expect the peer's ping/traffic at the same rate. No packets for ~3 s
+  means the session is dead: show "connection lost" and end the game.
+- Also watch RTCPeerConnection.connectionState; "failed" or "closed"
+  ends the session immediately.
+
+This gives the required once-per-second alive check at zero server load
+and much lower latency than any HTTP poll could.
 
 Notes:
 
