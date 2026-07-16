@@ -176,7 +176,8 @@ server. Staging needs its own one-time hash bootstrap.
       -> {"ok":true,"scores":[{"rank":1,"name":"...","score":...,...}]}
     POST /api/scores.php {"id","name","score","level","diff","color"?,"shopItems"?,"seed"?,"inputs"?}
       -> {"ok":true,"rank":n,"top":bool}
-    POST /api/signal.php {"id","to","type":"invite|accept|decline|offer|answer|ice|bye|chat","payload"}
+    POST /api/signal.php {"id","to","type":"invite|invite-relay|accept|accept-relay|decline|offer|answer|ice|bye|chat","payload"}
+         (the -relay types set the no-P2P bit: honored when either side sends it)
       -> {"ok":true}   (chat payloads capped at 120 bytes; matchmaking
                         payloads carry the player profile - see docs/API.md)
 

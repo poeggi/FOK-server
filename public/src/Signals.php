@@ -13,7 +13,7 @@ final class Signals
 {
     // Client-sendable types. 'friend' is reserved for server-generated
     // friendship notifications and is deliberately NOT in this list.
-    public const TYPES = ['invite', 'accept', 'decline', 'offer', 'answer', 'ice', 'bye', 'chat'];
+    public const TYPES = ['invite', 'invite-relay', 'accept', 'accept-relay', 'decline', 'offer', 'answer', 'ice', 'bye', 'chat'];
 
     /** @return bool false when the recipient's mailbox is full (flood cap) */
     public static function send(string $from, string $to, string $type, string $payload): bool

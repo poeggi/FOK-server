@@ -335,7 +335,13 @@ Types (fixed set, anything else is rejected):
 
     invite    ask "to" for a 1:1 game            payload: JSON {"profile": <profile>}
               (requires an ACCEPTED friendship with "to", else 403)
+    invite-relay  invite WITH the no-P2P bit set  payload: JSON {"profile": <profile>}
+              (friendship gate + relay capacity
+              checked immediately, 503 when full)
     accept    accept an invite                    payload: JSON {"profile": <profile>}
+    accept-relay  accept WITH the no-P2P bit set  payload: JSON {"profile": <profile>}
+              (relay capacity checked immediately,
+              503 when full)
     decline   decline an invite                   payload: ""
     offer     WebRTC SDP offer                    payload: JSON {"sdp": <RTCSessionDescription>,
                                                                  "seed": <32-bit int>,
@@ -496,7 +502,21 @@ friend list; the hello `friends` field tells A whether B is online):
 P2P fails for some pairs (symmetric NAT, UDP-blocking firewalls). When
 the DataChannel does not open within 5 s of signaling (the default
 fallback timeout; both peers must use the same value), BOTH clients
-fall back to relaying through the server. Expect ~200-400 ms one-way
+fall back to relaying through the server.
+
+THE NO-P2P BIT: a client that already knows P2P will not work for it
+(restrictive network, previous failures on this connection, user
+preference) declares relay mode UP FRONT - the inviter by sending
+`invite-relay` instead of `invite`, or the acceptor by answering
+`accept-relay` instead of `accept`. The declaration is HONORED when
+set by EITHER side: as soon as one of the two signals carried it, the
+game runs through the hub from the start and both peers skip WebRTC
+entirely. The inviter still sends the `offer` signal but with payload
+{"seed": n, "profile": ...} and NO sdp, the acceptor answers with
+{"profile": ...} - then both call start.php and use relay.php
+immediately. The server checks relay capacity at the declaring signal
+itself, so a full relay answers 503 "relay busy" before any game setup
+is wasted. Expect ~200-400 ms one-way
 latency: relay INPUT events, state hashes and control messages - never
 high-rate state. The local snake stays instant; the remote side trails
 and the prediction/correction model absorbs it. Show a "relay mode"

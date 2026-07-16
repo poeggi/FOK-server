@@ -179,6 +179,18 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
 expect "signal rejects bad type" '"error":"invalid type"' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID2\",\"to\":\"$ID1\",\"type\":\"accept-relay\",\"payload\":\"{}\"}" "$BASE/api/signal.php")
+expect "relay-first accept allowed" '"ok":true' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID1")
+expect "relay-first accept delivered" '"type":"accept-relay"' "$R"
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite-relay\",\"payload\":\"{}\"}" "$BASE/api/signal.php")
+expect "no-p2p invite allowed" '"ok":true' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+expect "no-p2p invite delivered" '"type":"invite-relay"' "$R"
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"gl hf\"}" "$BASE/api/signal.php")
 expect "chat signal accepted" '"ok":true' "$R"
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
