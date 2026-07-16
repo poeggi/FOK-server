@@ -1,0 +1,63 @@
+<?php
+declare(strict_types=1);
+
+require_once __DIR__ . '/../src/Util.php';
+require_once __DIR__ . '/../src/Presence.php';
+require_once __DIR__ . '/../src/Scores.php';
+
+/**
+ * GET  -> {"ok": true, "scores": [top 100]}
+ * POST {"id", "name", "score", "level", "diff", "seed"?, "inputs"?}
+ * seed + inputs are the deterministic replay material; they are stored
+ * verbatim for the future server-side sanity check (anti-spoofing).
+ */
+Util::cors();
+$method = $_SERVER['REQUEST_METHOD'] ?? '';
+
+if ($method === 'GET') {
+    $scores = Scores::top();
+    foreach ($scores as &$row) {
+        unset($row['id'], $row['validated']);
+    }
+    Util::jsonOut(['ok' => true, 'scores' => $scores]);
+}
+
+if ($method !== 'POST') {
+    Util::fail('GET or POST only', 405);
+}
+
+$body = Util::jsonBody();
+$id = $body['id'] ?? null;
+if (!Util::isValidId($id)) {
+    Util::fail('invalid id');
+}
+$score = $body['score'] ?? null;
+$level = $body['level'] ?? null;
+$diff = $body['diff'] ?? 1;
+if (!is_int($score) || $score < 0 || $score > 1000000000) {
+    Util::fail('invalid score');
+}
+if (!is_int($level) || $level < 1 || $level > 99) {
+    Util::fail('invalid level');
+}
+if (!is_int($diff) || $diff < 0 || $diff > 3) {
+    Util::fail('invalid diff');
+}
+$seed = $body['seed'] ?? null;
+if ($seed !== null && (!is_int($seed) || $seed < 0 || $seed > 0xFFFFFFFF)) {
+    Util::fail('invalid seed');
+}
+$inputs = null;
+if (isset($body['inputs'])) {
+    $inputs = json_encode($body['inputs']);
+    if ($inputs === false || strlen($inputs) > 262144) {
+        Util::fail('invalid inputs');
+    }
+}
+$name = is_string($body['name'] ?? null) ? $body['name'] : '';
+
+Presence::touch($id, Util::clientIp());
+$rank = Scores::submit($id, $name, $score, $level, $diff, $seed, $inputs);
+Util::bump('score_submit');
+
+Util::jsonOut(['ok' => true, 'rank' => $rank, 'top' => $rank <= FOK_TOP_SCORES]);

@@ -1,0 +1,93 @@
+:root {
+    --bg: #10141a;
+    --card: #1a212b;
+    --text: #d8e0ea;
+    --muted: #7d8894;
+    --accent: #3ddc84;
+    --danger: #e05555;
+    --border: #2a3442;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 system-ui, sans-serif;
+}
+
+header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+header h1 { font-size: 20px; margin: 0; }
+header h1 span { color: var(--accent); font-weight: normal; }
+header a { color: var(--muted); }
+
+.login { max-width: 320px; margin: 80px auto; }
+.login form { display: flex; flex-direction: column; gap: 12px; }
+.login label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
+
+input, button {
+    font: inherit;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.small { padding: 2px 8px; font-size: 13px; }
+button.refresh { float: right; }
+
+.error { color: var(--danger); }
+.muted { color: var(--muted); font-size: 13px; }
+
+.dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 16px;
+    padding: 20px;
+}
+
+.card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    overflow-x: auto;
+}
+
+.card h2 { margin: 0 0 12px; font-size: 16px; }
+
+.statgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.stat {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    text-align: center;
+}
+
+.stat-value { font-size: 24px; color: var(--accent); }
+.stat-label { font-size: 12px; color: var(--muted); }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: normal; }
+tr.online td:first-child { color: var(--accent); }
+
+.restore { margin-top: 12px; }

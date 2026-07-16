@@ -1,0 +1,8 @@
+# Runtime data (lives above the docroot on the server, never in the repo)
+fok-server-data/
+*.db
+*.db-wal
+*.db-shm
+
+# Local-only secrets (deploy credentials live in ~/.fok-server-deploy.json)
+*.secret
