@@ -66,4 +66,7 @@ jobs:
           echo "expect server $want, got: $got"
           echo "$got" | grep -q "\"server\":\"$want\""
           echo "$got" | grep -q '"env":"live"'
-          echo "Live is up on v$want" >> "$GITHUB_STEP_SUMMARY"
+          cors=$(curl -s -i -H 'Origin: https://poeggi.github.io' \
+            https://fok-server.poggensee.it/api/version.php | grep -i '^access-control-allow-origin')
+          echo "$cors" | grep -q 'poeggi.github.io'
+          echo "Live is up on v$want, reachable from the game origin" >> "$GITHUB_STEP_SUMMARY"

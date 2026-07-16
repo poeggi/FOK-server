@@ -61,6 +61,13 @@ strict() { if [ "$REMOTE" -eq 0 ]; then echo "$1"; else echo "${1%%:*}:"; fi; }
 R=$(curl -s "$BASE/")
 expect "landing page" "FOK" "$R"
 
+# The exact path a browser at the game origin takes: CORS must be open.
+R=$(curl -s -i -H 'Origin: https://poeggi.github.io' "$BASE/api/version.php" | grep -i '^access-control-allow-origin' || true)
+expect "game origin allowed by CORS" 'poeggi.github.io' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: https://poeggi.github.io' \
+    -H 'Access-Control-Request-Method: POST' "$BASE/api/hello.php")
+expect "CORS preflight passes" '204' "$R"
+
 EXPECT_ENV=live
 [[ "$BASE" == */staging ]] && EXPECT_ENV=staging
 R=$(curl -s "$BASE/api/version.php")
