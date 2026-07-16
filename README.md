@@ -24,11 +24,13 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 - Global highscores: top 100 list. Submissions carry the deterministic
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
   be sanity-checked by re-simulation to prevent spoofing (validated flag).
-- 1:1 matchmaking hub: players invite each other by ID (with friend
-  online-status checks) or quick-match with anyone waiting; the server
-  relays matchmaking and WebRTC signaling messages (SDP/ICE) through a
-  store-and-forward mailbox. The actual game traffic runs peer-to-peer over
-  a WebRTC DataChannel for low latency; the server never touches it.
+- 1:1 matchmaking hub: friends invite each other (gated by an accepted
+  friendship) or quick-match with anyone waiting; the server relays
+  matchmaking and WebRTC signaling (SDP/ICE) through a store-and-forward
+  mailbox and issues the shared level-start time. Game traffic normally
+  runs peer-to-peer over a WebRTC DataChannel (server not involved); when
+  P2P cannot connect it falls back to relaying through the server (see
+  Relay fallback above).
 - Admin interface at /admin/: a one-screen dashboard (statistics: online,
   playing 1:1, registered users with id and ip, per-hour load; alert feed;
   top-100 management) plus a settings view behind the gear button with the

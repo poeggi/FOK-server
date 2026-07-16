@@ -15,6 +15,8 @@ require_once __DIR__ . '/../src/Friends.php';
  *   "duel_with": "8-hex",       optional, while a 1:1 game runs
  *   "latency": int ms,          optional, the client's measured latency
  *                               (mandated regularly, see docs/API.md)
+ *   "auto_accept": bool,        optional, true while the QR/add-friend
+ *                               screen is open (auto-accepts requests)
  *   "friends": ["8-hex", ...]   optional, ids to check
  * }
  * Returns presence counters, pending signaling messages for the caller
