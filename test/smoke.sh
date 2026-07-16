@@ -164,15 +164,35 @@ expect "clients cannot send friend signals" '"error":"invalid type"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"list\"}" "$BASE/api/friend.php")
 expect "friend list carries name" '"name":"SMOKE TWO"' "$R"
 
+# Full invite round-trip between the two (now-friend) players.
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"play?\"}" "$BASE/api/signal.php")
-expect "signal send" '"ok":true' "$R"
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"{\\\"profile\\\":{\\\"name\\\":\\\"SMOKE ONE\\\"}}\"}" "$BASE/api/signal.php")
+expect "invite sent between friends" '"ok":true' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"}" "$BASE/api/hello.php")
-expect "signal delivered" '"type":"invite"' "$R"
+expect "invite delivered to peer" '"type":"invite"' "$R"
+expect "invite carries the profile payload" 'SMOKE ONE' "$R"
+expect "invite names the sender" "\"from\":\"$ID1\"" "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"}" "$BASE/api/hello.php")
-expect "signal drained" '"signals":[]' "$R"
+expect "invite drained after delivery" '"signals":[]' "$R"
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID2\",\"to\":\"$ID1\",\"type\":\"accept\",\"payload\":\"{\\\"profile\\\":{\\\"name\\\":\\\"SMOKE TWO\\\"}}\"}" "$BASE/api/signal.php")
+expect "accept reply sent" '"ok":true' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID1")
+expect "accept reply reaches the inviter" '"type":"accept"' "$R"
+expect "accept carries the peer profile" 'SMOKE TWO' "$R"
+
+# Decline is delivered too.
+curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"{}\"}" "$BASE/api/signal.php" > /dev/null
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID2\",\"to\":\"$ID1\",\"type\":\"decline\",\"payload\":\"\"}" "$BASE/api/signal.php")
+expect "decline sent" '"ok":true' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID1")
+expect "decline reaches the inviter" '"type":"decline"' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"hack\",\"payload\":\"\"}" "$BASE/api/signal.php")
