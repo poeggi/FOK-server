@@ -24,7 +24,9 @@ function el(tag, cls, text) {
 }
 
 function fmtTime(unix) {
-    return new Date(unix * 1000).toLocaleString();
+    const d = new Date(unix * 1000);
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '. ' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 
 function fmtBytes(n) {
@@ -71,10 +73,10 @@ const MODULES = [
                 r.append(el('td', 'muted', k), el('td', '', String(v)));
                 table.append(r);
             };
-            prop('PTS anchor (baseline)', d.pts_anchor);
-            prop('Current UTC', d.utc_now);
-            prop('Current PTS', d.pts_now + ' ms');
-            prop('Browser clock delta', (t0 - d.pts_now) + ' ms (approx, incl. request latency)');
+            prop('PTS anchor', d.pts_anchor);
+            prop('UTC now', d.utc_now);
+            prop('PTS now', d.pts_now + ' ms');
+            prop('Clock delta', (t0 - d.pts_now) + ' ms approx.');
             prop('Server', 'v' + d.server_version + ' (API v' + d.api_version + ', ' + d.env + ')');
             box.append(table);
         },
@@ -169,11 +171,11 @@ const MODULES = [
             const buckets = Object.keys(d.load).sort();
             if (!buckets.length) { box.append(el('p', 'muted', 'No traffic recorded yet.')); return; }
             const table = el('table');
-            table.append(row(['Hour', 'hello', 'score_submit', 'signal'], 'th'));
+            table.append(row(['Hour', 'hello', 'score', 'signal'], 'th'));
             for (const b of buckets) {
                 const m = d.load[b];
                 table.append(row([
-                    b.slice(0, 8) + ' ' + b.slice(8) + ':00',
+                    b.slice(6, 8) + '.' + b.slice(4, 6) + '. ' + b.slice(8) + 'h',
                     m.hello || 0, m.score_submit || 0, m.signal || 0,
                 ]));
             }
@@ -188,7 +190,7 @@ const MODULES = [
             box.replaceChildren();
             box.append(el('p', 'muted', d.total + ' registered, showing latest ' + d.users.length));
             const table = el('table');
-            table.append(row(['ID', 'IP', 'First seen', 'Last seen', 'Hellos', 'Latency', ''], 'th'));
+            table.append(row(['ID', 'IP', 'First', 'Last', 'N', 'Lat', ''], 'th'));
             for (const u of d.users) {
                 const online = d.now - u.last_seen <= d.online_window;
                 const r = row([u.id, u.ip, fmtTime(u.first_seen), fmtTime(u.last_seen), u.hello_count,
@@ -216,10 +218,10 @@ const MODULES = [
             box.replaceChildren();
             if (!d.scores.length) { box.append(el('p', 'muted', 'No scores yet.')); return; }
             const table = el('table');
-            table.append(row(['#', 'Name', 'Score', 'Level', 'Player', 'Valid', 'Date', ''], 'th'));
+            table.append(row(['#', 'Name', 'Score', 'Lvl', 'Player', 'Valid', 'Date', ''], 'th'));
             for (const s of d.scores) {
                 const r = row([s.rank, s.name, s.score, s.level, s.player_id,
-                    s.validated ? 'yes' : 'unchecked', fmtTime(s.created)]);
+                    s.validated ? 'yes' : '-', s.date]);
                 const btn = el('button', 'small', 'delete');
                 btn.onclick = async () => {
                     if (!confirm('Delete score by ' + s.name + '?')) return;

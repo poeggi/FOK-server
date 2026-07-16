@@ -47,7 +47,7 @@ switch ($action) {
         $ms = Util::nowMs();
         Util::jsonOut([
             'ok' => true,
-            'pts_anchor' => '1970-01-01T00:00:00.000Z (unix epoch, UTC)',
+            'pts_anchor' => '1970-01-01T00:00:00.000Z (unix epoch)',
             'utc_now' => gmdate('Y-m-d\TH:i:s', intdiv($ms, 1000)) . sprintf('.%03dZ', $ms % 1000),
             'pts_now' => $ms,
             'server_version' => FOK_SERVER_VERSION,
