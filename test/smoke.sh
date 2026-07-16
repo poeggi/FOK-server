@@ -232,6 +232,11 @@ else
     fi
     expect "gear toggles the views" 'toggle.onclick' "$R"
 
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=props")
+    expect "props tile has pts anchor" '1970-01-01T00:00:00.000Z' "$R"
+    PN=$(echo "$R" | grep -oE '"pts_now":[0-9]+' | cut -d: -f2)
+    if [ "${#PN}" -eq 13 ]; then echo "ok   props pts is milliseconds"; else echo "FAIL props pts not ms: $PN"; fail=1; fi
+
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=stats")
     expect "admin stats" '"ok":true' "$R"
     expect "admin stats registered" "$(strict '"registered":2')" "$R"

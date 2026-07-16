@@ -42,6 +42,18 @@ switch ($action) {
             'now' => time(),
         ]);
 
+    case 'props':
+        $ms = Util::nowMs();
+        Util::jsonOut([
+            'ok' => true,
+            'pts_anchor' => '1970-01-01T00:00:00.000Z (unix epoch, UTC)',
+            'utc_now' => gmdate('Y-m-d\TH:i:s', intdiv($ms, 1000)) . sprintf('.%03dZ', $ms % 1000),
+            'pts_now' => $ms,
+            'server_version' => FOK_SERVER_VERSION,
+            'api_version' => FOK_API_VERSION,
+            'env' => FOK_ENV,
+        ]);
+
     case 'users':
         $total = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
         $st = $db->query('SELECT id, ip, first_seen, last_seen, hello_count FROM players ORDER BY last_seen DESC LIMIT 200');

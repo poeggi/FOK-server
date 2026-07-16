@@ -58,6 +58,27 @@ const MODULES = [
         },
     },
     {
+        id: 'props',
+        title: 'Properties',
+        async refresh(box) {
+            const t0 = Date.now();
+            const d = await api('props');
+            box.replaceChildren();
+            const table = el('table');
+            const prop = (k, v) => {
+                const r = el('tr');
+                r.append(el('td', 'muted', k), el('td', '', String(v)));
+                table.append(r);
+            };
+            prop('PTS anchor (baseline)', d.pts_anchor);
+            prop('Current UTC', d.utc_now);
+            prop('Current PTS', d.pts_now + ' ms');
+            prop('Browser clock delta', (t0 - d.pts_now) + ' ms (approx, incl. request latency)');
+            prop('Server', 'v' + d.server_version + ' (API v' + d.api_version + ', ' + d.env + ')');
+            box.append(table);
+        },
+    },
+    {
         id: 'alerts',
         title: 'Alerts',
         async refresh(box) {
@@ -301,4 +322,4 @@ toggle.onclick = () => {
 };
 
 refreshAll();
-setInterval(() => { refreshModule('stats'); refreshModule('alerts'); }, 30000);
+setInterval(() => { refreshModule('stats'); refreshModule('alerts'); refreshModule('props'); }, 30000);
