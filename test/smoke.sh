@@ -273,6 +273,20 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"payload\":\"$BIGPAY\"}" "$BASE/api/relay.php")
 expect "oversized relay payload rejected" '"error":"invalid payload"' "$R"
 
+# Directional isolation: a message A->B must never come back to A.
+curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"payload\":\"IN:20:up\"}" "$BASE/api/relay.php" > /dev/null
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID1&peer=$ID2")
+expect "relay does not echo to sender" '204' "$R"
+curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1" > /dev/null
+
+# Long-poll times out to 204 and actually holds the request.
+T0=$(date +%s)
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1&wait=2")
+T1=$(date +%s)
+expect "relay long-poll times out to 204" '204' "$R"
+if [ $((T1 - T0)) -ge 1 ]; then echo "ok   relay long-poll held the request"; else echo "FAIL relay long-poll returned too fast"; fail=1; fi
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
 expect "friendship removed" '"ok":true' "$R"
 
