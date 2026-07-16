@@ -67,6 +67,21 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d '{"id":"deadbeef","to":"cafe0001","type":"hack","payload":""}' "$BASE/api/signal.php")
 expect "signal rejects bad type" '"error":"invalid type"' "$R"
 
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"id":"deadbeef","to":"cafe0001","type":"chat","payload":"gl hf"}' "$BASE/api/signal.php")
+expect "chat signal accepted" '"ok":true' "$R"
+curl -s "$BASE/api/poll.php?id=cafe0001" > /dev/null
+
+LONG=$(printf 'x%.0s' $(seq 1 121))
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"deadbeef\",\"to\":\"cafe0001\",\"type\":\"chat\",\"payload\":\"$LONG\"}" "$BASE/api/signal.php")
+expect "chat over 120 bytes rejected" '"error":"invalid payload"' "$R"
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"deadbeef\",\"to\":\"cafe0001\",\"type\":\"offer\",\"payload\":\"$LONG\"}" "$BASE/api/signal.php")
+expect "offer allows large payload" '"ok":true' "$R"
+curl -s "$BASE/api/poll.php?id=cafe0001" > /dev/null
+
 R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=cafe0001")
 expect "poll empty is 204" '204' "$R"
 

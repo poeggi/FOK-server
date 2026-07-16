@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-const FOK_VERSION = '0.2.0';
+const FOK_VERSION = '0.3.0';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
@@ -22,6 +22,8 @@ const FOK_DUEL_WINDOW = 60;
 // Undelivered signaling messages expire after this many seconds.
 const FOK_SIGNAL_TTL = 120;
 const FOK_SIGNAL_MAX_PAYLOAD = 16384;
+// Chat messages are hard-capped much lower than SDP payloads.
+const FOK_CHAT_MAX_LEN = 120;
 const FOK_TOP_SCORES = 100;
 // Must match MAX_NAME in FOK-snake js/assets.js.
 const FOK_MAX_NAME_LEN = 15;

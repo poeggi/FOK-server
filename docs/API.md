@@ -159,13 +159,37 @@ Response: `{"ok": true}`
 
 Types (fixed set, anything else is rejected):
 
-    invite    ask "to" for a 1:1 game            payload: free text or ""
-    accept    accept an invite                    payload: ""
+    invite    ask "to" for a 1:1 game            payload: JSON {"profile": <profile>}
+    accept    accept an invite                    payload: JSON {"profile": <profile>}
     decline   decline an invite                   payload: ""
-    offer     WebRTC SDP offer                    payload: JSON-encoded RTCSessionDescription
-    answer    WebRTC SDP answer                   payload: JSON-encoded RTCSessionDescription
+    offer     WebRTC SDP offer                    payload: JSON {"sdp": <RTCSessionDescription>,
+                                                                 "seed": <32-bit int>,
+                                                                 "profile": <profile>}
+    answer    WebRTC SDP answer                   payload: JSON {"sdp": <RTCSessionDescription>,
+                                                                 "profile": <profile>}
     ice       ICE candidate                       payload: JSON-encoded RTCIceCandidate
     bye       leave / abort the session           payload: ""
+    chat      text message (max 120 bytes total)  payload: plain text
+
+## The player profile object
+
+So the two players really see each other (name and look, not just an
+ID), matchmaking messages carry a profile object:
+
+    {
+      "name": "KAI",              display name, max 15 chars (= MAX_NAME)
+      "color": 3,                 SNAKE_COLORS index
+      "shopItems": {"hat": 1}     worn cosmetic items (cfg.wornItems)
+    }
+
+- invite/accept carry it so each side can render the opponent (name,
+  snake color, worn items) already in the invite dialog.
+- offer/answer carry it too, because quick-matched players (match.php)
+  skipped the invite step; including it always keeps one code path.
+- The server relays profiles verbatim and never stores them. Clients
+  MUST treat received profile fields as untrusted: clamp name to 15
+  chars, clamp color/shopItems to known values, and render as text
+  only (canvas/textContent, never HTML).
 
 ## POST /api/match.php - quick match (pair with anyone waiting)
 
@@ -187,14 +211,17 @@ without a seek poll). After a match both sides continue at step 3 of the
 Player A wants to play with player B (A knows B's ID, e.g. from the
 friend list; the hello `friends` field tells A whether B is online):
 
-    1. A -> signal {type: "invite", to: B}; A starts polling poll.php (~1 s).
+    1. A -> signal {type: "invite", to: B, payload: {"profile": ...}};
+       A starts polling poll.php (~1 s). B's UI can now show who is
+       asking, with name and snake look.
     2. B sees the invite in its hello poll (within ~30 s; within ~1 s if
        B is on the multiplayer screen and therefore polling poll.php).
-       UI asks the user. B -> signal accept (or decline, ending the flow).
+       UI asks the user. B -> signal accept with B's profile (or
+       decline, ending the flow).
     3. A (on accept) generates the 32-bit duel seed, creates an
        RTCPeerConnection with a DataChannel (unreliable, unordered:
-       maxRetransmits 0, ordered false), and sends
-       signal offer with payload = JSON {"sdp": <description>, "seed": n}.
+       maxRetransmits 0, ordered false), and sends signal offer with
+       payload = JSON {"sdp": <description>, "seed": n, "profile": ...}.
        The offerer ALWAYS generates the seed; both clients start the
        deterministic duel sim from it (startDuel(seed)).
     4. B sets the remote description, answers: B -> signal answer.
@@ -223,6 +250,22 @@ session:
 
 This gives the required once-per-second alive check at zero server load
 and much lower latency than any HTTP poll could.
+
+## Live chat (prepared, not yet implemented)
+
+The architecture reserves a chat path for both phases; clients may ship
+it later without any server change:
+
+- Before the DataChannel is open (invite pending, lobby): the "chat"
+  signal type relays a plain-text message between the two IDs. The
+  server hard-rejects payloads over 120 bytes.
+- During a duel: chat rides in-band on the open DataChannel like every
+  other game message, e.g. {"t": "chat", "text": "..."}. Clients
+  enforce the same 120-byte cap on send AND on receive (a hostile peer
+  is not bound by our client code).
+- Render received chat as plain text only, never HTML. Rate-limit
+  display client-side (e.g. drop to 1 message/s) to keep spam from
+  affecting gameplay.
 
 Notes:
 

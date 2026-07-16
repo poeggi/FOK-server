@@ -10,7 +10,7 @@ require_once __DIR__ . '/Db.php';
  */
 final class Signals
 {
-    public const TYPES = ['invite', 'accept', 'decline', 'offer', 'answer', 'ice', 'bye'];
+    public const TYPES = ['invite', 'accept', 'decline', 'offer', 'answer', 'ice', 'bye', 'chat'];
 
     public static function send(string $from, string $to, string $type, string $payload): void
     {

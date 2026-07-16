@@ -101,8 +101,9 @@ the repo, in commits, or in plain text on the server.
       -> {"ok":true,"scores":[{"rank":1,"name":"...","score":...,...}]}
     POST /api/scores.php {"id","name","score","level","diff","color"?,"shopItems"?,"seed"?,"inputs"?}
       -> {"ok":true,"rank":n,"top":bool}
-    POST /api/signal.php {"id","to","type":"invite|accept|decline|offer|answer|ice|bye","payload"}
-      -> {"ok":true}
+    POST /api/signal.php {"id","to","type":"invite|accept|decline|offer|answer|ice|bye|chat","payload"}
+      -> {"ok":true}   (chat payloads capped at 120 bytes; matchmaking
+                        payloads carry the player profile - see docs/API.md)
 
 Signals are delivered through the recipient's next hello poll. Clients poll
 slowly (~30 s) when idle and fast (~1-2 s) while matchmaking/signaling.

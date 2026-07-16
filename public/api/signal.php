@@ -28,7 +28,8 @@ if (!Util::isValidId($id) || !Util::isValidId($to) || $id === $to) {
 if (!is_string($type) || !in_array($type, Signals::TYPES, true)) {
     Util::fail('invalid type');
 }
-if (!is_string($payload) || strlen($payload) > FOK_SIGNAL_MAX_PAYLOAD) {
+$max = $type === 'chat' ? FOK_CHAT_MAX_LEN : FOK_SIGNAL_MAX_PAYLOAD;
+if (!is_string($payload) || strlen($payload) > $max) {
     Util::fail('invalid payload');
 }
 
