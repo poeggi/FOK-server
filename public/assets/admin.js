@@ -49,6 +49,7 @@ const MODULES = [
             stat('Users online', d.counts.online);
             stat('Playing 1:1', d.counts.playing);
             stat('Users registered', d.counts.registered);
+            stat('Avg latency', d.avg_latency === null ? 'n/a' : d.avg_latency + ' ms');
             stat('Scores stored', d.scores_total);
             stat('DB entries', d.db_rows);
             stat('DB size', fmtBytes(d.db_size));
@@ -187,10 +188,11 @@ const MODULES = [
             box.replaceChildren();
             box.append(el('p', 'muted', d.total + ' registered, showing latest ' + d.users.length));
             const table = el('table');
-            table.append(row(['ID', 'IP', 'First seen', 'Last seen', 'Hellos', ''], 'th'));
+            table.append(row(['ID', 'IP', 'First seen', 'Last seen', 'Hellos', 'Latency', ''], 'th'));
             for (const u of d.users) {
                 const online = d.now - u.last_seen <= d.online_window;
-                const r = row([u.id, u.ip, fmtTime(u.first_seen), fmtTime(u.last_seen), u.hello_count]);
+                const r = row([u.id, u.ip, fmtTime(u.first_seen), fmtTime(u.last_seen), u.hello_count,
+                    u.latency === null ? '-' : u.latency + ' ms']);
                 if (online) r.classList.add('online');
                 const btn = el('button', 'small', 'delete');
                 btn.onclick = async () => {

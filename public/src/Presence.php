@@ -5,14 +5,27 @@ require_once __DIR__ . '/Db.php';
 
 final class Presence
 {
-    public static function touch(string $id, string $ip): void
+    public static function touch(string $id, string $ip, ?int $latency = null): void
     {
         $now = time();
         Db::get()->prepare(
-            'INSERT INTO players (id, ip, first_seen, last_seen, hello_count) VALUES (?, ?, ?, ?, 1)
+            'INSERT INTO players (id, ip, first_seen, last_seen, hello_count, latency)
+             VALUES (?, ?, ?, ?, 1, ?)
              ON CONFLICT (id) DO UPDATE SET ip = excluded.ip, last_seen = excluded.last_seen,
-                 hello_count = hello_count + 1'
-        )->execute([$id, $ip, $now, $now]);
+                 hello_count = hello_count + 1,
+                 latency = COALESCE(excluded.latency, players.latency)'
+        )->execute([$id, $ip, $now, $now, $latency]);
+    }
+
+    /** Average reported latency of currently online players, or null. */
+    public static function avgLatency(): ?int
+    {
+        $st = Db::get()->prepare(
+            'SELECT AVG(latency) FROM players WHERE last_seen > ? AND latency IS NOT NULL'
+        );
+        $st->execute([time() - FOK_ONLINE_WINDOW]);
+        $avg = $st->fetchColumn();
+        return $avg === null ? null : (int)round((float)$avg);
     }
 
     public static function touchDuel(string $id, string $peer): void
@@ -25,20 +38,26 @@ final class Presence
         )->execute([$a, $b, $now, $now]);
     }
 
-    /** @return array map of id => true for the given ids that are online */
-    public static function onlineOf(array $ids): array
+    /** @return array map of id => [online: bool, latency: ?int] for known ids */
+    public static function infoOf(array $ids): array
     {
         if ($ids === []) {
             return [];
         }
         $ph = implode(',', array_fill(0, count($ids), '?'));
-        $st = Db::get()->prepare("SELECT id FROM players WHERE id IN ($ph) AND last_seen > ?");
-        $st->execute([...$ids, time() - FOK_ONLINE_WINDOW]);
-        $online = [];
+        $st = Db::get()->prepare("SELECT id, last_seen, latency FROM players WHERE id IN ($ph)");
+        $st->execute($ids);
+        $cutoff = time() - FOK_ONLINE_WINDOW;
+        $out = [];
         foreach ($st->fetchAll() as $row) {
-            $online[$row['id']] = true;
+            $online = (int)$row['last_seen'] > $cutoff;
+            $out[$row['id']] = [
+                'online' => $online,
+                // A latency is only meaningful while the friend is online.
+                'latency' => $online && $row['latency'] !== null ? (int)$row['latency'] : null,
+            ];
         }
-        return $online;
+        return $out;
     }
 
     public static function counts(): array

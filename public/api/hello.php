@@ -10,10 +10,13 @@ require_once __DIR__ . '/../src/Signals.php';
  * POST {
  *   "id": "8-hex",
  *   "duel_with": "8-hex",       optional, while a 1:1 game runs
+ *   "latency": int ms,          optional, the client's measured latency
+ *                               (mandated regularly, see docs/API.md)
  *   "friends": ["8-hex", ...]   optional, ids to check for online status
  * }
  * Returns presence counters, pending signaling messages for the caller
- * (drained on read) and, when friends were sent, which of them are online.
+ * (drained on read) and, when friends were sent, which of them are
+ * online plus their last reported latency.
  * Clients send this every ~30s; fast polling belongs to poll.php.
  */
 Util::cors();
@@ -27,7 +30,12 @@ if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
 
-Presence::touch($id, Util::clientIp());
+$latency = $body['latency'] ?? null;
+if ($latency !== null && (!is_int($latency) || $latency < 0 || $latency > 60000)) {
+    Util::fail('invalid latency');
+}
+
+Presence::touch($id, Util::clientIp(), $latency);
 Util::bump('hello');
 
 $duelWith = $body['duel_with'] ?? null;
@@ -55,10 +63,12 @@ if (isset($body['friends'])) {
             Util::fail('invalid friends');
         }
     }
-    $online = Presence::onlineOf($friends);
+    $info = Presence::infoOf($friends);
     $out['friends_online'] = new stdClass();
+    $out['friends_latency'] = new stdClass();
     foreach ($friends as $f) {
-        $out['friends_online']->$f = isset($online[$f]);
+        $out['friends_online']->$f = $info[$f]['online'] ?? false;
+        $out['friends_latency']->$f = $info[$f]['latency'] ?? null;
     }
 }
 

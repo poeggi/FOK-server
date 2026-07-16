@@ -183,9 +183,15 @@ if [ $((T1 - T0)) -ge 1 ]; then echo "ok   long poll held the request"; else ech
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"duel_with\":\"$ID2\"}" "$BASE/api/hello.php")
 expect "duel counted" "$(strict '"playing":2')" "$R"
 
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"latency\":31}" "$BASE/api/hello.php" > /dev/null
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\",\"aaaa0000\"]}" "$BASE/api/hello.php")
 expect "friends online reported" "\"$ID2\":true" "$R"
 expect "unknown friend offline" '"aaaa0000":false' "$R"
+FL=$(echo "$R" | grep -o '"friends_latency":{[^}]*}')
+expect "friend latency reported" "\"$ID2\":31" "$FL"
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"latency\":99999}" "$BASE/api/hello.php")
+expect "absurd latency rejected" '"error":"invalid latency"' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"seek\"}" "$BASE/api/match.php")
 expect "first seeker waits" '"waiting":true' "$R"
@@ -241,6 +247,7 @@ else
     expect "admin stats" '"ok":true' "$R"
     expect "admin stats registered" "$(strict '"registered":2')" "$R"
     expect "admin stats db rows" '"db_rows":' "$R"
+    expect "admin stats avg latency" '"avg_latency":' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
     expect "backup via GET rejected" '"error":"POST only"' "$R"

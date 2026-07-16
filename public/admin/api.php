@@ -32,6 +32,7 @@ switch ($action) {
         Util::jsonOut([
             'ok' => true,
             'counts' => $counts,
+            'avg_latency' => Presence::avgLatency(),
             'scores_total' => $scoreCount,
             'db_rows' => $dbRows,
             'load' => $load,
@@ -56,7 +57,7 @@ switch ($action) {
 
     case 'users':
         $total = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
-        $st = $db->query('SELECT id, ip, first_seen, last_seen, hello_count FROM players ORDER BY last_seen DESC LIMIT 200');
+        $st = $db->query('SELECT id, ip, first_seen, last_seen, hello_count, latency FROM players ORDER BY last_seen DESC LIMIT 200');
         Util::jsonOut(['ok' => true, 'total' => $total, 'online_window' => FOK_ONLINE_WINDOW,
             'now' => time(), 'users' => $st->fetchAll()]);
 

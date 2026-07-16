@@ -109,6 +109,27 @@ on typical connections) - enough for frame- and audio-level sync.
 - Same pattern for anything that must be simultaneous: music cues,
   countdowns, sudden-death onset.
 
+### Latency measurement and reporting (MANDATED)
+
+Every client regularly measures its latency to the server and reports
+it via hello's `latency` field (integer ms), so the server keeps a
+record per player (shown in the admin UI, and served to friends - see
+hello's `friends_latency`).
+
+Measurement procedure:
+
+    1. Take at least THREE samples: rtt of GET /api/time.php each
+       (reuse the clock-sync samples - same requests).
+    2. If the FIRST value is an extreme outlier (cold connection: DNS,
+       TCP and TLS setup make it much larger), discard it.
+    3. Report the AVERAGE of the remaining samples, rounded to ms -
+       a stable value, not a single noisy reading.
+
+Report with the next hello after measuring; re-measure at least when
+entering the multiplayer screen and every few minutes while online.
+Valid range 0..60000; omit the field between measurements (the server
+keeps the last value).
+
 ### Server-side PTS validation
 
 Client PTS can NEVER be in the future - no tolerance. Endpoints that
@@ -130,6 +151,9 @@ Request:
     {
       "id": "c0ffee42",           required, player ID
       "duel_with": "deadbeef",    optional, peer ID while a 1:1 game runs
+      "latency": 23,              optional, measured latency in ms (the
+                                  MANDATED regular report, see Latency
+                                  measurement; server keeps the last value)
       "friends": ["deadbeef"]     optional, up to 64 IDs to check (send the
                                   friend list when the multiplayer screen
                                   is open)
@@ -148,7 +172,12 @@ Response:
       "signals": [                pending messages for "id", oldest first
         {"from": "deadbeef", "type": "invite", "payload": "", "created": 1784182410}
       ],
-      "friends_online": {"deadbeef": true}   only when "friends" was sent
+      "friends_online": {"deadbeef": true},  only when "friends" was sent
+      "friends_latency": {"deadbeef": 31}    only when "friends" was sent:
+                                             last reported latency (ms) per
+                                             online friend, null when the
+                                             friend is offline or never
+                                             reported - for the overview UI
     }
 
 Rules:

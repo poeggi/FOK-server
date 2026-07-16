@@ -72,11 +72,20 @@ ok(preg_match('/^\d{2}\.\d{2}\.\d{2}$/', $top[0]['date']) === 1, 'date is DD.MM.
 $long = Scores::submit('aaaaaaaa', str_repeat('X', 40), 1, 1, 1, 0, '{}', null, null);
 ok(mb_strlen(Scores::top()[3]['name']) === FOK_MAX_NAME_LEN, 'name capped at max length');
 
-// Presence: targeted online check
-$online = Presence::onlineOf(['aaaaaaaa', 'cccccccc']);
-ok(isset($online['aaaaaaaa']), 'known player reported online');
-ok(!isset($online['cccccccc']), 'unknown player not online');
-ok(Presence::onlineOf([]) === [], 'empty friend list is fine');
+// Presence: targeted online + latency info
+$info = Presence::infoOf(['aaaaaaaa', 'cccccccc']);
+ok(($info['aaaaaaaa']['online'] ?? false) === true, 'known player reported online');
+ok(!isset($info['cccccccc']), 'unknown player not in info map');
+ok(Presence::infoOf([]) === [], 'empty friend list is fine');
+ok($info['aaaaaaaa']['latency'] === null, 'no latency before first report');
+
+// Presence: latency reports stick and average
+Presence::touch('aaaaaaaa', '1.2.3.9', 40);
+Presence::touch('bbbbbbbb', '5.6.7.8', 20);
+Presence::touch('aaaaaaaa', '1.2.3.9');
+$info = Presence::infoOf(['aaaaaaaa']);
+ok($info['aaaaaaaa']['latency'] === 40, 'latency kept when a report omits it');
+ok(Presence::avgLatency() === 30, 'average latency over online players');
 
 // Matchmaking: first seeker waits, second gets matched, roles assigned
 ok((Matchmaking::seek('11111111')['waiting'] ?? false) === true, 'first seeker waits');

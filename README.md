@@ -137,10 +137,11 @@ server. Staging needs its own one-time hash bootstrap.
       -> {"ok":true,"server":"<x.y.z>","api":1,"env":"live"}
     GET  /api/time.php
       -> {"ok":true,"t":<server ms>}   clock sync for the shared PTS base
-    POST /api/hello.php  {"id":"cafe0001", "duel_with":"deadbeef"?, "friends":[...]?}
-      -> {"ok":true,"now":...,"online":n,"playing":n,"registered":n,
+    POST /api/hello.php  {"id":"cafe0001", "duel_with":"deadbeef"?,
+                          "latency":ms?, "friends":[...]?}
+      -> {"ok":true,"now":ms,"online":n,"playing":n,"registered":n,
           "signals":[{"from":"...","type":"invite","payload":"..."},...],
-          "friends_online":{...}?}
+          "friends_online":{...}?, "friends_latency":{...}?}
     GET  /api/poll.php?id=cafe0001&wait=8
       -> 204 (nothing pending) | {"ok":true,"signals":[...]}
          (wait=N long-polls: answers ~150 ms after a signal arrives)

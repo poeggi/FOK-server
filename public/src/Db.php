@@ -47,7 +47,10 @@ final class Db
         if ($v < 2) {
             self::schemaV2($pdo);
         }
-        $pdo->exec('PRAGMA user_version = 2');
+        if ($v < 3) {
+            $pdo->exec('ALTER TABLE players ADD COLUMN latency INTEGER');
+        }
+        $pdo->exec('PRAGMA user_version = 3');
     }
 
     // A database commissioned from scratch starts with the same default
