@@ -42,6 +42,7 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
         hello.php     heartbeat: presence, counters, signals, friends online
         poll.php      fast signal poll, 204 when idle (matchmaking window)
         match.php     quick-match queue (pair with anyone waiting)
+        start.php     server-issued absolute level-start PTS per pair
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
       admin/          session-protected admin UI + JSON API
@@ -147,6 +148,8 @@ server. Staging needs its own one-time hash bootstrap.
          (wait=N long-polls: answers ~150 ms after a signal arrives)
     POST /api/match.php  {"id":"cafe0001","action":"seek|cancel"}
       -> {"ok":true,"waiting":true} | {"ok":true,"matched":"...","role":"..."}
+    POST /api/start.php  {"id":"cafe0001","peer":"deadbeef"}
+      -> {"ok":true,"start_pts":ms,"now":ms}   identical for both peers
     GET  /api/scores.php?limit=10
       -> {"ok":true,"scores":[{"rank":1,"name":"...","score":...,...}]}
     POST /api/scores.php {"id","name","score","level","diff","color"?,"shopItems"?,"seed"?,"inputs"?}

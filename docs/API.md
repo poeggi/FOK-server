@@ -98,14 +98,18 @@ on typical connections) - enough for frame- and audio-level sync.
   moment the event actually happened, stamped and sent as soon as
   possible. By the time it arrives anywhere, that PTS is already in
   the past.
-- The only future PTS values that exist are SCHEDULES between peers,
-  and they stay on the DataChannel (never sent to the server): the
-  offerer announces "level starts at PTS X" with X at least 200 ms
-  ahead, so both clients trigger the start (music, READY/GO, first
-  tick) at the same wall-clock instant using their local offset.
-- A confirming "start" message follows at the actual start. Receivers
-  must understand its PTS refers to a moment ALREADY IN THE PAST when
-  it arrives - it verifies the schedule, it does not trigger anything.
+- LEVEL STARTS ARE SERVER-ISSUED: the absolute start PTS comes from
+  POST /api/start.php (below), never from a client - the server owns
+  the clock, so it owns the start point. Both clients receive the
+  identical value and trigger the start (music, READY/GO, first tick)
+  at that instant using their local offset.
+- Peers may still schedule COSMETIC-only events among themselves with
+  future PTS values on the DataChannel (those never reach the server);
+  anything gameplay-relevant uses the server-issued start.
+- A confirming "start" message between the peers follows at the actual
+  start. Receivers must understand its PTS refers to a moment ALREADY
+  IN THE PAST when it arrives - it verifies the schedule, it does not
+  trigger anything.
 - Same pattern for anything that must be simultaneous: music cues,
   countdowns, sudden-death onset.
 - Audio implementation note: for actually-synchronous playback, map
@@ -136,6 +140,20 @@ Report with the next hello after measuring; re-measure at least when
 entering the multiplayer screen and every few minutes while online.
 Valid range 0..60000; omit the field between measurements (the server
 keeps the last value).
+
+### POST /api/start.php - server-issued level start
+
+    POST {"id": "c0ffee42", "peer": "deadbeef"}
+      -> {"ok":true, "start_pts": 1784190295323, "now": 1784190295123}
+
+When both peers are ready (DataChannel open, level loaded), EACH calls
+this endpoint; both receive the IDENTICAL absolute `start_pts` for
+their pair and start the level exactly then. The server chooses the
+lead time: at least 200 ms (start_lead_min_ms setting), scaled up by
+the pair's reported latencies, capped at 3 s - so the answer always
+arrives comfortably before the moment it announces. Once a start has
+passed, the next request issues a fresh one (next level, rematch).
+`now` is included for a free clock re-check.
 
 ### Server-side PTS validation
 
@@ -369,11 +387,14 @@ friend list; the hello `friends` field tells A whether B is online):
     4. B sets the remote description, answers: B -> signal answer.
     5. Both sides exchange ice messages as candidates arrive.
     6. When the DataChannel opens on both ends, BOTH clients stop
-       polling poll.php. Gameplay starts and ALL game traffic flows
-       peer-to-peer (see FOK-snake docs/multiplayer-server-prompt.md for
-       the tick sync protocol). Clients keep the normal slow hello
-       heartbeat (~30 s) with duel_with set, so the server can count
-       running games.
+       polling poll.php, and EACH calls POST /api/start.php {id, peer}:
+       the server answers both with the identical absolute start_pts,
+       and the level begins exactly then (music, READY/GO, first tick).
+       From here ALL game traffic flows peer-to-peer (see FOK-snake
+       docs/multiplayer-server-prompt.md for the tick sync protocol).
+       Clients keep the normal slow hello heartbeat (~30 s) with
+       duel_with set, so the server can count running games. For each
+       further level or a rematch, both call start.php again.
     7. Either side sends bye (via the DataChannel if open, and via
        signal as fallback) to end the session.
 

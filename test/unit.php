@@ -16,6 +16,7 @@ require_once __DIR__ . '/../public/src/Signals.php';
 require_once __DIR__ . '/../public/src/Auth.php';
 require_once __DIR__ . '/../public/src/Backup.php';
 require_once __DIR__ . '/../public/src/Matchmaking.php';
+require_once __DIR__ . '/../public/src/Starts.php';
 
 $tests = 0;
 function ok(bool $cond, string $what): void
@@ -99,6 +100,17 @@ ok((Matchmaking::seek('11111111')['waiting'] ?? false) === true, 'queue empty af
 Matchmaking::cancel('11111111');
 ok((Matchmaking::seek('33333333')['waiting'] ?? false) === true, 'cancelled seeker not matched');
 Matchmaking::cancel('33333333');
+
+// Server-issued level starts: identical for both peers, future, renewable
+$s1 = Starts::request('aaaaaaaa', 'bbbbbbbb');
+$s2 = Starts::request('bbbbbbbb', 'aaaaaaaa');
+ok($s1 === $s2, 'both peers receive the identical start pts');
+ok($s1 > Util::nowMs(), 'start pts lies in the future');
+ok($s1 <= Util::nowMs() + 3000, 'start lead is capped');
+Db::get()->prepare('UPDATE starts SET start_pts = ? WHERE a = ? AND b = ?')
+    ->execute([Util::nowMs() - 1000, 'aaaaaaaa', 'bbbbbbbb']);
+$s3 = Starts::request('aaaaaaaa', 'bbbbbbbb');
+ok($s3 > Util::nowMs(), 'fresh start issued once the previous one passed');
 
 // Signals: mailbox drains exactly once, order preserved
 ok(!Signals::any('bbbbbbbb'), 'any() false on empty mailbox');

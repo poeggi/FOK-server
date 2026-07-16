@@ -50,7 +50,16 @@ final class Db
         if ($v < 3) {
             $pdo->exec('ALTER TABLE players ADD COLUMN latency INTEGER');
         }
-        $pdo->exec('PRAGMA user_version = 3');
+        if ($v < 4) {
+            $pdo->exec('CREATE TABLE IF NOT EXISTS starts (
+                a TEXT NOT NULL,
+                b TEXT NOT NULL,
+                start_pts INTEGER NOT NULL,
+                created INTEGER NOT NULL,
+                PRIMARY KEY (a, b)
+            )');
+        }
+        $pdo->exec('PRAGMA user_version = 4');
     }
 
     // A database commissioned from scratch starts with the same default

@@ -13,6 +13,9 @@ if [ -z "${FTP_HOST:-}" ] || [ -z "${FTP_USER:-}" ] || [ -z "${FTP_PASS:-}" ]; t
     exit 1
 fi
 
+# src/ uploads FIRST: shared classes and schema migrations must land
+# before the endpoints that depend on them, so the seconds-long deploy
+# window can never serve new endpoints against old code.
 count=0
 while IFS= read -r f; do
     rel="${f#public/}"
@@ -20,5 +23,5 @@ while IFS= read -r f; do
         -T "$f" "ftp://$FTP_HOST/$prefix$rel"
     count=$((count + 1))
     echo "  $prefix$rel"
-done < <(find public -type f | sort)
+done < <({ find public/src -type f | sort; find public -type f -not -path 'public/src/*' | sort; })
 echo "Deployed $count file(s) [${prefix:+staging}${prefix:-live}]"

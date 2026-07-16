@@ -29,7 +29,15 @@ $root = Join-Path $PSScriptRoot '..\public' | Resolve-Path
 $base = if ($Only) { Join-Path $root $Only | Resolve-Path } else { $root }
 
 $prefix = if ($Staging) { 'staging/' } else { '' }
-$files = Get-ChildItem -Path $base -Recurse -File
+# src/ uploads first: shared classes and schema migrations must land
+# before the endpoints that depend on them (mid-deploy consistency).
+$srcDir = Join-Path $root 'src'
+$files = if ($Only) {
+    Get-ChildItem -Path $base -Recurse -File
+} else {
+    @(Get-ChildItem -Path $srcDir -Recurse -File) +
+    @(Get-ChildItem -Path $base -Recurse -File | Where-Object { $_.FullName -notlike "$srcDir*" })
+}
 $done = 0
 foreach ($f in $files) {
     $rel = $f.FullName.Substring($root.Path.Length + 1) -replace '\\', '/'
