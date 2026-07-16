@@ -185,9 +185,15 @@ Request:
       "latency": 23,              optional, measured latency in ms (the
                                   MANDATED regular report, see Latency
                                   measurement; server keeps the last value)
-      "friends": ["deadbeef"]     optional, up to 64 IDs to check (send the
+      "friends": ["deadbeef"],    optional, up to 64 IDs to check (send the
                                   friend list when the multiplayer screen
                                   is open)
+      "auto_accept": true         optional bool: send true in EVERY hello
+                                  while the QR/add-friend screen is open -
+                                  incoming friend requests are then accepted
+                                  immediately (see Friendships). Expires
+                                  ~60 s after the last flagged hello; a
+                                  hello without the flag clears it.
     }
 
 Response:
@@ -387,7 +393,14 @@ invites; quick match remains open to strangers by design.
     POST {"id":"c0ffee42", "action":"request", "peer":"deadbeef"}
       -> {"ok":true,"state":"pending"}      recorded; peer sees it in list
       -> {"ok":true,"state":"accepted"}     when the peer had already
-                                            requested me (auto-match)
+                                            requested me (auto-match), OR
+                                            when the peer is currently on
+                                            the QR/add-friend screen
+                                            (hello auto_accept flag): being
+                                            there is the consent, the
+                                            handshake completes instantly
+                                            and both sides get an
+                                            'accepted' notification
     POST {"id":..., "action":"accept", "peer":...}
       -> {"ok":true,"state":"accepted"}     404 without a pending request
     POST {"id":..., "action":"remove", "peer":...}

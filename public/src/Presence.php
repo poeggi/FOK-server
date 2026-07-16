@@ -2,20 +2,33 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/Settings.php';
 
 final class Presence
 {
-    public static function touch(string $id, string $ip, ?int $latency = null, ?string $name = null): void
+    public static function touch(string $id, string $ip, ?int $latency = null, ?string $name = null, ?bool $autoAccept = null): void
     {
         $now = time();
+        // null leaves accept_until untouched (non-hello endpoints); hello
+        // always passes a bool, so leaving the screen clears the flag.
+        $acceptUntil = $autoAccept === null ? null
+            : ($autoAccept ? $now + Settings::int('auto_accept_window') : 0);
         Db::get()->prepare(
-            'INSERT INTO players (id, ip, first_seen, last_seen, hello_count, latency, name)
-             VALUES (?, ?, ?, ?, 1, ?, ?)
+            'INSERT INTO players (id, ip, first_seen, last_seen, hello_count, latency, name, accept_until)
+             VALUES (?, ?, ?, ?, 1, ?, ?, COALESCE(?, 0))
              ON CONFLICT (id) DO UPDATE SET ip = excluded.ip, last_seen = excluded.last_seen,
                  hello_count = hello_count + 1,
                  latency = COALESCE(excluded.latency, players.latency),
-                 name = COALESCE(excluded.name, players.name)'
-        )->execute([$id, $ip, $now, $now, $latency, $name]);
+                 name = COALESCE(excluded.name, players.name),
+                 accept_until = COALESCE(?, players.accept_until)'
+        )->execute([$id, $ip, $now, $now, $latency, $name, $acceptUntil, $acceptUntil]);
+    }
+
+    public static function isAutoAccepting(string $id): bool
+    {
+        $st = Db::get()->prepare('SELECT accept_until FROM players WHERE id = ?');
+        $st->execute([$id]);
+        return (int)$st->fetchColumn() > time();
     }
 
     /** Average reported latency of currently online players, or null. */

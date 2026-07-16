@@ -47,8 +47,12 @@ if (isset($body['name'])) {
         $name = null;
     }
 }
+$autoAccept = $body['auto_accept'] ?? false;
+if (!is_bool($autoAccept)) {
+    Util::fail('invalid auto_accept');
+}
 
-Presence::touch($id, Util::clientIp(), $latency, $name);
+Presence::touch($id, Util::clientIp(), $latency, $name, $autoAccept);
 Util::bump('hello');
 
 $duelWith = $body['duel_with'] ?? null;

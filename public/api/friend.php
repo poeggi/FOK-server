@@ -64,6 +64,12 @@ if (!Util::isValidId($peer) || $peer === $id) {
 switch ($action) {
     case 'request':
         $r = Friends::request($id, $peer);
+        if ($r['changed'] && $r['state'] === 'pending' && Presence::isAutoAccepting($peer)) {
+            // The peer is on the QR/add-friend screen: consent is implied,
+            // the handshake completes immediately.
+            Friends::forceAccept($id, $peer);
+            $r['state'] = 'accepted';
+        }
         if ($r['changed']) {
             $event = $r['state'] === 'accepted' ? 'accepted' : 'request';
             Signals::send($id, $peer, 'friend', json_encode(['event' => $event, 'from' => $id]));

@@ -118,6 +118,18 @@ ok($r1['state'] === 'pending' && $r2['state'] === 'accepted' && $r2['changed'] =
     'crossing requests auto-match into a friendship');
 Friends::remove('11117777', '22227777');
 
+// Auto-accept while the peer is on the QR/add-friend screen
+Presence::touch('bbbbbbbb', '5.6.7.8', null, null, true);
+ok(Presence::isAutoAccepting('bbbbbbbb'), 'auto-accept flag set via touch');
+$r = Friends::request('aaaaaaaa', 'bbbbbbbb');
+Friends::forceAccept('aaaaaaaa', 'bbbbbbbb');
+ok(Friends::isFriend('aaaaaaaa', 'bbbbbbbb'), 'forceAccept completes a pending handshake');
+Friends::remove('aaaaaaaa', 'bbbbbbbb');
+Presence::touch('bbbbbbbb', '5.6.7.8', null, null, false);
+ok(!Presence::isAutoAccepting('bbbbbbbb'), 'hello without the flag clears auto-accept');
+Presence::touch('bbbbbbbb', '5.6.7.8');
+ok(!Presence::isAutoAccepting('bbbbbbbb'), 'null leaves the cleared flag untouched');
+
 // Matchmaking: first seeker waits, second gets matched, roles assigned
 ok((Matchmaking::seek('11111111')['waiting'] ?? false) === true, 'first seeker waits');
 $m = Matchmaking::seek('22222222');

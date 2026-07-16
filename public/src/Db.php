@@ -83,7 +83,10 @@ final class Db
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_relay_to ON relay (to_id, from_id, id)');
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_relay_pair ON relay (pair, created)');
         }
-        $pdo->exec('PRAGMA user_version = 6');
+        if ($v < 7) {
+            $pdo->exec('ALTER TABLE players ADD COLUMN accept_until INTEGER NOT NULL DEFAULT 0');
+        }
+        $pdo->exec('PRAGMA user_version = 7');
     }
 
     // A database commissioned from scratch starts with the same default

@@ -25,6 +25,7 @@ final class Settings
         'relay_max_duels' => [3, 'Max concurrent relayed duels (protects FPM workers)'],
         'relay_max_payload' => [2048, 'Max relayed message bytes'],
         'relay_pending_cap' => [256, 'Max undelivered relay messages per receiver'],
+        'auto_accept_window' => [60, 'Auto-accept flag validity after a hello (seconds)'],
         'alert_req_per_min' => [600, 'Alert: total requests per minute above'],
         'alert_load1' => [8, 'Alert: 1-minute system load above'],
         'alert_online' => [200, 'Alert: concurrent online players above'],

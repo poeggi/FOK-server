@@ -44,6 +44,18 @@ final class Friends
         return ['state' => 'pending', 'changed' => true];
     }
 
+    /**
+     * Promotes a pending relation to accepted regardless of who asked -
+     * used for the server-side auto-accept (peer is on the QR screen).
+     */
+    public static function forceAccept(string $me, string $peer): void
+    {
+        [$a, $b] = $me < $peer ? [$me, $peer] : [$peer, $me];
+        Db::get()->prepare(
+            'UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ? AND state = ?'
+        )->execute(['accepted', time(), $a, $b, 'pending']);
+    }
+
     /** Accept a request the peer made; false when there is none. */
     public static function accept(string $me, string $peer): bool
     {
