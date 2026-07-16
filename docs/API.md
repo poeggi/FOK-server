@@ -461,7 +461,8 @@ friend list; the hello `friends` field tells A whether B is online):
 ## Relay fallback - when P2P cannot connect
 
 P2P fails for some pairs (symmetric NAT, UDP-blocking firewalls). When
-the DataChannel does not open within ~8 s of signaling, BOTH clients
+the DataChannel does not open within 5 s of signaling (the default
+fallback timeout; both peers must use the same value), BOTH clients
 fall back to relaying through the server. Expect ~200-400 ms one-way
 latency: relay INPUT events, state hashes and control messages - never
 high-rate state. The local snake stays instant; the remote side trails
