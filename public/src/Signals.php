@@ -12,11 +12,19 @@ final class Signals
 {
     public const TYPES = ['invite', 'accept', 'decline', 'offer', 'answer', 'ice', 'bye', 'chat'];
 
-    public static function send(string $from, string $to, string $type, string $payload): void
+    /** @return bool false when the recipient's mailbox is full (flood cap) */
+    public static function send(string $from, string $to, string $type, string $payload): bool
     {
-        Db::get()->prepare(
+        $db = Db::get();
+        $st = $db->prepare('SELECT COUNT(*) FROM signals WHERE to_id = ? AND created >= ?');
+        $st->execute([$to, time() - FOK_SIGNAL_TTL]);
+        if ((int)$st->fetchColumn() >= FOK_MAILBOX_CAP) {
+            return false;
+        }
+        $db->prepare(
             'INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)'
         )->execute([$from, $to, $type, $payload, time()]);
+        return true;
     }
 
     /** Cheapest possible "anything for me?" check: one indexed read, no writes. */

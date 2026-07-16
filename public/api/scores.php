@@ -7,9 +7,11 @@ require_once __DIR__ . '/../src/Scores.php';
 
 /**
  * GET (optional ?limit=1..100) -> {"ok": true, "scores": [top entries]}
- * POST {"id", "name", "score", "level", "diff", "seed"?, "inputs"?}
+ * POST {"id", "name", "score", "level", "diff", "color"?, "shopItems"?,
+ *       "seed"?, "inputs"?}
  * seed + inputs are the deterministic replay material; they are stored
  * verbatim for the future server-side sanity check (anti-spoofing).
+ * Submissions are throttled per player (HTTP 429 above the cap).
  */
 Util::cors();
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
@@ -75,6 +77,11 @@ if (isset($body['inputs'])) {
 $name = is_string($body['name'] ?? null) ? $body['name'] : '';
 
 Presence::touch($id, Util::clientIp());
+$recent = Db::get()->prepare('SELECT COUNT(*) FROM scores WHERE player_id = ? AND created > ?');
+$recent->execute([$id, time() - FOK_SCORE_RATE_WINDOW]);
+if ((int)$recent->fetchColumn() >= FOK_SCORE_RATE_MAX) {
+    Util::fail('too many submissions', 429);
+}
 $rank = Scores::submit($id, $name, $score, $level, $diff, $color, $shopItems, $seed, $inputs);
 Util::bump('score_submit');
 

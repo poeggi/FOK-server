@@ -134,7 +134,7 @@ const MODULES = [
             const d = await api('backup_list');
             box.replaceChildren();
             const create = el('button', '', 'Create backup now');
-            create.onclick = async () => { await api('backup_create'); refreshModule('backup'); };
+            create.onclick = async () => { await api('backup_create', { method: 'POST' }); refreshModule('backup'); };
             box.append(create);
             const table = el('table');
             for (const b of d.backups) {

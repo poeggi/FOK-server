@@ -104,6 +104,15 @@ expect "unknown friend offline" '"aaaa0000":false' "$R"
 R=$(curl -s "$BASE/api/scores.php?limit=1")
 expect "scores limit works" '"scores":[{' "$R"
 
+for i in $(seq 1 9); do
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"deadbeef\",\"name\":\"S$i\",\"score\":$i,\"level\":1,\"diff\":1}" \
+        "$BASE/api/scores.php" > /dev/null
+done
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    -d '{"id":"deadbeef","name":"SPAM","score":1,"level":1,"diff":1}' "$BASE/api/scores.php")
+expect "score submissions throttled" '429' "$R"
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"deadbeef","action":"seek"}' "$BASE/api/match.php")
 expect "first seeker waits" '"waiting":true' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"cafe0001","action":"seek"}' "$BASE/api/match.php")
@@ -129,6 +138,9 @@ expect "admin stats" '"ok":true' "$R"
 expect "admin stats registered" '"registered":2' "$R"
 
 R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
+expect "backup via GET rejected" '"error":"POST only"' "$R"
+
+R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=backup_create")
 expect "admin backup" '"name":"fok-' "$R"
 
 if [ "$fail" -ne 0 ]; then

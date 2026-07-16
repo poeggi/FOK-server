@@ -59,6 +59,11 @@ switch ($action) {
         Util::jsonOut(['ok' => true]);
 
     case 'backup_create':
+        // State-changing, so POST-only: a GET could be triggered cross-site
+        // by top-level navigation despite the SameSite=Lax cookie.
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            Util::fail('POST only', 405);
+        }
         Util::jsonOut(['ok' => true, 'name' => Backup::create()]);
 
     case 'backup_list':

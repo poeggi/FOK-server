@@ -24,6 +24,11 @@ const FOK_SIGNAL_TTL = 120;
 const FOK_SIGNAL_MAX_PAYLOAD = 16384;
 // Chat messages are hard-capped much lower than SDP payloads.
 const FOK_CHAT_MAX_LEN = 120;
+// Abuse caps (HTTP 429): pending signals per recipient, score submissions
+// per player within the rate window.
+const FOK_MAILBOX_CAP = 128;
+const FOK_SCORE_RATE_MAX = 10;
+const FOK_SCORE_RATE_WINDOW = 300;
 const FOK_TOP_SCORES = 100;
 // Must match MAX_NAME in FOK-snake js/assets.js.
 const FOK_MAX_NAME_LEN = 15;

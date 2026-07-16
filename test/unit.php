@@ -100,6 +100,13 @@ ok($got[0]['type'] === 'invite' && $got[1]['type'] === 'ice', 'oldest first');
 ok($got[0]['from'] === 'aaaaaaaa', 'sender reported');
 ok(Signals::take('bbbbbbbb') === [], 'mailbox drained on read');
 
+// Signals: mailbox flood cap
+for ($i = 0; $i < FOK_MAILBOX_CAP; $i++) {
+    ok(Signals::send('aaaaaaaa', 'bbbbbbbb', 'ice', "c$i"), "send $i under cap accepted");
+}
+ok(!Signals::send('aaaaaaaa', 'bbbbbbbb', 'ice', 'over'), 'send over mailbox cap rejected');
+ok(count(Signals::take('bbbbbbbb')) === FOK_MAILBOX_CAP, 'capped mailbox drains fully');
+
 // Signals: expired messages are dropped
 Db::get()->prepare('INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)')
     ->execute(['aaaaaaaa', 'bbbbbbbb', 'invite', 'old', time() - FOK_SIGNAL_TTL - 1]);

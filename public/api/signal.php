@@ -7,9 +7,11 @@ require_once __DIR__ . '/../src/Signals.php';
 
 /**
  * Matchmaking / WebRTC signaling relay.
- * POST {"id": sender, "to": recipient, "type": invite|accept|decline|offer|answer|ice|bye,
- *       "payload": string (SDP/ICE JSON, opaque to the server)}
- * Delivery happens through the recipient's hello.php poll.
+ * POST {"id": sender, "to": recipient,
+ *       "type": invite|accept|decline|offer|answer|ice|bye|chat,
+ *       "payload": string, opaque to the server (SDP/ICE JSON, profile
+ *       JSON on matchmaking types, plain text capped at 120 bytes for chat)}
+ * Delivery happens through the recipient's hello.php or poll.php poll.
  */
 Util::cors();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
@@ -34,7 +36,9 @@ if (!is_string($payload) || strlen($payload) > $max) {
 }
 
 Presence::touch($id, Util::clientIp());
-Signals::send($id, $to, $type, $payload);
+if (!Signals::send($id, $to, $type, $payload)) {
+    Util::fail('mailbox full', 429);
+}
 Util::bump('signal');
 
 Util::jsonOut(['ok' => true]);
