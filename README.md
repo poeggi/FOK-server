@@ -134,7 +134,7 @@ server. Staging needs its own one-time hash bootstrap.
 ## API sketch
 
     GET  /api/version.php
-      -> {"ok":true,"server":"0.6.0","api":1,"env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":1,"env":"live"}
     GET  /api/time.php
       -> {"ok":true,"t":<server ms>}   clock sync for the shared PTS base
     POST /api/hello.php  {"id":"cafe0001", "duel_with":"deadbeef"?, "friends":[...]?}

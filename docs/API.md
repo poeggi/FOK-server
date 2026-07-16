@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"0.4.1", "api":1, "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":1, "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -49,7 +49,8 @@ rather than misbehave against an incompatible server.
 - Clients must gate ALL calls on the user's offline setting
   (`!cfg.offline` in FOK-snake): when offline is ON, never contact the
   server.
-- Timestamps are unix seconds (UTC).
+- Timestamps: `now` and `created` fields are unix SECONDS (UTC); `pts`
+  and time.php's `t` are unix MILLISECONDS (see Time synchronization).
 
 ## Time synchronization and PTS
 
@@ -221,7 +222,9 @@ Request:
       "color": 3,                 optional, int 0..255, default 0
       "shopItems": {"hat": 1},    optional, object, max 2 KB as JSON
       "seed": 305419896,          optional, the 32-bit game seed
-      "inputs": [[12,1],[40,2]]   optional, tick-stamped input log, max 256 KB as JSON
+      "inputs": [[12,1],[40,2]],  optional, tick-stamped input log, max 256 KB as JSON
+      "pts": 1784190295123        optional, PTS of the game-over moment
+                                  (never in the future, see PTS validation)
     }
 
 Response:
@@ -239,7 +242,8 @@ Response:
 ## POST /api/signal.php - matchmaking and WebRTC signaling
 
 Sends one message to another player. Delivery happens through the
-recipient's next hello poll. The server never interprets `payload`.
+recipient's next hello or poll.php request (long-poll for the lowest
+latency). The server never interprets `payload`.
 
 Request:
 
@@ -247,7 +251,10 @@ Request:
       "id": "c0ffee42",           required, sender
       "to": "deadbeef",           required, recipient (must differ from id)
       "type": "invite",           required, see below
-      "payload": "..."            optional string, max 16 KB
+      "payload": "...",           optional string, max 16 KB
+      "pts": 1784190295123        optional, sender's PTS when the event
+                                  happened (never in the future, see PTS
+                                  validation)
     }
 
 Response: `{"ok": true}`
