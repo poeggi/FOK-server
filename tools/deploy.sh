@@ -19,20 +19,13 @@ fi
 #            their new ?v= URL (else a mid-window fetch caches old
 #            content under the new URL for a year)
 # 3. rest    endpoints and pages last
-# One curl invocation for the whole tree, kept in the order above: curl
-# holds a SINGLE FTPS control connection open and resumes the TLS session
-# per file, instead of a full handshake + login for every one. The old
-# file-by-file loop paid that setup 35 times for a few hundred KB (~85 s);
-# the bytes were never the cost. No --parallel, so curl still uploads the
-# -T transfers strictly in order (src before assets before rest matters).
-# --fail-early keeps the loop's stop-on-first-error, so a failed src/
-# upload never lets its consumers land.
-args=()
+count=0
 while IFS= read -r f; do
     rel="${f#public/}"
-    args+=(-T "$f" "ftp://$FTP_HOST/$prefix$rel")
+    curl -sS --ssl-reqd --user "$FTP_USER:$FTP_PASS" --ftp-create-dirs \
+        -T "$f" "ftp://$FTP_HOST/$prefix$rel"
+    count=$((count + 1))
+    echo "  $prefix$rel"
 done < <({ find public/src -type f | sort; find public/assets -type f | sort; \
     find public -type f -not -path 'public/src/*' -not -path 'public/assets/*' | sort; })
-
-curl -sS --ssl-reqd --fail-early --user "$FTP_USER:$FTP_PASS" --ftp-create-dirs "${args[@]}"
-echo "Deployed $(( ${#args[@]} / 2 )) file(s) [${prefix:+staging}${prefix:-live}]"
+echo "Deployed $count file(s) [${prefix:+staging}${prefix:-live}]"
