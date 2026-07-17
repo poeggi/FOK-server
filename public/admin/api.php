@@ -79,6 +79,7 @@ switch ($action) {
             'opcache' => extension_loaded('Zend OPcache') && (bool)ini_get('opcache.enable'),
             'apcu' => function_exists('apcu_enabled') && apcu_enabled(),
             'deferred_flush' => function_exists('fastcgi_finish_request'),
+            'db_boot_us' => (int)round(Db::bootUs()),
         ]);
 
     case 'conns':

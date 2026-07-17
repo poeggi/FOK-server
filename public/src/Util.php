@@ -193,22 +193,27 @@ final class Util
 
     private static function bumpNow(string $metric): void
     {
-        $db = Db::get();
-        $bucket = gmdate('YmdH');
-        $db->prepare(
-            'INSERT INTO counters (bucket, metric, value) VALUES (?, ?, 1)
-             ON CONFLICT (bucket, metric) DO UPDATE SET value = value + 1'
-        )->execute([$bucket, $metric]);
-
-        $st = $db->prepare(
-            'INSERT INTO counters (bucket, metric, value) VALUES (?, ?, 1)
+        // BOTH counters in one statement. Two upserts meant two implicit
+        // transactions, so every request took the single write lock twice -
+        // and that writer, not the microseconds, is the ceiling behind the
+        // worker pool. The rows never conflict with each other: the hour
+        // bucket is YmdH, the minute bucket YmdHi.
+        $minute = gmdate('YmdHi');
+        $st = Db::get()->prepare(
+            'INSERT INTO counters (bucket, metric, value) VALUES (?, ?, 1), (?, ?, 1)
              ON CONFLICT (bucket, metric) DO UPDATE SET value = value + 1
-             RETURNING value'
+             RETURNING bucket, metric, value'
         );
-        $st->execute([gmdate('YmdHi'), 'req_min']);
-        $reqPerMin = (int)$st->fetchColumn();
+        $st->execute([gmdate('YmdH'), $metric, $minute, 'req_min']);
+        $reqPerMin = 0;
+        foreach ($st->fetchAll() as $r) {
+            if ($r['bucket'] === $minute && $r['metric'] === 'req_min') {
+                $reqPerMin = (int)$r['value'];
+            }
+        }
         // Threshold checks are cheap but not free; sample every 25 requests.
-        if ($reqPerMin % 25 === 0) {
+        // The > 0 guard matters: a miss must not read as "every request".
+        if ($reqPerMin > 0 && $reqPerMin % 25 === 0) {
             self::watch($reqPerMin);
         }
     }

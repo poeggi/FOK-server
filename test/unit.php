@@ -477,6 +477,33 @@ ok($countOf('unittest') === $before, 'bump writes nothing before the answer is o
 Util::runDeferred();
 ok($countOf('unittest') === $before + 1, 'bump lands once the answer is out');
 
+// Both counters ride in ONE statement now (one write lock instead of two),
+// so prove the second row is still really written.
+$reqMinOf = function (): int {
+    $st = Db::get()->prepare("SELECT COALESCE(value, 0) FROM counters WHERE bucket = ? AND metric = 'req_min'");
+    $st->execute([gmdate('YmdHi')]);
+    return (int)$st->fetchColumn();
+};
+$rm = $reqMinOf();
+Util::bump('unittest');
+Util::runDeferred();
+ok($reqMinOf() === $rm + 1, 'the per-minute request counter rides along');
+
+// ... and that its value is still FOUND among the returned rows. Miss it
+// and reqPerMin reads 0, the sampling never hits a multiple of 25, and the
+// traffic alert dies silently - monitoring that fails quietly is worse
+// than none.
+Settings::set('alert_req_per_min', 1);
+Db::get()->exec("DELETE FROM counters WHERE metric = 'req_min'");
+Db::get()->exec("DELETE FROM alerts WHERE type = 'traffic'");
+for ($i = 0; $i < 25; $i++) {
+    Util::bump('unittest');
+    Util::runDeferred();
+}
+$traffic = array_filter(Alerts::recent(), static fn(array $a) => $a['type'] === 'traffic');
+ok($traffic !== [], 'the returned req_min value still reaches the traffic alert');
+Settings::set('alert_req_per_min', 600);
+
 // Backup: create produces a valid snapshot, restore brings data back
 $name = Backup::create();
 ok(Backup::isValidName($name), 'backup name has expected format');

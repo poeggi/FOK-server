@@ -602,6 +602,7 @@ else
     expect "props reports opcache availability" '"opcache":' "$R"
     expect "props reports apcu availability" '"apcu":' "$R"
     expect "props reports deferred-flush availability" '"deferred_flush":' "$R"
+    expect "props reports what opening the db cost" '"db_boot_us":' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=stats")
     expect "admin stats" '"ok":true' "$R"

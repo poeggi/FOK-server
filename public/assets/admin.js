@@ -152,6 +152,9 @@ const MODULES = [
             prop('APCu', yn(d.apcu) + (d.apcu ? '' : ' - counters stay on the DB writer'));
             prop('Deferred flush', yn(d.deferred_flush)
                 + (d.deferred_flush ? '' : ' - bookkeeping runs before the client is answered'));
+            // What every request pays before any work; the first one after a
+            // deploy also carries the migration, so read it twice.
+            prop('DB open', d.db_boot_us + ' us this request');
             box.append(table);
         },
     },

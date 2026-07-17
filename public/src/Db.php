@@ -9,10 +9,25 @@ final class Db
     private const SCHEMA_VERSION = 12;
 
     private static ?PDO $pdo = null;
+    private static float $bootUs = 0.0;
+
+    /**
+     * What opening the database cost this request, in microseconds. Every
+     * request pays it before doing any work, which makes it the biggest
+     * single cost of a short endpoint - and the one number that cannot be
+     * measured on a developer box, because it is dominated by the host's
+     * file system. The Properties card reports it from the real server.
+     * The first request after a deploy also carries the migration.
+     */
+    public static function bootUs(): float
+    {
+        return self::$bootUs;
+    }
 
     public static function get(): PDO
     {
         if (self::$pdo === null) {
+            $t = microtime(true);
             if (!is_dir(FOK_DATA_DIR)) {
                 mkdir(FOK_DATA_DIR, 0770, true);
             }
@@ -25,6 +40,7 @@ final class Db
             $pdo->exec('PRAGMA foreign_keys = ON');
             self::migrate($pdo);
             self::$pdo = $pdo;
+            self::$bootUs = (microtime(true) - $t) * 1e6;
         }
         return self::$pdo;
     }

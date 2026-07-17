@@ -186,9 +186,15 @@ trigger the sweep no longer makes someone wait for it. Measured on a
 2000-player database, that moved ~815 us of the ~1330 us a hello spent in
 the database (61 %) past the answer. It buys latency and predictability
 only - the worker is held either way, so the ceiling above is unmoved.
-Keeping those writes off the single writer entirely needs shared memory
-between workers (APCu); the Properties card reports whether this host has
-any.
+
+For the writer itself, what counts is how often a request takes the lock,
+not how long it waits. Both counters go in one multi-row upsert, so a
+hello takes it twice (heartbeat + counters) instead of three times; the
+heartbeat write is irreducible, since it IS the heartbeat. Dropping the
+counters off the writer altogether would need shared memory between
+workers, and this host has no APCu - the Properties card reports that,
+along with opcache, whether the deferred flush is really available, and
+what opening the database cost the request that drew the card.
 
 `public/api/.user.ini` holds the only PHP settings we own (no FPM pool
 access on shared hosting): body, memory and runtime caps for the game API
