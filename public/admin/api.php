@@ -64,6 +64,21 @@ switch ($action) {
             'server_version' => FOK_SERVER_VERSION,
             'api_version' => FOK_API_VERSION,
             'env' => FOK_ENV,
+            'php' => PHP_VERSION,
+            'sapi' => PHP_SAPI,
+            // What the host actually gives the hot path. Shared hosting has
+            // no shell and no phpinfo, so asking the running server is the
+            // only way to find out - and each of these decides whether an
+            // optimisation is available at all:
+            //   opcache        - are the sources recompiled per request
+            //   apcu           - is there shared memory between workers, the
+            //                    prerequisite for keeping counters off the
+            //                    single SQLite writer
+            //   deferred_flush - can the response be handed over before the
+            //                    bookkeeping runs (see Util::defer)
+            'opcache' => extension_loaded('Zend OPcache') && (bool)ini_get('opcache.enable'),
+            'apcu' => function_exists('apcu_enabled') && apcu_enabled(),
+            'deferred_flush' => function_exists('fastcgi_finish_request'),
         ]);
 
     case 'conns':

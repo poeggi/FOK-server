@@ -30,6 +30,9 @@ final class Util
             if ($e !== null && ($e['type'] & $fatal) !== 0 && !headers_sent()) {
                 self::jsonOut(['ok' => false, 'error' => 'server fault'], 500);
             }
+            // Endpoints that answer without jsonOut (backup download) would
+            // otherwise drop their queue on the floor.
+            self::runDeferred();
         });
     }
 
@@ -110,26 +113,85 @@ final class Util
         return is_array($data) ? $data : [];
     }
 
+    /** @var list<callable> */
+    private static array $deferred = [];
+
+    /**
+     * Runs $fn AFTER the response has been handed to the client. The
+     * server's own bookkeeping is not the caller's work and must not sit
+     * in its latency: under FPM the response is flushed first, so the
+     * client is gone before any of it runs.
+     *
+     * ONLY for work the client never observes (monitoring, sweeps). A
+     * client may issue its next request the instant the response lands,
+     * and that request can overtake this work - anything it could read
+     * back has to happen before the answer, not here.
+     *
+     * Without FPM (CLI, the php -S test server) there is nothing to flush
+     * and the work simply runs inline: same behaviour, only the timing
+     * differs, so the tests still see it.
+     */
+    public static function defer(callable $fn): void
+    {
+        self::$deferred[] = $fn;
+    }
+
+    /** Idempotent: jsonOut runs the queue, the shutdown handler catches
+     *  whatever exits by another path (readfile, a fatal). */
+    public static function runDeferred(): void
+    {
+        if (self::$deferred === []) {
+            return;
+        }
+        $queue = self::$deferred;
+        self::$deferred = [];
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        }
+        foreach ($queue as $fn) {
+            try {
+                $fn();
+            } catch (Throwable $e) {
+                // The response is already sent: bookkeeping cannot be
+                // allowed to become the client's problem.
+                error_log('FOK deferred: ' . $e);
+            }
+        }
+    }
+
     public static function jsonOut(array $data, int $code = 200): never
     {
         http_response_code($code);
         header('Cache-Control: no-store');
         header('Content-Type: application/json');
         echo json_encode($data);
+        self::runDeferred();
         exit;
     }
 
     public static function fail(string $msg, int $code = 400): never
     {
         if ($code === 400) {
-            self::noteInvalid();
+            self::defer(static fn() => self::noteInvalid());
         }
         self::jsonOut(['ok' => false, 'error' => $msg], $code);
     }
 
-    // Per-hour counters feed the admin load statistics; the per-minute
-    // request counter feeds the traffic alert.
+    /**
+     * Per-hour counters feed the admin load statistics; the per-minute
+     * request counter feeds the traffic alert.
+     *
+     * Deferred, because none of it is the caller's: two writes on the
+     * single SQLite writer for every request, every 25th request a
+     * threshold sweep, and once an hour the whole player expiry - which
+     * one unlucky client used to wait for.
+     */
     public static function bump(string $metric): void
+    {
+        self::defer(static fn() => self::bumpNow($metric));
+    }
+
+    private static function bumpNow(string $metric): void
     {
         $db = Db::get();
         $bucket = gmdate('YmdH');

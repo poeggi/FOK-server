@@ -179,6 +179,17 @@ What limits this server, in order:
 3. **Relayed duels**, the most expensive client: a long poll each plus
    ~30 messages/s. relay_max_duels (default 3) is the honest "busy".
 
+The server's own bookkeeping does not sit in the client's latency:
+Util::defer runs the counters, the threshold sweep and the hourly player
+expiry AFTER the response is flushed, so the request that happens to
+trigger the sweep no longer makes someone wait for it. Measured on a
+2000-player database, that moved ~815 us of the ~1330 us a hello spent in
+the database (61 %) past the answer. It buys latency and predictability
+only - the worker is held either way, so the ceiling above is unmoved.
+Keeping those writes off the single writer entirely needs shared memory
+between workers (APCu); the Properties card reports whether this host has
+any.
+
 `public/api/.user.ini` holds the only PHP settings we own (no FPM pool
 access on shared hosting): body, memory and runtime caps for the game API
 only - the admin keeps the defaults since its restore uploads a whole

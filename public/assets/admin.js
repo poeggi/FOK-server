@@ -146,6 +146,12 @@ const MODULES = [
             prop('PTS now', d.pts_now + ' ms');
             prop('Clock delta', (t0 - d.pts_now) + ' ms approx.');
             prop('Server', 'v' + d.server_version + ' (API v' + d.api_version + ', ' + d.env + ')');
+            prop('PHP', d.php + ' (' + d.sapi + ')');
+            const yn = (v) => (v ? 'yes' : 'no');
+            prop('opcache', yn(d.opcache));
+            prop('APCu', yn(d.apcu) + (d.apcu ? '' : ' - counters stay on the DB writer'));
+            prop('Deferred flush', yn(d.deferred_flush)
+                + (d.deferred_flush ? '' : ' - bookkeeping runs before the client is answered'));
             box.append(table);
         },
     },

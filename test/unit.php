@@ -447,6 +447,36 @@ Auth::login('u', 'wrong', '9.9.9.5');
 ok(!Auth::login('u', 'p', '9.9.9.5'), 'configured lower lockout threshold applies');
 Settings::set('admin_max_fails', FOK_ADMIN_MAX_FAILS);
 
+// Util::defer: the server's own bookkeeping runs AFTER the answer is out.
+// There is no FPM here so nothing is flushed and the queue runs inline -
+// what matters is that it runs at all, exactly once, and that a failing
+// job cannot take the rest with it.
+ini_set('error_log', $tmp . '/php-error.log');
+$ran = [];
+Util::defer(function () use (&$ran) { $ran[] = 'a'; });
+Util::defer(function () use (&$ran) { $ran[] = 'b'; });
+ok($ran === [], 'deferred work does not run at defer time');
+Util::runDeferred();
+ok($ran === ['a', 'b'], 'deferred work runs, in order');
+Util::runDeferred();
+ok($ran === ['a', 'b'], 'the queue is drained exactly once');
+Util::defer(function () { throw new RuntimeException('boom'); });
+Util::defer(function () use (&$ran) { $ran[] = 'c'; });
+Util::runDeferred();
+ok($ran === ['a', 'b', 'c'], 'a failing deferred job does not stop the rest');
+
+// The point of all of it: the counter writes leave the caller's latency.
+$countOf = function (string $metric): int {
+    $st = Db::get()->prepare('SELECT COALESCE(SUM(value), 0) FROM counters WHERE metric = ?');
+    $st->execute([$metric]);
+    return (int)$st->fetchColumn();
+};
+$before = $countOf('unittest');
+Util::bump('unittest');
+ok($countOf('unittest') === $before, 'bump writes nothing before the answer is out');
+Util::runDeferred();
+ok($countOf('unittest') === $before + 1, 'bump lands once the answer is out');
+
 // Backup: create produces a valid snapshot, restore brings data back
 $name = Backup::create();
 ok(Backup::isValidName($name), 'backup name has expected format');

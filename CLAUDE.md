@@ -30,6 +30,13 @@ endpoint - it is the contract the FOK-snake client is built against.
   the database IS the state and "background" work piggybacks on the next
   request (TTL sweeps, expiry, monitoring). Cost per request must stay
   flat in the number of players (see README "Capacity and limits").
+- That piggybacked work goes through Util::defer, which runs it after the
+  response is flushed (fastcgi_finish_request). ONLY defer what the
+  client never observes - monitoring, counters, sweeps. A client can send
+  its next request the moment the response lands and that request may
+  overtake the deferred work, so anything readable back must happen
+  before the answer. Deferring does NOT free the worker: it buys latency
+  and determinism, never capacity.
 - The clock source (api/t.txt) is a STATIC file whose timestamp comes
   from mod_headers %t in public/.htaccess - deliberately not PHP, so it
   never queues for an FPM worker (that wait is invisible to PHP and would

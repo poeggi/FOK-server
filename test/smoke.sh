@@ -596,6 +596,12 @@ else
     expect "props tile has pts anchor" '1970-01-01T00:00:00.000Z' "$R"
     PN=$(echo "$R" | grep -oE '"pts_now":[0-9]+' | cut -d: -f2)
     if [ "${#PN}" -eq 13 ]; then echo "ok   props pts is milliseconds"; else echo "FAIL props pts not ms: $PN"; fail=1; fi
+    # The host capabilities each decide whether an optimisation is even
+    # available; shared hosting has no other way to ask.
+    expect "props reports the php sapi" '"sapi":' "$R"
+    expect "props reports opcache availability" '"opcache":' "$R"
+    expect "props reports apcu availability" '"apcu":' "$R"
+    expect "props reports deferred-flush availability" '"deferred_flush":' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=stats")
     expect "admin stats" '"ok":true' "$R"
