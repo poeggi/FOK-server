@@ -702,6 +702,7 @@ indicator so latency self-explains.
                          "pts": ms?}
       -> {"ok":true}
       -> 429 "relay backlog full"   receiver stopped fetching; back off
+      -> 429 "relay rate limit"     you are sending too fast; back off
       -> 503 "relay busy"           concurrent relayed-duel cap reached:
                                     tell the user the server is full and
                                     end the match attempt
@@ -718,6 +719,12 @@ hello with duel_with during relayed games too. The concurrent-duel cap
 exists because every relayed duel holds server workers with its long
 polls - a capped, honest "busy" beats degrading the server for everyone.
 
+Send rate is also capped per client: a sender sustaining more than
+relay_rate_max messages a second (measured over more than a second, so a
+brief burst is fine) is blocked with 429 for relay_rate_block_secs and an
+alert is raised. Legitimate in-duel traffic is an order of magnitude under
+this, so the cap only catches a runaway or malicious client.
+
 A slot is taken by the first message a pair really pushes through the hub
 and held until ~90 s after its last one (a running duel refreshes it many
 times a second), so a 503 can only hit a pair that is not relaying yet -
@@ -728,7 +735,7 @@ in both places.
 
 `bye` also discards that pair's undelivered relay backlog, so a stale
 input from a finished duel can never reach the pair's next one. Relay
-messages undelivered after relay_ttl (60 s, admin-configurable) are
+messages undelivered after relay_ttl (30 s, admin-configurable) are
 dropped: this is a live channel, not
 a queue for an absent peer - a receiver away longer than that has lost
 the duel anyway (its in-game liveness timeout fires first).

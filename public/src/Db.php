@@ -6,7 +6,7 @@ require_once __DIR__ . '/Config.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 12;
+    private const SCHEMA_VERSION = 13;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -155,6 +155,19 @@ final class Db
             // both is how the admin knows it landed.
             $pdo->exec('ALTER TABLE players ADD COLUMN debug INTEGER NOT NULL DEFAULT 0');
             $pdo->exec('ALTER TABLE players ADD COLUMN debug_active INTEGER NOT NULL DEFAULT 0');
+        }
+        if ($v < 13) {
+            // Per-client relay send-rate guard (see RelayRate). The relay
+            // table is drained on delivery, so the send rate cannot be read
+            // off it; this keeps a running total per client plus the mark
+            // to diff the per-slice increase against.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS relay_rate (
+                id TEXT PRIMARY KEY,
+                total INTEGER NOT NULL DEFAULT 0,
+                mark_total INTEGER NOT NULL DEFAULT 0,
+                mark_time INTEGER NOT NULL DEFAULT 0,
+                blocked_until INTEGER NOT NULL DEFAULT 0
+            )');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

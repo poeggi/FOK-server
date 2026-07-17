@@ -125,8 +125,10 @@ final class ConnTrack
         $now = time();
         $st = $db->prepare(
             'SELECT p.id, p.name, p.ip, p.latency, p.last_seen, p.debug, p.debug_active,
-                    c.peer, c.state, c.mode, c.updated
-               FROM players p LEFT JOIN conn c ON c.id = p.id
+                    c.peer, c.state, c.mode, c.updated, rr.total AS msgs
+               FROM players p
+               LEFT JOIN conn c ON c.id = p.id
+               LEFT JOIN relay_rate rr ON rr.id = p.id
               WHERE p.last_seen > ?
               ORDER BY p.last_seen DESC LIMIT ' . $limit
         );
@@ -147,6 +149,7 @@ final class ConnTrack
                 'peer' => $peer,
                 'mode' => $peer === null ? null : $r['mode'],
                 'since' => $stale ? null : (int)$r['updated'],
+                'msgs' => (int)$r['msgs'],
                 'debug' => (int)$r['debug'] === 1,
                 'debug_active' => (int)$r['debug_active'] === 1,
             ];

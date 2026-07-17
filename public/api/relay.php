@@ -6,6 +6,7 @@ require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Alerts.php';
 require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
+require_once __DIR__ . '/../src/RelayRate.php';
 
 /**
  * In-duel message relay - the FALLBACK when the peer-to-peer DataChannel
@@ -15,6 +16,8 @@ require_once __DIR__ . '/../src/ConnTrack.php';
  * POST {"id": sender, "peer": recipient, "payload": string, "pts": ms?}
  *   -> {"ok":true}
  *   -> 429 "relay backlog full"  receiver stopped fetching; back off
+ *   -> 429 "relay rate limit"    sender sustained too high a send rate;
+ *                                blocked for relay_rate_block_secs
  *   -> 503 "relay busy"          concurrent-duel cap reached; the pair
  *                                cannot start relaying now
  *
@@ -97,6 +100,11 @@ $peer = $body['peer'] ?? null;
 if (!Util::isValidId($id) || !Util::isValidId($peer) || $id === $peer) {
     Util::fail('invalid id/peer');
 }
+// A client sustaining too high a send rate is turned away for a while
+// (see RelayRate) - a cheap indexed read, before any of the work below.
+if (RelayRate::blocked($id)) {
+    Util::fail('relay rate limit: slow down', 429);
+}
 $payload = $body['payload'] ?? null;
 if (!is_string($payload) || $payload === '' || strlen($payload) > Settings::int('relay_max_payload')) {
     Util::fail('invalid payload');
@@ -130,5 +138,8 @@ $db->prepare('INSERT INTO relay (pair, from_id, to_id, payload, created) VALUES 
 // no-P2P bit is needed to end up here.
 ConnTrack::relaying($id, $peer);
 Util::bump('relay');
+// Deferred, like bump: count this message and check the sender's rate
+// after the response is flushed, never in its latency.
+Util::defer(static fn() => RelayRate::record($id));
 
 Util::jsonOut(['ok' => true]);

@@ -755,6 +755,17 @@ else
     setting relay_pending_cap 128
     curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1" > /dev/null
 
+    # A client SUSTAINING too high a send rate (over relay_rate_max for
+    # more than a timeslice) is blocked, not just backpressured. Throwaway
+    # ids so the 30s block touches nothing else; needs a >1s window.
+    setting relay_rate_max 1
+    for i in 1 2 3 4 5; do rly aa11aa11 bb22bb22 "f$i" > /dev/null; done
+    sleep 3
+    rly aa11aa11 bb22bb22 'trips the rate check' > /dev/null
+    R=$(rlycode aa11aa11 bb22bb22 'now blocked')
+    expect "a sustained relay flood is blocked with 429" '429' "$R"
+    setting relay_rate_max 128
+
     # A full hub rejects a NEW relayed duel loudly - but a duel that is
     # already relaying must never be cut off by it.
     setting relay_max_duels 1

@@ -84,7 +84,7 @@ const MODULES = [
     },
     {
         id: 'conns',
-        title: 'Connections (online clients)',
+        title: 'Connections (online)',
         // Own, much faster interval: a whole invite/connect/play/bye
         // cycle can happen between two global refreshes.
         every: 'admin_conns_refresh_secs',
@@ -93,7 +93,7 @@ const MODULES = [
             box.replaceChildren();
             if (!d.conns.length) { box.append(el('p', 'muted', 'No client online.')); return; }
             const table = el('table');
-            table.append(row(['ID', 'Name', 'State', 'Peer', 'Mode', 'Lat', 'Age', 'Debug'], 'th'));
+            table.append(row(['ID', 'Name', 'State', 'Peer', 'Mode', 'Lat', 'Msgs', 'Age'], 'th'));
             for (const c of d.conns) {
                 const r = el('tr');
                 r.classList.add('online');
@@ -104,28 +104,13 @@ const MODULES = [
                 r.append(el('td', '', c.peer === null ? '-' : c.peer));
                 r.append(el('td', c.mode === 'relay' ? 'error' : '', c.mode === null ? '-' : c.mode));
                 r.append(el('td', '', c.latency === null ? '-' : c.latency + ' ms'));
+                r.append(el('td', 'muted', c.msgs));
                 r.append(el('td', 'muted', (d.now - (c.since === null ? c.last_seen : c.since)) + ' s'));
-
-                const label = debugLabel(c);
-                const dbg = el('td', 'debug-cell');
-                dbg.append(el('span', 'badge dbg-' + label, label));
-                const toggle = el('button', 'small', c.debug ? 'off' : 'on');
-                toggle.onclick = async () => {
-                    toggle.disabled = true;
-                    await api('set_debug', {
-                        method: 'POST',
-                        body: form({ id: c.id, on: c.debug ? '0' : '1' }),
-                    });
-                    refreshModule('conns');
-                };
-                dbg.append(toggle);
-                r.append(dbg);
                 table.append(r);
             }
             box.append(table);
-            box.append(el('p', 'muted', 'Age: time since the last event of that state. '
-                + 'Debug: pending = set, not yet picked up by the client; self = the client '
-                + 'turned it on by itself.'));
+            box.append(el('p', 'muted', 'Msgs: relay messages this client has sent. '
+                + 'Age: time since the last event of that state.'));
         },
     },
     {
@@ -237,13 +222,29 @@ const MODULES = [
             box.replaceChildren();
             box.append(el('p', 'muted', d.total + ' registered, showing latest ' + d.users.length));
             const table = el('table');
-            table.append(row(['ID', 'Name', 'IP', 'First', 'Last', 'N', 'Lat', ''], 'th'));
+            table.append(row(['ID', 'Name', 'IP', 'First', 'Last', 'N', 'Lat', 'Debug', ''], 'th'));
             for (const u of d.users) {
                 const online = d.now - u.last_seen <= d.online_window;
                 const r = row([u.id, u.name === null ? '-' : u.name, u.ip,
                     fmtTime(u.first_seen), fmtTime(u.last_seen), u.hello_count,
                     u.latency === null ? '-' : u.latency + ' ms']);
                 if (online) r.classList.add('online');
+
+                // Debug can be set on an OFFLINE client too: it is a wish
+                // stored on the player and applied on its next connect, so
+                // it belongs here per registered user, not only per conn.
+                const label = debugLabel(u);
+                const dbg = el('td', 'debug-cell');
+                dbg.append(el('span', 'badge dbg-' + label, label));
+                const toggle = el('button', 'small', u.debug ? 'off' : 'on');
+                toggle.onclick = async () => {
+                    toggle.disabled = true;
+                    await api('set_debug', { method: 'POST', body: form({ id: u.id, on: u.debug ? '0' : '1' }) });
+                    refreshModule('users');
+                };
+                dbg.append(toggle);
+                r.append(dbg);
+
                 const btn = el('button', 'small', 'delete');
                 btn.onclick = async () => {
                     if (!confirm('Delete player ' + u.id + '?')) return;
@@ -256,6 +257,8 @@ const MODULES = [
                 table.append(r);
             }
             box.append(table);
+            box.append(el('p', 'muted', 'Debug: pending = set, not yet picked up '
+                + '(applies on the client next connect); self = the client turned it on itself.'));
         },
     },
     {
@@ -393,8 +396,8 @@ function applyIntervals() {
     }
 }
 
-function intervalControl(key, title) {
-    const wrap = el('label', 'interval');
+function intervalControl(key, title, slim) {
+    const wrap = el('label', 'interval' + (slim ? ' slim' : ''));
     const input = el('input');
     input.type = 'number';
     input.min = '0';
@@ -433,7 +436,7 @@ function buildCards() {
         const head = el('h2', '', m.title);
         const btn = el('button', 'small refresh', 'refresh');
         btn.onclick = () => refreshModule(m.id);
-        if (m.every) head.append(intervalControl(m.every, m.title + ' refresh interval'));
+        if (m.every) head.append(intervalControl(m.every, m.title + ' refresh interval', true));
         head.append(btn);
         const box = el('div', 'card-body');
         card.append(head, box);

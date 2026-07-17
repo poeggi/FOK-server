@@ -18,6 +18,7 @@ require_once __DIR__ . '/../public/src/Backup.php';
 require_once __DIR__ . '/../public/src/Matchmaking.php';
 require_once __DIR__ . '/../public/src/Starts.php';
 require_once __DIR__ . '/../public/src/Friends.php';
+require_once __DIR__ . '/../public/src/RelayRate.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
 
 $tests = 0;
@@ -228,6 +229,19 @@ ok($again > Util::nowMs(), 'a rematch on a fresh epoch line gets a start');
 Starts::request('aaaaaaaa', 'bbbbbbbb', 1, 'level');
 Starts::forget('aaaaaaaa', 'cccccccc');
 ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first') === null, "a stranger's bye leaves the pair's epoch alone");
+
+// RelayRate: the relay table is drained on delivery, so the send rate is
+// tracked as a running total per client. mark_time is pre-set so a full
+// slice has already passed and the very next record() checks the rate.
+Db::get()->prepare('INSERT INTO relay_rate (id, total, mark_total, mark_time, blocked_until) VALUES (?, ?, ?, ?, 0)')
+    ->execute(['dddddddd', 1000, 0, time() - 3]);
+RelayRate::record('dddddddd'); // ~334 msg/s over 3 s, far over the 128 default
+ok(RelayRate::blocked('dddddddd'), 'a client over the sustained relay rate is blocked');
+Db::get()->prepare('INSERT INTO relay_rate (id, total, mark_total, mark_time, blocked_until) VALUES (?, ?, ?, ?, 0)')
+    ->execute(['eeeeeeee', 10, 0, time() - 3]);
+RelayRate::record('eeeeeeee'); // ~3 msg/s, comfortably under the cap
+ok(!RelayRate::blocked('eeeeeeee'), 'a client under the sustained relay rate is not blocked');
+ok(!RelayRate::blocked('ffffffff'), 'an unseen client is never blocked');
 
 // The debug flag: the admin's wish and the client's report are separate
 ok(Presence::touch('eeeeeeee', '1.2.3.4') === false, 'debug is off for a new player');

@@ -269,5 +269,5 @@ matchmaking/signaling. Two further signal types are server-generated and
 rejected (400) if a client sends them, but every client must HANDLE them:
 'friend' (a request/acceptance/expiry notification) and 'undelivered' (a
 connection attempt expired before the peer collected it - the attempt is
-dead). Caps answer a distinct status: 429 (mailbox or relay backlog
-full), 503 (relay busy), 413 (body over the cap).
+dead). Caps answer a distinct status: 429 (mailbox full, relay backlog
+full, or relay rate limit), 503 (relay busy), 413 (body over the cap).

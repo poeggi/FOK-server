@@ -103,7 +103,7 @@ switch ($action) {
 
     case 'users':
         $total = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
-        $st = $db->query('SELECT id, name, ip, first_seen, last_seen, hello_count, latency FROM players ORDER BY last_seen DESC LIMIT 200');
+        $st = $db->query('SELECT id, name, ip, first_seen, last_seen, hello_count, latency, debug, debug_active FROM players ORDER BY last_seen DESC LIMIT 200');
         Util::jsonOut(['ok' => true, 'total' => $total, 'online_window' => FOK_ONLINE_WINDOW,
             'now' => time(), 'users' => $st->fetchAll()]);
 
