@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.16.9';
+const FOK_SERVER_VERSION = '0.16.10';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
 // v2: friendship-gated status and invites, ms hello.now, friend
@@ -43,6 +43,10 @@ const FOK_DUEL_WINDOW = 60;
 // A tracked connection state (see ConnTrack) goes stale after this long
 // without a signaling or duel event: the client reads as idle again.
 const FOK_CONN_TTL = 60;
+// The admin dashboard keeps a client on its Duels / Connections cards this
+// long AFTER its liveness lapses (a duel went quiet, a client dropped), so
+// a just-ended entry does not blink out the instant it stops refreshing.
+const FOK_DUEL_LINGER = 10;
 // How long a pair holds its relay slot after its last message through the
 // hub. A relaying duel refreshes this many times a second, so the window
 // only has to outlast a pause (level transition, backgrounded tab) - keep

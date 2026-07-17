@@ -83,8 +83,11 @@ switch ($action) {
         ]);
 
     case 'conns':
-        $conns = ConnTrack::listOnline();
-        Util::jsonOut(['ok' => true, 'now' => time(), 'conns' => $conns]);
+        Util::jsonOut(['ok' => true, 'now' => time(),
+            'online_window' => FOK_ONLINE_WINDOW, 'conns' => ConnTrack::listPresence()]);
+
+    case 'duels':
+        Util::jsonOut(['ok' => true, 'now' => time(), 'duels' => ConnTrack::listDuels()]);
 
     case 'set_debug':
         // State-changing, so POST-only: a GET could be triggered cross-site
@@ -104,8 +107,13 @@ switch ($action) {
     case 'users':
         $total = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
         $st = $db->query('SELECT id, name, ip, first_seen, last_seen, hello_count, latency, debug, debug_active FROM players ORDER BY last_seen DESC LIMIT 200');
+        $users = array_map(static function (array $u) {
+            $u['debug'] = (int)$u['debug'] === 1;
+            $u['debug_active'] = (int)$u['debug_active'] === 1;
+            return $u;
+        }, $st->fetchAll());
         Util::jsonOut(['ok' => true, 'total' => $total, 'online_window' => FOK_ONLINE_WINDOW,
-            'now' => time(), 'users' => $st->fetchAll()]);
+            'now' => time(), 'users' => $users]);
 
     case 'scores':
         Util::jsonOut(['ok' => true, 'scores' => Scores::top()]);

@@ -77,7 +77,7 @@ button.small { padding: 2px 8px; font-size: 13px; }
     font-size: 12px;
     text-align: center;
 }
-.interval.slim input { width: 40px; }
+.interval.slim input { width: 34px; padding: 3px 4px; }
 
 .error { color: var(--danger); }
 .muted { color: var(--muted); font-size: 13px; }
@@ -111,7 +111,7 @@ button.small { padding: 2px 8px; font-size: 13px; }
 }
 /* The title keeps the space; every control sits at the right edge, with
    the refresh button always last so it lines up across the cards. */
-.card h2 > :first-child { margin-left: auto; }
+.card h2 .card-title { white-space: nowrap; margin-right: auto; }
 
 .statgrid {
     display: grid;
@@ -133,6 +133,14 @@ button.small { padding: 2px 8px; font-size: 13px; }
 
 table { border-collapse: collapse; width: 100%; font-size: 12px; }
 th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sort-asc::after, th.sort-desc::after {
+    content: ""; display: inline-block; margin-left: 5px;
+    border-left: 4px solid transparent; border-right: 4px solid transparent;
+}
+th.sort-asc::after { border-bottom: 5px solid currentColor; }
+th.sort-desc::after { border-top: 5px solid currentColor; }
+tr.gone td { opacity: 0.5; }
 th { color: var(--muted); font-weight: normal; }
 tr.online td:first-child { color: var(--accent); }
 tr.unseen td { color: var(--danger); }
@@ -149,6 +157,9 @@ tr.unseen td { color: var(--danger); }
 .badge.inviting, .badge.invited { border-color: #b7861f; color: #e0b055; }
 .badge.connecting { border-color: #3f6ea8; color: #79aee8; }
 .badge.playing { border-color: var(--accent); color: var(--accent); }
+.badge.matchmaking { border-color: #b7861f; color: #e0b055; }
+.badge.declined { border-color: var(--danger); color: var(--danger); }
+.badge.ended { opacity: 0.55; }
 
 /* dbg-off keeps the muted default: it is the normal state. */
 .badge.dbg-on { border-color: var(--accent); color: var(--accent); }

@@ -641,32 +641,43 @@ else
     # These types need no friendship, so they work after the unfriend above.
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"offer\",\"payload\":\"sdp\"}" "$BASE/api/signal.php" > /dev/null
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
-    expect "connections listed" '"conns":' "$R"
-    expect "online client tracked" "$(strict "\"id\":\"$ID1\"")" "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
+    expect "duels listed" '"duels":' "$R"
+    expect "a client in a handshake is on the Duels card" "$(strict "\"id\":\"$ID1\"")" "$R"
     expect "handshake tracked as connecting" '"state":"connecting"' "$R"
-    expect "connection peer tracked" "$(strict "\"peer\":\"$ID2\"")" "$R"
-    expect "connection mode tracked as p2p" '"mode":"p2p"' "$R"
+    expect "duel peer tracked" "$(strict "\"peer\":\"$ID2\"")" "$R"
+    expect "duel mode tracked as p2p" '"mode":"p2p"' "$R"
 
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID2\",\"to\":\"$ID1\",\"type\":\"accept-relay\",\"payload\":\"{}\"}" "$BASE/api/signal.php" > /dev/null
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
     expect "no-p2p declaration tracked as relay" '"mode":"relay"' "$R"
 
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\",\"duel_with\":\"$ID2\"}" "$BASE/api/hello.php" > /dev/null
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
     expect "running duel tracked as playing" '"state":"playing"' "$R"
     expect "playing keeps the relay mode" '"mode":"relay"' "$R"
+
+    # A decline leaves the decliner on a short-lived 'declined' row naming
+    # who it turned down, so the Duels card shows the rejection and who
+    # made it; the inviter drops back to idle (the Connections card).
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID2\",\"to\":\"$ID1\",\"type\":\"decline\",\"payload\":\"\"}" "$BASE/api/signal.php" > /dev/null
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
+    expect "a decline shows as declined" '"state":"declined"' "$R"
+    expect "the declined row names the decliner" "$(strict "\"id\":\"$ID2\"")" "$R"
+    expect "the declined row names who was turned down" "$(strict "\"peer\":\"$ID1\"")" "$R"
 
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"bye\",\"payload\":\"\"}" "$BASE/api/signal.php" > /dev/null
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
-    expect "bye returns clients to idle" '"state":"idle"' "$R"
+    expect "connections (presence) listed" '"conns":' "$R"
+    expect "after bye a client is back on the Connections card" "$(strict "\"id\":\"$ID1\"")" "$R"
 
-    # Debug flag: the admin sets a wish, the client honours it on its next
-    # hello and reports back what it actually did.
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    # Debug flag lives per registered user now: the admin sets a wish, the
+    # client honours it on its next hello and reports what it actually did.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=users")
     expect "a client is not debugging by default" '"debug":false' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=set_debug" -d "id=$ID1&on=1")
     expect "admin sets a client to debug" '"ok":true' "$R"
@@ -674,7 +685,7 @@ else
     expect "set_debug via GET rejected" '405' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=set_debug" -d "id=nothex&on=1")
     expect "set_debug rejects a malformed id" '"error":"invalid id"' "$R"
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=users")
     expect "the wish shows before the client picks it up" '"debug":true,"debug_active":false' "$R"
 
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
@@ -682,7 +693,7 @@ else
     expect "hello hands the debug wish to the client" '"debug":true' "$R"
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\",\"debug\":true}" "$BASE/api/hello.php" > /dev/null
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=users")
     expect "the client reports it honoured the wish" '"debug":true,"debug_active":true' "$R"
 
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
@@ -693,18 +704,22 @@ else
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\",\"debug\":true}" "$BASE/api/hello.php")
     expect "the wish can be withdrawn" '"debug":false' "$R"
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=users")
     expect "a client debugging by itself still reports active" '"debug":false,"debug_active":true' "$R"
 
     R=$(curl -s "$BASE/assets/admin.js?v=$VER")
     expect "connections card on the dashboard" "id: 'conns'" "$R"
+    expect "duels card on the dashboard" "id: 'duels'" "$R"
     expect "connections card has its own interval" "every: 'admin_conns_refresh_secs'" "$R"
+    expect "duels card has its own interval" "every: 'admin_duels_refresh_secs'" "$R"
     expect "global refresh interval sits in the top bar" "prepend(intervalControl('admin_refresh_secs'" "$R"
-    expect "connections card can toggle debug" "api('set_debug'" "$R"
+    expect "the users card can toggle debug" "api('set_debug'" "$R"
+    expect "tables can be sorted by column" "function sortable(" "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
     expect "global refresh interval defaults to 30 s" '"key":"admin_refresh_secs","value":30' "$R"
     expect "connections refresh interval defaults to 1 s" '"key":"admin_conns_refresh_secs","value":1' "$R"
+    expect "duels refresh interval defaults to 1 s" '"key":"admin_duels_refresh_secs","value":1' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
     expect "backup via GET rejected" '"error":"POST only"' "$R"

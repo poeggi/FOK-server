@@ -40,10 +40,13 @@ function fmtBytes(n) {
 // Connection states as tracked by src/ConnTrack.php.
 const STATE_LABEL = {
     idle: 'idle',
+    matchmaking: 'matchmaking',
     inviting: 'inviting',
     invited: 'invited by',
     connecting: 'connecting',
     playing: 'playing 1:1',
+    declined: 'declined',
+    ended: 'ended',
 };
 
 // What the server asked for vs what the client reports it is doing. They
@@ -85,32 +88,56 @@ const MODULES = [
     {
         id: 'conns',
         title: 'Connections (online)',
-        // Own, much faster interval: a whole invite/connect/play/bye
-        // cycle can happen between two global refreshes.
+        // Own, much faster interval: presence changes fast and a dropped
+        // client should clear within a second or two.
         every: 'admin_conns_refresh_secs',
         async refresh(box) {
             const d = await api('conns');
             box.replaceChildren();
-            if (!d.conns.length) { box.append(el('p', 'muted', 'No client online.')); return; }
+            if (!d.conns.length) { box.append(el('p', 'muted', 'No client here.')); return; }
             const table = el('table');
-            table.append(row(['ID', 'Name', 'State', 'Peer', 'Mode', 'Lat', 'Msgs', 'Age'], 'th'));
+            table.append(row(['ID', 'Name', 'IP', 'Lat', 'Age'], 'th'));
             for (const c of d.conns) {
-                const r = el('tr');
-                r.classList.add('online');
-                const state = el('td');
-                state.append(el('span', 'badge ' + c.state, STATE_LABEL[c.state] || c.state));
-                r.append(el('td', '', c.id), el('td', '', c.name === null ? '-' : c.name));
-                r.append(state);
-                r.append(el('td', '', c.peer === null ? '-' : c.peer));
-                r.append(el('td', c.mode === 'relay' ? 'error' : '', c.mode === null ? '-' : c.mode));
-                r.append(el('td', '', c.latency === null ? '-' : c.latency + ' ms'));
-                r.append(el('td', 'muted', c.msgs));
-                r.append(el('td', 'muted', (d.now - (c.since === null ? c.last_seen : c.since)) + ' s'));
+                const r = row([c.id, c.name === null ? '-' : c.name, c.ip,
+                    c.latency === null ? '-' : c.latency + ' ms',
+                    (d.now - c.last_seen) + ' s' + (c.gone ? ' gone' : '')]);
+                r.classList.add(c.gone ? 'gone' : 'online');
                 table.append(r);
             }
             box.append(table);
-            box.append(el('p', 'muted', 'Msgs: relay messages this client has sent. '
-                + 'Age: time since the last event of that state.'));
+            sortable(table, 'conns');
+            box.append(el('p', 'muted', 'Clients in a 1:1 are on the Duels card; a dropped '
+                + 'client lingers here (gone) for a few seconds. Click a header to sort.'));
+        },
+    },
+    {
+        id: 'duels',
+        title: '1:1 Duels',
+        every: 'admin_duels_refresh_secs',
+        async refresh(box) {
+            const d = await api('duels');
+            box.replaceChildren();
+            if (!d.duels.length) { box.append(el('p', 'muted', 'No 1:1 activity.')); return; }
+            const table = el('table');
+            table.append(row(['Client', 'Name', 'Peer', 'State', 'Mode', 'Lat', 'Msgs', 'Age'], 'th'));
+            for (const c of d.duels) {
+                const r = el('tr');
+                r.classList.add(c.state === 'ended' ? 'gone' : 'online');
+                const state = el('td');
+                state.append(el('span', 'badge ' + c.state, STATE_LABEL[c.state] || c.state));
+                r.append(el('td', '', c.id), el('td', '', c.name === null ? '-' : c.name),
+                    el('td', '', c.peer === null ? '-' : c.peer));
+                r.append(state);
+                r.append(el('td', c.mode === 'relay' ? 'error' : '', c.mode === null ? '-' : c.mode));
+                r.append(el('td', '', c.latency === null ? '-' : c.latency + ' ms'));
+                r.append(el('td', 'muted', c.msgs));
+                r.append(el('td', 'muted', (d.now - c.since) + ' s'));
+                table.append(r);
+            }
+            box.append(table);
+            sortable(table, 'duels');
+            box.append(el('p', 'muted', 'Every phase of a 1:1 - matchmaking, invite, connect, play - '
+                + 'and 10 s after it ends. Msgs: relay messages sent. Click a header to sort.'));
         },
     },
     {
@@ -369,6 +396,48 @@ function form(obj) {
     return f;
 }
 
+// Click-to-sort for the tables the cards build. The sort a card is showing
+// is remembered per card id, so a 1 s refresh reorders the new rows the
+// same way instead of throwing the user's choice away.
+const sortState = {};
+
+function sortRows(table, col, asc) {
+    const rows = Array.from(table.querySelectorAll('tr')).filter((r) => r.querySelector('td'));
+    // Sort a column numerically only when the cell STARTS with a number
+    // (e.g. "31 ms", "5 s"); ids and IPs then fall back to text order.
+    const num = (s) => { const m = s.match(/^-?\d+(?:\.\d+)?(?=\s|$)/); return m ? parseFloat(m[0]) : null; };
+    const cell = (r) => (r.children[col] ? r.children[col].textContent.trim() : '');
+    rows.sort((a, b) => {
+        const x = cell(a), y = cell(b), nx = num(x), ny = num(y);
+        const cmp = (nx !== null && ny !== null) ? nx - ny : x.localeCompare(y);
+        return asc ? cmp : -cmp;
+    });
+    for (const r of rows) table.append(r);
+}
+
+function markSort(ths, col, asc) {
+    ths.forEach((h, i) => {
+        h.classList.toggle('sort-asc', i === col && asc);
+        h.classList.toggle('sort-desc', i === col && !asc);
+    });
+}
+
+function sortable(table, id) {
+    const ths = table.querySelectorAll('th');
+    ths.forEach((th, col) => {
+        th.classList.add('sortable');
+        th.onclick = () => {
+            const st = sortState[id];
+            const asc = !(st && st.col === col && st.asc);
+            sortState[id] = { col, asc };
+            markSort(ths, col, asc);
+            sortRows(table, col, asc);
+        };
+    });
+    const st = sortState[id];
+    if (st) { markSort(ths, st.col, st.asc); sortRows(table, st.col, st.asc); }
+}
+
 const boxes = {};
 
 // Cards on the global interval. Cards with an 'every' of their own are
@@ -433,7 +502,8 @@ const views = {
 function buildCards() {
     for (const m of MODULES) {
         const card = el('section', 'card');
-        const head = el('h2', '', m.title);
+        const head = el('h2');
+        head.append(el('span', 'card-title', m.title));
         const btn = el('button', 'small refresh', 'refresh');
         btn.onclick = () => refreshModule(m.id);
         if (m.every) head.append(intervalControl(m.every, m.title + ' refresh interval', true));

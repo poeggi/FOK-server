@@ -25,7 +25,8 @@ final class ConnTrack
         'offer' => ['connecting', 'connecting', 'p2p'],
         'answer' => ['connecting', 'connecting', 'p2p'],
         'ice' => ['connecting', 'connecting', 'p2p'],
-        // Ends the pairing for both sides.
+        // decline is special-cased in note() (it leaves a 'declined' row);
+        // bye ends the pairing for both sides.
         'decline' => [null, null, null],
         'bye' => [null, null, null],
     ];
@@ -34,6 +35,14 @@ final class ConnTrack
     public static function note(string $from, string $to, string $type): void
     {
         if (!isset(self::BY_TYPE[$type])) {
+            return;
+        }
+        if ($type === 'decline') {
+            // Keep the rejection visible: the decliner holds a short-lived
+            // 'declined' row naming who it turned down, so the Duels card
+            // shows the decline and who made it; the inviter returns to idle.
+            self::set($from, $to, 'declined', null);
+            self::clear($to, $from);
             return;
         }
         [$mine, $theirs, $mode] = self::BY_TYPE[$type];
@@ -112,46 +121,101 @@ final class ConnTrack
     }
 
     /**
-     * Online players with their connection state, latest first. A stale
-     * row means the client went quiet mid-handshake: it reads as idle.
-     * debug is what the admin asked for, debug_active what the client last
-     * reported - they differ until the wish reaches it (see Presence).
-     * @return array [{id, name, ip, latency, last_seen, state, peer, mode,
-     *                 since, debug, debug_active}]
+     * Presence for the Connections card: who is here, newest first, with a
+     * short tail so a client that just dropped stays visible (gone=true)
+     * for FOK_DUEL_LINGER seconds. Clients in a 1:1 - a live or just-ended
+     * duel, or a quick-match seeker - are NOT here; they live on the Duels
+     * card (listDuels), so a client shows on exactly one of the two.
+     * @return array [{id, name, ip, latency, last_seen, gone}]
      */
-    public static function listOnline(int $limit = 200): array
+    public static function listPresence(int $limit = 200): array
     {
         $db = Db::get();
         $now = time();
+        // The LEFT JOIN only matches a conn row that counts as an active or
+        // just-ended duel, so c.id IS NULL means "not in a duel"; seekers
+        // are removed the same way.
         $st = $db->prepare(
-            'SELECT p.id, p.name, p.ip, p.latency, p.last_seen, p.debug, p.debug_active,
-                    c.peer, c.state, c.mode, c.updated, rr.total AS msgs
+            'SELECT p.id, p.name, p.ip, p.latency, p.last_seen
                FROM players p
-               LEFT JOIN conn c ON c.id = p.id
-               LEFT JOIN relay_rate rr ON rr.id = p.id
-              WHERE p.last_seen > ?
+               LEFT JOIN conn c ON c.id = p.id AND c.peer IS NOT NULL AND c.updated > ?
+              WHERE p.last_seen > ? AND c.id IS NULL
+                AND p.id NOT IN (SELECT id FROM mm_queue WHERE matched_with IS NULL)
               ORDER BY p.last_seen DESC LIMIT ' . $limit
         );
-        $st->execute([$now - FOK_ONLINE_WINDOW]);
-        $rows = $st->fetchAll();
-
+        $st->execute([$now - FOK_CONN_TTL - FOK_DUEL_LINGER, $now - FOK_ONLINE_WINDOW - FOK_DUEL_LINGER]);
         $out = [];
-        foreach ($rows as $r) {
-            $stale = $r['state'] === null || (int)$r['updated'] < $now - FOK_CONN_TTL;
-            $peer = $stale ? null : $r['peer'];
+        foreach ($st->fetchAll() as $r) {
             $out[] = [
                 'id' => $r['id'],
                 'name' => $r['name'],
                 'ip' => $r['ip'],
                 'latency' => $r['latency'] === null ? null : (int)$r['latency'],
                 'last_seen' => (int)$r['last_seen'],
-                'state' => $stale ? 'idle' : $r['state'],
-                'peer' => $peer,
-                'mode' => $peer === null ? null : $r['mode'],
-                'since' => $stale ? null : (int)$r['updated'],
+                'gone' => (int)$r['last_seen'] < $now - FOK_ONLINE_WINDOW,
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * The 1:1 Duels card: one row per client in a duel phase - inferred
+     * from the conn row the signal handshake, duel heartbeat and relay
+     * write - plus quick-match seekers from mm_queue that have no peer yet.
+     * A row shows its live state while conn.updated is fresh (FOK_CONN_TTL)
+     * and lingers FOK_DUEL_LINGER seconds past that as 'ended', so a
+     * finished duel does not vanish the instant it goes quiet.
+     * @return array [{id, name, peer, state, mode, latency, msgs, since}]
+     */
+    public static function listDuels(int $limit = 200): array
+    {
+        $db = Db::get();
+        $now = time();
+        $st = $db->prepare(
+            'SELECT p.id, p.name, p.latency, c.peer, c.state, c.mode, c.updated,
+                    rr.total AS msgs
+               FROM conn c
+               JOIN players p ON p.id = c.id
+               LEFT JOIN relay_rate rr ON rr.id = c.id
+              WHERE c.peer IS NOT NULL AND c.updated > ?
+              ORDER BY c.updated DESC LIMIT ' . $limit
+        );
+        $st->execute([$now - FOK_CONN_TTL - FOK_DUEL_LINGER]);
+        $out = [];
+        $seen = [];
+        foreach ($st->fetchAll() as $r) {
+            $seen[$r['id']] = true;
+            $ended = (int)$r['updated'] < $now - FOK_CONN_TTL;
+            $out[] = [
+                'id' => $r['id'],
+                'name' => $r['name'],
+                'peer' => $r['peer'],
+                'state' => $ended ? 'ended' : $r['state'],
+                'mode' => $r['mode'],
+                'latency' => $r['latency'] === null ? null : (int)$r['latency'],
                 'msgs' => (int)$r['msgs'],
-                'debug' => (int)$r['debug'] === 1,
-                'debug_active' => (int)$r['debug_active'] === 1,
+                'since' => (int)$r['updated'],
+            ];
+        }
+        // Quick-match seekers with no peer yet: half a duel, shown the
+        // instant they start looking.
+        foreach ($db->query(
+            'SELECT m.id, m.since, p.name, p.latency
+               FROM mm_queue m JOIN players p ON p.id = m.id
+              WHERE m.matched_with IS NULL'
+        )->fetchAll() as $r) {
+            if (isset($seen[$r['id']])) {
+                continue;
+            }
+            $out[] = [
+                'id' => $r['id'],
+                'name' => $r['name'],
+                'peer' => null,
+                'state' => 'matchmaking',
+                'mode' => null,
+                'latency' => $r['latency'] === null ? null : (int)$r['latency'],
+                'msgs' => 0,
+                'since' => (int)$r['since'],
             ];
         }
         return $out;
