@@ -628,8 +628,13 @@ Notes:
   fails loudly. Everything else (ice, chat, bye) expires silently: those
   belong to a handshake the client is already timing out on its own.
 - Use a public STUN server (e.g. stun:stun.l.google.com:19302) in the
-  RTCPeerConnection config. There is no TURN relay; if P2P fails, report
-  "connection failed" to the user.
+  RTCPeerConnection config. There is NO TURN server: the server never
+  relays WebRTC itself - it forwards the signaling (SDP/ICE) and nothing
+  else, and once the DataChannel is open it sees no game traffic at all.
+  When P2P cannot connect, WebRTC is abandoned rather than relayed: the
+  duel falls back to relay.php, which carries plain opaque messages over
+  HTTP (see "Relay fallback"). So "P2P failed" is not the end of the
+  match - it is the switch to the hub. Only a failing relay ends it.
 - Signaling payloads fit the 16 KB limit; send one signal per ICE
   candidate rather than batching.
 

@@ -21,6 +21,9 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
   their (input-level) messages through the server via relay.php long
   polls - degraded latency but works through any firewall; concurrent
   relayed duels are capped to protect the shared-hosting worker pool.
+  This is NOT WebRTC relaying: there is no TURN server, and the server
+  never carries an RTCPeerConnection. WebRTC is abandoned, and plain
+  opaque messages go over HTTP instead.
 - Global highscores: top 100 list. Submissions carry the deterministic
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
   be sanity-checked by re-simulation to prevent spoofing (validated flag).
