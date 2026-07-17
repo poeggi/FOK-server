@@ -6,20 +6,25 @@
     </FilesMatch>
 </IfModule>
 
-# Clock source probe. Apache stamps the moment it RECEIVED the request
-# into a response header, so a client could sync its clock without ever
-# entering the PHP-FPM queue. That queue wait happens before PHP starts,
-# so PHP can neither see nor report it, and it lands in the client's
-# offset as if it were network delay (see docs/API.md, "Time
-# synchronization and PTS").
+# THE clock source clients sync against (docs/API.md, "Time
+# synchronization and PTS"). Apache stamps the moment it RECEIVED the
+# request into the header, in MICROseconds, and serves the file without
+# PHP - so clock sync never queues for a PHP-FPM worker. That queue wait
+# happens before PHP starts, so PHP can neither see nor subtract it, and
+# it would land in the client's offset as if it were network delay.
 #
-# PROBE ONLY: nothing reads this yet. It is here to learn whether this
-# host expands %t and in what format. php -S ignores .htaccess entirely,
-# so real Apache is the only place that can answer.
+# php -S ignores .htaccess entirely, so nothing here is covered by the
+# smoke test: only real Apache can prove it works. Verified on live in
+# 0.16.3, which is why this shipped alone first.
 #
 # no-store is not optional: a cached timestamp is a wrong clock. The
-# immutable rule above matches on extension and never sees this file,
-# but a proxy default might.
+# immutable rule above matches on extension and never sees this file, but
+# a proxy default might.
+#
+# Allow-Origin is * rather than the FOK_ALLOWED_ORIGINS allowlist the PHP
+# endpoints use: this file bypasses PHP, so it cannot consult that list,
+# and it discloses nothing the HTTP Date header does not already.
+# Expose-Headers is what lets a browser read X-Fok-T cross-origin at all.
 <IfModule mod_headers.c>
     <Files "t.txt">
         Header set X-Fok-T "%t"

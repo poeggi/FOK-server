@@ -46,7 +46,12 @@ endpoint - it is the contract the FOK-snake client is built against.
 - Server-issued starts are keyed on (pair, epoch), never on the pair
   alone: both peers name the epoch so the answer cannot depend on when
   either asks. A pair-only key silently handed a late peer a different
-  start. The epoch is scoped to one connection and resets on 'bye'.
+  start. The epoch is scoped to one connection and resets where a pairing
+  BEGINS (invite/invite-relay/offer in signal.php) - NOT on 'bye': once
+  the DataChannel is open the bye goes peer-to-peer and the server never
+  sees it, so a bye-keyed reset left the finished line standing and 409'd
+  the pair's rematch. The server sees every begin; it does not see every
+  end. Dropping the row is always safe, missing one breaks a rematch.
 - public/ mirrors the webroot 1:1; deploy is a dumb FTPS file copy
   (tools/deploy.sh in CI, tools/deploy.ps1 by hand). No build step, no
   composer, no dependencies.

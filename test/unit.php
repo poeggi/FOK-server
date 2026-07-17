@@ -215,11 +215,14 @@ $startRow = (function (): array {
 ok((int)$startRow['epoch'] === 1 && $startRow['reason'] === 'respawn', 'the pair records epoch and reason');
 ok(in_array('resume', Starts::REASONS, true), 'a resume from pause is a start reason');
 
-// The epoch counts halts within ONE connection: bye ends it, so the pair's
-// next duel opens at epoch 0 again instead of being refused forever.
+// The epoch counts halts within ONE connection, so the pair's next duel
+// opens at epoch 0 again instead of being refused forever. The reset hangs
+// off the handshake, NOT off bye: a P2P bye goes over the DataChannel and
+// the server never sees it (see signal.php), so a rematch would otherwise
+// hit the finished line and 409 until the row aged out.
 Starts::forget('aaaaaaaa', 'bbbbbbbb');
 $again = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'first');
-ok($again > Util::nowMs(), 'a rematch after bye starts a fresh epoch line');
+ok($again > Util::nowMs(), 'a rematch on a fresh epoch line gets a start');
 // Pair-scoped: bye is not friendship-gated, so a stranger saying bye must
 // not reach a duel it has nothing to do with.
 Starts::request('aaaaaaaa', 'bbbbbbbb', 1, 'level');

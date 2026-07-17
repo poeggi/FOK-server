@@ -5,12 +5,17 @@ require_once __DIR__ . '/../src/Util.php';
 
 /**
  * GET -> {"ok":true, "t": <server time in ms>}
- * The clock-sync endpoint: deliberately touches NO database so the
- * response time is as constant as possible. Clients measure the round
- * trip (record local t0, call, record local t1) and derive their offset
- * to the server clock: offset = t + rtt/2 - t1. Take several samples
- * and keep the one with the lowest rtt. This offset is the base of the
- * shared PTS clock (see docs/API.md, "Time synchronization and PTS").
+ *
+ * The FALLBACK clock source, and a free `now` re-check. The primary one
+ * is api/t.txt, where Apache stamps the receive time into a header
+ * without involving PHP at all; clients prefer that and only come here
+ * if they cannot read the header (see docs/API.md, "Time synchronization
+ * and PTS", for the sampling procedure).
+ *
+ * Still worth keeping cheap: it touches NO database, so its response time
+ * stays as constant as PHP allows. It cannot match t.txt though - this
+ * request queues for a PHP-FPM worker first, and the stamp below is taken
+ * after that wait rather than before it.
  */
 Util::cors();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'GET') {

@@ -68,13 +68,24 @@ if (($type === 'invite-relay' || $type === 'accept-relay')
 }
 
 // 'bye' ends the pairing, so its relay backlog dies with it: an
-// undelivered input must never reach the pair's next duel. The start
-// epoch goes the same way - it counts halts within ONE connection, so the
-// pair's next duel has to be able to open at epoch 0 again.
+// undelivered input must never reach the pair's next duel.
 if ($type === 'bye') {
     $db = Db::get();
     [$a, $b] = $id < $to ? [$id, $to] : [$to, $id];
     $db->prepare('DELETE FROM relay WHERE pair = ?')->execute(["$a:$b"]);
+}
+
+// The start epoch counts halts within ONE connection, so it resets with
+// the connection - but it resets where the connection BEGINS, because
+// that is the only end the server reliably sees. A bye travels over the
+// open DataChannel and never reaches us, which left the pair's finished
+// epoch line standing and refused their rematch at epoch 0 with a 409
+// until the row aged out. 'invite'/'invite-relay' open the friend flow,
+// 'offer' opens quick match (which has no invite) and any renegotiation:
+// one DELETE per duel setup, never per signal. Dropping the row is always
+// safe - the pair simply re-creates it on their next start - so erring
+// towards resetting costs nothing, while missing one costs the rematch.
+if ($type === 'invite' || $type === 'invite-relay' || $type === 'offer' || $type === 'bye') {
     Starts::forget($id, $to);
 }
 

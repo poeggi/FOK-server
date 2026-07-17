@@ -513,6 +513,26 @@ R=$(sig "$ID1" "$ID2" bye '')
 expect "normal duel ends with bye" '"ok":true' "$R"
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 
+# --- A rematch after a PEER-TO-PEER bye. Once the DataChannel is open the
+# bye travels over it and never reaches the server (docs/API.md, the 1:1
+# flow), so nothing here says the duel ended. The pair's finished epoch
+# line must not survive to refuse their next match: without the handshake
+# reset in signal.php this 409s for a full five minutes.
+start_req "$ID1" "$ID2" 0 first "$(now_ms)" > /dev/null
+start_req "$ID1" "$ID2" 1 level "$(now_ms)" > /dev/null
+sig "$ID1" "$ID2" invite 'rematch please' > /dev/null
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+R=$(start_req "$ID1" "$ID2" 0 first "$(now_ms)")
+expect "a rematch after a peer-to-peer bye still gets a start" '"start_pts":' "$R"
+# Quick match has no invite at all: the offer is what opens that pairing.
+start_req "$ID1" "$ID2" 1 level "$(now_ms)" > /dev/null
+sig "$ID1" "$ID2" offer 'sdp-rematch' > /dev/null
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+R=$(start_req "$ID1" "$ID2" 0 first "$(now_ms)")
+expect "an offer opens a fresh epoch line too (quick match)" '"start_pts":' "$R"
+sig "$ID1" "$ID2" bye '' > /dev/null
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
 expect "friendship removed" '"ok":true' "$R"
 

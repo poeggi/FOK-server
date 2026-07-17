@@ -31,11 +31,12 @@ rather than misbehave against an incompatible server.
   (`Content-Type: application/json`), responses are JSON objects.
 - Every response contains `"ok": true` or `"ok": false`. On failure the
   object is `{"ok": false, "error": "<short reason>"}` with an HTTP status
-  of 400 (bad input), 401 (auth), 403 (not friends, see signal.php), 404
-  (unknown), 405 (wrong method), 413 (request body over ~272 KB, only a
-  score submission ever comes close), 429 (rate cap, see below), 503
-  (relay busy) or 500 (server fault). Clients must treat any non-`ok`
-  answer as a soft failure: log it, back off, never crash gameplay.
+  of 400 (bad input), 403 (not friends, see signal.php), 404 (unknown),
+  405 (wrong method), 409 (caller is behind, see start.php), 413 (request
+  body over ~272 KB, only a score submission ever comes close), 429 (rate
+  cap, see below), 503 (relay busy) or 500 (server fault). Clients must
+  treat any non-`ok` answer as a soft failure: log it, back off, never
+  crash gameplay.
 - Abuse caps returning 429 (defaults, admin-configurable): a recipient's
   signal mailbox holds at most 128 pending messages, and a player may
   submit at most 10 scores per 5 minutes. Normal play never reaches
@@ -46,7 +47,9 @@ rather than misbehave against an incompatible server.
   secret token is planned but not part of this version.
 - CORS: browsers may call the API from `https://poeggi.github.io` and
   `http://localhost:8000` / `http://127.0.0.1:8000`. Other origins are
-  not sent CORS headers.
+  not sent CORS headers. The one exception is `t.txt`, which is served by
+  Apache without PHP and so cannot consult that allowlist: it answers any
+  origin, and discloses nothing the standard HTTP `Date` header does not.
 - Clients must gate ALL calls on the user's offline setting
   (`!cfg.offline` in FOK-snake): when offline is ON, never contact the
   server.
@@ -229,11 +232,19 @@ asked only for its timing.
 - `now`: a free clock re-check.
 
 The lead time is chosen by the server: at least 200 ms
-(`start_lead_min_ms`), scaled by the pair's reported latencies
+(`start_lead_min_ms`), scaled by the pair's latencies
 (150 + 2 x worst latency when that exceeds the minimum), capped at 3 s.
+A player who has never reported a latency counts as 100 ms, so a pair
+that has not measured yet gets a 350 ms lead rather than the 200 ms
+floor - report latency (see above) and the lead fits the pair instead.
 
-A `bye` ends the pairing and resets the epoch line with it, so the pair's
-next match opens at `epoch: 0` again.
+The epoch line belongs to one pairing, and the server resets it when a
+pairing BEGINS: an `invite`, an `invite-relay` or an `offer` for the pair
+drops whatever line was standing, so their next match opens at `epoch: 0`
+again. It is deliberately not keyed on `bye`: once the DataChannel is
+open a bye travels over it and never reaches the server, so a rematch
+would meet the finished line and be refused. Clients need do nothing for
+this beyond the normal handshake.
 
 #### The sync gate
 
@@ -630,16 +641,22 @@ friend list; the hello `friends` field tells A whether B is online):
     4. B sets the remote description, answers: B -> signal answer.
     5. Both sides exchange ice messages as candidates arrive.
     6. When the DataChannel opens on both ends, BOTH clients stop
-       polling poll.php, and EACH calls POST /api/start.php {id, peer}:
+       polling poll.php, sync the clock (t.txt), and EACH calls
+       POST /api/start.php {id, peer, epoch: 0, reason: "first", pts}:
        the server answers both with the identical absolute start_pts,
        and the level begins exactly then (music, READY/GO, first tick).
        From here ALL game traffic flows peer-to-peer (see FOK-snake
        docs/multiplayer-server-prompt.md for the tick sync protocol).
        Clients keep the normal slow hello heartbeat (~30 s) with
-       duel_with set, so the server can count running games. For each
-       further level or a rematch, both call start.php again.
-    7. Either side sends bye (via the DataChannel if open, and via
-       signal as fallback) to end the session.
+       duel_with set, so the server can count running games.
+    7. EVERY further halt of the run - next level, respawn, resume from
+       pause - repeats step 6 with the next epoch and its reason, and a
+       fresh sync each time. See start.php for the epoch rules.
+    8. Either side sends bye (via the DataChannel if open, and via
+       signal as fallback) to end the session. A rematch is a new
+       pairing: it re-runs the handshake from step 1 and opens a new
+       epoch line at 0 (the invite/offer is what resets it server-side,
+       precisely because a DataChannel bye never reaches the server).
 
 ## Relay fallback - when P2P cannot connect
 

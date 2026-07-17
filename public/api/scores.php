@@ -8,7 +8,7 @@ require_once __DIR__ . '/../src/Scores.php';
 /**
  * GET (optional ?limit=1..100) -> {"ok": true, "scores": [top entries]}
  * POST {"id", "name", "score", "level", "diff", "color"?, "shopItems"?,
- *       "seed"?, "inputs"?}
+ *       "seed"?, "inputs"?, "pts"?}
  * seed + inputs are the deterministic replay material; they are stored
  * verbatim for the future server-side sanity check (anti-spoofing).
  * Submissions are throttled per player (HTTP 429 above the cap).

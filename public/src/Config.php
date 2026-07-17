@@ -2,15 +2,15 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.16.6';
+const FOK_SERVER_VERSION = '0.16.7';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
 // v2: friendship-gated status and invites, ms hello.now, friend
 // notifications, relay fallback.
 // v3: start.php requires epoch + reason + pts. A start is now issued for
-// EVERY halt of the run (first, level, respawn, resume), peers name the
-// one they mean instead of racing for it, and an unsynced client is
-// turned away rather than let into a desynced game.
+// EVERY halt of the run (see Starts::REASONS), peers name the one they
+// mean instead of racing for it, and an unsynced client is turned away
+// rather than let into a desynced game.
 const FOK_API_VERSION = 3;
 
 // Never leak stack traces or paths to clients; errors go to the server log.
