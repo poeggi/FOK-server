@@ -3,12 +3,11 @@
 /*
  * FOK-server admin UI.
  * Each card is a self-contained module: { id, title, view, every,
- * refresh(el) }. view selects the screen: 'dash' (default dashboard) or
- * 'settings' (the gear menu with configuration and backup/restore).
- * every names a settings key holding this card's own refresh interval,
- * which also gives the card an interval control of its own; cards
- * without it follow the global interval (top bar) if listed in LIVE. To
- * extend the admin UI, append a module to MODULES; nothing else to touch.
+ * refresh(el) }. view picks the screen: 'dash' (default) or 'settings'
+ * (behind the gear). every names a settings key holding the card's own
+ * refresh interval and gives it an interval control; cards without one
+ * follow the global interval if listed in LIVE. To extend the admin UI,
+ * append a module to MODULES; nothing else to touch.
  */
 
 const API = 'api.php';
@@ -77,8 +76,8 @@ const MODULES = [
     {
         id: 'conns',
         title: 'Connections (online clients)',
-        // Its own, much faster interval: a whole invite -> connect ->
-        // play -> bye cycle can happen between two global refreshes.
+        // Own, much faster interval: a whole invite/connect/play/bye
+        // cycle can happen between two global refreshes.
         every: 'admin_conns_refresh_secs',
         async refresh(box) {
             const d = await api('conns');
@@ -333,9 +332,8 @@ function form(obj) {
 
 const boxes = {};
 
-// Cards that follow the global interval from the top bar. Cards with an
-// 'every' of their own are not listed here; the rest only refresh on
-// page load or when their own refresh button is pressed.
+// Cards on the global interval. Cards with an 'every' of their own are
+// not listed; the rest refresh on page load or on their refresh button.
 const LIVE = ['stats', 'props', 'alerts'];
 
 const settings = {};
@@ -345,8 +343,8 @@ async function loadSettings() {
     for (const s of (await api('settings')).settings) settings[s.key] = s.value;
 }
 
-// The intervals live in the server settings, so they survive a reload
-// and are editable in the settings view like everything else; 0 is off.
+// Intervals live in the server settings: they survive a reload and are
+// editable in the settings view like everything else. 0 is off.
 function schedule(name, secs, fn) {
     if (timers[name]) clearInterval(timers[name]);
     if (secs > 0) timers[name] = setInterval(fn, secs * 1000);

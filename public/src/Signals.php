@@ -7,7 +7,8 @@ require_once __DIR__ . '/Settings.php';
 /**
  * Store-and-forward mailbox for matchmaking and WebRTC signaling.
  * The server never interprets SDP/ICE payloads; it only relays them
- * between player IDs. Game traffic itself is peer-to-peer.
+ * between player IDs. The game traffic itself is peer-to-peer, except
+ * in relay-fallback mode, which runs over relay.php - not through here.
  */
 final class Signals
 {
@@ -36,10 +37,9 @@ final class Signals
     }
 
     /**
-     * Cheapest possible "anything for me?" check: one indexed read, no
-     * writes. It must apply the same TTL take() does, or a long poll would
-     * wake on an already-expired message and answer 200 with an empty
-     * list instead of holding for the real one.
+     * Cheapest "anything for me?" check: one indexed read, no writes. The
+     * TTL must match take()'s, or a long poll wakes on an expired message
+     * and answers 200 with an empty list instead of holding for a real one.
      */
     public static function any(string $to): bool
     {
@@ -49,20 +49,17 @@ final class Signals
     }
 
     /**
-     * Drops messages past signal_ttl. An expiring message that a peer was
-     * WAITING for an answer to (see NEEDS_RECEIPT) is a failed connection
-     * attempt, so the sender is told: it gets a server-generated
-     * 'undelivered' signal naming the peer and the message type. Without
-     * it an invite that nobody picks up just evaporates behind an
-     * ok:true, and the inviter waits forever.
+     * Drops messages past signal_ttl. A NEEDS_RECEIPT message dying here
+     * is a failed connection attempt, so its sender gets an 'undelivered'
+     * signal naming the peer and the type - otherwise an invite nobody
+     * picks up evaporates behind its ok:true and the inviter waits forever.
      */
     private static function expire(PDO $db): void
     {
         $cut = time() - Settings::int('signal_ttl');
-        // DELETE ... RETURNING is what makes the receipt exactly-once:
-        // whichever request wins the delete is the only one holding the
-        // rows, so two mailbox reads racing here cannot both report the
-        // same lost invite (a plain SELECT-then-DELETE lets both).
+        // DELETE ... RETURNING makes the receipt exactly-once: only the
+        // request that wins the delete holds the rows. SELECT-then-DELETE
+        // would let two racing mailbox reads both report the same loss.
         $st = $db->prepare('DELETE FROM signals WHERE created < ? RETURNING from_id, to_id, type');
         $st->execute([$cut]);
         $rows = $st->fetchAll();
@@ -73,12 +70,10 @@ final class Signals
             if (!in_array($r['type'], self::NEEDS_RECEIPT, true)) {
                 continue;
             }
-            // Addressed FROM the peer that never picked it up, so the
-            // client correlates the receipt to its pending attempt.
-            // Inserted past the mailbox cap on purpose: a full mailbox
-            // must not swallow the one message that says the connection
-            // failed. It cannot be used to flood - the server only ever
-            // sends one per connection message the player sent itself.
+            // FROM the peer that never picked it up, so the client can
+            // correlate it. Past the mailbox cap on purpose: a flood must
+            // not swallow the message that says the connection failed.
+            // Bounded - one per connection message the player sent itself.
             $db->prepare(
                 'INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)'
             )->execute([$r['to_id'], $r['from_id'], 'undelivered', (string)json_encode([
@@ -90,11 +85,10 @@ final class Signals
     }
 
     /**
-     * Drains and returns all pending messages for a player, oldest first.
-     * The read and the delete are one transaction: two overlapping polls
-     * by the same client (a retry over a slow link) must never both be
-     * handed the same message - "exactly once" is the API contract, and a
-     * replayed invite or input desyncs the game.
+     * Drains all pending messages for a player, oldest first. Read and
+     * delete are one transaction: two overlapping polls (a retry over a
+     * slow link) must never both be handed the same message - exactly-once
+     * is the contract, and a replayed invite or input desyncs the game.
      */
     public static function take(string $to): array
     {

@@ -31,10 +31,11 @@ rather than misbehave against an incompatible server.
   (`Content-Type: application/json`), responses are JSON objects.
 - Every response contains `"ok": true` or `"ok": false`. On failure the
   object is `{"ok": false, "error": "<short reason>"}` with an HTTP status
-  of 400 (bad input), 401 (auth), 404 (unknown), 405 (wrong method),
-  429 (rate cap, see below) or 500 (server fault). Clients must treat any
-  non-`ok` answer as a soft failure: log it, back off, never crash
-  gameplay.
+  of 400 (bad input), 401 (auth), 403 (not friends, see signal.php), 404
+  (unknown), 405 (wrong method), 413 (request body over ~272 KB, only a
+  score submission ever comes close), 429 (rate cap, see below), 503
+  (relay busy) or 500 (server fault). Clients must treat any non-`ok`
+  answer as a soft failure: log it, back off, never crash gameplay.
 - Abuse caps returning 429 (defaults, admin-configurable): a recipient's
   signal mailbox holds at most 128 pending messages, and a player may
   submit at most 10 scores per 5 minutes. Normal play never reaches
@@ -246,9 +247,9 @@ indexed read, 204).
 
 Same drain semantics as hello's `signals`. Use it ONLY while waiting
 for or performing matchmaking/signaling; stop when the DataChannel
-opens or the attempt is abandoned. Remember the server is never in the
-in-game path at all - once the DataChannel is up, peer packets flow
-directly and no server hop exists to optimize.
+opens or the attempt is abandoned. In P2P mode the server is then out
+of the in-game path entirely - peer packets flow directly and there is
+no server hop to optimize. In relay mode it is the path (relay.php).
 
 ## GET /api/scores.php - global top 100
 
@@ -286,8 +287,9 @@ Request:
 
     {
       "id": "c0ffee42",           required, player ID
-      "name": "KAI",              required, display name (trimmed, max 15
-                                  chars = MAX_NAME in the client)
+      "name": "KAI",              optional, display name (trimmed, max 15
+                                  chars = MAX_NAME in the client); missing
+                                  or empty is stored as ANONYMOUS
       "score": 4200,              required, int 0..1000000000
       "level": 7,                 required, int 1..99
       "diff": 2,                  optional, int 0..3, default 1
@@ -367,17 +369,15 @@ poll.php, long-poll included), so an online client learns of a request
 within its poll cadence; an offline client finds the pending entry via
 friend.php list on next start (mailbox signals expire after 30 s).
 
-The 'undelivered' signal is the FAILURE RECEIPT for a connection
-attempt. An invite / invite-relay / accept / accept-relay that nobody
-picks up before it expires (signal_ttl, 30 s) is a failed attempt, so
-the server tells the sender instead of letting it wait forever on the
-ok:true it got: the receipt is addressed "from" the peer that never
-picked the message up and names the lost "type". Treat it as a hard
-"this attempt is dead" - stop waiting, tell the user, offer a retry.
-The receipt is raised on the next mailbox read, so it reaches the sender
-with its next hello (i.e. within its heartbeat cadence after the TTL).
-Note the reverse is NOT true: no receipt means only that the message did
-not expire undelivered, it is not a delivery confirmation.
+The 'undelivered' signal is the FAILURE RECEIPT for a connection attempt.
+An invite / invite-relay / accept / accept-relay that nobody picks up
+before it expires (signal_ttl, 30 s) is a failed attempt, so the sender
+is told instead of waiting forever on the ok:true it got. It is addressed
+"from" the peer that never collected the message and names the lost
+"type". Treat it as "this attempt is dead": stop waiting, tell the user,
+offer a retry. It is raised on the next mailbox read, so it arrives with
+the sender's next hello. The reverse does NOT hold: no receipt is not a
+delivery confirmation, only the absence of an expiry.
 
 ## The player profile object
 
@@ -452,8 +452,10 @@ list is authoritative. Scores remain as history.
 Rate limit: a client whose UNANSWERED requests exceed a threshold
 (default 15 per hour, admin-configurable) is banned from making friend
 requests for a while (default 1 h), ALL of its pending requests are
-deleted, and the incident is logged as an alert. Banned requests answer
-429 `friend requests banned`. Normal use never gets close.
+deleted, and the incident is logged as an alert. The request that trips
+the threshold answers 429 `friend request spam - banned`; every request
+while the ban lasts answers 429 `friend requests banned`. Match on the
+status, not the text. Normal use never gets close.
 
 Poll list (or rely on hello) while the friends screen is open to notice
 incoming requests. Caveat until the session-token work lands: ids are
@@ -567,26 +569,24 @@ hello with duel_with during relayed games too. The concurrent-duel cap
 exists because every relayed duel holds server workers with its long
 polls - a capped, honest "busy" beats degrading the server for everyone.
 
-A slot is taken by the first message a pair really pushes through the
-hub, and held while it keeps relaying (a running duel refreshes it many
-times a second), until ~90 s after its last one. So a 503 can only ever
-hit a pair that is not relaying yet: a live game is never cut off by a
-full server. Declaring the no-P2P bit does NOT reserve a slot - the 503
-at the declaration is a capacity preflight, so a pair can still be
-turned away at its first relayed message if the hub filled up meanwhile.
-Handle 503 on the first message the same way as on the declaration.
+A slot is taken by the first message a pair really pushes through the hub
+and held until ~90 s after its last one (a running duel refreshes it many
+times a second), so a 503 can only hit a pair that is not relaying yet -
+a live game is never cut off by a full server. Declaring the no-P2P bit
+does NOT reserve a slot: that 503 is a capacity preflight, so a pair can
+still be turned away at its first relayed message. Handle it the same way
+in both places.
 
-Ending a duel with `bye` also discards that pair's undelivered relay
-backlog, so a stale input from a finished duel can never be handed to
-the pair's next one. Relay messages that are still undelivered after
-60 s are dropped: the relay is a live channel, not a queue for an absent
-peer. A receiver that has to be away longer than that must treat the
-duel as lost (the in-game liveness timeout does this anyway).
+`bye` also discards that pair's undelivered relay backlog, so a stale
+input from a finished duel can never reach the pair's next one. Relay
+messages undelivered after 60 s are dropped: this is a live channel, not
+a queue for an absent peer - a receiver away longer than that has lost
+the duel anyway (its in-game liveness timeout fires first).
 
-## In-game liveness (no server involved)
+## In-game liveness
 
-The server is NOT polled during gameplay. The DataChannel itself is the
-session:
+In P2P mode - the normal case - the server is NOT polled during
+gameplay and the DataChannel itself is the session:
 
 - Game state updates arrive at the net tick rate: recommended
   netInterval = max(2, ticksPerMove) on the 60 Hz engine, i.e. up to
@@ -601,6 +601,11 @@ session:
 
 This gives the required once-per-second alive check at zero server load
 and much lower latency than any HTTP poll could.
+
+In RELAY mode there is no DataChannel and no connectionState: the
+relay.php long poll is the session. The same 1 s in-band ping and ~3 s
+timeout apply, carried as relay messages; a 429/503 or repeated
+transport errors end the match the same way "connection lost" does.
 
 ## Live chat (prepared, not yet implemented)
 
@@ -628,13 +633,12 @@ Notes:
   fails loudly. Everything else (ice, chat, bye) expires silently: those
   belong to a handshake the client is already timing out on its own.
 - Use a public STUN server (e.g. stun:stun.l.google.com:19302) in the
-  RTCPeerConnection config. There is NO TURN server: the server never
-  relays WebRTC itself - it forwards the signaling (SDP/ICE) and nothing
-  else, and once the DataChannel is open it sees no game traffic at all.
-  When P2P cannot connect, WebRTC is abandoned rather than relayed: the
-  duel falls back to relay.php, which carries plain opaque messages over
-  HTTP (see "Relay fallback"). So "P2P failed" is not the end of the
-  match - it is the switch to the hub. Only a failing relay ends it.
+  RTCPeerConnection config. There is NO TURN server: this server forwards
+  the signaling (SDP/ICE) and nothing else, and sees no game traffic once
+  the DataChannel is open. When P2P cannot connect, WebRTC is ABANDONED
+  rather than relayed - the duel falls back to relay.php and plain HTTP
+  messages (see "Relay fallback"). "P2P failed" is the switch to the hub,
+  not the end of the match; only a failing relay ends it.
 - Signaling payloads fit the 16 KB limit; send one signal per ICE
   candidate rather than batching.
 

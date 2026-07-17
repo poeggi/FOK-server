@@ -103,16 +103,15 @@ final class Db
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_conn_mode ON conn (mode, updated)');
         }
         if ($v < 10) {
-            // When this pair last pushed REAL traffic through the hub.
-            // Only that holds a relay slot - a claim cannot (see ConnTrack).
+            // Last REAL traffic through the hub: only that holds a relay
+            // slot, a client's claim cannot (see ConnTrack).
             $pdo->exec('ALTER TABLE conn ADD COLUMN relay_seen INTEGER NOT NULL DEFAULT 0');
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_conn_relay ON conn (relay_seen)');
         }
         if ($v < 11) {
-            // Every one of these backed a WHERE that had to scan the whole
-            // table, on request paths that run per heartbeat or per
-            // relayed message. Cost per request has to be flat in the
-            // number of players; without these it was linear.
+            // Each of these backed a full scan on a per-heartbeat or
+            // per-relayed-message path: cost per request must be flat in
+            // the number of players, and it was linear.
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_players_seen ON players (last_seen)');
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_duels_seen ON duels (last_seen)');
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_signals_created ON signals (created)');

@@ -37,18 +37,20 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
   runs peer-to-peer over a WebRTC DataChannel (server not involved); when
   P2P cannot connect it falls back to relaying through the server (see
   Relay fallback above).
-- Connection tracking: the server sees every step of a 1:1 connection
-  anyway (invite handshake, ICE exchange, duel heartbeat, relay traffic),
-  so it keeps the resulting state per client - idle, inviting, invited,
-  connecting or playing, with the peer and whether the pair runs p2p or
-  relayed. Clients report nothing extra for this; it is inferred, and the
-  admin dashboard lists it for every online client.
-- Admin interface at /admin/: a one-screen dashboard (statistics: online,
-  playing 1:1, registered users with id and ip, per-hour load; connection
-  state of every online client, on its own 1 s refresh next to the
-  30 s global one in the top bar; alert feed; top-100 management) plus a settings view behind the gear button with the
-  runtime configuration (incl. JSON export/import) and database backup
-  (SQLite online backup, download) and restore (upload).
+- Connection tracking: per-client state of the current 1:1 connection -
+  idle, inviting, invited, connecting or playing, with the peer and
+  whether the pair runs p2p or relayed. Inferred from traffic the server
+  relays anyway (invite handshake, ICE exchange, duel heartbeat, relay
+  messages), so clients report nothing for it; the admin dashboard lists
+  it for every online client.
+- Admin interface at /admin/: a one-screen dashboard - statistics,
+  connection state of every online client, server properties (PTS anchor,
+  versions), alert feed, per-hour load, registered users, top-100
+  management - plus a settings view behind the gear with the runtime
+  configuration (incl. JSON export/import) and database backup (SQLite
+  online backup, download) and restore (upload). Cards refresh on a
+  global interval (default 30 s, control in the top bar); Connections has
+  its own (default 1 s), since a connection changes in seconds.
 - Monitoring and alerting: inline checks (no daemons on shared hosting)
   raise de-duplicated alerts for excessive traffic, system overload, too
   many connections, client spam (flooding, oversized or repeatedly invalid
@@ -75,6 +77,7 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
         relay.php     in-duel message relay (P2P fallback), long-polled
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
+        .user.ini     PHP limits for the API only (see Capacity below)
       admin/          session-protected admin UI + JSON API
       assets/         CSS/JS; admin dashboard is modular (see MODULES in
                       assets/admin.js - add a module object to extend it)
@@ -84,6 +87,7 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
     test/checks.sh    all quality checks: PHP lint, ASCII-only guard,
                       secret-leak guard, strict_types guard, unit tests
                       (test/unit.php), HTTP smoke test (test/smoke.sh)
+    test/load.php     capacity probe, not a pass-fail test (see Capacity)
     tools/deploy.sh   FTPS upload of public/ (used by the CI/CD pipeline)
     tools/deploy.ps1  manual FTPS upload (emergency fallback)
 
@@ -151,41 +155,33 @@ server. Staging needs its own one-time hash bootstrap.
 
 ## Capacity and limits
 
-Measure before tuning: `php test/load.php [players] [duels]` times the
-database work the hot endpoints do against a seeded throwaway database.
-The rule it exists to enforce: **cost per request must be flat in the
-number of players**. A heartbeat has to cost the same at 100 and at
-100000 registered players, so anything that grows with the table is a
-bug (that is why the presence counters are cached and why every WHERE on
-the request path is indexed).
+`php test/load.php [players] [duels]` times the database work of the hot
+endpoints against a seeded throwaway database. It exists to enforce one
+rule: **cost per request stays flat in the number of players**. Anything
+that grows with the table is a bug - hence the cached presence counters
+and an index behind every WHERE on a request path.
 
-What actually limits this server, in order:
+What limits this server, in order:
 
-1. **PHP-FPM workers, not CPU or SQL.** Every long poll (poll.php,
-   relay.php with wait=N) holds ONE worker for the whole hold. Shared
-   hosting gives a few dozen; no PHP setting changes that. Thousands of
-   IDLE clients on the 30 s heartbeat are cheap (a hello is ~1 ms, so
-   5000 clients are ~170 req/s of short requests). Thousands
-   SIMULTANEOUSLY matchmaking are not: they are ~1 held worker each.
-   This is the wall to watch, and the reason poll_wait_max and
-   relay_max_duels exist. Clients poll fast only while matchmaking.
-2. **SQLite has ONE writer.** Every hello writes (presence + counters).
-   The busy_timeout is 5 s; sustained write contention shows up as
-   latency, then as 500s. Keep writes per request down - that is why the
-   long polls peek lock-free and only take the write lock when they
-   really have something to drain.
-3. **Relayed duels** cost the most per player: a long poll each plus
-   ~30 messages/s. relay_max_duels (default 3) is the deliberate,
-   honest "busy" that protects everything else.
+1. **PHP-FPM workers.** Every long poll (poll.php, relay.php with
+   wait=N) holds one worker for the whole hold, and shared hosting gives
+   a few dozen. No PHP setting changes that. Thousands of IDLE clients on
+   the 30 s heartbeat are cheap (~170 short req/s at 5000 clients);
+   thousands matchmaking at once are not - that is ~1 held worker each,
+   and the reason poll_wait_max and relay_max_duels exist.
+2. **SQLite has one writer.** Every hello writes. Sustained contention
+   shows up as latency, then 500s (busy_timeout is 5 s), so the long
+   polls peek lock-free and take the write lock only to drain.
+3. **Relayed duels**, the most expensive client: a long poll each plus
+   ~30 messages/s. relay_max_duels (default 3) is the honest "busy".
 
-PHP settings we own: `public/api/.user.ini` (shared hosting has no FPM
-pool access). It caps the request body, memory and runtime for the game
-API only; the admin keeps the defaults because its restore uploads a
-whole database. The body cap is ALSO enforced in code
-(Util::jsonBody -> 413), because .user.ini depends on the host honoring
-user_ini.filename - never rely on it alone. opcache, realpath cache and
-the worker count are host-level and cannot be set from here; if this
-outgrows shared hosting, that ordering (workers first) is what to fix.
+`public/api/.user.ini` holds the only PHP settings we own (no FPM pool
+access on shared hosting): body, memory and runtime caps for the game API
+only - the admin keeps the defaults since its restore uploads a whole
+database. The body cap is enforced in code as well (Util::jsonBody ->
+413): .user.ini needs the host to honor user_ini.filename, so it is never
+the only guard. opcache, realpath cache and the worker count are
+host-level. If this outgrows shared hosting, fix workers first.
 
 ## Security notes
 
@@ -207,9 +203,9 @@ outgrows shared hosting, that ordering (workers first) is what to fix.
     GET  /api/time.php
       -> {"ok":true,"t":<server ms>}   clock sync for the shared PTS base
     POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
-                          "latency":ms?, "friends":[...]?}
-      -> {"ok":true,"now":ms,"online":n,"playing":n,"registered":n,
-          "signals":[{"from":"...","type":"invite","payload":"..."},...],
+                          "latency":ms?, "auto_accept":bool?, "friends":[...]?}
+      -> {"ok":true,"api":2,"now":ms,"online":n,"playing":n,"registered":n,
+          "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_online":{...}?, "friends_latency":{...}?,
           "friends_name":{...}?}   (friends_* only real for accepted friends)
     POST /api/friend.php {"id","action":"request|accept|remove|list","peer"?}
@@ -222,13 +218,15 @@ outgrows shared hosting, that ordering (workers first) is what to fix.
       -> 204 (nothing pending) | {"ok":true,"signals":[...]}
          (wait=N long-polls: answers ~150 ms after a signal arrives)
     POST /api/match.php  {"id":"cafe0001","action":"seek|cancel"}
-      -> {"ok":true,"waiting":true} | {"ok":true,"matched":"...","role":"..."}
+      -> {"ok":true,"waiting":true}
+       | {"ok":true,"matched":"...","role":"...","peer_name":"..."}
     POST /api/start.php  {"id":"cafe0001","peer":"deadbeef"}
       -> {"ok":true,"start_pts":ms,"now":ms}   identical for both peers
     GET  /api/scores.php?limit=10
       -> {"ok":true,"scores":[{"rank":1,"name":"...","score":...,...}]}
-    POST /api/scores.php {"id","name","score","level","diff","color"?,"shopItems"?,"seed"?,"inputs"?}
-      -> {"ok":true,"rank":n,"top":bool}
+    POST /api/scores.php {"id","score","level","diff","name"?,"color"?,
+                          "shopItems"?,"seed"?,"inputs"?,"pts"?}
+      -> {"ok":true,"rank":n,"top":bool}   (no name -> ANONYMOUS)
     POST /api/signal.php {"id","to","type":"invite|invite-relay|accept|accept-relay|decline|offer|answer|ice|bye|chat","payload"}
          (the -relay types set the no-P2P bit: honored when either side sends it)
       -> {"ok":true}   (chat payloads capped at 120 bytes; matchmaking
@@ -236,4 +234,9 @@ outgrows shared hosting, that ordering (workers first) is what to fix.
 
 Signals are delivered through the recipient's next hello or poll.php poll.
 Clients poll slowly (~30 s) when idle and fast (~1-2 s) while
-matchmaking/signaling.
+matchmaking/signaling. Two further signal types are server-generated and
+rejected (400) if a client sends them, but every client must HANDLE them:
+'friend' (a request/acceptance/expiry notification) and 'undelivered' (a
+connection attempt expired before the peer collected it - the attempt is
+dead). Caps answer a distinct status: 429 (mailbox or relay backlog
+full), 503 (relay busy), 413 (body over the cap).

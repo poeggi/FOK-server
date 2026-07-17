@@ -2,21 +2,19 @@
 declare(strict_types=1);
 
 /**
- * Capacity probe: how much work does the server do PER REQUEST as the
- * database grows? Not part of checks.sh - it is a measuring tool, and
- * its numbers depend on the machine.
+ * Capacity probe: what does the server do PER REQUEST as the database
+ * grows? Times the database work of the hot endpoints against a throwaway
+ * database seeded to the given size. Not part of checks.sh - a measuring
+ * tool, and its numbers depend on the machine.
  *
  *   php test/load.php [players] [duels]
  *
- * It times the database work the hot endpoints do, against a throwaway
- * database seeded to the size given. Run it before and after a change to
- * see what the change really cost. Anything that grows with the player
- * count is a scaling bug: a heartbeat must cost the same at 100 and at
- * 100000 players.
+ * Anything that grows with the player count is a scaling bug: a heartbeat
+ * must cost the same at 100 and at 100000 players.
  *
- * What it CANNOT tell you: the live worker ceiling. Every long poll holds
- * one PHP-FPM worker for its whole hold, so the concurrency limit on
- * shared hosting is (workers / concurrent long polls), not CPU or SQL.
+ * It cannot show the worker ceiling: every long poll holds one PHP-FPM
+ * worker for its whole hold, so concurrency is bounded by workers, not by
+ * CPU or SQL (see README).
  */
 
 $tmp = sys_get_temp_dir() . '/fok-load-' . getmypid();

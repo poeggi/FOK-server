@@ -26,10 +26,9 @@ final class Presence
              RETURNING first_seen = last_seen'
         );
         $st->execute([$id, $ip, $now, $now, $latency, $name, $acceptUntil, $acceptUntil]);
-        // A player joining is the one counter change somebody notices at
-        // once - nobody may watch their own hello report zero online. So
-        // a first registration drops the cache; the repeat heartbeats
-        // that make up virtually all traffic leave it alone.
+        // Nobody may watch their own first hello report zero online, so a
+        // registration drops the cache. The repeat heartbeats that are
+        // virtually all the traffic leave it alone.
         if ((int)$st->fetchColumn() === 1) {
             self::flushCounts();
         }
@@ -58,8 +57,7 @@ final class Presence
              RETURNING started = last_seen'
         );
         $st->execute([$a, $b, $now, $now]);
-        // Like a new registration: a duel starting is visible, the
-        // heartbeats that keep it alive are not.
+        // A duel starting is visible; the heartbeats keeping it alive are not.
         if ((int)$st->fetchColumn() === 1) {
             self::flushCounts();
         }
@@ -120,14 +118,11 @@ final class Presence
     }
 
     /**
-     * Presence counters, cached for FOK_COUNTS_TTL seconds.
-     *
-     * Every hello returns these, so this is the most repeated read on the
-     * server - and counting rows to answer it makes a heartbeat cost more
-     * as the player base grows, which is exactly what must not happen.
-     * Nobody needs an exact count: online is a 60 s window anyway, and a
-     * few seconds of staleness is invisible. The recompute is not locked:
-     * two requests racing it just write the same numbers.
+     * Presence counters, cached for FOK_COUNTS_TTL seconds. Every hello
+     * returns these, so counting rows here would make a heartbeat cost
+     * more as the player base grows - the one thing that must not happen.
+     * Nobody needs an exact count (online is a 60 s window anyway). The
+     * recompute is unlocked: racing requests write the same numbers.
      */
     public static function counts(): array
     {

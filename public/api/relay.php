@@ -23,12 +23,11 @@ require_once __DIR__ . '/../src/ConnTrack.php';
  *      oldest first, drained on delivery (exactly-once)
  *   -> 204 nothing pending (after the long-poll hold, like poll.php)
  *
- * Capacity notes: every relayed duel occupies FPM workers with its long
- * polls, so admission is capped (relay_max_duels); a pair holds its slot
- * from its first message through the hub until FOK_RELAY_WINDOW after
- * its last one, so a running duel is never turned away. Expect
- * one-way latency of ~200-400 ms: relay INPUT events and hashes, not
- * high-rate state (see docs/API.md).
+ * Every relayed duel occupies FPM workers with its long polls, so
+ * admission is capped (relay_max_duels). A pair holds its slot from its
+ * first message through the hub until FOK_RELAY_WINDOW after its last,
+ * so a running duel is never turned away. Expect ~200-400 ms one-way:
+ * relay INPUT events and hashes, not high-rate state (see docs/API.md).
  */
 Util::cors();
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
@@ -42,8 +41,8 @@ if ($method === 'GET') {
     $wait = min((int)($_GET['wait'] ?? 0), Settings::int('poll_wait_max'));
     $db = Db::get();
     // The hold loop peeks with an indexed read and takes no lock while
-    // idle: SQLite has ONE writer, so a waiting poll must not fight the
-    // duels that are actually sending for it.
+    // idle: SQLite has one writer, and a waiting poll must not fight the
+    // duels that are actually sending.
     $peek = $db->prepare('SELECT 1 FROM relay WHERE to_id = ? AND from_id = ? LIMIT 1');
     $st = $db->prepare('SELECT id, payload, created FROM relay WHERE to_id = ? AND from_id = ? ORDER BY id');
     $deadline = microtime(true) + $wait;
@@ -51,9 +50,9 @@ if ($method === 'GET') {
         $peek->execute([$id, $peer]);
         $rows = [];
         if ($peek->fetchColumn() !== false) {
-            // Read and drain in ONE transaction: two overlapping polls (a
-            // client retrying over a slow link) must never both be handed
-            // the same message - replayed inputs desync the duel.
+            // Read and drain in ONE transaction: two overlapping polls
+            // must never both be handed the same message - replayed
+            // inputs desync the duel.
             $db->exec('BEGIN IMMEDIATE');
             try {
                 $st->execute([$id, $peer]);
@@ -117,8 +116,8 @@ if ((int)$st->fetchColumn() >= Settings::int('relay_pending_cap')) {
 
 [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
 $pair = "$a:$b";
-// Admission is checked only for a pair that does not hold a slot yet - a
-// duel already relaying must never be cut off mid-game by a full server.
+// Only a pair without a slot is checked: a duel already relaying must
+// never be cut off mid-game by a full server.
 if (!ConnTrack::isRelaying($id, $peer)
     && ConnTrack::relayPairs() >= Settings::int('relay_max_duels')) {
     Alerts::raise('relay', 'Relay duel cap reached: new relayed duel rejected');
@@ -127,8 +126,8 @@ if (!ConnTrack::isRelaying($id, $peer)
 
 $db->prepare('INSERT INTO relay (pair, from_id, to_id, payload, created) VALUES (?, ?, ?, ?, ?)')
     ->execute([$pair, $id, $peer, $payload, $now]);
-// Accepted relay traffic is the ground truth for "this pair runs through
-// the hub" - a declared no-P2P bit is not required to end up here.
+// Ground truth for "this pair runs through the hub": no declared
+// no-P2P bit is needed to end up here.
 ConnTrack::relaying($id, $peer);
 Util::bump('relay');
 

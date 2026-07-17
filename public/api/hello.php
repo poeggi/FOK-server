@@ -69,7 +69,7 @@ if ($duelWith !== null) {
 
 // EVERY input is validated before the mailbox is touched: Signals::take()
 // deletes what it returns, so a Util::fail() after it would drop the
-// caller's pending invites on the floor with no way to ever get them back.
+// caller's pending invites for good.
 $friends = null;
 if (isset($body['friends'])) {
     $friends = $body['friends'];

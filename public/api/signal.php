@@ -12,7 +12,8 @@ require_once __DIR__ . '/../src/ConnTrack.php';
  * POST {"id": sender, "to": recipient,
  *       "type": one of Signals::TYPES (invite, invite-relay, accept,
  *         accept-relay, decline, offer, answer, ice, bye, chat) - the
- *         reserved 'friend' type is server-generated and rejected here,
+ *         reserved 'friend' and 'undelivered' types are server-generated
+ *         and rejected here,
  *       "payload": string, opaque to the server (SDP/ICE/profile JSON;
  *         plain text capped at chat_max_len for chat, else max 16 KB),
  *       "pts": int ms on the shared clock (optional but expected once the
@@ -65,9 +66,8 @@ if (($type === 'invite-relay' || $type === 'accept-relay')
     Util::fail('relay busy', 503);
 }
 
-// 'bye' ends the pairing, so the pair's in-duel relay backlog dies with
-// it: an undelivered input from the finished duel must never be handed to
-// the next duel of the same two players.
+// 'bye' ends the pairing, so its relay backlog dies with it: an
+// undelivered input must never reach the pair's next duel.
 if ($type === 'bye') {
     $db = Db::get();
     [$a, $b] = $id < $to ? [$id, $to] : [$to, $id];
@@ -79,8 +79,7 @@ if (!Signals::send($id, $to, $type, $payload)) {
     Alerts::raise('spam', "Client spam: mailbox of $to flooded (last sender $id)");
     Util::fail('mailbox full', 429);
 }
-// Only once the message is actually queued does it mean anything for the
-// state of the connection (see the Connections card in the admin UI).
+// Only a queued message says anything about the connection.
 ConnTrack::note($id, $to, $type);
 Util::bump('signal');
 

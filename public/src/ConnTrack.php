@@ -5,19 +5,14 @@ require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
 
 /**
- * Per-client connection tracker: one row per player describing the state
- * of its current 1:1 connection. The server already sees every step of a
- * connection (signal.php handshake, hello.php duel heartbeat, relay.php
- * traffic), so the state is INFERRED from that traffic - clients report
- * nothing extra and the API contract is unchanged.
+ * Per-client state of the current 1:1 connection, one row per player.
+ * Inferred from traffic the server relays anyway (signal handshake, duel
+ * heartbeat, relay messages), so clients report nothing for it.
  *
- * States: inviting, invited, connecting, playing. A player whose row is
- * missing or older than FOK_CONN_TTL reads as 'idle'; offline players are
- * not listed at all (both derived in listOnline(), never stored).
- *
- * mode is how the pair's game traffic is meant to flow: 'p2p' or 'relay'.
- * The no-P2P bit is honored from EITHER side, so once a pair is 'relay' it
- * is never downgraded back to 'p2p' while that pairing lasts.
+ * States: inviting, invited, connecting, playing. 'idle' and the offline
+ * filter are derived in listOnline(), never stored. mode is 'p2p' or
+ * 'relay'; relay is never downgraded, the no-P2P bit counts from either
+ * side.
  */
 final class ConnTrack
 {
@@ -35,11 +30,7 @@ final class ConnTrack
         'bye' => [null, null, null],
     ];
 
-    /**
-     * Records what a signaling message means for both endpoints. Types
-     * that say nothing about the connection ('chat', the reserved
-     * 'friend') are ignored.
-     */
+    /** What a signaling message means for both endpoints. */
     public static function note(string $from, string $to, string $type): void
     {
         if (!isset(self::BY_TYPE[$type])) {
@@ -63,17 +54,11 @@ final class ConnTrack
     }
 
     /**
-     * The sender pushed in-duel data through the hub, so this pair is
-     * relaying for real - which is the only way an UNDECLARED P2P->relay
-     * fallback becomes visible. Only the sender's own row is written (one
-     * statement on a hot path); the peer's row follows from its own
-     * traffic and its duel heartbeat.
-     *
-     * This is ALSO the only thing that stamps relay_seen, i.e. the only
-     * thing that takes a relay slot: a slot must cost the server real hub
-     * traffic, never a client's mere claim to be relaying. Otherwise a
-     * handful of invented no-P2P declarations would deny the relay to
-     * everyone (the declaration is not even friendship-gated).
+     * Real traffic through the hub - also the only writer of relay_seen,
+     * so a relay slot always costs hub traffic and never a client's claim
+     * to be relaying (accept-relay is not friendship-gated, so claims are
+     * free and a few would otherwise deny the relay to everyone).
+     * Writes only the sender's row: one statement on a hot path.
      */
     public static function relaying(string $from, string $to): void
     {
@@ -104,12 +89,10 @@ final class ConnTrack
     }
 
     /**
-     * Pairs currently running through the hub, counted from the hub
-     * traffic they actually caused (relay_seen). NOT from queued relay
-     * messages: those are deleted the moment the receiver drains them, so
-     * a healthy relayed duel would count as zero and the cap would
-     * protect nothing. And NOT from the declared mode either: that is a
-     * client's claim, and claims are free (see relaying()).
+     * Pairs running through the hub. Counted from relay_seen, not from
+     * queued relay messages: those are deleted as the receiver drains
+     * them, so a healthy duel would count as zero and the cap would
+     * protect nothing.
      */
     public static function relayPairs(): int
     {
@@ -129,9 +112,8 @@ final class ConnTrack
     }
 
     /**
-     * Online players with their connection state, most recently seen
-     * first. state/mode are resolved here: a stale row means the client
-     * went quiet mid-handshake and reads as idle.
+     * Online players with their connection state, latest first. A stale
+     * row means the client went quiet mid-handshake: it reads as idle.
      * @return array [{id, name, ip, latency, last_seen, state, peer, mode, since}]
      */
     public static function listOnline(int $limit = 200): array
@@ -187,9 +169,9 @@ final class ConnTrack
     }
 
     /**
-     * Ends a tracked connection, but ONLY the one with this peer: 'bye'
-     * and 'decline' are not friendship-gated, so a stranger must not be
-     * able to wipe the state of a duel it has nothing to do with.
+     * Ends the connection with THIS peer only: bye/decline are not
+     * friendship-gated, so a stranger must not be able to wipe the state
+     * of a duel it has nothing to do with.
      */
     private static function clear(string $id, string $peer): void
     {

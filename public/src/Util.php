@@ -9,12 +9,10 @@ require_once __DIR__ . '/Settings.php';
 final class Util
 {
     /**
-     * Every response is a JSON object carrying "ok" (docs/API.md), and a
-     * fault must not break that: an uncaught exception (a locked database,
-     * a full disk) would otherwise end the request with display_errors=0,
-     * i.e. HTTP 500 and an EMPTY body, which blows up the client's
-     * response.json() instead of telling it what happened. Install once,
-     * from the file every endpoint includes.
+     * Keeps the "every response is JSON with ok" contract when something
+     * fails: with display_errors=0 an uncaught exception (locked database,
+     * full disk) would end the request with an EMPTY 500 body, blowing up
+     * the client's response.json() instead of telling it what happened.
      */
     public static function installFaultHandler(): void
     {
@@ -24,8 +22,8 @@ final class Util
                 self::jsonOut(['ok' => false, 'error' => 'server fault'], 500);
             }
         });
-        // An exception handler does not see fatals - and the long polls
-        // are exactly where an execution timeout can hit.
+        // Exception handlers do not see fatals, and an execution timeout
+        // hits the long polls first.
         register_shutdown_function(static function (): void {
             $e = error_get_last();
             $fatal = E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR;
@@ -92,9 +90,9 @@ final class Util
     }
 
     /**
-     * The request body, hard-capped: without this the only bound is PHP's
-     * post_max_size (8M by default), so anyone could make a worker buffer
-     * megabytes per request. Rejected loudly (413), not silently trimmed.
+     * The request body, hard-capped: the only other bound is PHP's
+     * post_max_size (8M default), i.e. anyone could make a worker buffer
+     * megabytes. Rejected loudly (413), never silently trimmed.
      */
     public static function jsonBody(): array
     {

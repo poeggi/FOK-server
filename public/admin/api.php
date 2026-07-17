@@ -28,7 +28,7 @@ switch ($action) {
         $dbRows = 0;
         foreach (['players', 'scores', 'signals', 'duels', 'mm_queue', 'counters',
             'alerts', 'settings', 'admin_fails', 'ipcount', 'friends', 'relay',
-            'starts', 'conn'] as $table) {
+            'starts', 'conn', 'stats'] as $table) {
             $dbRows += (int)$db->query("SELECT COUNT(*) FROM $table")->fetchColumn();
         }
         $relaying = ConnTrack::relayPairs();

@@ -20,11 +20,19 @@ endpoint - it is the contract the FOK-snake client is built against.
 ## Architecture invariants
 
 - Shared hosting: Apache + PHP-FPM only. No daemons, no WebSockets, no
-  cron. Anything real-time must be client-polled HTTP or peer-to-peer
-  WebRTC (the server only relays signaling; game traffic never touches
-  the server).
+  cron. Anything real-time is client-polled HTTP or peer-to-peer WebRTC.
+  The server relays SDP/ICE signaling only and never carries an
+  RTCPeerConnection (there is no TURN). Game traffic normally goes P2P
+  and never touches the server; the ONE exception is the relay fallback
+  (api/relay.php), where WebRTC is abandoned and opaque in-duel messages
+  go over HTTP instead - capped, because it costs workers.
+- There is no persistent state: PHP dies at the end of every request, so
+  the database IS the state and "background" work piggybacks on the next
+  request (TTL sweeps, expiry, monitoring). Cost per request must stay
+  flat in the number of players (see README "Capacity and limits").
 - public/ mirrors the webroot 1:1; deploy is a dumb FTPS file copy
-  (tools/deploy.ps1). No build step, no composer, no dependencies.
+  (tools/deploy.sh in CI, tools/deploy.ps1 by hand). No build step, no
+  composer, no dependencies.
 - SQLite via PDO in WAL mode, schema auto-created in src/Db.php. The
   FOK_DATA_DIR env var overrides the data location (tests rely on it).
 - Schema changes go through the migration ladder in Db::migrate (PRAGMA
@@ -62,7 +70,11 @@ test/smoke.sh for the HTTP behavior).
   then always staging first (tools/deploy.ps1 -Staging + remote smoke
   before tools/deploy.ps1).
 - Bump FOK_SERVER_VERSION with every release commit - the live-verify
-  step compares it against what the deployed server reports.
+  step compares it against what the deployed server reports. A change
+  under public/assets/ ALWAYS needs a bump even if nothing else moved:
+  asset URLs carry ?v=<version> and are cached immutably, so shipping a
+  second file under a version that was already deployed leaves browsers
+  on the old one for a year.
 - bash test/checks.sh runs everything CI runs (needs php CLI; the
   pre-commit hook in .githooks/ does this automatically and skips
   gracefully when php is missing).

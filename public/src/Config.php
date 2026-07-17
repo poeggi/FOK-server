@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.16.1';
+const FOK_SERVER_VERSION = '0.17.0';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
 // v2: friendship-gated status and invites, ms hello.now, friend
@@ -29,19 +29,18 @@ define('FOK_BACKUP_DIR', FOK_DATA_DIR . '/backups');
 
 // A player counts as online while its last heartbeat is within this window.
 const FOK_ONLINE_WINDOW = 60;
-// Presence counters are cached this long. They are returned by every
-// hello, so they must never be counted per request (see Presence::counts).
+// Presence counters are cached this long: every hello returns them, so
+// they must never be counted per request (see Presence::counts).
 const FOK_COUNTS_TTL = 5;
 // A duel counts as running while either peer refreshed it within this window.
 const FOK_DUEL_WINDOW = 60;
 // A tracked connection state (see ConnTrack) goes stale after this long
 // without a signaling or duel event: the client reads as idle again.
 const FOK_CONN_TTL = 60;
-// A pair holds its relay admission slot for this long after its last
-// message through the hub. A relaying duel refreshes it many times a
-// second, so the window only has to outlast a pause (level transition,
-// backgrounded tab): comfortably more than the ~30 s hello cadence, or a
-// live duel would lose its slot and could be turned away on resume.
+// How long a pair holds its relay slot after its last message through the
+// hub. A relaying duel refreshes this many times a second, so the window
+// only has to outlast a pause (level transition, backgrounded tab) - keep
+// it well above the ~30 s hello cadence or a live duel loses its slot.
 const FOK_RELAY_WINDOW = 90;
 // Undelivered signaling messages expire after this many seconds. A
 // connection attempt that dies this way is reported back to its sender
@@ -51,11 +50,9 @@ const FOK_SIGNAL_MAX_PAYLOAD = 16384;
 // Replay material of a score submission (seed + tick-stamped inputs).
 const FOK_MAX_INPUTS = 262144;
 // Hard ceiling on a client request body, derived from the biggest
-// legitimate one: a score submission with its replay material, plus room
-// for the other fields. In-game messages are ORDERS of magnitude smaller
-// (one MTU, 1280 bytes) - only the end-of-game replay upload is big.
-// Without this the only limit is PHP's post_max_size (8M by default),
-// i.e. anyone could make a worker buffer megabytes per request.
+// legitimate one: a score submission with its replay material, plus the
+// other fields. In-game messages are one MTU (1280 B); only the
+// end-of-game replay upload is anywhere near this.
 const FOK_MAX_BODY = FOK_MAX_INPUTS + 16384;
 // Chat messages are hard-capped much lower than SDP payloads.
 const FOK_CHAT_MAX_LEN = 120;
