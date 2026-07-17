@@ -29,7 +29,7 @@ header h1 { font-size: 17px; margin: 0; display: flex; align-items: center; gap:
 header .logo { image-rendering: pixelated; }
 header h1 span { color: var(--accent); font-weight: normal; }
 header a { color: var(--muted); }
-header nav { display: flex; align-items: center; gap: 14px; }
+header nav { display: flex; align-items: center; gap: 20px; }
 
 #viewtoggle {
     font-size: 18px;
@@ -67,18 +67,16 @@ input, button {
 button { cursor: pointer; }
 button:hover { border-color: var(--accent); }
 button.small { padding: 2px 8px; font-size: 13px; }
-button.refresh { float: right; }
 
 /* Refresh-interval control: one in the top bar (global), one per card
    that carries its own interval. */
-.interval { display: inline-flex; align-items: center; gap: 3px; }
+.interval { display: inline-flex; align-items: center; gap: 5px; }
 .interval input {
-    width: 52px;
-    padding: 2px 4px;
+    width: 58px;
+    padding: 3px 6px;
     font-size: 12px;
-    text-align: right;
+    text-align: center;
 }
-.card h2 .interval { float: right; margin-right: 8px; }
 
 .error { color: var(--danger); }
 .muted { color: var(--muted); font-size: 13px; }
@@ -101,7 +99,18 @@ button.refresh { float: right; }
 /* Keep the dashboard on one screen: long card content scrolls inside. */
 #dashboard .card-body { max-height: 34vh; overflow-y: auto; }
 
-.card h2 { margin: 0 0 8px; font-size: 14px; }
+/* One flex row, so the head controls can never overlap the card body -
+   a floated control escapes the heading box and lands on the content. */
+.card h2 {
+    margin: 0 0 8px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+/* The title keeps the space; every control sits at the right edge, with
+   the refresh button always last so it lines up across the cards. */
+.card h2 > :first-child { margin-left: auto; }
 
 .statgrid {
     display: grid;

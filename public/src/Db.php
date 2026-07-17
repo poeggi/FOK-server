@@ -6,7 +6,7 @@ require_once __DIR__ . '/Config.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 10;
+    private const SCHEMA_VERSION = 11;
 
     private static ?PDO $pdo = null;
 
@@ -107,6 +107,24 @@ final class Db
             // Only that holds a relay slot - a claim cannot (see ConnTrack).
             $pdo->exec('ALTER TABLE conn ADD COLUMN relay_seen INTEGER NOT NULL DEFAULT 0');
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_conn_relay ON conn (relay_seen)');
+        }
+        if ($v < 11) {
+            // Every one of these backed a WHERE that had to scan the whole
+            // table, on request paths that run per heartbeat or per
+            // relayed message. Cost per request has to be flat in the
+            // number of players; without these it was linear.
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_players_seen ON players (last_seen)');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_duels_seen ON duels (last_seen)');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_signals_created ON signals (created)');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_relay_created ON relay (created)');
+            // Cached presence counters, see Presence::counts().
+            $pdo->exec('CREATE TABLE IF NOT EXISTS stats (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                online INTEGER NOT NULL,
+                playing INTEGER NOT NULL,
+                registered INTEGER NOT NULL,
+                updated INTEGER NOT NULL
+            )');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

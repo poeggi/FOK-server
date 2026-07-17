@@ -399,8 +399,8 @@ function buildCards() {
         const head = el('h2', '', m.title);
         const btn = el('button', 'small refresh', 'refresh');
         btn.onclick = () => refreshModule(m.id);
-        head.append(btn);
         if (m.every) head.append(intervalControl(m.every, m.title + ' refresh interval'));
+        head.append(btn);
         const box = el('div', 'card-body');
         card.append(head, box);
         views[m.view || 'dash'].append(card);

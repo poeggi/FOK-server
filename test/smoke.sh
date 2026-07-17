@@ -128,6 +128,13 @@ if [ "${#HN}" -eq 13 ]; then echo "ok   hello now is milliseconds"; else echo "F
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"XYZ"}' "$BASE/api/hello.php")
 expect "hello rejects bad id" '"error":"invalid id"' "$R"
 
+# An oversized body must be refused loudly, not buffered into a worker.
+# The cap is FOK_MAX_BODY (replay material + slack); this clears it.
+{ printf '{"id":"%s","pad":"' "$ID1"; head -c 300000 /dev/zero | tr '\0' 'x'; printf '"}'; } > "$DATA/big.json"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    --data-binary "@$DATA/big.json" "$BASE/api/hello.php")
+expect "oversized request body rejected with 413" '413' "$R"
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"name\":\"SMOKE\",\"score\":4200,\"level\":7,\"diff\":2,\"color\":3,\"shopItems\":{\"hat\":1},\"seed\":42,\"inputs\":[[1,2]]}" \
     "$BASE/api/scores.php")

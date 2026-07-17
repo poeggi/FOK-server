@@ -91,10 +91,24 @@ final class Util
         }
     }
 
+    /**
+     * The request body, hard-capped: without this the only bound is PHP's
+     * post_max_size (8M by default), so anyone could make a worker buffer
+     * megabytes per request. Rejected loudly (413), not silently trimmed.
+     */
     public static function jsonBody(): array
     {
-        $raw = file_get_contents('php://input');
-        $data = json_decode($raw === false ? '' : $raw, true);
+        if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > FOK_MAX_BODY) {
+            self::fail('body too large', 413);
+        }
+        $raw = file_get_contents('php://input', false, null, 0, FOK_MAX_BODY + 1);
+        if ($raw === false) {
+            return [];
+        }
+        if (strlen($raw) > FOK_MAX_BODY) {
+            self::fail('body too large', 413);
+        }
+        $data = json_decode($raw, true);
         return is_array($data) ? $data : [];
     }
 

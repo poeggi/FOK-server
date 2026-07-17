@@ -29,6 +29,9 @@ define('FOK_BACKUP_DIR', FOK_DATA_DIR . '/backups');
 
 // A player counts as online while its last heartbeat is within this window.
 const FOK_ONLINE_WINDOW = 60;
+// Presence counters are cached this long. They are returned by every
+// hello, so they must never be counted per request (see Presence::counts).
+const FOK_COUNTS_TTL = 5;
 // A duel counts as running while either peer refreshed it within this window.
 const FOK_DUEL_WINDOW = 60;
 // A tracked connection state (see ConnTrack) goes stale after this long
@@ -45,6 +48,15 @@ const FOK_RELAY_WINDOW = 90;
 // (see Signals::expire), so an invite never just evaporates.
 const FOK_SIGNAL_TTL = 30;
 const FOK_SIGNAL_MAX_PAYLOAD = 16384;
+// Replay material of a score submission (seed + tick-stamped inputs).
+const FOK_MAX_INPUTS = 262144;
+// Hard ceiling on a client request body, derived from the biggest
+// legitimate one: a score submission with its replay material, plus room
+// for the other fields. In-game messages are ORDERS of magnitude smaller
+// (one MTU, 1280 bytes) - only the end-of-game replay upload is big.
+// Without this the only limit is PHP's post_max_size (8M by default),
+// i.e. anyone could make a worker buffer megabytes per request.
+const FOK_MAX_BODY = FOK_MAX_INPUTS + 16384;
 // Chat messages are hard-capped much lower than SDP payloads.
 const FOK_CHAT_MAX_LEN = 120;
 // Long-poll mailbox check interval. The hold duration cap is the

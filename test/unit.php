@@ -48,10 +48,31 @@ ok($c['registered'] === 2, 'touch twice registers once');
 ok($c['online'] === 2, 'both players online');
 ok($c['playing'] === 0, 'no duels yet');
 
+// Presence: the counters are CACHED - every hello returns them, so they
+// must never be counted per request. Staleness up to FOK_COUNTS_TTL is
+// the deliberate price. Written in behind the cache, so a recount is the
+// only thing that could notice.
+function freshCounts(): array
+{
+    Presence::flushCounts();
+    return Presence::counts();
+}
+Presence::counts();
+Db::get()->prepare('INSERT INTO players (id, ip, first_seen, last_seen, hello_count) VALUES (?, ?, ?, ?, 1)')
+    ->execute(['eeee0001', '9.9.9.9', time(), time()]);
+ok(Presence::counts()['registered'] === 2, 'repeat heartbeats are served from the cache');
+ok(freshCounts()['registered'] === 3, 'counters recount once the cache goes stale');
+// ... but a player joining must show up at once: nobody may watch their
+// own first hello report zero online.
+Presence::touch('dddddddd', '9.9.9.9');
+ok(Presence::counts()['registered'] === 4, 'a new registration refreshes the counters at once');
+Db::get()->exec("DELETE FROM players WHERE id IN ('eeee0001', 'dddddddd')");
+Presence::flushCounts();
+
 // Presence: duel pair is normalized, refresh from either side
 Presence::touchDuel('bbbbbbbb', 'aaaaaaaa');
 Presence::touchDuel('aaaaaaaa', 'bbbbbbbb');
-$c = Presence::counts();
+$c = freshCounts();
 ok($c['playing'] === 2, 'one duel counts two playing');
 
 // Scores: parity with the FOK-snake local top-10 entry shape

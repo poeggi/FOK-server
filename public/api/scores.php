@@ -70,7 +70,7 @@ if ($seed !== null && (!is_int($seed) || $seed < 0 || $seed > 0xFFFFFFFF)) {
 $inputs = null;
 if (isset($body['inputs'])) {
     $inputs = json_encode($body['inputs']);
-    if ($inputs === false || strlen($inputs) > 262144) {
+    if ($inputs === false || strlen($inputs) > FOK_MAX_INPUTS) {
         Util::fail('invalid inputs');
     }
 }

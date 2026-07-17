@@ -146,6 +146,44 @@ POSTed values, invoke it once over HTTPS, then delete it. Credentials
 must never exist in the repo, in commits, or in plain text on the
 server. Staging needs its own one-time hash bootstrap.
 
+## Capacity and limits
+
+Measure before tuning: `php test/load.php [players] [duels]` times the
+database work the hot endpoints do against a seeded throwaway database.
+The rule it exists to enforce: **cost per request must be flat in the
+number of players**. A heartbeat has to cost the same at 100 and at
+100000 registered players, so anything that grows with the table is a
+bug (that is why the presence counters are cached and why every WHERE on
+the request path is indexed).
+
+What actually limits this server, in order:
+
+1. **PHP-FPM workers, not CPU or SQL.** Every long poll (poll.php,
+   relay.php with wait=N) holds ONE worker for the whole hold. Shared
+   hosting gives a few dozen; no PHP setting changes that. Thousands of
+   IDLE clients on the 30 s heartbeat are cheap (a hello is ~1 ms, so
+   5000 clients are ~170 req/s of short requests). Thousands
+   SIMULTANEOUSLY matchmaking are not: they are ~1 held worker each.
+   This is the wall to watch, and the reason poll_wait_max and
+   relay_max_duels exist. Clients poll fast only while matchmaking.
+2. **SQLite has ONE writer.** Every hello writes (presence + counters).
+   The busy_timeout is 5 s; sustained write contention shows up as
+   latency, then as 500s. Keep writes per request down - that is why the
+   long polls peek lock-free and only take the write lock when they
+   really have something to drain.
+3. **Relayed duels** cost the most per player: a long poll each plus
+   ~30 messages/s. relay_max_duels (default 3) is the deliberate,
+   honest "busy" that protects everything else.
+
+PHP settings we own: `public/api/.user.ini` (shared hosting has no FPM
+pool access). It caps the request body, memory and runtime for the game
+API only; the admin keeps the defaults because its restore uploads a
+whole database. The body cap is ALSO enforced in code
+(Util::jsonBody -> 413), because .user.ini depends on the host honoring
+user_ini.filename - never rely on it alone. opcache, realpath cache and
+the worker count are host-level and cannot be set from here; if this
+outgrows shared hosting, that ordering (workers first) is what to fix.
+
 ## Security notes
 
 - Admin credentials exist only as a password_hash() of "user:pass" in
