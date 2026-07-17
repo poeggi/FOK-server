@@ -6,7 +6,7 @@ require_once __DIR__ . '/Config.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 9;
+    private const SCHEMA_VERSION = 10;
 
     private static ?PDO $pdo = null;
 
@@ -101,6 +101,12 @@ final class Db
                 updated INTEGER NOT NULL
             )');
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_conn_mode ON conn (mode, updated)');
+        }
+        if ($v < 10) {
+            // When this pair last pushed REAL traffic through the hub.
+            // Only that holds a relay slot - a claim cannot (see ConnTrack).
+            $pdo->exec('ALTER TABLE conn ADD COLUMN relay_seen INTEGER NOT NULL DEFAULT 0');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_conn_relay ON conn (relay_seen)');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

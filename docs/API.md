@@ -567,11 +567,14 @@ hello with duel_with during relayed games too. The concurrent-duel cap
 exists because every relayed duel holds server workers with its long
 polls - a capped, honest "busy" beats degrading the server for everyone.
 
-Admission is decided ONCE, when a pair starts relaying (or declares the
-no-P2P bit): a pair that holds a slot keeps it for as long as it keeps
-relaying or heartbeating, and a 503 can therefore only ever hit a duel
-that is not running yet - a live game is never cut off by a full server.
-The slot is released ~30 s after the pair goes quiet.
+A slot is taken by the first message a pair really pushes through the
+hub, and held while it keeps relaying (a running duel refreshes it many
+times a second), until ~90 s after its last one. So a 503 can only ever
+hit a pair that is not relaying yet: a live game is never cut off by a
+full server. Declaring the no-P2P bit does NOT reserve a slot - the 503
+at the declaration is a capacity preflight, so a pair can still be
+turned away at its first relayed message if the hub filled up meanwhile.
+Handle 503 on the first message the same way as on the declaration.
 
 Ending a duel with `bye` also discards that pair's undelivered relay
 backlog, so a stale input from a finished duel can never be handed to

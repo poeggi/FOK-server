@@ -59,24 +59,33 @@ final class Signals
     private static function expire(PDO $db): void
     {
         $cut = time() - Settings::int('signal_ttl');
-        $st = $db->prepare('SELECT from_id, to_id, type FROM signals WHERE created < ?');
+        // DELETE ... RETURNING is what makes the receipt exactly-once:
+        // whichever request wins the delete is the only one holding the
+        // rows, so two mailbox reads racing here cannot both report the
+        // same lost invite (a plain SELECT-then-DELETE lets both).
+        $st = $db->prepare('DELETE FROM signals WHERE created < ? RETURNING from_id, to_id, type');
         $st->execute([$cut]);
         $rows = $st->fetchAll();
         if ($rows === []) {
             return;
         }
-        $db->prepare('DELETE FROM signals WHERE created < ?')->execute([$cut]);
         foreach ($rows as $r) {
             if (!in_array($r['type'], self::NEEDS_RECEIPT, true)) {
                 continue;
             }
             // Addressed FROM the peer that never picked it up, so the
             // client correlates the receipt to its pending attempt.
-            self::send($r['to_id'], $r['from_id'], 'undelivered', (string)json_encode([
+            // Inserted past the mailbox cap on purpose: a full mailbox
+            // must not swallow the one message that says the connection
+            // failed. It cannot be used to flood - the server only ever
+            // sends one per connection message the player sent itself.
+            $db->prepare(
+                'INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)'
+            )->execute([$r['to_id'], $r['from_id'], 'undelivered', (string)json_encode([
                 'event' => 'undelivered',
                 'peer' => $r['to_id'],
                 'type' => $r['type'],
-            ]));
+            ]), time()]);
         }
     }
 
@@ -103,7 +112,11 @@ final class Signals
             }
             $db->exec('COMMIT');
         } catch (Throwable $e) {
-            $db->exec('ROLLBACK');
+            // SQLite auto-rolls back on some faults; a bare ROLLBACK
+            // would then throw and mask the real error.
+            if ($db->inTransaction()) {
+                $db->exec('ROLLBACK');
+            }
             throw $e;
         }
         return array_map(static fn(array $r) => [

@@ -34,6 +34,8 @@ final class Settings
         'alert_online' => [200, 'Alert: concurrent online players above'],
         'alert_invalid_per_min' => [30, 'Alert: invalid requests per IP per minute above'],
         'alert_cooldown' => [900, 'Alert de-duplication window (seconds)'],
+        'admin_refresh_secs' => [30, 'Admin dashboard refresh interval (seconds, 0 = off)'],
+        'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)'],
     ];
 
     private static ?array $cache = null;

@@ -2,10 +2,13 @@
 
 /*
  * FOK-server admin UI.
- * Each card is a self-contained module: { id, title, view, refresh(el) }.
- * view selects the screen: 'dash' (default dashboard) or 'settings' (the
- * gear menu with configuration and backup/restore). To extend the admin
- * UI, append a module to MODULES; nothing else to touch.
+ * Each card is a self-contained module: { id, title, view, every,
+ * refresh(el) }. view selects the screen: 'dash' (default dashboard) or
+ * 'settings' (the gear menu with configuration and backup/restore).
+ * every names a settings key holding this card's own refresh interval,
+ * which also gives the card an interval control of its own; cards
+ * without it follow the global interval (top bar) if listed in LIVE. To
+ * extend the admin UI, append a module to MODULES; nothing else to touch.
  */
 
 const API = 'api.php';
@@ -74,6 +77,9 @@ const MODULES = [
     {
         id: 'conns',
         title: 'Connections (online clients)',
+        // Its own, much faster interval: a whole invite -> connect ->
+        // play -> bye cycle can happen between two global refreshes.
+        every: 'admin_conns_refresh_secs',
         async refresh(box) {
             const d = await api('conns');
             box.replaceChildren();
@@ -327,6 +333,50 @@ function form(obj) {
 
 const boxes = {};
 
+// Cards that follow the global interval from the top bar. Cards with an
+// 'every' of their own are not listed here; the rest only refresh on
+// page load or when their own refresh button is pressed.
+const LIVE = ['stats', 'props', 'alerts'];
+
+const settings = {};
+const timers = {};
+
+async function loadSettings() {
+    for (const s of (await api('settings')).settings) settings[s.key] = s.value;
+}
+
+// The intervals live in the server settings, so they survive a reload
+// and are editable in the settings view like everything else; 0 is off.
+function schedule(name, secs, fn) {
+    if (timers[name]) clearInterval(timers[name]);
+    if (secs > 0) timers[name] = setInterval(fn, secs * 1000);
+}
+
+function applyIntervals() {
+    schedule('live', settings.admin_refresh_secs, () => LIVE.forEach(refreshModule));
+    for (const m of MODULES) {
+        if (m.every) schedule(m.id, settings[m.every], () => refreshModule(m.id));
+    }
+}
+
+function intervalControl(key, title) {
+    const wrap = el('label', 'interval');
+    const input = el('input');
+    input.type = 'number';
+    input.min = '0';
+    input.value = settings[key];
+    input.title = title + ' in seconds (0 = off)';
+    input.onchange = async () => {
+        const secs = Math.max(0, parseInt(input.value, 10) || 0);
+        input.value = secs;
+        settings[key] = secs;
+        applyIntervals();
+        await api('settings_save', { method: 'POST', body: form({ [key]: secs }) });
+    };
+    wrap.append(input, el('span', 'muted', 's'));
+    return wrap;
+}
+
 function refreshModule(id) {
     const mod = MODULES.find((m) => m.id === id);
     mod.refresh(boxes[id]).catch((e) => {
@@ -342,16 +392,20 @@ const views = {
     dash: document.getElementById('dashboard'),
     settings: document.getElementById('settings'),
 };
-for (const m of MODULES) {
-    const card = el('section', 'card');
-    const head = el('h2', '', m.title);
-    const btn = el('button', 'small refresh', 'refresh');
-    btn.onclick = () => refreshModule(m.id);
-    head.append(btn);
-    const box = el('div', 'card-body');
-    card.append(head, box);
-    views[m.view || 'dash'].append(card);
-    boxes[m.id] = box;
+
+function buildCards() {
+    for (const m of MODULES) {
+        const card = el('section', 'card');
+        const head = el('h2', '', m.title);
+        const btn = el('button', 'small refresh', 'refresh');
+        btn.onclick = () => refreshModule(m.id);
+        head.append(btn);
+        if (m.every) head.append(intervalControl(m.every, m.title + ' refresh interval'));
+        const box = el('div', 'card-body');
+        card.append(head, box);
+        views[m.view || 'dash'].append(card);
+        boxes[m.id] = box;
+    }
 }
 
 const toggle = document.getElementById('viewtoggle');
@@ -363,10 +417,11 @@ toggle.onclick = () => {
     toggle.title = showSettings ? 'Back to dashboard' : 'Settings';
 };
 
-refreshAll();
-setInterval(() => {
-    refreshModule('stats');
-    refreshModule('alerts');
-    refreshModule('props');
-    refreshModule('conns');
-}, 30000);
+(async () => {
+    await loadSettings();
+    buildCards();
+    document.querySelector('header nav')
+        .prepend(intervalControl('admin_refresh_secs', 'Dashboard refresh interval'));
+    refreshAll();
+    applyIntervals();
+})();

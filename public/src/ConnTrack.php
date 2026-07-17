@@ -47,8 +47,8 @@ final class ConnTrack
         }
         [$mine, $theirs, $mode] = self::BY_TYPE[$type];
         if ($mine === null) {
-            self::clear($from);
-            self::clear($to);
+            self::clear($from, $to);
+            self::clear($to, $from);
             return;
         }
         self::set($from, $to, $mine, $mode);
@@ -68,10 +68,25 @@ final class ConnTrack
      * fallback becomes visible. Only the sender's own row is written (one
      * statement on a hot path); the peer's row follows from its own
      * traffic and its duel heartbeat.
+     *
+     * This is ALSO the only thing that stamps relay_seen, i.e. the only
+     * thing that takes a relay slot: a slot must cost the server real hub
+     * traffic, never a client's mere claim to be relaying. Otherwise a
+     * handful of invented no-P2P declarations would deny the relay to
+     * everyone (the declaration is not even friendship-gated).
      */
     public static function relaying(string $from, string $to): void
     {
-        self::set($from, $to, 'playing', 'relay');
+        $now = time();
+        Db::get()->prepare(
+            'INSERT INTO conn (id, peer, state, mode, updated, relay_seen) VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT (id) DO UPDATE SET
+                 peer = excluded.peer,
+                 state = excluded.state,
+                 mode = excluded.mode,
+                 updated = excluded.updated,
+                 relay_seen = excluded.relay_seen'
+        )->execute([$from, $to, 'playing', 'relay', $now, $now]);
     }
 
     /**
@@ -81,25 +96,27 @@ final class ConnTrack
     public static function isRelaying(string $a, string $b): bool
     {
         $st = Db::get()->prepare(
-            'SELECT 1 FROM conn WHERE mode = ? AND updated > ?
+            'SELECT 1 FROM conn WHERE relay_seen > ?
                AND ((id = ? AND peer = ?) OR (id = ? AND peer = ?)) LIMIT 1'
         );
-        $st->execute(['relay', time() - FOK_RELAY_WINDOW, $a, $b, $b, $a]);
+        $st->execute([time() - FOK_RELAY_WINDOW, $a, $b, $b, $a]);
         return $st->fetchColumn() !== false;
     }
 
     /**
-     * Pairs currently running through the hub. Counted from the tracked
-     * state, NOT from queued relay messages: those are deleted the moment
-     * the receiver drains them, so a healthy relayed duel would count as
-     * zero and the cap would protect nothing.
+     * Pairs currently running through the hub, counted from the hub
+     * traffic they actually caused (relay_seen). NOT from queued relay
+     * messages: those are deleted the moment the receiver drains them, so
+     * a healthy relayed duel would count as zero and the cap would
+     * protect nothing. And NOT from the declared mode either: that is a
+     * client's claim, and claims are free (see relaying()).
      */
     public static function relayPairs(): int
     {
         $st = Db::get()->prepare(
             "SELECT COUNT(DISTINCT CASE WHEN id < peer THEN id || ':' || peer
                                         ELSE peer || ':' || id END)
-               FROM conn WHERE mode = 'relay' AND peer IS NOT NULL AND updated > ?"
+               FROM conn WHERE peer IS NOT NULL AND relay_seen > ?"
         );
         $st->execute([time() - FOK_RELAY_WINDOW]);
         return (int)$st->fetchColumn();
@@ -169,8 +186,13 @@ final class ConnTrack
         )->execute([$id, $peer, $state, $mode, time()]);
     }
 
-    private static function clear(string $id): void
+    /**
+     * Ends a tracked connection, but ONLY the one with this peer: 'bye'
+     * and 'decline' are not friendship-gated, so a stranger must not be
+     * able to wipe the state of a duel it has nothing to do with.
+     */
+    private static function clear(string $id, string $peer): void
     {
-        Db::get()->prepare('DELETE FROM conn WHERE id = ?')->execute([$id]);
+        Db::get()->prepare('DELETE FROM conn WHERE id = ? AND peer = ?')->execute([$id, $peer]);
     }
 }

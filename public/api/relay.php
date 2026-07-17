@@ -24,8 +24,9 @@ require_once __DIR__ . '/../src/ConnTrack.php';
  *   -> 204 nothing pending (after the long-poll hold, like poll.php)
  *
  * Capacity notes: every relayed duel occupies FPM workers with its long
- * polls, so admission is capped (relay_max_duels); a pair counts as an
- * active relay while it exchanged anything within the last 30 s. Expect
+ * polls, so admission is capped (relay_max_duels); a pair holds its slot
+ * from its first message through the hub until FOK_RELAY_WINDOW after
+ * its last one, so a running duel is never turned away. Expect
  * one-way latency of ~200-400 ms: relay INPUT events and hashes, not
  * high-rate state (see docs/API.md).
  */
@@ -64,7 +65,11 @@ if ($method === 'GET') {
                 }
                 $db->exec('COMMIT');
             } catch (Throwable $e) {
-                $db->exec('ROLLBACK');
+                // SQLite auto-rolls back on some faults; a bare ROLLBACK
+                // would then throw and mask the real error.
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
                 throw $e;
             }
         }

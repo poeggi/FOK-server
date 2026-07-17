@@ -69,6 +69,17 @@ button:hover { border-color: var(--accent); }
 button.small { padding: 2px 8px; font-size: 13px; }
 button.refresh { float: right; }
 
+/* Refresh-interval control: one in the top bar (global), one per card
+   that carries its own interval. */
+.interval { display: inline-flex; align-items: center; gap: 3px; }
+.interval input {
+    width: 52px;
+    padding: 2px 4px;
+    font-size: 12px;
+    text-align: right;
+}
+.card h2 .interval { float: right; margin-right: 8px; }
+
 .error { color: var(--danger); }
 .muted { color: var(--muted); font-size: 13px; }
 

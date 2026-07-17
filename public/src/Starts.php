@@ -46,7 +46,11 @@ final class Starts
             $db->exec('COMMIT');
             return $startPts;
         } catch (Throwable $e) {
-            $db->exec('ROLLBACK');
+            // SQLite auto-rolls back on some faults; a bare ROLLBACK
+            // would then throw and mask the real error.
+            if ($db->inTransaction()) {
+                $db->exec('ROLLBACK');
+            }
             throw $e;
         }
     }

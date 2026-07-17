@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.15.0';
+const FOK_SERVER_VERSION = '0.16.0';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
 // v2: friendship-gated status and invites, ms hello.now, friend
@@ -34,9 +34,12 @@ const FOK_DUEL_WINDOW = 60;
 // A tracked connection state (see ConnTrack) goes stale after this long
 // without a signaling or duel event: the client reads as idle again.
 const FOK_CONN_TTL = 60;
-// A pair holds its relay admission slot while it declared no-P2P, pushed
-// hub traffic or refreshed its duel heartbeat within this window.
-const FOK_RELAY_WINDOW = 30;
+// A pair holds its relay admission slot for this long after its last
+// message through the hub. A relaying duel refreshes it many times a
+// second, so the window only has to outlast a pause (level transition,
+// backgrounded tab): comfortably more than the ~30 s hello cadence, or a
+// live duel would lose its slot and could be turned away on resume.
+const FOK_RELAY_WINDOW = 90;
 // Undelivered signaling messages expire after this many seconds. A
 // connection attempt that dies this way is reported back to its sender
 // (see Signals::expire), so an invite never just evaporates.

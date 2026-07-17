@@ -202,6 +202,19 @@ ok($receipt[0]['type'] === 'undelivered', 'receipt is an undelivered signal');
 ok($receipt[0]['from'] === 'bbbbbbbb', 'receipt names the peer that never picked it up');
 ok(str_contains($receipt[0]['payload'], '"type":"invite"'), 'receipt names the lost message type');
 
+// Signals: the receipt must survive a FULL mailbox - a flood must not be
+// able to swallow the one message that says the connection failed.
+Db::get()->prepare('INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)')
+    ->execute(['aaaaaaaa', 'bbbbbbbb', 'invite', 'old', time() - FOK_SIGNAL_TTL - 1]);
+for ($i = 0; $i < FOK_MAILBOX_CAP; $i++) {
+    Signals::send('cccccccc', 'aaaaaaaa', 'ice', "flood$i");
+}
+ok(!Signals::send('cccccccc', 'aaaaaaaa', 'ice', 'over'), 'mailbox really is full');
+$flooded = Signals::take('aaaaaaaa');
+ok(count(array_filter($flooded, static fn(array $s) => $s['type'] === 'undelivered')) === 1,
+    'receipt is delivered even past a full mailbox');
+Signals::take('bbbbbbbb');
+
 // Signals: an expiring message nobody waits on generates no receipt
 Db::get()->prepare('INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)')
     ->execute(['aaaaaaaa', 'bbbbbbbb', 'ice', 'old', time() - FOK_SIGNAL_TTL - 1]);
@@ -278,8 +291,9 @@ ok(connOf('bbbbbbbb')['state'] === 'idle', 'forget drops the peer side as well')
 // ConnTrack: offline clients are not listed at all
 ok(connOf('cccccccc') === [], 'unknown client not in the online list');
 
-// ConnTrack: relay admission is counted from tracked state, not from the
-// queued messages (those are gone the instant the receiver drains them).
+// ConnTrack: relay admission is counted from the hub traffic a pair
+// really caused, not from queued messages (gone the instant the receiver
+// drains them) and not from what a client claims.
 Db::get()->exec('DELETE FROM conn');
 ok(ConnTrack::relayPairs() === 0, 'no relayed pairs on a quiet server');
 ok(!ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'idle pair holds no relay slot');
@@ -289,11 +303,32 @@ ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'relaying pair holds its slot'
 ok(ConnTrack::isRelaying('bbbbbbbb', 'aaaaaaaa'), 'slot is held from either side');
 ConnTrack::relaying('bbbbbbbb', 'aaaaaaaa');
 ok(ConnTrack::relayPairs() === 1, 'both directions are still one pair');
-Db::get()->prepare('UPDATE conn SET updated = ? WHERE id = ?')
-    ->execute([time() - FOK_RELAY_WINDOW - 1, 'aaaaaaaa']);
-Db::get()->prepare('UPDATE conn SET updated = ? WHERE id = ?')
-    ->execute([time() - FOK_RELAY_WINDOW - 1, 'bbbbbbbb']);
+Db::get()->prepare('UPDATE conn SET relay_seen = ? WHERE id IN (?, ?)')
+    ->execute([time() - FOK_RELAY_WINDOW - 1, 'aaaaaaaa', 'bbbbbbbb']);
 ok(ConnTrack::relayPairs() === 0, 'a pair that stopped relaying frees its slot');
+
+// ConnTrack: a DECLARATION must never take a relay slot. accept-relay is
+// not friendship-gated, so if a claim counted, a handful of invented
+// pairs would deny the relay to everyone.
+Db::get()->exec('DELETE FROM conn');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite-relay');
+ok(connOf('aaaaaaaa')['mode'] === 'relay', 'declaration is tracked as relay mode');
+ok(ConnTrack::relayPairs() === 0, 'a no-p2p declaration takes no relay slot');
+ok(!ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'declaring pair holds no slot yet');
+ConnTrack::relaying('aaaaaaaa', 'bbbbbbbb');
+ok(ConnTrack::relayPairs() === 1, 'real hub traffic takes the slot');
+
+// ConnTrack: bye and decline are not friendship-gated either, so a
+// stranger must not be able to end someone else's connection - let alone
+// drop the slot of a live relayed duel and get it turned away on resume.
+ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'duel is relaying before the stranger');
+ConnTrack::note('cccccccc', 'aaaaaaaa', 'bye');
+ok(connOf('aaaaaaaa')['peer'] === 'bbbbbbbb', "a stranger's bye leaves the connection alone");
+ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), "a stranger's bye cannot drop the relay slot");
+ConnTrack::playing('aaaaaaaa', 'bbbbbbbb');
+ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'the duel heartbeat keeps the relay slot');
+ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'bye');
+ok(connOf('aaaaaaaa')['state'] === 'idle', "the real peer's bye does end it");
 Db::get()->exec('DELETE FROM conn');
 
 // Auth: verify against hash file, lockout after repeated failures

@@ -588,6 +588,12 @@ else
 
     R=$(curl -s "$BASE/assets/admin.js?v=$VER")
     expect "connections card on the dashboard" "id: 'conns'" "$R"
+    expect "connections card has its own interval" "every: 'admin_conns_refresh_secs'" "$R"
+    expect "global refresh interval sits in the top bar" "prepend(intervalControl('admin_refresh_secs'" "$R"
+
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
+    expect "global refresh interval defaults to 30 s" '"key":"admin_refresh_secs","value":30' "$R"
+    expect "connections refresh interval defaults to 1 s" '"key":"admin_conns_refresh_secs","value":1' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
     expect "backup via GET rejected" '"error":"POST only"' "$R"
@@ -648,8 +654,25 @@ else
     expect "relay cap rejects a no-p2p declaration with 503" '503' "$R"
     R=$(rly "$ID1" "$ID2" 'still here')
     expect "a duel already relaying is never cut off" '"ok":true' "$R"
+
+    # Only real hub traffic may hold a slot. accept-relay is not
+    # friendship-gated, so if a bare declaration counted, a few invented
+    # pairs would deny the relay to the whole server.
+    setting relay_max_duels 2
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID3\",\"to\":\"$ID4\",\"type\":\"accept-relay\",\"payload\":\"{}\"}" \
+        "$BASE/api/signal.php" > /dev/null
+    R=$(rly "$ID1" "$ID2" 'still mine')
+    expect "a claimed relay duel cannot squeeze out a real one" '"ok":true' "$R"
+
+    # A stranger must not be able to end a duel it has nothing to do with.
+    sig "$ID3" "$ID1" bye '' > /dev/null
+    R=$(rly "$ID1" "$ID2" 'stranger cannot end this')
+    expect "a stranger's bye cannot kill a live relayed duel" '"ok":true' "$R"
     setting relay_max_duels 3
     curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1" > /dev/null
+    curl -s "$BASE/api/poll.php?id=$ID1" > /dev/null
+    curl -s "$BASE/api/poll.php?id=$ID4" > /dev/null
 
     # An invite nobody picks up must not evaporate behind its ok:true:
     # the sender is told. (The sweep runs on the next mailbox read, so

@@ -24,6 +24,15 @@ final class Util
                 self::jsonOut(['ok' => false, 'error' => 'server fault'], 500);
             }
         });
+        // An exception handler does not see fatals - and the long polls
+        // are exactly where an execution timeout can hit.
+        register_shutdown_function(static function (): void {
+            $e = error_get_last();
+            $fatal = E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR;
+            if ($e !== null && ($e['type'] & $fatal) !== 0 && !headers_sent()) {
+                self::jsonOut(['ok' => false, 'error' => 'server fault'], 500);
+            }
+        });
     }
 
     // Player IDs are 32-bit values as 8 lowercase hex chars (see FOK-snake js/storage.js).

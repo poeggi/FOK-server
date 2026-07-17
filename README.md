@@ -42,7 +42,8 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
   admin dashboard lists it for every online client.
 - Admin interface at /admin/: a one-screen dashboard (statistics: online,
   playing 1:1, registered users with id and ip, per-hour load; connection
-  state of every online client; alert feed; top-100 management) plus a settings view behind the gear button with the
+  state of every online client, on its own 1 s refresh next to the
+  30 s global one in the top bar; alert feed; top-100 management) plus a settings view behind the gear button with the
   runtime configuration (incl. JSON export/import) and database backup
   (SQLite online backup, download) and restore (upload).
 - Monitoring and alerting: inline checks (no daemons on shared hosting)
