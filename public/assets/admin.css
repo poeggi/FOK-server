@@ -149,6 +149,15 @@ tr.unseen td { color: var(--danger); }
 .badge.connecting { border-color: #3f6ea8; color: #79aee8; }
 .badge.playing { border-color: var(--accent); color: var(--accent); }
 
+/* dbg-off keeps the muted default: it is the normal state. */
+.badge.dbg-on { border-color: var(--accent); color: var(--accent); }
+.badge.dbg-pending { border-color: #b7861f; color: #e0b055; }
+.badge.dbg-self { border-color: #3f6ea8; color: #79aee8; }
+
+/* Cells are already nowrap; flex here would collapse the column width. */
+.debug-cell .badge { margin-right: 6px; }
+button.small { padding: 0 6px; font-size: 11px; }
+
 .card input[type="number"] { width: 90px; padding: 3px 6px; }
 .card form > button { margin-top: 10px; }
 

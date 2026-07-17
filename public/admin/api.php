@@ -70,6 +70,21 @@ switch ($action) {
         $conns = ConnTrack::listOnline();
         Util::jsonOut(['ok' => true, 'now' => time(), 'conns' => $conns]);
 
+    case 'set_debug':
+        // State-changing, so POST-only: a GET could be triggered cross-site
+        // by top-level navigation despite the SameSite=Lax cookie.
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            Util::fail('POST only', 405);
+        }
+        $id = $_POST['id'] ?? '';
+        if (!Util::isValidId($id)) {
+            Util::fail('invalid id');
+        }
+        // The wish only: the client honours it on its next hello and
+        // reports back what it actually did (see ConnTrack::listOnline).
+        Presence::setDebug($id, ($_POST['on'] ?? '') === '1');
+        Util::jsonOut(['ok' => true]);
+
     case 'users':
         $total = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
         $st = $db->query('SELECT id, name, ip, first_seen, last_seen, hello_count, latency FROM players ORDER BY last_seen DESC LIMIT 200');

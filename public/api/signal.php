@@ -6,6 +6,7 @@ require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Friends.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
+require_once __DIR__ . '/../src/Starts.php';
 
 /**
  * Matchmaking / WebRTC signaling relay.
@@ -67,11 +68,14 @@ if (($type === 'invite-relay' || $type === 'accept-relay')
 }
 
 // 'bye' ends the pairing, so its relay backlog dies with it: an
-// undelivered input must never reach the pair's next duel.
+// undelivered input must never reach the pair's next duel. The start
+// epoch goes the same way - it counts halts within ONE connection, so the
+// pair's next duel has to be able to open at epoch 0 again.
 if ($type === 'bye') {
     $db = Db::get();
     [$a, $b] = $id < $to ? [$id, $to] : [$to, $id];
     $db->prepare('DELETE FROM relay WHERE pair = ?')->execute(["$a:$b"]);
+    Starts::forget($id, $to);
 }
 
 Presence::touch($id, Util::clientIp());

@@ -68,12 +68,16 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
       index.php       landing page with the global top 100
       api/            JSON endpoints for game clients (CORS-allowlisted)
         version.php   server + API contract version, environment
-        time.php      millisecond clock sync (shared PTS base for games)
-        hello.php     heartbeat: presence, counters, signals, friends online
+        t.txt         clock source: Apache stamps the receive time into a
+                      header, so sync never queues for a PHP worker
+        time.php      millisecond clock sync, fallback for t.txt
+        hello.php     heartbeat: presence, counters, signals, friends online,
+                      debug flag (server instruction + client report)
         poll.php      fast signal poll, 204 when idle (matchmaking window)
         friend.php    friendship handshake: request/accept/remove/list
         match.php     quick-match queue (pair with anyone waiting)
-        start.php     server-issued absolute level-start PTS per pair
+        start.php     server-issued absolute start PTS per pair, for every
+                      halt of the run (first/level/respawn/resume/rematch)
         relay.php     in-duel message relay (P2P fallback), long-polled
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
@@ -199,12 +203,16 @@ host-level. If this outgrows shared hosting, fix workers first.
 ## API sketch
 
     GET  /api/version.php
-      -> {"ok":true,"server":"<x.y.z>","api":2,"env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":3,"env":"live"}
+    GET  /api/t.txt
+      -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
     GET  /api/time.php
-      -> {"ok":true,"t":<server ms>}   clock sync for the shared PTS base
+      -> {"ok":true,"t":<server ms>}   fallback clock source
     POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
-                          "latency":ms?, "auto_accept":bool?, "friends":[...]?}
-      -> {"ok":true,"api":2,"now":ms,"online":n,"playing":n,"registered":n,
+                          "latency":ms?, "auto_accept":bool?, "debug":bool?,
+                          "friends":[...]?}
+      -> {"ok":true,"api":3,"now":ms,"debug":bool,"online":n,"playing":n,
+          "registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_online":{...}?, "friends_latency":{...}?,
           "friends_name":{...}?}   (friends_* only real for accepted friends)
@@ -220,8 +228,13 @@ host-level. If this outgrows shared hosting, fix workers first.
     POST /api/match.php  {"id":"cafe0001","action":"seek|cancel"}
       -> {"ok":true,"waiting":true}
        | {"ok":true,"matched":"...","role":"...","peer_name":"..."}
-    POST /api/start.php  {"id":"cafe0001","peer":"deadbeef"}
-      -> {"ok":true,"start_pts":ms,"now":ms}   identical for both peers
+    POST /api/start.php  {"id":"cafe0001","peer":"deadbeef","epoch":n,
+                          "reason":"first|level|respawn|resume|rematch",
+                          "pts":ms}
+      -> {"ok":true,"start_pts":ms,"epoch":n,"now":ms}
+         identical for both peers; both name the same epoch, so the answer
+         does not depend on when either asks. 409 if the caller is behind,
+         400 if its pts proves it is not clock-synced.
     GET  /api/scores.php?limit=10
       -> {"ok":true,"scores":[{"rank":1,"name":"...","score":...,...}]}
     POST /api/scores.php {"id","score","level","diff","name"?,"color"?,

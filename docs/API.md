@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":2, "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":3, "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -51,7 +51,8 @@ rather than misbehave against an incompatible server.
   (`!cfg.offline` in FOK-snake): when offline is ON, never contact the
   server.
 - Timestamps: ALL timing/sync values are unix MILLISECONDS - `pts`,
-  time.php's `t`, and hello's `now` (the same PTS clock everywhere).
+  time.php's `t`, and hello's `now` (the same PTS clock everywhere). The
+  one exception is t.txt's `X-Fok-T` header, which is MICROSECONDS.
   Only `created` fields on stored records (scores, relayed signals)
   are unix SECONDS: they are calendar bookkeeping, never used for
   timing - format dates from them, do not mix them with PTS.
@@ -67,22 +68,58 @@ server does zero per-client computation, which is what makes this
 scale. A timestamp on this clock is called the PTS (presentation
 timestamp).
 
-### GET /api/time.php - clock sync (REQUIRED before starting a game)
+### GET /api/t.txt - clock source (REQUIRED, preferred)
 
-    GET /api/time.php  ->  {"ok":true, "t": 1784190295123}
+    GET /api/t.txt  ->  200, body "ok"
+    Response header:  X-Fok-T: t=1784281823033613
 
-The endpoint touches no database, so its latency is minimal and stable.
-Clients MUST sync when initiating an online game (and should re-sync
-periodically during long sessions):
+The clock rides in a header on a STATIC file, and the value is the moment
+Apache received the request, in MICROSECONDS since the epoch (note the
+`t=` prefix; divide by 1000 for PTS milliseconds). The header is exposed
+via CORS (`Access-Control-Expose-Headers`) and the response is
+`no-store` - never cache it, a cached timestamp is a wrong clock.
 
-    1. Record local time t0 (performance.now()).
-    2. GET /api/time.php -> t. Record local time t1 on arrival.
-    3. rtt = t1 - t0;  offset = t + rtt/2 - t1_wallclock
+Static on purpose: it is answered without PHP, so it never queues for a
+PHP-FPM worker. That queue wait happens before PHP starts, so PHP can
+neither see nor subtract it, and it would otherwise land in the offset
+as if it were network delay - exactly when the server is busiest.
+
+`GET /api/time.php -> {"ok":true, "t": <ms>}` remains as the FALLBACK,
+in milliseconds, for clients that cannot read the header (and for a
+`now` re-check). Prefer t.txt; fall back if the header is absent.
+
+### The sync procedure
+
+    1. Record local time t0.
+    2. GET /api/t.txt -> T (microseconds; T/1000 = ms). Record local
+       time t1 on arrival.
+    3. rtt = t1 - t0;  offset = T/1000 + rtt/2 - t1_wallclock
     4. Repeat ~5 times, keep the offset from the sample with the
        LOWEST rtt. localToPts(x) = x + offset.
 
+Keeping the lowest-rtt sample is what removes the error, not averaging:
+a sample delayed by queuing carries that delay into the offset, and the
+fastest sample is the least polluted one. SPREAD the samples out (a few
+hundred ms apart) rather than firing them back to back - consecutive
+requests hit the same server load and can all be slow together, leaving
+no clean sample to pick.
+
 Both clients now share a PTS base accurate to roughly rtt/2 (a few ms
-on typical connections) - enough for frame- and audio-level sync.
+on typical connections) - enough for frame- and audio-level sync. The
+server does zero per-client work for any of this, which is what makes it
+scale.
+
+Clients MUST sync:
+
+- before sending an invite, and on receiving one;
+- before starting an online game;
+- before EVERY start request (see start.php) - so before the first
+  start, before each next level, after a death and before the respawn,
+  and before resuming from a pause;
+- periodically during long sessions (a device clock drifts by roughly
+  1-3 ms per minute).
+
+The rule is simply: a fresh sync always precedes a new start PTS.
 
 ### Using PTS
 
@@ -130,7 +167,7 @@ hello's `friends_latency`).
 
 Measurement procedure:
 
-    1. Take at least THREE samples: rtt of GET /api/time.php each
+    1. Take at least THREE samples: rtt of GET /api/t.txt each
        (reuse the clock-sync samples - same requests).
     2. If the FIRST value is an extreme outlier (cold connection: DNS,
        TCP and TLS setup make it much larger), discard it.
@@ -142,32 +179,91 @@ entering the multiplayer screen and every few minutes while online.
 Valid range 0..60000; omit the field between measurements (the server
 keeps the last value).
 
-### POST /api/start.php - server-issued level start
+### POST /api/start.php - server-issued start of play
 
-    POST {"id": "c0ffee42", "peer": "deadbeef"}
-      -> {"ok":true, "start_pts": 1784190295323, "now": 1784190295123}
+    POST {"id": "c0ffee42", "peer": "deadbeef", "epoch": 3,
+          "reason": "respawn", "pts": 1784190295120}
+      -> {"ok":true, "start_pts": 1784190295323, "epoch": 3,
+          "now": 1784190295123}
 
-When both peers are ready (DataChannel open, level loaded), EACH calls
-this endpoint; both receive the IDENTICAL absolute `start_pts` for
-their pair and start the level exactly then. Both peers MUST request
-promptly and near-simultaneously once ready (right when the
-DataChannel opens) - the second peer has to fetch the schedule before
-the start moment passes. The server chooses the lead time: at least
-200 ms (start_lead_min_ms setting), scaled up by the pair's reported
-latencies (150 + 2 x worst latency when that exceeds the minimum),
-capped at 3 s. Once a start has
-passed, the next request issues a fresh one (next level, rematch).
-`now` is included for a free clock re-check.
+The server owns the clock, so it owns EVERY moment play begins or
+resumes. A start is requested for each of these, not only the first:
+
+| `reason`  | when                                  |
+|-----------|---------------------------------------|
+| `first`   | first start of a match                |
+| `level`   | next level                            |
+| `respawn` | after a death, before play resumes    |
+| `resume`  | coming back from a pause              |
+| `rematch` | replaying against the same peer       |
+
+Anything that halts or restarts the run goes through here. Peers never
+pick the moment themselves.
+
+**Both peers call it, and both name the same `epoch`.** The epoch counts
+halts within the current connection: it starts at 0 and increments by one
+per halt. Deterministic lockstep means both peers count identically
+without either being authoritative, so they arrive at the same number by
+themselves. The peer that asks first causes the start to be issued; the
+second gets the IDENTICAL value back.
+
+Naming the epoch is what makes the answer independent of WHEN each peer
+asks. A late peer receives the same `start_pts`, possibly already in the
+past - it then knows exactly how late it is and can fast-forward. This
+matters most for mid-game halts: a pause or a respawn is noticed by one
+peer first, and the other only learns of it over the DataChannel, so it
+asks late by definition.
+
+The server never pushes a start. The peers agree over the DataChannel
+(or the relay) that a halt happened and which epoch it is; the server is
+asked only for its timing.
+
+- `epoch`: integer 0..1000000, REQUIRED. A peer that has fallen BEHIND
+  the pair's epoch gets **409** `stale epoch` and must resynchronise its
+  game state rather than start from a wrong origin.
+- `reason`: one of the table above, REQUIRED.
+- `pts`: the caller's own current PTS, REQUIRED - the proof it is synced
+  (see below).
+- `start_pts`: absolute, on the shared clock. Trigger everything
+  (music, READY/GO, first tick) exactly then, via the local offset.
+- `now`: a free clock re-check.
+
+The lead time is chosen by the server: at least 200 ms
+(`start_lead_min_ms`), scaled by the pair's reported latencies
+(150 + 2 x worst latency when that exceeds the minimum), capped at 3 s.
+
+A `bye` ends the pairing and resets the epoch line with it, so the pair's
+next match opens at `epoch: 0` again.
+
+#### The sync gate
+
+`pts` is REQUIRED and must be a fresh reading of the shared clock. A
+start is a moment on that clock, so a client that cannot place itself on
+it is turned away rather than let into a desynced game:
+
+- ahead of the server -> **400** `bogus pts` (zero tolerance, logged);
+- older than `start_sync_max_age_ms` (default 2 s) -> **400**
+  `stale pts`, meaning: resync via t.txt and retry;
+- absent -> **400** `pts required`.
+
+Be aware of what this does and does not prove. What reaches the server is
+`pts + one-way delay + any clock error`, and those cannot be separated
+from a single direction - the very reason NTP needs a round trip. So the
+gate is deliberately GROSS and generous: it catches a client that never
+synced (a raw device clock is off by seconds to minutes) and passes any
+client that did (min-RTT sampling bounds the error to a few ms). Passing
+it is not a licence to skip the sync; the procedure above is the contract.
 
 ### Server-side PTS validation
 
 Client PTS can NEVER be in the future - no tolerance. Endpoints that
-accept a `pts` field (signal.php, scores.php) reject any value ahead
-of the server clock with 400 `bogus pts: in the future`; the incident
-is counted and logged as a bogus-client alert in the admin UI. If an
-honest client gets this rejection its clock sync has drifted: re-sync
-via time.php immediately (min-RTT sampling keeps the offset error at a
-few ms, comfortably below any real network transit time).
+accept a `pts` field (signal.php, scores.php, start.php) reject any value
+ahead of the server clock with 400 `bogus pts: in the future`; the
+incident is counted and logged as a bogus-client alert in the admin UI.
+If an honest client gets this rejection its clock sync has drifted:
+re-sync immediately (min-RTT sampling keeps the offset error at a few ms,
+comfortably below any real network transit time). start.php additionally
+rejects a pts that is too far in the PAST - see its sync gate.
 
 ## POST /api/hello.php - heartbeat and poll
 
@@ -195,15 +291,20 @@ Request:
                                   immediately (see Friendships). Expires
                                   ~60 s after the last flagged hello; a
                                   hello without the flag clears it.
+      "debug": true               optional bool: whether the client IS in
+                                  debug mode right now (absent means it is
+                                  not). See Debug mode below.
     }
 
 Response:
 
     {
       "ok": true,
-      "api": 2,                   contract version, see Versioning
+      "api": 3,                   contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
+      "debug": false,             the server's instruction: the client MUST
+                                  honour it (see Debug mode below)
       "online": 3,                players seen in the last 60 s
       "playing": 2,               players currently in 1:1 games
       "registered": 17,           total known player IDs
@@ -229,6 +330,31 @@ Rules:
 - While a 1:1 game is running, keep sending `duel_with` at least every
   60 s (the duel counts as over when neither peer refreshed it within
   60 s).
+
+## Debug mode
+
+The server can turn a specific client's debug mode on remotely - an
+operator sets it per player in the admin dashboard, to diagnose a client
+in the field without asking its user to do anything.
+
+Two separate bits are involved, and they are deliberately independent:
+
+- **The instruction**, `debug` in the hello RESPONSE. What the server
+  wants. The client MUST honour it: `true` turns its debug mode on,
+  `false` turns it off again. It arrives on the next hello (so up to
+  ~30 s after an operator sets it), never sooner.
+- **The report**, `debug` in the hello REQUEST. What the client IS
+  actually doing. Send `true` in every hello while debug mode is on,
+  whatever turned it on.
+
+They differ legitimately, and the admin view names each case: `pending`
+is an instruction the client has not picked up yet, and `self` is a
+client that enabled debug mode on its own (a developer, a local build).
+A client must therefore never derive one from the other: report what is
+true, honour what is asked.
+
+What "debug mode" shows is entirely the client's business; the server
+only carries the bit.
 
 ## GET /api/poll.php - fast signal poll (matchmaking window only)
 

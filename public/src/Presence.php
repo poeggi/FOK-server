@@ -8,30 +8,49 @@ require_once __DIR__ . '/ConnTrack.php';
 
 final class Presence
 {
-    public static function touch(string $id, string $ip, ?int $latency = null, ?string $name = null, ?bool $autoAccept = null): void
+    /**
+     * Records the heartbeat and returns whether the server wants this
+     * client in debug mode. $debugActive is what the client REPORTS it is
+     * doing; null leaves the record alone (non-hello endpoints).
+     *
+     * The wish rides back on the same RETURNING as the registration check:
+     * every hello goes through here, so reading it separately would put a
+     * second query on the one path that must stay cheapest.
+     */
+    public static function touch(string $id, string $ip, ?int $latency = null, ?string $name = null, ?bool $autoAccept = null, ?bool $debugActive = null): bool
     {
         $now = time();
         // null leaves accept_until untouched (non-hello endpoints); hello
         // always passes a bool, so leaving the screen clears the flag.
         $acceptUntil = $autoAccept === null ? null
             : ($autoAccept ? $now + Settings::int('auto_accept_window') : 0);
+        $active = $debugActive === null ? null : (int)$debugActive;
         $st = Db::get()->prepare(
-            'INSERT INTO players (id, ip, first_seen, last_seen, hello_count, latency, name, accept_until)
-             VALUES (?, ?, ?, ?, 1, ?, ?, COALESCE(?, 0))
+            'INSERT INTO players (id, ip, first_seen, last_seen, hello_count, latency, name, accept_until, debug_active)
+             VALUES (?, ?, ?, ?, 1, ?, ?, COALESCE(?, 0), COALESCE(?, 0))
              ON CONFLICT (id) DO UPDATE SET ip = excluded.ip, last_seen = excluded.last_seen,
                  hello_count = hello_count + 1,
                  latency = COALESCE(excluded.latency, players.latency),
                  name = COALESCE(excluded.name, players.name),
-                 accept_until = COALESCE(?, players.accept_until)
-             RETURNING first_seen = last_seen'
+                 accept_until = COALESCE(?, players.accept_until),
+                 debug_active = COALESCE(?, players.debug_active)
+             RETURNING first_seen = last_seen AS registered, debug'
         );
-        $st->execute([$id, $ip, $now, $now, $latency, $name, $acceptUntil, $acceptUntil]);
+        $st->execute([$id, $ip, $now, $now, $latency, $name, $acceptUntil, $active, $acceptUntil, $active]);
+        $row = $st->fetch();
         // Nobody may watch their own first hello report zero online, so a
         // registration drops the cache. The repeat heartbeats that are
         // virtually all the traffic leave it alone.
-        if ((int)$st->fetchColumn() === 1) {
+        if ((int)$row['registered'] === 1) {
             self::flushCounts();
         }
+        return (int)$row['debug'] === 1;
+    }
+
+    /** Admin-set: what the server WANTS the client to do (see touch). */
+    public static function setDebug(string $id, bool $on): void
+    {
+        Db::get()->prepare('UPDATE players SET debug = ? WHERE id = ?')->execute([(int)$on, $id]);
     }
 
     /** Forces the next counts() to recount (see the caching there). */

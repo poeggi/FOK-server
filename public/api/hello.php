@@ -18,11 +18,14 @@ require_once __DIR__ . '/../src/ConnTrack.php';
  *                               (mandated regularly, see docs/API.md)
  *   "auto_accept": bool,        optional, true while the QR/add-friend
  *                               screen is open (auto-accepts requests)
+ *   "debug": bool,              optional, whether the client IS in debug
+ *                               mode (absent means it is not)
  *   "friends": ["8-hex", ...]   optional, ids to check
  * }
- * Returns presence counters, pending signaling messages for the caller
- * (drained on read) and, for requested friends, online/latency/name -
- * filled ONLY for ids with an ACCEPTED friendship to the caller.
+ * Returns presence counters, the server's debug wish for this client,
+ * pending signaling messages for the caller (drained on read) and, for
+ * requested friends, online/latency/name - filled ONLY for ids with an
+ * ACCEPTED friendship to the caller.
  * Clients send this every ~30s; fast polling belongs to poll.php.
  */
 Util::cors();
@@ -54,8 +57,15 @@ $autoAccept = $body['auto_accept'] ?? false;
 if (!is_bool($autoAccept)) {
     Util::fail('invalid auto_accept');
 }
+// What the client reports it IS doing, which is not the same as what the
+// admin asked for: a client may enter debug mode by itself, and a fresh
+// wish is not honoured until this hello. Both are kept (see Db step 12).
+$debugActive = $body['debug'] ?? false;
+if (!is_bool($debugActive)) {
+    Util::fail('invalid debug');
+}
 
-Presence::touch($id, Util::clientIp(), $latency, $name, $autoAccept);
+$debug = Presence::touch($id, Util::clientIp(), $latency, $name, $autoAccept, $debugActive);
 Util::bump('hello');
 
 $duelWith = $body['duel_with'] ?? null;
@@ -87,6 +97,10 @@ $out = [
     'ok' => true,
     'api' => FOK_API_VERSION,
     'now' => Util::nowMs(),
+    // The client MUST honour this: true turns its debug mode on, false
+    // turns it off again. It reports back what it actually did via the
+    // debug field of the next hello.
+    'debug' => $debug,
     'signals' => Signals::take($id),
 ] + Presence::counts();
 

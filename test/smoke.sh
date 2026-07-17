@@ -311,18 +311,57 @@ expect "friend name reported" "\"$ID2\":\"SMOKE TWO\"" "$FN"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"latency\":99999}" "$BASE/api/hello.php")
 expect "absurd latency rejected" '"error":"invalid latency"' "$R"
 
+# A start carries a FRESH sync proof, so every request re-reads the clock.
+now_ms() { curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2; }
+start_req() { # id peer epoch reason pts
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5}" \
+        "$BASE/api/start.php"
+}
+
 # Both peers request the start near-simultaneously, like real clients.
 # Wait ONLY for the two curls - a bare wait would also wait for the
 # backgrounded php server and hang forever.
-curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\"}" "$BASE/api/start.php" > "$DATA/s1.json" &
+start_req "$ID1" "$ID2" 0 first "$(now_ms)" > "$DATA/s1.json" &
 C1=$!
-curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"peer\":\"$ID1\"}" "$BASE/api/start.php" > "$DATA/s2.json" &
+start_req "$ID2" "$ID1" 0 first "$(now_ms)" > "$DATA/s2.json" &
 C2=$!
 wait "$C1" "$C2"
 S1=$(grep -oE '"start_pts":[0-9]+' "$DATA/s1.json" | cut -d: -f2)
 S2=$(grep -oE '"start_pts":[0-9]+' "$DATA/s2.json" | cut -d: -f2)
 if [ -n "$S1" ] && [ "$S1" = "$S2" ]; then echo "ok   server-issued start identical for both peers"; else echo "FAIL start pts differ: $S1 vs $S2"; fail=1; fi
 if [ "${#S1}" -eq 13 ]; then echo "ok   start pts is milliseconds"; else echo "FAIL start pts not ms: $S1"; fail=1; fi
+
+# The epoch is what makes the answer independent of WHEN a peer asks: the
+# same epoch must return the same moment however late the second one is.
+R=$(start_req "$ID2" "$ID1" 0 first "$(now_ms)")
+expect "a late peer re-asking the same epoch gets the same start" "\"start_pts\":$S1" "$R"
+
+# Every halt of the run is its own epoch.
+R=$(start_req "$ID1" "$ID2" 1 respawn "$(now_ms)")
+expect "a respawn issues a new start" '"start_pts":' "$R"
+expect "the new start echoes its epoch" '"epoch":1' "$R"
+R=$(start_req "$ID1" "$ID2" 2 resume "$(now_ms)")
+expect "a resume from pause issues a start" '"epoch":2' "$R"
+
+# A peer left behind is told loudly, not handed a start it would misplace.
+R=$(start_req "$ID2" "$ID1" 0 first "$(now_ms)")
+expect "a stale epoch is refused" 'stale epoch' "$R"
+
+# The sync gate: a start is a moment on the shared clock, so a client that
+# cannot place itself on it gets no start.
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"epoch\":3,\"reason\":\"level\"}" "$BASE/api/start.php")
+expect "a start without a sync proof is refused" 'pts required' "$R"
+R=$(start_req "$ID1" "$ID2" 3 level "$(( $(now_ms) - 120000 ))")
+expect "a start with a stale sync proof is refused" 'stale pts' "$R"
+R=$(start_req "$ID1" "$ID2" 3 level "$(( $(now_ms) + 60000 ))")
+expect "a start with a future pts is bogus" 'bogus pts' "$R"
+R=$(start_req "$ID1" "$ID2" 3 nonsense "$(now_ms)")
+expect "an unknown start reason is refused" 'invalid reason' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"epoch\":-1,\"reason\":\"level\",\"pts\":$(now_ms)}" "$BASE/api/start.php")
+expect "a negative epoch is refused" 'invalid epoch' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"payload\":\"IN:12:up\"}" "$BASE/api/relay.php")
@@ -464,8 +503,7 @@ expect "normal answer delivered" '"type":"answer"' "$R"
 sig "$ID1" "$ID2" ice 'cand-1' > /dev/null
 R=$(curl -s "$BASE/api/poll.php?id=$ID2")
 expect "normal ice delivered" '"type":"ice"' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\"}" "$BASE/api/start.php")
+R=$(start_req "$ID1" "$ID2" 0 first "$(now_ms)")
 expect "normal start issued" '"start_pts":' "$R"
 R=$(rly "$ID1" "$ID2" 'IN:42:up')
 expect "normal relay accepted" '"ok":true' "$R"
@@ -593,10 +631,43 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
     expect "bye returns clients to idle" '"state":"idle"' "$R"
 
+    # Debug flag: the admin sets a wish, the client honours it on its next
+    # hello and reports back what it actually did.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    expect "a client is not debugging by default" '"debug":false' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=set_debug" -d "id=$ID1&on=1")
+    expect "admin sets a client to debug" '"ok":true' "$R"
+    R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=set_debug&id=$ID1&on=1")
+    expect "set_debug via GET rejected" '405' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=set_debug" -d "id=nothex&on=1")
+    expect "set_debug rejects a malformed id" '"error":"invalid id"' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    expect "the wish shows before the client picks it up" '"debug":true,"debug_active":false' "$R"
+
+    R=$(curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID1\"}" "$BASE/api/hello.php")
+    expect "hello hands the debug wish to the client" '"debug":true' "$R"
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID1\",\"debug\":true}" "$BASE/api/hello.php" > /dev/null
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    expect "the client reports it honoured the wish" '"debug":true,"debug_active":true' "$R"
+
+    R=$(curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID1\",\"debug\":\"yes\"}" "$BASE/api/hello.php")
+    expect "a non-boolean debug report is rejected" '"error":"invalid debug"' "$R"
+
+    curl -s -b "$COOKIES" "$BASE/admin/api.php?action=set_debug" -d "id=$ID1&on=0" > /dev/null
+    R=$(curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID1\",\"debug\":true}" "$BASE/api/hello.php")
+    expect "the wish can be withdrawn" '"debug":false' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    expect "a client debugging by itself still reports active" '"debug":false,"debug_active":true' "$R"
+
     R=$(curl -s "$BASE/assets/admin.js?v=$VER")
     expect "connections card on the dashboard" "id: 'conns'" "$R"
     expect "connections card has its own interval" "every: 'admin_conns_refresh_secs'" "$R"
     expect "global refresh interval sits in the top bar" "prepend(intervalControl('admin_refresh_secs'" "$R"
+    expect "connections card can toggle debug" "api('set_debug'" "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
     expect "global refresh interval defaults to 30 s" '"key":"admin_refresh_secs","value":30' "$R"

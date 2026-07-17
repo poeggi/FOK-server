@@ -114,14 +114,17 @@ final class ConnTrack
     /**
      * Online players with their connection state, latest first. A stale
      * row means the client went quiet mid-handshake: it reads as idle.
-     * @return array [{id, name, ip, latency, last_seen, state, peer, mode, since}]
+     * debug is what the admin asked for, debug_active what the client last
+     * reported - they differ until the wish reaches it (see Presence).
+     * @return array [{id, name, ip, latency, last_seen, state, peer, mode,
+     *                 since, debug, debug_active}]
      */
     public static function listOnline(int $limit = 200): array
     {
         $db = Db::get();
         $now = time();
         $st = $db->prepare(
-            'SELECT p.id, p.name, p.ip, p.latency, p.last_seen,
+            'SELECT p.id, p.name, p.ip, p.latency, p.last_seen, p.debug, p.debug_active,
                     c.peer, c.state, c.mode, c.updated
                FROM players p LEFT JOIN conn c ON c.id = p.id
               WHERE p.last_seen > ?
@@ -144,6 +147,8 @@ final class ConnTrack
                 'peer' => $peer,
                 'mode' => $peer === null ? null : $r['mode'],
                 'since' => $stale ? null : (int)$r['updated'],
+                'debug' => (int)$r['debug'] === 1,
+                'debug_active' => (int)$r['debug_active'] === 1,
             ];
         }
         return $out;

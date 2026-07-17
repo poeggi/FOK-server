@@ -30,6 +30,16 @@ endpoint - it is the contract the FOK-snake client is built against.
   the database IS the state and "background" work piggybacks on the next
   request (TTL sweeps, expiry, monitoring). Cost per request must stay
   flat in the number of players (see README "Capacity and limits").
+- The clock source (api/t.txt) is a STATIC file whose timestamp comes
+  from mod_headers %t in public/.htaccess - deliberately not PHP, so it
+  never queues for an FPM worker (that wait is invisible to PHP and would
+  land in the client's clock offset). It must stay no-store, and its
+  header must stay in Access-Control-Expose-Headers or browsers cannot
+  read it. php -S ignores .htaccess, so only staging/live can verify it.
+- Server-issued starts are keyed on (pair, epoch), never on the pair
+  alone: both peers name the epoch so the answer cannot depend on when
+  either asks. A pair-only key silently handed a late peer a different
+  start. The epoch is scoped to one connection and resets on 'bye'.
 - public/ mirrors the webroot 1:1; deploy is a dumb FTPS file copy
   (tools/deploy.sh in CI, tools/deploy.ps1 by hand). No build step, no
   composer, no dependencies.

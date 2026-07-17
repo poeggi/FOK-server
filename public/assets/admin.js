@@ -46,6 +46,15 @@ const STATE_LABEL = {
     playing: 'playing 1:1',
 };
 
+// What the server asked for vs what the client reports it is doing. They
+// are independent: 'pending' is a wish the client has not picked up yet
+// (it honours it on its next hello), 'self' is a client that turned its
+// own debug mode on without being told to.
+function debugLabel(c) {
+    if (c.debug) return c.debug_active ? 'on' : 'pending';
+    return c.debug_active ? 'self' : 'off';
+}
+
 const MODULES = [
     {
         id: 'stats',
@@ -84,7 +93,7 @@ const MODULES = [
             box.replaceChildren();
             if (!d.conns.length) { box.append(el('p', 'muted', 'No client online.')); return; }
             const table = el('table');
-            table.append(row(['ID', 'Name', 'State', 'Peer', 'Mode', 'Lat', 'Age'], 'th'));
+            table.append(row(['ID', 'Name', 'State', 'Peer', 'Mode', 'Lat', 'Age', 'Debug'], 'th'));
             for (const c of d.conns) {
                 const r = el('tr');
                 r.classList.add('online');
@@ -96,10 +105,27 @@ const MODULES = [
                 r.append(el('td', c.mode === 'relay' ? 'error' : '', c.mode === null ? '-' : c.mode));
                 r.append(el('td', '', c.latency === null ? '-' : c.latency + ' ms'));
                 r.append(el('td', 'muted', (d.now - (c.since === null ? c.last_seen : c.since)) + ' s'));
+
+                const label = debugLabel(c);
+                const dbg = el('td', 'debug-cell');
+                dbg.append(el('span', 'badge dbg-' + label, label));
+                const toggle = el('button', 'small', c.debug ? 'off' : 'on');
+                toggle.onclick = async () => {
+                    toggle.disabled = true;
+                    await api('set_debug', {
+                        method: 'POST',
+                        body: form({ id: c.id, on: c.debug ? '0' : '1' }),
+                    });
+                    refreshModule('conns');
+                };
+                dbg.append(toggle);
+                r.append(dbg);
                 table.append(r);
             }
             box.append(table);
-            box.append(el('p', 'muted', 'Age: time since the last event of that state.'));
+            box.append(el('p', 'muted', 'Age: time since the last event of that state. '
+                + 'Debug: pending = set, not yet picked up by the client; self = the client '
+                + 'turned it on by itself.'));
         },
     },
     {

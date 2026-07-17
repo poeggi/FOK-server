@@ -6,7 +6,7 @@ require_once __DIR__ . '/Config.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 11;
+    private const SCHEMA_VERSION = 12;
 
     private static ?PDO $pdo = null;
 
@@ -124,6 +124,21 @@ final class Db
                 registered INTEGER NOT NULL,
                 updated INTEGER NOT NULL
             )');
+        }
+        if ($v < 12) {
+            // Peers now NAME the start they mean (see Starts). Keyed by
+            // pair alone, a peer whose request landed after the moment it
+            // was asking about silently got a DIFFERENT start; the epoch
+            // makes the answer independent of when either peer asks.
+            $pdo->exec('ALTER TABLE starts ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0');
+            $pdo->exec("ALTER TABLE starts ADD COLUMN reason TEXT NOT NULL DEFAULT 'first'");
+            // debug is what the ADMIN asked for, debug_active is what the
+            // client REPORTS it is actually doing. They are independent: a
+            // client can enter debug mode on its own, and a freshly set
+            // flag is not honoured until the client's next hello - seeing
+            // both is how the admin knows it landed.
+            $pdo->exec('ALTER TABLE players ADD COLUMN debug INTEGER NOT NULL DEFAULT 0');
+            $pdo->exec('ALTER TABLE players ADD COLUMN debug_active INTEGER NOT NULL DEFAULT 0');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

@@ -182,16 +182,68 @@ Matchmaking::cancel('11111111');
 ok((Matchmaking::seek('33333333')['waiting'] ?? false) === true, 'cancelled seeker not matched');
 Matchmaking::cancel('33333333');
 
-// Server-issued level starts: identical for both peers, future, renewable
-$s1 = Starts::request('aaaaaaaa', 'bbbbbbbb');
-$s2 = Starts::request('bbbbbbbb', 'aaaaaaaa');
+// Server-issued starts: both peers NAME the epoch, so the answer never
+// depends on when either of them asks
+$s1 = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'first');
+$s2 = Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first');
 ok($s1 === $s2, 'both peers receive the identical start pts');
 ok($s1 > Util::nowMs(), 'start pts lies in the future');
 ok($s1 <= Util::nowMs() + 3000, 'start lead is capped');
+
+// The race a pair-only key lost: a peer whose request lands after the
+// moment it is asking about must still be told THAT moment. Handing it a
+// fresh one instead put the two players on different origins silently.
+$passed = Util::nowMs() - 1000;
 Db::get()->prepare('UPDATE starts SET start_pts = ? WHERE a = ? AND b = ?')
-    ->execute([Util::nowMs() - 1000, 'aaaaaaaa', 'bbbbbbbb']);
-$s3 = Starts::request('aaaaaaaa', 'bbbbbbbb');
-ok($s3 > Util::nowMs(), 'fresh start issued once the previous one passed');
+    ->execute([$passed, 'aaaaaaaa', 'bbbbbbbb']);
+$late = Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first');
+ok($late === $passed, 'a late peer gets the same start, already in the past');
+
+// Every halt of the run is a new epoch, and a new epoch is a new moment.
+$s4 = Starts::request('aaaaaaaa', 'bbbbbbbb', 1, 'respawn');
+ok($s4 > Util::nowMs(), 'a new epoch issues a fresh start');
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 1, 'respawn') === $s4, 'the peer joins the new epoch');
+
+// A peer left behind is told so, never handed a start it would misplace.
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first') === null, 'a stale epoch is refused');
+
+$startRow = (function (): array {
+    $st = Db::get()->prepare('SELECT epoch, reason FROM starts WHERE a = ? AND b = ?');
+    $st->execute(['aaaaaaaa', 'bbbbbbbb']);
+    return $st->fetch();
+})();
+ok((int)$startRow['epoch'] === 1 && $startRow['reason'] === 'respawn', 'the pair records epoch and reason');
+ok(in_array('resume', Starts::REASONS, true), 'a resume from pause is a start reason');
+
+// The epoch counts halts within ONE connection: bye ends it, so the pair's
+// next duel opens at epoch 0 again instead of being refused forever.
+Starts::forget('aaaaaaaa', 'bbbbbbbb');
+$again = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'first');
+ok($again > Util::nowMs(), 'a rematch after bye starts a fresh epoch line');
+// Pair-scoped: bye is not friendship-gated, so a stranger saying bye must
+// not reach a duel it has nothing to do with.
+Starts::request('aaaaaaaa', 'bbbbbbbb', 1, 'level');
+Starts::forget('aaaaaaaa', 'cccccccc');
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first') === null, "a stranger's bye leaves the pair's epoch alone");
+
+// The debug flag: the admin's wish and the client's report are separate
+ok(Presence::touch('eeeeeeee', '1.2.3.4') === false, 'debug is off for a new player');
+Presence::setDebug('eeeeeeee', true);
+ok(Presence::touch('eeeeeeee', '1.2.3.4') === true, 'the server hands the wish back on hello');
+$dbgOf = function (string $id): array {
+    $st = Db::get()->prepare('SELECT debug, debug_active FROM players WHERE id = ?');
+    $st->execute([$id]);
+    return $st->fetch();
+};
+ok((int)$dbgOf('eeeeeeee')['debug_active'] === 0, 'the wish alone does not mark the client active');
+Presence::touch('eeeeeeee', '1.2.3.4', null, null, null, true);
+ok((int)$dbgOf('eeeeeeee')['debug_active'] === 1, 'the client reports it honoured the wish');
+Presence::setDebug('eeeeeeee', false);
+ok(Presence::touch('eeeeeeee', '1.2.3.4', null, null, null, true) === false, 'the wish can be withdrawn');
+ok((int)$dbgOf('eeeeeeee')['debug_active'] === 1, 'a client debugging by itself still reports active');
+// Endpoints other than hello pass null and must not clear the report.
+Presence::touch('eeeeeeee', '1.2.3.4');
+ok((int)$dbgOf('eeeeeeee')['debug_active'] === 1, 'a non-hello touch leaves the debug report alone');
 
 // Signals: mailbox drains exactly once, order preserved
 ok(!Signals::any('bbbbbbbb'), 'any() false on empty mailbox');
