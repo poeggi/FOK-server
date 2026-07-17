@@ -8,6 +8,24 @@ require_once __DIR__ . '/Settings.php';
 
 final class Util
 {
+    /**
+     * Every response is a JSON object carrying "ok" (docs/API.md), and a
+     * fault must not break that: an uncaught exception (a locked database,
+     * a full disk) would otherwise end the request with display_errors=0,
+     * i.e. HTTP 500 and an EMPTY body, which blows up the client's
+     * response.json() instead of telling it what happened. Install once,
+     * from the file every endpoint includes.
+     */
+    public static function installFaultHandler(): void
+    {
+        set_exception_handler(static function (Throwable $e): void {
+            error_log('FOK fault: ' . $e);
+            if (!headers_sent()) {
+                self::jsonOut(['ok' => false, 'error' => 'server fault'], 500);
+            }
+        });
+    }
+
     // Player IDs are 32-bit values as 8 lowercase hex chars (see FOK-snake js/storage.js).
     public static function isValidId(mixed $id): bool
     {
@@ -176,3 +194,5 @@ final class Util
         }
     }
 }
+
+Util::installFaultHandler();

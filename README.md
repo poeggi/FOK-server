@@ -27,13 +27,22 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 - 1:1 matchmaking hub: friends invite each other (gated by an accepted
   friendship) or quick-match with anyone waiting; the server relays
   matchmaking and WebRTC signaling (SDP/ICE) through a store-and-forward
-  mailbox and issues the shared level-start time. Game traffic normally
+  mailbox and issues the shared level-start time. A connection attempt
+  either goes through or fails loudly: caps answer a distinct status
+  (429/503), and an invite that expires before anyone picks it up sends
+  its sender a failure receipt instead of evaporating behind an "ok". Game traffic normally
   runs peer-to-peer over a WebRTC DataChannel (server not involved); when
   P2P cannot connect it falls back to relaying through the server (see
   Relay fallback above).
+- Connection tracking: the server sees every step of a 1:1 connection
+  anyway (invite handshake, ICE exchange, duel heartbeat, relay traffic),
+  so it keeps the resulting state per client - idle, inviting, invited,
+  connecting or playing, with the peer and whether the pair runs p2p or
+  relayed. Clients report nothing extra for this; it is inferred, and the
+  admin dashboard lists it for every online client.
 - Admin interface at /admin/: a one-screen dashboard (statistics: online,
-  playing 1:1, registered users with id and ip, per-hour load; alert feed;
-  top-100 management) plus a settings view behind the gear button with the
+  playing 1:1, registered users with id and ip, per-hour load; connection
+  state of every online client; alert feed; top-100 management) plus a settings view behind the gear button with the
   runtime configuration (incl. JSON export/import) and database backup
   (SQLite online backup, download) and restore (upload).
 - Monitoring and alerting: inline checks (no daemons on shared hosting)

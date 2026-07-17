@@ -5,6 +5,7 @@ require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Friends.php';
+require_once __DIR__ . '/../src/ConnTrack.php';
 
 /**
  * Heartbeat and poll endpoint, the client's single periodic request.
@@ -63,15 +64,13 @@ if ($duelWith !== null) {
         Util::fail('invalid duel_with');
     }
     Presence::touchDuel($id, $duelWith);
+    ConnTrack::playing($id, $duelWith);
 }
 
-$out = [
-    'ok' => true,
-    'api' => FOK_API_VERSION,
-    'now' => Util::nowMs(),
-    'signals' => Signals::take($id),
-] + Presence::counts();
-
+// EVERY input is validated before the mailbox is touched: Signals::take()
+// deletes what it returns, so a Util::fail() after it would drop the
+// caller's pending invites on the floor with no way to ever get them back.
+$friends = null;
 if (isset($body['friends'])) {
     $friends = $body['friends'];
     if (!is_array($friends) || count($friends) > FOK_MAX_FRIENDS) {
@@ -82,6 +81,16 @@ if (isset($body['friends'])) {
             Util::fail('invalid friends');
         }
     }
+}
+
+$out = [
+    'ok' => true,
+    'api' => FOK_API_VERSION,
+    'now' => Util::nowMs(),
+    'signals' => Signals::take($id),
+] + Presence::counts();
+
+if ($friends !== null) {
     // Status is only served for ACCEPTED friendships; everything else
     // reads as offline/unknown so mere possession of an id leaks nothing.
     $accepted = Friends::acceptedOf($id, $friends);

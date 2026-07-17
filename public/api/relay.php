@@ -5,6 +5,7 @@ require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Alerts.php';
 require_once __DIR__ . '/../src/Settings.php';
+require_once __DIR__ . '/../src/ConnTrack.php';
 
 /**
  * In-duel message relay - the FALLBACK when the peer-to-peer DataChannel
@@ -39,15 +40,35 @@ if ($method === 'GET') {
     }
     $wait = min((int)($_GET['wait'] ?? 0), Settings::int('poll_wait_max'));
     $db = Db::get();
+    // The hold loop peeks with an indexed read and takes no lock while
+    // idle: SQLite has ONE writer, so a waiting poll must not fight the
+    // duels that are actually sending for it.
+    $peek = $db->prepare('SELECT 1 FROM relay WHERE to_id = ? AND from_id = ? LIMIT 1');
     $st = $db->prepare('SELECT id, payload, created FROM relay WHERE to_id = ? AND from_id = ? ORDER BY id');
     $deadline = microtime(true) + $wait;
     while (true) {
-        $st->execute([$id, $peer]);
-        $rows = $st->fetchAll();
+        $peek->execute([$id, $peer]);
+        $rows = [];
+        if ($peek->fetchColumn() !== false) {
+            // Read and drain in ONE transaction: two overlapping polls (a
+            // client retrying over a slow link) must never both be handed
+            // the same message - replayed inputs desync the duel.
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                $st->execute([$id, $peer]);
+                $rows = $st->fetchAll();
+                if ($rows !== []) {
+                    $ids = array_column($rows, 'id');
+                    $ph = implode(',', array_fill(0, count($ids), '?'));
+                    $db->prepare("DELETE FROM relay WHERE id IN ($ph)")->execute($ids);
+                }
+                $db->exec('COMMIT');
+            } catch (Throwable $e) {
+                $db->exec('ROLLBACK');
+                throw $e;
+            }
+        }
         if ($rows !== []) {
-            $ids = array_column($rows, 'id');
-            $ph = implode(',', array_fill(0, count($ids), '?'));
-            $db->prepare("DELETE FROM relay WHERE id IN ($ph)")->execute($ids);
             Util::jsonOut(['ok' => true, 'messages' => array_map(static fn(array $r) => [
                 'seq' => (int)$r['id'],
                 'payload' => $r['payload'],
@@ -91,19 +112,19 @@ if ((int)$st->fetchColumn() >= Settings::int('relay_pending_cap')) {
 
 [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
 $pair = "$a:$b";
-$st = $db->prepare('SELECT 1 FROM relay WHERE pair = ? AND created > ? LIMIT 1');
-$st->execute([$pair, $now - 30]);
-if ($st->fetchColumn() === false) {
-    $st = $db->prepare('SELECT COUNT(DISTINCT pair) FROM relay WHERE created > ?');
-    $st->execute([$now - 30]);
-    if ((int)$st->fetchColumn() >= Settings::int('relay_max_duels')) {
-        Alerts::raise('relay', 'Relay duel cap reached: new relayed duel rejected');
-        Util::fail('relay busy', 503);
-    }
+// Admission is checked only for a pair that does not hold a slot yet - a
+// duel already relaying must never be cut off mid-game by a full server.
+if (!ConnTrack::isRelaying($id, $peer)
+    && ConnTrack::relayPairs() >= Settings::int('relay_max_duels')) {
+    Alerts::raise('relay', 'Relay duel cap reached: new relayed duel rejected');
+    Util::fail('relay busy', 503);
 }
 
 $db->prepare('INSERT INTO relay (pair, from_id, to_id, payload, created) VALUES (?, ?, ?, ?, ?)')
     ->execute([$pair, $id, $peer, $payload, $now]);
+// Accepted relay traffic is the ground truth for "this pair runs through
+// the hub" - a declared no-P2P bit is not required to end up here.
+ConnTrack::relaying($id, $peer);
 Util::bump('relay');
 
 Util::jsonOut(['ok' => true]);

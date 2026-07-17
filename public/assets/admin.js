@@ -35,6 +35,15 @@ function fmtBytes(n) {
     return n + ' B';
 }
 
+// Connection states as tracked by src/ConnTrack.php.
+const STATE_LABEL = {
+    idle: 'idle',
+    inviting: 'inviting',
+    invited: 'invited by',
+    connecting: 'connecting',
+    playing: 'playing 1:1',
+};
+
 const MODULES = [
     {
         id: 'stats',
@@ -60,6 +69,32 @@ const MODULES = [
             box.append(grid);
             box.append(el('p', 'muted', 'Server v' + d.server_version + ', PHP ' + d.php +
                 ', ' + fmtTime(d.now)));
+        },
+    },
+    {
+        id: 'conns',
+        title: 'Connections (online clients)',
+        async refresh(box) {
+            const d = await api('conns');
+            box.replaceChildren();
+            if (!d.conns.length) { box.append(el('p', 'muted', 'No client online.')); return; }
+            const table = el('table');
+            table.append(row(['ID', 'Name', 'State', 'Peer', 'Mode', 'Lat', 'Age'], 'th'));
+            for (const c of d.conns) {
+                const r = el('tr');
+                r.classList.add('online');
+                const state = el('td');
+                state.append(el('span', 'badge ' + c.state, STATE_LABEL[c.state] || c.state));
+                r.append(el('td', '', c.id), el('td', '', c.name === null ? '-' : c.name));
+                r.append(state);
+                r.append(el('td', '', c.peer === null ? '-' : c.peer));
+                r.append(el('td', c.mode === 'relay' ? 'error' : '', c.mode === null ? '-' : c.mode));
+                r.append(el('td', '', c.latency === null ? '-' : c.latency + ' ms'));
+                r.append(el('td', 'muted', (d.now - (c.since === null ? c.last_seen : c.since)) + ' s'));
+                table.append(r);
+            }
+            box.append(table);
+            box.append(el('p', 'muted', 'Age: time since the last event of that state.'));
         },
     },
     {
@@ -329,4 +364,9 @@ toggle.onclick = () => {
 };
 
 refreshAll();
-setInterval(() => { refreshModule('stats'); refreshModule('alerts'); refreshModule('props'); }, 30000);
+setInterval(() => {
+    refreshModule('stats');
+    refreshModule('alerts');
+    refreshModule('props');
+    refreshModule('conns');
+}, 30000);

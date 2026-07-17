@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.14.1';
+const FOK_SERVER_VERSION = '0.15.0';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
 // v2: friendship-gated status and invites, ms hello.now, friend
@@ -31,8 +31,15 @@ define('FOK_BACKUP_DIR', FOK_DATA_DIR . '/backups');
 const FOK_ONLINE_WINDOW = 60;
 // A duel counts as running while either peer refreshed it within this window.
 const FOK_DUEL_WINDOW = 60;
-// Undelivered signaling messages expire after this many seconds;
-// after that they are gone for good.
+// A tracked connection state (see ConnTrack) goes stale after this long
+// without a signaling or duel event: the client reads as idle again.
+const FOK_CONN_TTL = 60;
+// A pair holds its relay admission slot while it declared no-P2P, pushed
+// hub traffic or refreshed its duel heartbeat within this window.
+const FOK_RELAY_WINDOW = 30;
+// Undelivered signaling messages expire after this many seconds. A
+// connection attempt that dies this way is reported back to its sender
+// (see Signals::expire), so an invite never just evaporates.
 const FOK_SIGNAL_TTL = 30;
 const FOK_SIGNAL_MAX_PAYLOAD = 16384;
 // Chat messages are hard-capped much lower than SDP payloads.

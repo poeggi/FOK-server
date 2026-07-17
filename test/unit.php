@@ -18,6 +18,7 @@ require_once __DIR__ . '/../public/src/Backup.php';
 require_once __DIR__ . '/../public/src/Matchmaking.php';
 require_once __DIR__ . '/../public/src/Starts.php';
 require_once __DIR__ . '/../public/src/Friends.php';
+require_once __DIR__ . '/../public/src/ConnTrack.php';
 
 $tests = 0;
 function ok(bool $cond, string $what): void
@@ -190,10 +191,110 @@ for ($i = 0; $i < FOK_MAILBOX_CAP; $i++) {
 ok(!Signals::send('aaaaaaaa', 'bbbbbbbb', 'ice', 'over'), 'send over mailbox cap rejected');
 ok(count(Signals::take('bbbbbbbb')) === FOK_MAILBOX_CAP, 'capped mailbox drains fully');
 
-// Signals: expired messages are dropped
+// Signals: expired messages are dropped, but an invite that expires
+// UNDELIVERED must fail loudly back to the sender, never just evaporate.
 Db::get()->prepare('INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)')
     ->execute(['aaaaaaaa', 'bbbbbbbb', 'invite', 'old', time() - FOK_SIGNAL_TTL - 1]);
 ok(Signals::take('bbbbbbbb') === [], 'expired signal not delivered');
+$receipt = Signals::take('aaaaaaaa');
+ok(count($receipt) === 1, 'sender gets a receipt for the expired invite');
+ok($receipt[0]['type'] === 'undelivered', 'receipt is an undelivered signal');
+ok($receipt[0]['from'] === 'bbbbbbbb', 'receipt names the peer that never picked it up');
+ok(str_contains($receipt[0]['payload'], '"type":"invite"'), 'receipt names the lost message type');
+
+// Signals: an expiring message nobody waits on generates no receipt
+Db::get()->prepare('INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)')
+    ->execute(['aaaaaaaa', 'bbbbbbbb', 'ice', 'old', time() - FOK_SIGNAL_TTL - 1]);
+ok(Signals::take('bbbbbbbb') === [], 'expired ice not delivered');
+ok(Signals::take('aaaaaaaa') === [], 'no receipt for an expired ice candidate');
+
+// Signals: an expired message must not wake a long poll (any() and take()
+// have to agree on the TTL, or poll.php answers 200 with an empty list)
+Db::get()->prepare('INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)')
+    ->execute(['aaaaaaaa', 'bbbbbbbb', 'ice', 'old', time() - FOK_SIGNAL_TTL - 1]);
+ok(!Signals::any('bbbbbbbb'), 'expired signal does not count as pending');
+Signals::take('bbbbbbbb');
+
+// ConnTrack: the connection state both peers are in, inferred from the
+// signaling traffic the server relays anyway.
+function connOf(string $id): array
+{
+    foreach (ConnTrack::listOnline() as $c) {
+        if ($c['id'] === $id) {
+            return $c;
+        }
+    }
+    return [];
+}
+ok(connOf('aaaaaaaa')['state'] === 'idle', 'untracked online client is idle');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
+ok(connOf('aaaaaaaa')['state'] === 'inviting', 'inviter is inviting');
+ok(connOf('aaaaaaaa')['peer'] === 'bbbbbbbb', 'inviter tracks its peer');
+ok(connOf('bbbbbbbb')['state'] === 'invited', 'invited peer sees the invite');
+ok(connOf('bbbbbbbb')['peer'] === 'aaaaaaaa', 'invited peer tracks the inviter');
+ok(connOf('aaaaaaaa')['mode'] === 'p2p', 'plain invite means p2p');
+ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'accept');
+ok(connOf('aaaaaaaa')['state'] === 'connecting', 'accept moves both to connecting');
+ok(connOf('bbbbbbbb')['state'] === 'connecting', 'accepting peer is connecting too');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'ice');
+ok(connOf('aaaaaaaa')['state'] === 'connecting', 'ice keeps connecting');
+ConnTrack::playing('aaaaaaaa', 'bbbbbbbb');
+ok(connOf('aaaaaaaa')['state'] === 'playing', 'duel heartbeat means playing');
+ok(connOf('aaaaaaaa')['mode'] === 'p2p', 'playing keeps the negotiated mode');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
+ok(connOf('aaaaaaaa')['state'] === 'idle', 'bye returns the sender to idle');
+ok(connOf('bbbbbbbb')['state'] === 'idle', 'bye returns the peer to idle');
+ok(connOf('aaaaaaaa')['peer'] === null, 'bye clears the peer');
+
+// ConnTrack: the no-P2P bit is honored from either side and sticks
+ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'invite-relay');
+ok(connOf('bbbbbbbb')['mode'] === 'relay', 'invite-relay declares relay');
+ok(connOf('aaaaaaaa')['mode'] === 'relay', 'the invited peer sees relay too');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'accept');
+ok(connOf('aaaaaaaa')['mode'] === 'relay', 'a plain accept cannot downgrade to p2p');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
+ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'accept-relay');
+ok(connOf('aaaaaaaa')['mode'] === 'relay', 'accept-relay declares relay from the other side');
+
+// ConnTrack: an UNDECLARED p2p -> relay fallback still shows as relay
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
+ok(connOf('aaaaaaaa')['mode'] === 'p2p', 'plain invite starts out p2p');
+ConnTrack::relaying('aaaaaaaa', 'bbbbbbbb');
+ok(connOf('aaaaaaaa')['mode'] === 'relay', 'relay traffic reports relay without a declaration');
+ok(connOf('aaaaaaaa')['state'] === 'playing', 'relay traffic means the game runs');
+
+// ConnTrack: a client that goes quiet mid-handshake falls back to idle
+Db::get()->prepare('UPDATE conn SET updated = ? WHERE id = ?')
+    ->execute([time() - FOK_CONN_TTL - 1, 'aaaaaaaa']);
+ok(connOf('aaaaaaaa')['state'] === 'idle', 'stale connection state reads as idle');
+ok(connOf('aaaaaaaa')['peer'] === null, 'stale connection reports no peer');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
+ConnTrack::forget('aaaaaaaa');
+ok(connOf('aaaaaaaa')['state'] === 'idle', 'forgotten client is idle');
+ok(connOf('bbbbbbbb')['state'] === 'idle', 'forget drops the peer side as well');
+
+// ConnTrack: offline clients are not listed at all
+ok(connOf('cccccccc') === [], 'unknown client not in the online list');
+
+// ConnTrack: relay admission is counted from tracked state, not from the
+// queued messages (those are gone the instant the receiver drains them).
+Db::get()->exec('DELETE FROM conn');
+ok(ConnTrack::relayPairs() === 0, 'no relayed pairs on a quiet server');
+ok(!ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'idle pair holds no relay slot');
+ConnTrack::relaying('aaaaaaaa', 'bbbbbbbb');
+ok(ConnTrack::relayPairs() === 1, 'relaying pair counted once');
+ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'relaying pair holds its slot');
+ok(ConnTrack::isRelaying('bbbbbbbb', 'aaaaaaaa'), 'slot is held from either side');
+ConnTrack::relaying('bbbbbbbb', 'aaaaaaaa');
+ok(ConnTrack::relayPairs() === 1, 'both directions are still one pair');
+Db::get()->prepare('UPDATE conn SET updated = ? WHERE id = ?')
+    ->execute([time() - FOK_RELAY_WINDOW - 1, 'aaaaaaaa']);
+Db::get()->prepare('UPDATE conn SET updated = ? WHERE id = ?')
+    ->execute([time() - FOK_RELAY_WINDOW - 1, 'bbbbbbbb']);
+ok(ConnTrack::relayPairs() === 0, 'a pair that stopped relaying frees its slot');
+Db::get()->exec('DELETE FROM conn');
 
 // Auth: verify against hash file, lockout after repeated failures
 file_put_contents(FOK_ADMIN_HASH_FILE, password_hash('u:p', PASSWORD_DEFAULT));

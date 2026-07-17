@@ -5,6 +5,7 @@ require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Friends.php';
+require_once __DIR__ . '/../src/ConnTrack.php';
 
 /**
  * Matchmaking / WebRTC signaling relay.
@@ -57,19 +58,20 @@ if (($type === 'invite' || $type === 'invite-relay') && !Friends::isFriend($id, 
 // through the server hub without a P2P attempt - so relay capacity is
 // checked right now, and a full relay answers 503 before any game
 // setup is wasted.
-if ($type === 'invite-relay' || $type === 'accept-relay') {
+if (($type === 'invite-relay' || $type === 'accept-relay')
+    && !ConnTrack::isRelaying($id, $to)
+    && ConnTrack::relayPairs() >= Settings::int('relay_max_duels')) {
+    Alerts::raise('relay', 'Relay duel cap reached: no-P2P game declaration rejected');
+    Util::fail('relay busy', 503);
+}
+
+// 'bye' ends the pairing, so the pair's in-duel relay backlog dies with
+// it: an undelivered input from the finished duel must never be handed to
+// the next duel of the same two players.
+if ($type === 'bye') {
     $db = Db::get();
     [$a, $b] = $id < $to ? [$id, $to] : [$to, $id];
-    $st = $db->prepare('SELECT 1 FROM relay WHERE pair = ? AND created > ? LIMIT 1');
-    $st->execute(["$a:$b", time() - 30]);
-    if ($st->fetchColumn() === false) {
-        $st = $db->prepare('SELECT COUNT(DISTINCT pair) FROM relay WHERE created > ?');
-        $st->execute([time() - 30]);
-        if ((int)$st->fetchColumn() >= Settings::int('relay_max_duels')) {
-            Alerts::raise('relay', 'Relay duel cap reached: no-P2P game declaration rejected');
-            Util::fail('relay busy', 503);
-        }
-    }
+    $db->prepare('DELETE FROM relay WHERE pair = ?')->execute(["$a:$b"]);
 }
 
 Presence::touch($id, Util::clientIp());
@@ -77,6 +79,9 @@ if (!Signals::send($id, $to, $type, $payload)) {
     Alerts::raise('spam', "Client spam: mailbox of $to flooded (last sender $id)");
     Util::fail('mailbox full', 429);
 }
+// Only once the message is actually queued does it mean anything for the
+// state of the connection (see the Connections card in the admin UI).
+ConnTrack::note($id, $to, $type);
 Util::bump('signal');
 
 Util::jsonOut(['ok' => true]);

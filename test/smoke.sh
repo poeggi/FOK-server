@@ -20,6 +20,8 @@ if [ -n "${SMOKE_BASE:-}" ]; then
     BASE="${SMOKE_BASE%/}"
     ID1=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
     ID2=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
+    ID3=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
+    ID4=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
     ADMIN_USER="${FOK_ADMIN_USER:-}"
     ADMIN_PASS="${FOK_ADMIN_PASS:-}"
     cleanup() { rm -rf "$DATA"; }
@@ -31,6 +33,8 @@ else
     BASE="http://127.0.0.1:$PORT"
     ID1=deadbeef
     ID2=cafe0001
+    ID3=f00df00d
+    ID4=b0a710ad
     ADMIN_USER=smoke
     ADMIN_PASS=test
     export FOK_DATA_DIR="$DATA"
@@ -57,6 +61,41 @@ expect() { # expect <name> <needle> <actual>
 # Player/count assertions are exact locally; on a shared remote instance
 # other clients may exist, so only the field's presence is asserted.
 strict() { if [ "$REMOTE" -eq 0 ]; then echo "$1"; else echo "${1%%:*}:"; fi; }
+
+# Shorthands for the connection endpoints. Payloads are inserted into the
+# JSON verbatim, so keep them free of quotes and backslashes.
+sig() { # sig <from> <to> <type> <payload>
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\",\"to\":\"$2\",\"type\":\"$3\",\"payload\":\"$4\"}" "$BASE/api/signal.php"
+}
+sigcode() { # like sig, but prints the HTTP status instead of the body
+    curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\",\"to\":\"$2\",\"type\":\"$3\",\"payload\":\"$4\"}" "$BASE/api/signal.php"
+}
+rly() { # rly <from> <peer> <payload>
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php"
+}
+rlycode() { # like rly, but prints the HTTP status instead of the body
+    curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php"
+}
+hello() { # hello <id>
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$1\"}" "$BASE/api/hello.php"
+}
+setting() { # setting <key> <value>
+    curl -s -b "$COOKIES" -X POST -d "$1=$2" "$BASE/admin/api.php?action=settings_save" > /dev/null
+}
+# Asserts <needle-a> appears before <needle-b>: order is part of the
+# contract for both mailboxes.
+ordered() { # ordered <name> <first> <second> <actual>
+    if [[ "$4" == *"$2"* && "$4" == *"$3"* && "${4%%$3*}" == *"$2"* ]]; then
+        echo "ok   $1"
+    else
+        echo "FAIL $1: expected '$2' before '$3' in: $4"
+        fail=1
+    fi
+}
 
 R=$(curl -s "$BASE/")
 expect "landing page" "FOK" "$R"
@@ -307,6 +346,128 @@ T1=$(date +%s)
 expect "relay long-poll times out to 204" '204' "$R"
 if [ $((T1 - T0)) -ge 1 ]; then echo "ok   relay long-poll held the request"; else echo "FAIL relay long-poll returned too fast"; fail=1; fi
 
+# =====================================================================
+# Connection edge cases. An invite or a relayed connection must ALWAYS
+# go through or fail loudly - never a silent ok:true that goes nowhere.
+# Variations first, then aborts, then a normal connection again: the
+# server has to be sane after everything above.
+# =====================================================================
+
+# --- Invite variations
+R=$(sig "$ID1" "$ID1" invite 'me')
+expect "invite to self rejected" '"error":"invalid id' "$R"
+R=$(sig "$ID1" 'nothex!!' invite 'x')
+expect "invite to a malformed id rejected" '"error":"invalid id' "$R"
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\"}" "$BASE/api/signal.php")
+expect "invite without a payload accepted" '"ok":true' "$R"
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":123}" "$BASE/api/signal.php")
+expect "invite with a non-string payload rejected" '"error":"invalid payload"' "$R"
+
+MAXPAY=$(head -c 16384 /dev/zero | tr '\0' 'x')
+R=$(sig "$ID1" "$ID2" invite "$MAXPAY")
+expect "invite at the 16 KB payload cap accepted" '"ok":true' "$R"
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+R=$(sig "$ID1" "$ID2" invite "${MAXPAY}x")
+expect "invite one byte over the cap rejected" '"error":"invalid payload"' "$R"
+
+FUTURE=$((($(date +%s) + 60) * 1000))
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"{}\",\"pts\":$FUTURE}" "$BASE/api/signal.php")
+expect "future-dated invite rejected as bogus" '"error":"bogus pts' "$R"
+
+# Two invites before any answer: both arrive, oldest first.
+sig "$ID1" "$ID2" invite 'first' > /dev/null
+sig "$ID1" "$ID2" invite 'second' > /dev/null
+R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+ordered "repeated invites both delivered, in order" 'first' 'second' "$R"
+
+# --- Aborts
+# The inviter gives up before the peer ever answers.
+sig "$ID1" "$ID2" invite 'gone?' > /dev/null
+R=$(sig "$ID1" "$ID2" bye '')
+expect "inviter can abort with bye" '"ok":true' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+ordered "peer sees the invite and the abort" '"type":"invite"' '"type":"bye"' "$R"
+
+# The peer declines: the inviter must learn it, and re-inviting must work.
+sig "$ID1" "$ID2" invite 'again' > /dev/null
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+sig "$ID2" "$ID1" decline '' > /dev/null
+R=$(curl -s "$BASE/api/poll.php?id=$ID1")
+expect "decline reaches the inviter" '"type":"decline"' "$R"
+R=$(sig "$ID1" "$ID2" invite 'once more')
+expect "inviting again after a decline works" '"ok":true' "$R"
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+
+# An accept for an invite that was never sent is free-form signaling: it
+# is delivered, and the client correlates it (docs/API.md).
+R=$(sig "$ID2" "$ID1" accept 'unsolicited')
+expect "unsolicited accept still delivered" '"ok":true' "$R"
+curl -s "$BASE/api/poll.php?id=$ID1" > /dev/null
+
+# --- Relay variations
+R=$(rly "$ID1" "$ID1" 'x')
+expect "relay to self rejected" '"error":"invalid id' "$R"
+R=$(rly "$ID1" "$ID2" '')
+expect "empty relay payload rejected" '"error":"invalid payload"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"payload\":42}" "$BASE/api/relay.php")
+expect "non-string relay payload rejected" '"error":"invalid payload"' "$R"
+MAXR=$(head -c 2048 /dev/zero | tr '\0' 'y')
+R=$(rly "$ID1" "$ID2" "$MAXR")
+expect "relay at the payload cap accepted" '"ok":true' "$R"
+curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1" > /dev/null
+
+# A slow receiver must lose nothing and see the backlog in order.
+rly "$ID1" "$ID2" 'IN:1' > /dev/null
+rly "$ID1" "$ID2" 'IN:2' > /dev/null
+rly "$ID1" "$ID2" 'IN:3' > /dev/null
+R=$(curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1")
+ordered "slow receiver gets the whole backlog, oldest first" 'IN:1' 'IN:3' "$R"
+expect "backlog keeps the middle message" 'IN:2' "$R"
+
+# Aborting a relayed duel takes its undelivered backlog with it: a stale
+# input from the finished duel must never land in the next one.
+rly "$ID1" "$ID2" 'IN:stale' > /dev/null
+sig "$ID1" "$ID2" bye '' > /dev/null
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
+expect "bye drops the pair's relay backlog" '204' "$R"
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+
+# --- ... and now a normal connection again, start to finish.
+R=$(sig "$ID1" "$ID2" invite 'lets play')
+expect "normal invite after all the aborts" '"ok":true' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+expect "normal invite delivered" '"type":"invite"' "$R"
+R=$(sig "$ID2" "$ID1" accept 'sure')
+expect "normal accept sent" '"ok":true' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID1")
+expect "normal accept delivered" '"type":"accept"' "$R"
+sig "$ID1" "$ID2" offer 'sdp-offer' > /dev/null
+R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+expect "normal offer delivered" '"type":"offer"' "$R"
+sig "$ID2" "$ID1" answer 'sdp-answer' > /dev/null
+R=$(curl -s "$BASE/api/poll.php?id=$ID1")
+expect "normal answer delivered" '"type":"answer"' "$R"
+sig "$ID1" "$ID2" ice 'cand-1' > /dev/null
+R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+expect "normal ice delivered" '"type":"ice"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\"}" "$BASE/api/start.php")
+expect "normal start issued" '"start_pts":' "$R"
+R=$(rly "$ID1" "$ID2" 'IN:42:up')
+expect "normal relay accepted" '"ok":true' "$R"
+R=$(curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1")
+expect "normal relay delivered" 'IN:42:up' "$R"
+R=$(sig "$ID1" "$ID2" bye '')
+expect "normal duel ends with bye" '"ok":true' "$R"
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
 expect "friendship removed" '"ok":true' "$R"
 
@@ -398,6 +559,36 @@ else
     expect "admin stats friendships" '"friendships":' "$R"
     expect "admin stats pending friendships" '"friendships_pending":' "$R"
 
+    # Connection tracker: the admin sees the state the signaling implies.
+    # These types need no friendship, so they work after the unfriend above.
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"offer\",\"payload\":\"sdp\"}" "$BASE/api/signal.php" > /dev/null
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    expect "connections listed" '"conns":' "$R"
+    expect "online client tracked" "$(strict "\"id\":\"$ID1\"")" "$R"
+    expect "handshake tracked as connecting" '"state":"connecting"' "$R"
+    expect "connection peer tracked" "$(strict "\"peer\":\"$ID2\"")" "$R"
+    expect "connection mode tracked as p2p" '"mode":"p2p"' "$R"
+
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID2\",\"to\":\"$ID1\",\"type\":\"accept-relay\",\"payload\":\"{}\"}" "$BASE/api/signal.php" > /dev/null
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    expect "no-p2p declaration tracked as relay" '"mode":"relay"' "$R"
+
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID1\",\"duel_with\":\"$ID2\"}" "$BASE/api/hello.php" > /dev/null
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    expect "running duel tracked as playing" '"state":"playing"' "$R"
+    expect "playing keeps the relay mode" '"mode":"relay"' "$R"
+
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"bye\",\"payload\":\"\"}" "$BASE/api/signal.php" > /dev/null
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    expect "bye returns clients to idle" '"state":"idle"' "$R"
+
+    R=$(curl -s "$BASE/assets/admin.js?v=$VER")
+    expect "connections card on the dashboard" "id: 'conns'" "$R"
+
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
     expect "backup via GET rejected" '"error":"POST only"' "$R"
 
@@ -428,6 +619,63 @@ else
     R=$(curl -s -b "$COOKIES" -X POST -d 'admin_max_fails=notanumber' "$BASE/admin/api.php?action=settings_save")
     expect "bad setting value rejected" '"error":"invalid value' "$R"
 
+    # --- Loud failures. Every cap must answer a distinct status the
+    # client can act on, never a silent ok:true. Driven through the
+    # runtime settings so the test does not have to flood the real caps.
+    setting mailbox_cap 2
+    sig "$ID1" "$ID2" ice 'm1' > /dev/null
+    sig "$ID1" "$ID2" ice 'm2' > /dev/null
+    R=$(sigcode "$ID1" "$ID2" ice 'm3')
+    expect "a full mailbox fails loudly with 429" '429' "$R"
+    setting mailbox_cap 128
+    curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+
+    setting relay_pending_cap 2
+    rly "$ID1" "$ID2" 'p1' > /dev/null
+    rly "$ID1" "$ID2" 'p2' > /dev/null
+    R=$(rlycode "$ID1" "$ID2" 'p3')
+    expect "a full relay backlog fails loudly with 429" '429' "$R"
+    setting relay_pending_cap 256
+    curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1" > /dev/null
+
+    # A full hub rejects a NEW relayed duel loudly - but a duel that is
+    # already relaying must never be cut off by it.
+    setting relay_max_duels 1
+    rly "$ID1" "$ID2" 'holding the slot' > /dev/null
+    R=$(rlycode "$ID3" "$ID4" 'may i')
+    expect "relay cap rejects a new duel with 503" '503' "$R"
+    R=$(sigcode "$ID3" "$ID4" accept-relay '{}')
+    expect "relay cap rejects a no-p2p declaration with 503" '503' "$R"
+    R=$(rly "$ID1" "$ID2" 'still here')
+    expect "a duel already relaying is never cut off" '"ok":true' "$R"
+    setting relay_max_duels 3
+    curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1" > /dev/null
+
+    # An invite nobody picks up must not evaporate behind its ok:true:
+    # the sender is told. (The sweep runs on the next mailbox read, so
+    # the inviter's own heartbeat both raises and delivers the receipt.)
+    # Uses the fresh pair: ID1/ID2 unfriended above, and ID1 is still
+    # friend-request banned by the spam test.
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID3\",\"action\":\"request\",\"peer\":\"$ID4\"}" "$BASE/api/friend.php" > /dev/null
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID4\",\"action\":\"accept\",\"peer\":\"$ID3\"}" "$BASE/api/friend.php" > /dev/null
+    curl -s "$BASE/api/poll.php?id=$ID3" > /dev/null
+    curl -s "$BASE/api/poll.php?id=$ID4" > /dev/null
+    setting signal_ttl 1
+    R=$(sig "$ID3" "$ID4" invite 'anyone?')
+    expect "invite to the fresh friend accepted" '"ok":true' "$R"
+    sleep 2
+    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID4")
+    expect "an expired invite is not delivered" '204' "$R"
+    R=$(hello "$ID3")
+    expect "the inviter is told the invite went undelivered" '"type":"undelivered"' "$R"
+    expect "the receipt names the peer" "\"from\":\"$ID4\"" "$R"
+    expect "the receipt names the lost message type" 'invite' "$R"
+    setting signal_ttl 30
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID3\",\"action\":\"remove\",\"peer\":\"$ID4\"}" "$BASE/api/friend.php" > /dev/null
+
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=config_export")
     expect "config export" '"chat_max_len"' "$R"
     R=$(curl -s -b "$COOKIES" -X POST --data-urlencode "config=$R" "$BASE/admin/api.php?action=config_import")
@@ -443,8 +691,9 @@ else
         done
         curl -s -X POST -H 'Content-Type: application/json' \
             -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php" > /dev/null
-        curl -s -b "$COOKIES" -X POST -d "id=$ID1" "$BASE/admin/api.php?action=delete_player" > /dev/null
-        curl -s -b "$COOKIES" -X POST -d "id=$ID2" "$BASE/admin/api.php?action=delete_player" > /dev/null
+        for pid in "$ID1" "$ID2" "$ID3" "$ID4"; do
+            curl -s -b "$COOKIES" -X POST -d "id=$pid" "$BASE/admin/api.php?action=delete_player" > /dev/null
+        done
         curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_seen" > /dev/null
         echo "ok   remote test data cleaned up"
     fi

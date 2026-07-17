@@ -8,6 +8,7 @@ require_once __DIR__ . '/../src/Scores.php';
 require_once __DIR__ . '/../src/Backup.php';
 require_once __DIR__ . '/../src/Alerts.php';
 require_once __DIR__ . '/../src/Settings.php';
+require_once __DIR__ . '/../src/ConnTrack.php';
 
 Auth::requireLogin();
 
@@ -26,12 +27,11 @@ switch ($action) {
         $scoreCount = (int)$db->query('SELECT COUNT(*) FROM scores')->fetchColumn();
         $dbRows = 0;
         foreach (['players', 'scores', 'signals', 'duels', 'mm_queue', 'counters',
-            'alerts', 'settings', 'admin_fails', 'ipcount'] as $table) {
+            'alerts', 'settings', 'admin_fails', 'ipcount', 'friends', 'relay',
+            'starts', 'conn'] as $table) {
             $dbRows += (int)$db->query("SELECT COUNT(*) FROM $table")->fetchColumn();
         }
-        $relaying = (int)$db->query(
-            'SELECT COUNT(DISTINCT pair) FROM relay WHERE created > ' . (time() - 30)
-        )->fetchColumn();
+        $relaying = ConnTrack::relayPairs();
         $friendships = (int)$db->query(
             "SELECT COUNT(*) FROM friends WHERE state = 'accepted'"
         )->fetchColumn();
@@ -66,6 +66,10 @@ switch ($action) {
             'env' => FOK_ENV,
         ]);
 
+    case 'conns':
+        $conns = ConnTrack::listOnline();
+        Util::jsonOut(['ok' => true, 'now' => time(), 'conns' => $conns]);
+
     case 'users':
         $total = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
         $st = $db->query('SELECT id, name, ip, first_seen, last_seen, hello_count, latency FROM players ORDER BY last_seen DESC LIMIT 200');
@@ -89,6 +93,7 @@ switch ($action) {
             Util::fail('invalid id');
         }
         $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
+        ConnTrack::forget($id);
         Util::jsonOut(['ok' => true]);
 
     case 'alerts':

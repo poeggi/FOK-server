@@ -5,6 +5,9 @@ require_once __DIR__ . '/Config.php';
 
 final class Db
 {
+    // Highest step of the migration ladder below.
+    private const SCHEMA_VERSION = 9;
+
     private static ?PDO $pdo = null;
 
     public static function get(): PDO
@@ -89,7 +92,22 @@ final class Db
         if ($v < 8) {
             $pdo->exec('ALTER TABLE players ADD COLUMN friend_ban_until INTEGER NOT NULL DEFAULT 0');
         }
-        $pdo->exec('PRAGMA user_version = 8');
+        if ($v < 9) {
+            $pdo->exec('CREATE TABLE IF NOT EXISTS conn (
+                id TEXT PRIMARY KEY,
+                peer TEXT,
+                state TEXT NOT NULL,
+                mode TEXT,
+                updated INTEGER NOT NULL
+            )');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_conn_mode ON conn (mode, updated)');
+        }
+        // Only ever written when a step actually ran: this is a WRITE, and
+        // every request goes through here - including the long polls that
+        // must not touch the single SQLite writer while they idle.
+        if ($v < self::SCHEMA_VERSION) {
+            $pdo->exec('PRAGMA user_version = ' . self::SCHEMA_VERSION);
+        }
     }
 
     // A database commissioned from scratch starts with the same default

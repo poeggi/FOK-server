@@ -116,6 +116,19 @@ th { color: var(--muted); font-weight: normal; }
 tr.online td:first-child { color: var(--accent); }
 tr.unseen td { color: var(--danger); }
 
+/* Connection state, colored by how busy the client is. */
+.badge {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+}
+.badge.inviting, .badge.invited { border-color: #b7861f; color: #e0b055; }
+.badge.connecting { border-color: #3f6ea8; color: #79aee8; }
+.badge.playing { border-color: var(--accent); color: var(--accent); }
+
 .card input[type="number"] { width: 90px; padding: 3px 6px; }
 .card form > button { margin-top: 10px; }
 

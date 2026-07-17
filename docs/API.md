@@ -355,6 +355,10 @@ Types (fixed set, anything else is rejected):
               (clients cannot send it: 400)         "request"|"accepted"
                                                      |"expired",
                                                     "from": "8-hex"}
+    undelivered  RESERVED - server-generated only payload: JSON {"event":
+              (clients cannot send it: 400)         "undelivered",
+                                                    "peer": "8-hex",
+                                                    "type": <lost type>}
 
 The 'friend' signal is the friendship NOTIFICATION: the server delivers
 it into the peer's mailbox when a friend request is created for them or
@@ -362,6 +366,18 @@ their request gets accepted. It arrives like any other signal (hello or
 poll.php, long-poll included), so an online client learns of a request
 within its poll cadence; an offline client finds the pending entry via
 friend.php list on next start (mailbox signals expire after 30 s).
+
+The 'undelivered' signal is the FAILURE RECEIPT for a connection
+attempt. An invite / invite-relay / accept / accept-relay that nobody
+picks up before it expires (signal_ttl, 30 s) is a failed attempt, so
+the server tells the sender instead of letting it wait forever on the
+ok:true it got: the receipt is addressed "from" the peer that never
+picked the message up and names the lost "type". Treat it as a hard
+"this attempt is dead" - stop waiting, tell the user, offer a retry.
+The receipt is raised on the next mailbox read, so it reaches the sender
+with its next hello (i.e. within its heartbeat cadence after the TTL).
+Note the reverse is NOT true: no receipt means only that the message did
+not expire undelivered, it is not a delivery confirmation.
 
 ## The player profile object
 
@@ -551,6 +567,19 @@ hello with duel_with during relayed games too. The concurrent-duel cap
 exists because every relayed duel holds server workers with its long
 polls - a capped, honest "busy" beats degrading the server for everyone.
 
+Admission is decided ONCE, when a pair starts relaying (or declares the
+no-P2P bit): a pair that holds a slot keeps it for as long as it keeps
+relaying or heartbeating, and a 503 can therefore only ever hit a duel
+that is not running yet - a live game is never cut off by a full server.
+The slot is released ~30 s after the pair goes quiet.
+
+Ending a duel with `bye` also discards that pair's undelivered relay
+backlog, so a stale input from a finished duel can never be handed to
+the pair's next one. Relay messages that are still undelivered after
+60 s are dropped: the relay is a live channel, not a queue for an absent
+peer. A receiver that has to be away longer than that must treat the
+duel as lost (the in-game liveness timeout does this anyway).
+
 ## In-game liveness (no server involved)
 
 The server is NOT polled during gameplay. The DataChannel itself is the
@@ -588,10 +617,13 @@ it later without any server change:
 
 Notes:
 
-- Undelivered signals expire after 30 s - after that they are gone for
-  good. An unanswered invite is stale after 30 s, and signals only
-  reliably arrive while the recipient is actively polling (multiplayer
-  screen open); an idle client on the 30 s hello cadence can miss them.
+- Undelivered signals expire after 30 s. Signals only reliably arrive
+  fast while the recipient is actively polling (multiplayer screen open);
+  an idle client on the 30 s hello cadence can miss the window. When a
+  connection-establishing message dies that way the sender is told - see
+  the 'undelivered' receipt above - so an invite either goes through or
+  fails loudly. Everything else (ice, chat, bye) expires silently: those
+  belong to a handshake the client is already timing out on its own.
 - Use a public STUN server (e.g. stun:stun.l.google.com:19302) in the
   RTCPeerConnection config. There is no TURN relay; if P2P fails, report
   "connection failed" to the user.

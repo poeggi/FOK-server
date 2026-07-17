@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Signals.php';
+require_once __DIR__ . '/ConnTrack.php';
 
 final class Presence
 {
@@ -91,6 +92,7 @@ final class Presence
             }
             $db->prepare('DELETE FROM friends WHERE a = ? OR b = ?')->execute([$id, $id]);
             $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
+            ConnTrack::forget($id);
         }
         return count($expired);
     }
