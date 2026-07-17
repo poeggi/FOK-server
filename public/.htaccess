@@ -5,3 +5,26 @@
         Header set Cache-Control "public, max-age=31536000, immutable"
     </FilesMatch>
 </IfModule>
+
+# Clock source probe. Apache stamps the moment it RECEIVED the request
+# into a response header, so a client could sync its clock without ever
+# entering the PHP-FPM queue. That queue wait happens before PHP starts,
+# so PHP can neither see nor report it, and it lands in the client's
+# offset as if it were network delay (see docs/API.md, "Time
+# synchronization and PTS").
+#
+# PROBE ONLY: nothing reads this yet. It is here to learn whether this
+# host expands %t and in what format. php -S ignores .htaccess entirely,
+# so real Apache is the only place that can answer.
+#
+# no-store is not optional: a cached timestamp is a wrong clock. The
+# immutable rule above matches on extension and never sees this file,
+# but a proxy default might.
+<IfModule mod_headers.c>
+    <Files "t.txt">
+        Header set X-Fok-T "%t"
+        Header set Cache-Control "no-store"
+        Header set Access-Control-Allow-Origin "*"
+        Header set Access-Control-Expose-Headers "X-Fok-T"
+    </Files>
+</IfModule>
