@@ -251,7 +251,8 @@ host-level. If this outgrows shared hosting, fix workers first.
       -> {"ok":true,"start_pts":ms,"epoch":n,"now":ms}
          identical for both peers; both name the same epoch, so the answer
          does not depend on when either asks. 409 if the caller is behind,
-         400 if its pts proves it is not clock-synced.
+         400 if its pts is missing or in the future; a stale pts is
+         refused only for a start that begins play (first/rematch).
     GET  /api/scores.php?limit=10
       -> {"ok":true,"scores":[{"rank":1,"name":"...","score":...,...}]}
     POST /api/scores.php {"id","score","level","diff","name"?,"color"?,

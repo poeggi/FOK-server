@@ -49,19 +49,25 @@ if (!is_string($reason) || !in_array($reason, Starts::REASONS, true)) {
 }
 
 // The sync gate. checkPts rejects a PTS ahead of the server (zero
-// tolerance, logged as bogus); this adds the other side. What arrives is
-// pts + one-way delay + any clock error, and the server cannot separate
-// those two from a single direction - the same reason NTP needs a round
-// trip. So this is a GROSS gate: it catches a client that never synced
-// (a raw device clock is off by seconds to minutes) and never a client
-// that did (min-RTT sampling bounds it to a few ms). It is deliberately
-// generous, because the FPM queue inflates the age under exactly the load
-// where a false rejection would hurt most.
+// tolerance, logged as bogus), and pts is required - for EVERY reason: a
+// start is a moment on the shared clock, so a client that cannot place
+// itself on it, or places itself in the future, gets no start.
 $pts = Util::checkPts($body['pts'] ?? null, $id);
 if ($pts === null) {
     Util::fail('pts required: sync before requesting a start');
 }
-if (Util::nowMs() - $pts > Settings::int('start_sync_max_age_ms')) {
+// The staleness half is enforced only where play BEGINS (first/rematch),
+// so the pair enters the run aligned. What arrives is pts + one-way delay
+// + clock error, which the server cannot separate from a single direction
+// (the reason NTP needs a round trip), so even here the gate is GROSS: it
+// catches a client that never synced (a raw device clock is off by seconds
+// to minutes) and passes any that did (min-RTT sampling bounds it to ms).
+// The in-run halts (level/respawn/resume) skip it entirely - the pair is
+// already synced from its first start, and the FPM queue inflates the age
+// under exactly the load where a false rejection would break a live duel,
+// so we let the client resync as it goes rather than turn it away.
+if (in_array($reason, Starts::SYNC_GATED_REASONS, true)
+    && Util::nowMs() - $pts > Settings::int('start_sync_max_age_ms')) {
     Util::fail('stale pts: resync before requesting a start');
 }
 

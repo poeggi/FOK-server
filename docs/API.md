@@ -252,10 +252,15 @@ this beyond the normal handshake.
 start is a moment on that clock, so a client that cannot place itself on
 it is turned away rather than let into a desynced game:
 
-- ahead of the server -> **400** `bogus pts` (zero tolerance, logged);
+- ahead of the server -> **400** `bogus pts` (zero tolerance, logged),
+  for EVERY reason;
+- absent -> **400** `pts required`, for EVERY reason;
 - older than `start_sync_max_age_ms` (default 2 s) -> **400**
-  `stale pts`, meaning: resync via t.txt and retry;
-- absent -> **400** `pts required`.
+  `stale pts` (resync via t.txt and retry) - but ONLY for a start that
+  BEGINS play (`first`, `rematch`). The in-run halts (`level`, `respawn`,
+  `resume`) are exempt: the pair is already synced from its first start,
+  so a stale proof does not block them and the client may resync as it
+  goes. A `pts` in the future is still `bogus` even in-run.
 
 Be aware of what this does and does not prove. What reaches the server is
 `pts + one-way delay + any clock error`, and those cannot be separated
@@ -274,7 +279,8 @@ incident is counted and logged as a bogus-client alert in the admin UI.
 If an honest client gets this rejection its clock sync has drifted:
 re-sync immediately (min-RTT sampling keeps the offset error at a few ms,
 comfortably below any real network transit time). start.php additionally
-rejects a pts that is too far in the PAST - see its sync gate.
+rejects a pts too far in the PAST, but only for a start that begins play
+(first/rematch) - see its sync gate.
 
 ## POST /api/hello.php - heartbeat and poll
 
@@ -722,7 +728,8 @@ in both places.
 
 `bye` also discards that pair's undelivered relay backlog, so a stale
 input from a finished duel can never reach the pair's next one. Relay
-messages undelivered after 60 s are dropped: this is a live channel, not
+messages undelivered after relay_ttl (60 s, admin-configurable) are
+dropped: this is a live channel, not
 a queue for an absent peer - a receiver away longer than that has lost
 the duel anyway (its in-game liveness timeout fires first).
 

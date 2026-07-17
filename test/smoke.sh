@@ -348,15 +348,21 @@ expect "a resume from pause issues a start" '"epoch":2' "$R"
 R=$(start_req "$ID2" "$ID1" 0 first "$(now_ms)")
 expect "a stale epoch is refused" 'stale epoch' "$R"
 
-# The sync gate: a start is a moment on the shared clock, so a client that
-# cannot place itself on it gets no start.
+# The sync gate: a start is a moment on the shared clock. pts is required
+# for every reason and can never be in the future.
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"epoch\":3,\"reason\":\"level\"}" "$BASE/api/start.php")
 expect "a start without a sync proof is refused" 'pts required' "$R"
-R=$(start_req "$ID1" "$ID2" 3 level "$(( $(now_ms) - 120000 ))")
-expect "a start with a stale sync proof is refused" 'stale pts' "$R"
 R=$(start_req "$ID1" "$ID2" 3 level "$(( $(now_ms) + 60000 ))")
 expect "a start with a future pts is bogus" 'bogus pts' "$R"
+# A STALE proof is refused only where play BEGINS (first/rematch): the
+# pair must enter the run aligned there.
+R=$(start_req "$ID1" "$ID2" 3 rematch "$(( $(now_ms) - 120000 ))")
+expect "a stale sync proof is refused where play begins" 'stale pts' "$R"
+# The in-run halts are permissive: the pair is already synced, so a stale
+# proof does NOT block a resume - the client resyncs as it goes.
+R=$(start_req "$ID1" "$ID2" 3 level "$(( $(now_ms) - 120000 ))")
+expect "a stale sync proof does not block an in-run start" '"start_pts":' "$R"
 R=$(start_req "$ID1" "$ID2" 3 nonsense "$(now_ms)")
 expect "an unknown start reason is refused" 'invalid reason' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
@@ -738,7 +744,7 @@ else
     sig "$ID1" "$ID2" ice 'm2' > /dev/null
     R=$(sigcode "$ID1" "$ID2" ice 'm3')
     expect "a full mailbox fails loudly with 429" '429' "$R"
-    setting mailbox_cap 128
+    setting mailbox_cap 64
     curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 
     setting relay_pending_cap 2
@@ -746,7 +752,7 @@ else
     rly "$ID1" "$ID2" 'p2' > /dev/null
     R=$(rlycode "$ID1" "$ID2" 'p3')
     expect "a full relay backlog fails loudly with 429" '429' "$R"
-    setting relay_pending_cap 256
+    setting relay_pending_cap 128
     curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1" > /dev/null
 
     # A full hub rejects a NEW relayed duel loudly - but a duel that is

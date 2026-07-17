@@ -105,7 +105,7 @@ Util::checkPts($body['pts'] ?? null, "player $id");
 
 $db = Db::get();
 $now = time();
-$db->prepare('DELETE FROM relay WHERE created < ?')->execute([$now - 60]);
+$db->prepare('DELETE FROM relay WHERE created < ?')->execute([$now - Settings::int('relay_ttl')]);
 
 $st = $db->prepare('SELECT COUNT(*) FROM relay WHERE to_id = ?');
 $st->execute([$peer]);

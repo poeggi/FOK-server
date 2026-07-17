@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.16.7';
+const FOK_SERVER_VERSION = '0.16.8';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
 // v2: friendship-gated status and invites, ms hello.now, friend
@@ -10,7 +10,9 @@ const FOK_SERVER_VERSION = '0.16.7';
 // v3: start.php requires epoch + reason + pts. A start is now issued for
 // EVERY halt of the run (see Starts::REASONS), peers name the one they
 // mean instead of racing for it, and an unsynced client is turned away
-// rather than let into a desynced game.
+// rather than let into a desynced game. The staleness half of that gate
+// applies only where play BEGINS (first/rematch, see Starts::
+// SYNC_GATED_REASONS); the in-run halts let the client resync as it goes.
 const FOK_API_VERSION = 3;
 
 // Never leak stack traces or paths to clients; errors go to the server log.
@@ -67,7 +69,7 @@ const FOK_POLL_CHECK_USEC = 150000;
 
 // Abuse caps (HTTP 429): pending signals per recipient, score submissions
 // per player within the rate window.
-const FOK_MAILBOX_CAP = 128;
+const FOK_MAILBOX_CAP = 64;
 const FOK_SCORE_RATE_MAX = 10;
 const FOK_SCORE_RATE_WINDOW = 300;
 const FOK_TOP_SCORES = 100;

@@ -31,6 +31,14 @@ final class Starts
     // the admin view; the lead time does not depend on which it is.
     public const REASONS = ['first', 'level', 'respawn', 'resume', 'rematch'];
 
+    // A start that BEGINS play - the first of a connection, or a rematch
+    // on it - must prove a fresh sync so the pair enters the run aligned.
+    // The in-run halts (level/respawn/resume) are exempt from the staleness
+    // half of the gate: the pair is already synced from that first start,
+    // and turning one away over a stale proof would break a live duel for
+    // nothing but FPM queue delay. See start.php.
+    public const SYNC_GATED_REASONS = ['first', 'rematch'];
+
     // A pair's start is forgotten this long after it passed. Only the
     // stale-epoch guard depends on the row, and a peer that far behind is
     // gone, not late.

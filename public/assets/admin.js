@@ -129,36 +129,6 @@ const MODULES = [
         },
     },
     {
-        id: 'props',
-        title: 'Properties',
-        async refresh(box) {
-            const t0 = Date.now();
-            const d = await api('props');
-            box.replaceChildren();
-            const table = el('table');
-            const prop = (k, v) => {
-                const r = el('tr');
-                r.append(el('td', 'muted', k), el('td', '', String(v)));
-                table.append(r);
-            };
-            prop('PTS anchor', d.pts_anchor);
-            prop('UTC now', d.utc_now);
-            prop('PTS now', d.pts_now + ' ms');
-            prop('Clock delta', (t0 - d.pts_now) + ' ms approx.');
-            prop('Server', 'v' + d.server_version + ' (API v' + d.api_version + ', ' + d.env + ')');
-            prop('PHP', d.php + ' (' + d.sapi + ')');
-            const yn = (v) => (v ? 'yes' : 'no');
-            prop('opcache', yn(d.opcache));
-            prop('APCu', yn(d.apcu) + (d.apcu ? '' : ' - counters stay on the DB writer'));
-            prop('Deferred flush', yn(d.deferred_flush)
-                + (d.deferred_flush ? '' : ' - bookkeeping runs before the client is answered'));
-            // What every request pays before any work; the first one after a
-            // deploy also carries the migration, so read it twice.
-            prop('DB open', d.db_boot_us + ' us this request');
-            box.append(table);
-        },
-    },
-    {
         id: 'alerts',
         title: 'Alerts',
         async refresh(box) {
@@ -315,6 +285,37 @@ const MODULES = [
         },
     },
     {
+        id: 'props',
+        title: 'Properties',
+        view: 'settings',
+        async refresh(box) {
+            const t0 = Date.now();
+            const d = await api('props');
+            box.replaceChildren();
+            const table = el('table');
+            const prop = (k, v) => {
+                const r = el('tr');
+                r.append(el('td', 'muted', k), el('td', '', String(v)));
+                table.append(r);
+            };
+            prop('PTS anchor', d.pts_anchor);
+            prop('UTC now', d.utc_now);
+            prop('PTS now', d.pts_now + ' ms');
+            prop('Clock delta', (t0 - d.pts_now) + ' ms approx.');
+            prop('Server', 'v' + d.server_version + ' (API v' + d.api_version + ', ' + d.env + ')');
+            prop('PHP', d.php + ' (' + d.sapi + ')');
+            const yn = (v) => (v ? 'yes' : 'no');
+            prop('opcache', yn(d.opcache));
+            prop('APCu', yn(d.apcu) + (d.apcu ? '' : ' - counters stay on the DB writer'));
+            prop('Deferred flush', yn(d.deferred_flush)
+                + (d.deferred_flush ? '' : ' - bookkeeping runs before the client is answered'));
+            // What every request pays before any work; the first one after a
+            // deploy also carries the migration, so read it twice.
+            prop('DB open', d.db_boot_us + ' us this request');
+            box.append(table);
+        },
+    },
+    {
         id: 'backup',
         title: 'Backup and restore (database incl. config)',
         view: 'settings',
@@ -369,7 +370,7 @@ const boxes = {};
 
 // Cards on the global interval. Cards with an 'every' of their own are
 // not listed; the rest refresh on page load or on their refresh button.
-const LIVE = ['stats', 'props', 'alerts'];
+const LIVE = ['stats', 'alerts'];
 
 const settings = {};
 const timers = {};
