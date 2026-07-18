@@ -799,6 +799,38 @@ Notes:
 - Signaling payloads fit the 16 KB limit; send one signal per ICE
   candidate rather than batching.
 
+## Stats backup / restore (prepared)
+
+A client may back its own progress up to the server and restore it on a new
+device. The server side is ready; clients may adopt it without further
+server work.
+
+    POST /api/backup.php {"id": "c0ffee42", "payload": "<string>"}
+      -> 200 {"ok": true, "updated": <unix seconds>}
+    GET  /api/backup.php?id=c0ffee42
+      -> 200 {"ok": true, "payload": "<string>", "updated": <unix seconds>}
+      -> 404 {"error": "no backup"}       nothing stored for this id
+
+The payload is OPAQUE to the server - stored and returned verbatim, never
+parsed. One backup per player id; a POST replaces the previous one. Capped
+at 64 KB (FOK_STATS_MAX); larger is rejected with 413.
+
+Payload manifest (a client convention, NOT enforced by the server): pack a
+single JSON object and carry a version so a future client can migrate an
+older backup, e.g.
+
+    {"v": 1, "scores": [...], "shop": {...}, "settings": {...}}
+
+The client owns this shape: bump "v" when it changes and keep readers for
+older versions.
+
+SECURITY (not yet): restore and overwrite are keyed by player id ALONE, and
+IDs are exchanged during a duel - so anyone who learns an ID can read or
+replace that player's backup. This is intentionally open for now. Before a
+client stores anything sensitive, we will bind a backup to a shared secret:
+the client sets a secret on its first backup (the server keeps only a hash),
+and restore/overwrite then require it.
+
 ## Admin
 
 `/admin/` is a human web UI (session login), not part of the client API.

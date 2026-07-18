@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.16.14';
+const FOK_SERVER_VERSION = '0.16.15';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
 // v2: friendship-gated status and invites, ms hello.now, friend
@@ -57,6 +57,10 @@ const FOK_RELAY_WINDOW = 90;
 // (see Signals::expire), so an invite never just evaporates.
 const FOK_SIGNAL_TTL = 30;
 const FOK_SIGNAL_MAX_PAYLOAD = 16384;
+// A client's own stats backup: an opaque blob the client packs (scores,
+// shop items, settings - see api/backup.php and docs/API.md). Capped so a
+// single player cannot store an unbounded amount.
+const FOK_STATS_MAX = 65536;
 // Replay material of a score submission (seed + tick-stamped inputs).
 const FOK_MAX_INPUTS = 262144;
 // Hard ceiling on a client request body, derived from the biggest

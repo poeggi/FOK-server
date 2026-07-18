@@ -21,6 +21,7 @@ require_once __DIR__ . '/../public/src/Friends.php';
 require_once __DIR__ . '/../public/src/RelayRate.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
 require_once __DIR__ . '/../public/src/Load.php';
+require_once __DIR__ . '/../public/src/Vault.php';
 
 // Util installs a fault handler that answers 500 and exits 0 - right for a
 // request, fatal for a test run, where it would swallow a throwable (a
@@ -501,6 +502,18 @@ ok($lm['out'] === 7, 'lastMinute reports the previous minute messages out');
 ok($lm['db_writes'] === 4, 'lastMinute reports the previous minute db writes');
 ok(array_key_exists('in', $lm), 'lastMinute carries messages-in from the req_min counter');
 Db::get()->exec('DELETE FROM loadmin');
+
+// Vault: opaque per-player stats backup, one row per id, restorable.
+ok(Vault::get('aaaaaaaa') === null, 'no backup for a fresh id');
+$vts = Vault::put('aaaaaaaa', '{"v":1,"scores":[1,2]}');
+ok($vts > 0, 'put returns the stored timestamp');
+$vrow = Vault::get('aaaaaaaa');
+ok($vrow !== null && $vrow['payload'] === '{"v":1,"scores":[1,2]}', 'get returns the payload verbatim');
+ok($vrow['updated'] === $vts, 'get returns the stored timestamp');
+Vault::put('aaaaaaaa', 'replaced');
+ok(Vault::get('aaaaaaaa')['payload'] === 'replaced', 'put replaces the previous backup');
+ok(Vault::get('bbbbbbbb') === null, 'another id keeps its own empty slot');
+Db::get()->exec('DELETE FROM vault');
 
 // Auth: verify against hash file, lockout after repeated failures
 file_put_contents(FOK_ADMIN_HASH_FILE, password_hash('u:p', PASSWORD_DEFAULT));

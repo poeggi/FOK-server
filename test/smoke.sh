@@ -173,6 +173,24 @@ R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application
 expect "score submissions throttled" '429' "$R"
 [ "$ADMIN" -eq 1 ] && setting score_rate_max 10
 
+# Client stats backup / restore: an opaque per-id blob (see docs/API.md).
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID3")
+expect "restore with no backup is 404" '404' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID3\",\"payload\":\"backup-blob-123\"}" "$BASE/api/backup.php")
+expect "stats backup stored" '"ok":true' "$R"
+expect "backup reports its timestamp" '"updated":' "$R"
+R=$(curl -s "$BASE/api/backup.php?id=$ID3")
+expect "stats restore returns the payload verbatim" 'backup-blob-123' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"nothex\",\"payload\":\"x\"}" "$BASE/api/backup.php")
+expect "backup rejects a malformed id" '"error":"invalid id"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID3\"}" "$BASE/api/backup.php")
+expect "backup rejects a missing payload" '"error":"invalid payload"' "$R"
+{ printf '{"id":"%s","payload":"' "$ID3"; head -c 70000 /dev/zero | tr '\0' 'x'; printf '"}'; } > "$DATA/bigbak.json"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    --data-binary "@$DATA/bigbak.json" "$BASE/api/backup.php")
+expect "oversized backup rejected with 413" '413' "$R"
+
 R=$(curl -s "$BASE/api/time.php")
 expect "time sync endpoint" '"t":' "$R"
 NOW_MS=$(echo "$R" | grep -oE '"t":[0-9]+' | cut -d: -f2)

@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 14;
+    private const SCHEMA_VERSION = 15;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -183,6 +183,15 @@ final class Db
                 metric TEXT NOT NULL,
                 value INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (bucket, metric)
+            )');
+        }
+        if ($v < 15) {
+            // Per-player stats backup (see Vault, api/backup.php): one opaque
+            // client-defined blob per id, restorable on a new device.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS vault (
+                id TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                updated INTEGER NOT NULL
             )');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
