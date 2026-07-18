@@ -912,11 +912,17 @@ else
     for i in 1 2 3 4 5; do rly aa11aa11 bb22bb22 "f$i" > /dev/null; done
     sleep 3
     rly aa11aa11 bb22bb22 'trips the rate check' > /dev/null
-    # The block is SET by a deferred (post-response) write; under FPM it
-    # lands a beat after the tripping message returns, so let it commit
-    # before the enforcement read - otherwise the check can race it.
-    sleep 2
-    R=$(rlycode aa11aa11 bb22bb22 'now blocked')
+    # The block is SET by a deferred (post-response) write; under FPM it lands
+    # a beat after the message returns and the delay varies with load. Poll
+    # the enforcement read until it catches up rather than guess a sleep -
+    # each poll is itself another message, which only pushes the rate further
+    # over the cap.
+    R=200
+    for i in 1 2 3 4 5 6 7 8; do
+        R=$(rlycode aa11aa11 bb22bb22 'now blocked')
+        [ "$R" = "429" ] && break
+        sleep 1
+    done
     expect "a sustained relay flood is blocked with 429" '429' "$R"
     setting relay_rate_max 128
 
