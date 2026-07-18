@@ -198,6 +198,10 @@ footer { text-align: center; font-size: 12px; padding: 8px 0 16px; }
 .id-link { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
 .id-link:hover { text-decoration: underline; }
 td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
+/* An alert row shows the first few words; the click opens the full message.
+   Keeps the row's colour (muted, or danger while unseen) via currentColor. */
+.msg-link { cursor: pointer; text-decoration: underline dotted; }
+.msg-link:hover { text-decoration: underline; }
 
 /* Registered-users live filter. */
 input.usearch { width: 100%; margin: 6px 0 8px; padding: 5px 8px; -webkit-appearance: none; }

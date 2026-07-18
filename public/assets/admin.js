@@ -31,6 +31,19 @@ function fmtTime(unix) {
     return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '. ' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 
+// Date only, no time - for columns where the time of day carries no
+// information (e.g. a debug report's fixed 24 h expiry) and the extra
+// width would push the card into a horizontal scrollbar.
+function fmtDate(unix) {
+    const d = new Date(unix * 1000);
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.';
+}
+
+// How many leading words of an alert message the card shows; the full text
+// is one click away in a detail popup.
+const ALERT_PREVIEW_WORDS = 4;
+
 function fmtBytes(n) {
     if (n > 1048576) return (n / 1048576).toFixed(1) + ' MB';
     if (n > 1024) return (n / 1024).toFixed(1) + ' KB';
@@ -94,6 +107,36 @@ function closeModal(overlay) {
     if (overlay._stop) overlay._stop();
     if (overlay._onKey) document.removeEventListener('keydown', overlay._onKey);
     overlay.remove();
+}
+
+// A minimal read-only popup (no refresh timer) for content that does not fit
+// inline, e.g. a full alert message. Closes on the button, click-outside or
+// Escape, just like the client popup.
+function infoModal(titleText, bodyNode) {
+    const overlay = el('div', 'modal-backdrop');
+    const modal = el('div', 'modal');
+    const head = el('div', 'modal-head');
+    const title = el('div', 'modal-title');
+    title.append(el('span', 'modal-name', titleText));
+    const close = el('button', 'small', 'close');
+    close.onclick = () => closeModal(overlay);
+    head.append(title, close);
+    modal.append(head, bodyNode);
+    overlay.append(modal);
+    overlay.onmousedown = (e) => { if (e.target === overlay) closeModal(overlay); };
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(overlay); };
+    overlay._onKey = onKey;
+    document.addEventListener('keydown', onKey);
+    document.body.append(overlay);
+}
+
+function showAlert(a) {
+    const tbl = el('table', 'kv');
+    const kv = (k, v) => { const r = el('tr'); r.append(el('td', 'kv-k', k), el('td', 'kv-v', v)); tbl.append(r); };
+    kv('Time', fmtTime(a.created));
+    kv('Type', a.type);
+    kv('Message', a.message);
+    infoModal('Alert', tbl);
 }
 
 // A refresh-interval control not backed by a server setting (the popup).
@@ -341,7 +384,18 @@ const MODULES = [
             const table = el('table');
             table.append(row(['Time', 'Type', 'Message'], 'th'));
             for (const a of d.alerts) {
-                const r = row([fmtTime(a.created), a.type, a.message]);
+                const words = a.message.split(' ');
+                const cut = words.length > ALERT_PREVIEW_WORDS;
+                const preview = cut
+                    ? words.slice(0, ALERT_PREVIEW_WORDS).join(' ') + ' ...'
+                    : a.message;
+                const link = el('span', 'msg-link', preview);
+                link.title = a.message;
+                link.onclick = () => showAlert(a);
+                const msg = el('td');
+                msg.append(link);
+                const r = el('tr');
+                r.append(el('td', '', fmtTime(a.created)), el('td', '', a.type), msg);
                 if (!a.seen) r.classList.add('unseen');
                 table.append(r);
             }
@@ -534,7 +588,7 @@ const MODULES = [
             for (const ds of d.datasets) {
                 const r = el('tr');
                 r.append(el('td', '', ds.pin), el('td', '', fmtTime(ds.created)),
-                    el('td', 'muted', fmtTime(ds.created + d.ttl)), el('td', 'muted', fmtBytes(ds.bytes)));
+                    el('td', 'muted', fmtDate(ds.created + d.ttl)), el('td', 'muted', fmtBytes(ds.bytes)));
                 const dl = el('button', 'small', 'download');
                 dl.onclick = () => { window.location = API + '?action=debug_get&pin=' + ds.pin; };
                 const td = el('td');
