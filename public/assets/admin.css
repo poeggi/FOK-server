@@ -72,12 +72,15 @@ button.small { padding: 2px 8px; font-size: 13px; }
    that carries its own interval. */
 .interval { display: inline-flex; align-items: center; gap: 5px; }
 .interval input {
-    width: 58px;
+    width: 52px;
+    height: 26px;
     padding: 3px 6px;
     font-size: 12px;
     text-align: center;
 }
-.interval.slim input { width: 34px; padding: 3px 4px; }
+.interval.slim input { width: 40px; padding: 3px 4px; }
+/* Refresh buttons line up with the interval field: same height everywhere. */
+button.refresh { height: 26px; display: inline-flex; align-items: center; }
 
 .error { color: var(--danger); }
 .muted { color: var(--muted); font-size: 13px; }
@@ -170,7 +173,9 @@ tr.unseen td { color: var(--danger); }
 .debug-cell .badge { margin-right: 6px; }
 button.small { padding: 0 6px; font-size: 11px; }
 
-.card input[type="number"] { width: 90px; padding: 3px 6px; }
+/* Settings-form number inputs only; must NOT match the interval control in
+   the card head, or it would override its (narrower) width. */
+.card-body input[type="number"] { width: 90px; padding: 3px 6px; }
 .card form > button { margin-top: 10px; }
 
 .restore { margin-top: 12px; }
@@ -178,3 +183,33 @@ button.small { padding: 0 6px; font-size: 11px; }
 footer { text-align: center; font-size: 12px; padding: 8px 0 16px; }
 .exportrow { margin-top: 14px; display: flex; align-items: center; gap: 18px; }
 .exportrow a { color: var(--accent); }
+
+/* A client id is a link into its details popup; a truncated IPv6 shows the
+   full address on hover. */
+.id-link { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
+.id-link:hover { text-decoration: underline; }
+td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
+
+/* Registered-users live filter. */
+input.usearch { width: 100%; margin: 6px 0 8px; padding: 5px 8px; -webkit-appearance: none; }
+
+/* Client details popup. */
+.modal-backdrop {
+    position: fixed; inset: 0; z-index: 100; padding: 16px;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex; align-items: center; justify-content: center;
+}
+.modal {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; width: 100%; max-width: 460px; max-height: 84vh; overflow: auto;
+}
+.modal-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.modal-title { display: flex; flex-direction: column; margin-right: auto; }
+.modal-name { font-size: 15px; }
+.modal-id { color: var(--muted); font-size: 12px; }
+table.kv { font-size: 12px; }
+table.kv .kv-k { color: var(--muted); white-space: nowrap; padding-right: 14px; }
+table.kv .kv-sec td {
+    color: var(--accent); border-bottom: none; padding-top: 12px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+}

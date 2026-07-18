@@ -715,6 +715,18 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=users")
     expect "a client debugging by itself still reports active" '"debug":false,"debug_active":true' "$R"
 
+    # Client details popup: one condensed view of everything about an id.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=client&id=$ID1")
+    expect "client details returned" '"client":' "$R"
+    expect "client details name the client" "$(strict "\"id\":\"$ID1\"")" "$R"
+    expect "client details include presence" '"last_seen":' "$R"
+    expect "client details include the 1:1 state" '"duel":' "$R"
+    expect "client details include the mailbox" '"mailbox":' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=client&id=nothex")
+    expect "client details reject a malformed id" '"error":"invalid id"' "$R"
+    R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=client&id=12345678")
+    expect "client details 404 for an unknown id" '404' "$R"
+
     R=$(curl -s "$BASE/assets/admin.js?v=$VER")
     expect "connections card on the dashboard" "id: 'conns'" "$R"
     expect "duels card on the dashboard" "id: 'duels'" "$R"
@@ -723,6 +735,11 @@ else
     expect "global refresh interval sits in the top bar" "prepend(intervalControl('admin_refresh_secs'" "$R"
     expect "the users card can toggle debug" "api('set_debug'" "$R"
     expect "tables can be sorted by column" "function sortable(" "$R"
+    expect "sorting survives the refresh (delegated on the card body)" "_sortBound" "$R"
+    expect "an id opens the client details popup" "function showClient(" "$R"
+    expect "the details popup is wired to the client endpoint" "api('client&id='" "$R"
+    expect "ipv6 is truncated to first and last group" "function ipCell(" "$R"
+    expect "registered users has a live id/name filter" "Filter by ID or name" "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
     expect "global refresh interval defaults to 30 s" '"key":"admin_refresh_secs","value":30' "$R"

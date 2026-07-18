@@ -144,6 +144,31 @@ final class ConnTrack
         return (int)$st->fetchColumn();
     }
 
+    /**
+     * The raw tracked-connection row for one client (admin detail view), or
+     * null if it holds no duel state. Callers render the linger/ended
+     * semantics themselves (see listDuels).
+     * @return array{peer:?string,state:string,mode:?string,updated:int,relay_seen:int}|null
+     */
+    public static function stateOf(string $id): ?array
+    {
+        $st = Db::get()->prepare(
+            'SELECT peer, state, mode, updated, relay_seen FROM conn WHERE id = ?'
+        );
+        $st->execute([$id]);
+        $row = $st->fetch();
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'peer' => $row['peer'],
+            'state' => $row['state'],
+            'mode' => $row['mode'],
+            'updated' => (int)$row['updated'],
+            'relay_seen' => (int)$row['relay_seen'],
+        ];
+    }
+
     /** Drops a player's tracked connection (expiry, admin delete). */
     public static function forget(string $id): void
     {

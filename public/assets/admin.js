@@ -58,6 +58,120 @@ function debugLabel(c) {
     return c.debug_active ? 'self' : 'off';
 }
 
+// A client id, clickable: opens the details popup. Used wherever an id
+// appears (Connections, Duels, Registered users) so any id is a way in.
+function idCell(id) {
+    const td = el('td');
+    const s = el('span', 'id-link', id);
+    s.onclick = () => showClient(id);
+    td.append(s);
+    return td;
+}
+
+// IPv6 is too wide for a table column: show the first and last group with
+// an ellipsis and the full address on hover. IPv4 is short, shown whole.
+function ipCell(ip) {
+    const td = el('td');
+    if (typeof ip === 'string' && ip.includes(':')) {
+        const g = ip.split(':').filter((x) => x !== '');
+        const s = el('span', 'trunc', g.length > 1 ? g[0] + '..' + g[g.length - 1] : ip);
+        s.title = ip;
+        td.append(s);
+    } else {
+        td.textContent = (ip === null || ip === undefined || ip === '') ? '-' : ip;
+    }
+    return td;
+}
+
+// One condensed popup with everything known about a client: identity,
+// presence, its 1:1 / connection state, relay counters, matchmaking,
+// friendships, scores and mailbox. Opened by clicking any id.
+function closeModal(overlay) {
+    if (overlay._onKey) document.removeEventListener('keydown', overlay._onKey);
+    overlay.remove();
+}
+
+async function showClient(id) {
+    const overlay = el('div', 'modal-backdrop');
+    const modal = el('div', 'modal');
+    overlay.append(modal);
+    overlay.onmousedown = (e) => { if (e.target === overlay) closeModal(overlay); };
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(overlay); };
+    overlay._onKey = onKey;
+    document.addEventListener('keydown', onKey);
+    modal.append(el('p', 'muted', 'Loading ' + id + ' ...'));
+    document.body.append(overlay);
+    try {
+        const d = await api('client&id=' + id);
+        if (!d.ok) throw new Error(d.error || 'failed');
+        renderClient(modal, overlay, d);
+    } catch (e) {
+        modal.replaceChildren(el('p', 'error', 'Error: ' + e.message));
+    }
+}
+
+function renderClient(modal, overlay, d) {
+    const c = d.client;
+    const now = d.now;
+    const ago = (t) => t ? (now - t) + ' s ago' : '-';
+    modal.replaceChildren();
+
+    const head = el('div', 'modal-head');
+    const title = el('div', 'modal-title');
+    title.append(el('span', 'modal-name', c.name || '(no name)'), el('span', 'modal-id', c.id));
+    const close = el('button', 'small', 'close');
+    close.onclick = () => closeModal(overlay);
+    head.append(title, close);
+    modal.append(head);
+
+    const tbl = el('table', 'kv');
+    const sec = (t) => { const r = el('tr', 'kv-sec'); const td = el('td', '', t); td.colSpan = 2; r.append(td); tbl.append(r); };
+    const kv = (k, v) => { const r = el('tr'); r.append(el('td', 'kv-k', k), el('td', 'kv-v', (v === null || v === undefined || v === '') ? '-' : String(v))); tbl.append(r); };
+    const kvId = (k, id) => {
+        const r = el('tr'), v = el('td', 'kv-v');
+        if (id) { const s = el('span', 'id-link', id); s.onclick = () => { closeModal(overlay); showClient(id); }; v.append(s); } else { v.textContent = '-'; }
+        r.append(el('td', 'kv-k', k), v); tbl.append(r);
+    };
+
+    sec('Presence');
+    kv('Status', c.online ? 'online' : 'offline');
+    kv('IP (last known)', c.ip);
+    kv('First seen', fmtTime(c.first_seen));
+    kv('Last seen', fmtTime(c.last_seen) + ' (' + ago(c.last_seen) + ')');
+    kv('Hellos', c.hello_count);
+    kv('Latency', c.latency === null ? '-' : c.latency + ' ms');
+    kv('Debug', debugLabel(c));
+
+    sec('1:1 / connection');
+    if (c.duel) {
+        kv('State', STATE_LABEL[c.duel.state] || c.duel.state);
+        kvId('Peer', c.duel.peer);
+        kv('Mode', c.duel.mode);
+        kv('Updated', c.duel.age + ' s ago (' + (c.duel.live ? 'live' : 'stale') + ')');
+        if (c.duel.relay_seen) kv('Last relay', (now - c.duel.relay_seen) + ' s ago');
+    } else {
+        kv('State', 'not in a duel');
+    }
+    if (c.matchmaking) {
+        if (c.matchmaking.matched_with) kvId('Matched with', c.matchmaking.matched_with);
+        else kv('Matchmaking', 'seeking since ' + ago(c.matchmaking.since));
+    }
+
+    sec('Relay & scores');
+    kv('Relay messages', c.relay_rate ? c.relay_rate.total : 0);
+    if (c.relay_rate && c.relay_rate.blocked_until > now) kv('Rate-limited', 'for ' + (c.relay_rate.blocked_until - now) + ' s');
+    kv('Friends', c.friends.accepted + ' (' + c.friends.pending + ' pending)');
+    kv('Scores', c.scores.count + (c.scores.best !== null ? ', best ' + c.scores.best : ''));
+    kv('Mailbox', c.mailbox + ' pending signal(s)');
+    if (c.friend_ban_until > now) kv('Friend-banned', 'for ' + (c.friend_ban_until - now) + ' s');
+
+    modal.append(tbl);
+}
+
+// Registered-users live filter (id or name), kept across the manual
+// refreshes that follow a debug toggle or a delete.
+let usersFilter = '';
+
 const MODULES = [
     {
         id: 'stats',
@@ -98,10 +212,11 @@ const MODULES = [
             const table = el('table');
             table.append(row(['ID', 'Name', 'IP', 'Lat', 'Age'], 'th'));
             for (const c of d.conns) {
-                const r = row([c.id, c.name === null ? '-' : c.name, c.ip,
-                    c.latency === null ? '-' : c.latency + ' ms',
-                    (d.now - c.last_seen) + ' s' + (c.gone ? ' gone' : '')]);
+                const r = el('tr');
                 r.classList.add(c.gone ? 'gone' : 'online');
+                r.append(idCell(c.id), el('td', '', c.name === null ? '-' : c.name), ipCell(c.ip),
+                    el('td', '', c.latency === null ? '-' : c.latency + ' ms'),
+                    el('td', '', (d.now - c.last_seen) + ' s' + (c.gone ? ' gone' : '')));
                 table.append(r);
             }
             box.append(table);
@@ -123,8 +238,8 @@ const MODULES = [
                 r.classList.add(c.state === 'ended' ? 'gone' : 'online');
                 const state = el('td');
                 state.append(el('span', 'badge ' + c.state, STATE_LABEL[c.state] || c.state));
-                r.append(el('td', '', c.id), el('td', '', c.name === null ? '-' : c.name),
-                    el('td', '', c.peer === null ? '-' : c.peer));
+                r.append(idCell(c.id), el('td', '', c.name === null ? '-' : c.name),
+                    c.peer === null ? el('td', '', '-') : idCell(c.peer));
                 r.append(state);
                 r.append(el('td', c.mode === 'relay' ? 'error' : '', c.mode === null ? '-' : c.mode));
                 r.append(el('td', '', c.latency === null ? '-' : c.latency + ' ms'));
@@ -246,14 +361,22 @@ const MODULES = [
             const d = await api('users');
             box.replaceChildren();
             box.append(el('p', 'muted', d.total + ' registered, showing latest ' + d.users.length));
+            // Live filter over id and name; the last known IP moved to the
+            // per-client details popup (click an id), so it is off the list.
+            const search = el('input', 'usearch');
+            search.type = 'search';
+            search.placeholder = 'Filter by ID or name...';
+            search.value = usersFilter;
+            box.append(search);
             const table = el('table');
-            table.append(row(['ID', 'Name', 'IP', 'First', 'Last', 'N', 'Lat', 'Debug', ''], 'th'));
+            table.append(row(['ID', 'Name', 'First', 'Last', 'N', 'Lat', 'Debug', ''], 'th'));
             for (const u of d.users) {
                 const online = d.now - u.last_seen <= d.online_window;
-                const r = row([u.id, u.name === null ? '-' : u.name, u.ip,
-                    fmtTime(u.first_seen), fmtTime(u.last_seen), u.hello_count,
-                    u.latency === null ? '-' : u.latency + ' ms']);
+                const r = el('tr');
                 if (online) r.classList.add('online');
+                r.append(idCell(u.id), el('td', '', u.name === null ? '-' : u.name),
+                    el('td', '', fmtTime(u.first_seen)), el('td', '', fmtTime(u.last_seen)),
+                    el('td', '', u.hello_count), el('td', '', u.latency === null ? '-' : u.latency + ' ms'));
 
                 // Debug can be set on an OFFLINE client too: it is a wish
                 // stored on the player and applied on its next connect, so
@@ -279,9 +402,20 @@ const MODULES = [
                 const td = el('td');
                 td.append(btn);
                 r.append(td);
+                r._search = (u.id + ' ' + (u.name || '')).toLowerCase();
                 table.append(r);
             }
             box.append(table);
+            sortable(table, 'users');
+            const applyFilter = () => {
+                usersFilter = search.value.trim().toLowerCase();
+                for (const r of table.querySelectorAll('tr')) {
+                    if (r._search === undefined) continue;
+                    r.style.display = (!usersFilter || r._search.includes(usersFilter)) ? '' : 'none';
+                }
+            };
+            search.oninput = applyFilter;
+            applyFilter();
             box.append(el('p', 'muted', 'Debug: pending = set, not yet picked up '
                 + '(applies on the client next connect); self = the client turned it on itself.'));
         },
@@ -422,18 +556,31 @@ function markSort(ths, col, asc) {
 
 function sortable(table, id) {
     const ths = table.querySelectorAll('th');
-    ths.forEach((th, col) => {
-        th.classList.add('sortable');
-        th.onclick = () => {
-            const st = sortState[id];
-            const asc = !(st && st.col === col && st.asc);
-            sortState[id] = { col, asc };
-            markSort(ths, col, asc);
-            sortRows(table, col, asc);
-        };
-    });
+    ths.forEach((th) => th.classList.add('sortable'));
     const st = sortState[id];
     if (st) { markSort(ths, st.col, st.asc); sortRows(table, st.col, st.asc); }
+    // Delegate on the card body (which survives the refresh) and sort on
+    // mousedown, not click: the live cards rebuild their table every second,
+    // so a click - mousedown then mouseup on the SAME element - is often
+    // lost when the row is replaced between press and release. mousedown
+    // fires on the press alone and cannot be eaten that way.
+    const box = table.parentNode;
+    if (box && !box._sortBound) {
+        box._sortBound = true;
+        box.addEventListener('mousedown', (e) => {
+            const th = e.target.closest && e.target.closest('th.sortable');
+            if (!th) return;
+            const tbl = th.closest('table');
+            const cols = Array.from(tbl.querySelectorAll('th'));
+            const col = cols.indexOf(th);
+            if (col < 0) return;
+            const cur = sortState[id];
+            const asc = !(cur && cur.col === col && cur.asc);
+            sortState[id] = { col, asc };
+            markSort(cols, col, asc);
+            sortRows(tbl, col, asc);
+        });
+    }
 }
 
 const boxes = {};

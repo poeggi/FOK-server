@@ -115,6 +115,76 @@ switch ($action) {
         Util::jsonOut(['ok' => true, 'total' => $total, 'online_window' => FOK_ONLINE_WINDOW,
             'now' => time(), 'users' => $users]);
 
+    case 'client':
+        // One condensed view of everything known about a single client:
+        // identity, presence, its 1:1 / connection state, relay counters,
+        // matchmaking, friendships, scores and pending mailbox. Read-only,
+        // gathered from the tables each subsystem already keeps.
+        $id = $_GET['id'] ?? '';
+        if (!Util::isValidId($id)) {
+            Util::fail('invalid id');
+        }
+        $st = $db->prepare('SELECT id, name, ip, first_seen, last_seen, hello_count,
+            latency, debug, debug_active, accept_until, friend_ban_until FROM players WHERE id = ?');
+        $st->execute([$id]);
+        $p = $st->fetch();
+        if ($p === false) {
+            Util::fail('unknown client', 404);
+        }
+        $now = time();
+        $duel = ConnTrack::stateOf($id);
+        if ($duel !== null) {
+            $duel['age'] = $now - $duel['updated'];
+            $duel['live'] = $duel['updated'] > $now - FOK_CONN_TTL;
+        }
+        $rr = $db->prepare('SELECT total, blocked_until FROM relay_rate WHERE id = ?');
+        $rr->execute([$id]);
+        $rate = $rr->fetch() ?: null;
+        $mm = $db->prepare('SELECT since, matched_with FROM mm_queue WHERE id = ?');
+        $mm->execute([$id]);
+        $queue = $mm->fetch() ?: null;
+        $fr = $db->prepare("SELECT state, COUNT(*) c FROM friends
+            WHERE a = ? OR b = ? GROUP BY state");
+        $fr->execute([$id, $id]);
+        $friends = ['accepted' => 0, 'pending' => 0];
+        foreach ($fr->fetchAll() as $f) {
+            $friends[$f['state']] = (int)$f['c'];
+        }
+        $sc = $db->prepare('SELECT COUNT(*) c, MAX(score) best FROM scores WHERE player_id = ?');
+        $sc->execute([$id]);
+        $scores = $sc->fetch();
+        $mb = $db->prepare('SELECT COUNT(*) FROM signals WHERE to_id = ?');
+        $mb->execute([$id]);
+        $mailbox = (int)$mb->fetchColumn();
+        Util::jsonOut([
+            'ok' => true,
+            'now' => $now,
+            'online_window' => FOK_ONLINE_WINDOW,
+            'client' => [
+                'id' => $p['id'],
+                'name' => $p['name'],
+                'ip' => $p['ip'],
+                'first_seen' => (int)$p['first_seen'],
+                'last_seen' => (int)$p['last_seen'],
+                'hello_count' => (int)$p['hello_count'],
+                'latency' => $p['latency'] === null ? null : (int)$p['latency'],
+                'online' => (int)$p['last_seen'] > $now - FOK_ONLINE_WINDOW,
+                'debug' => (int)$p['debug'] === 1,
+                'debug_active' => (int)$p['debug_active'] === 1,
+                'accept_until' => (int)$p['accept_until'],
+                'friend_ban_until' => (int)$p['friend_ban_until'],
+                'duel' => $duel,
+                'relay_rate' => $rate === null ? null
+                    : ['total' => (int)$rate['total'], 'blocked_until' => (int)$rate['blocked_until']],
+                'matchmaking' => $queue === null ? null
+                    : ['since' => (int)$queue['since'], 'matched_with' => $queue['matched_with']],
+                'friends' => $friends,
+                'scores' => ['count' => (int)$scores['c'],
+                    'best' => $scores['best'] === null ? null : (int)$scores['best']],
+                'mailbox' => $mailbox,
+            ],
+        ]);
+
     case 'scores':
         Util::jsonOut(['ok' => true, 'scores' => Scores::top()]);
 
