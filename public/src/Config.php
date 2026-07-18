@@ -2,9 +2,14 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.16.24';
-// Contract version: bumps ONLY on breaking API changes (removed fields,
-// changed semantics). Additive changes do not bump it. Clients pin this.
+const FOK_SERVER_VERSION = '0.16.25';
+// Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
+// bumps only on breaking changes (removed fields, changed semantics):
+// clients gate on it and disable online play when the server's major is
+// newer than the one they were built against. The MINOR bumps on additive,
+// backward-compatible changes (a new optional signal type or field); a
+// client on the same major stays compatible and may read the minor to
+// detect optional features. A string, so major/minor split on the dot.
 // v2: friendship-gated status and invites, ms hello.now, friend
 // notifications, relay fallback.
 // v3: start.php requires epoch + reason + pts. A start is now issued for
@@ -13,7 +18,9 @@ const FOK_SERVER_VERSION = '0.16.24';
 // rather than let into a desynced game. The staleness half of that gate
 // applies only where play BEGINS (first/rematch, see Starts::
 // SYNC_GATED_REASONS); the in-run halts let the client resync as it goes.
-const FOK_API_VERSION = 3;
+// v3.1: additive 'peer-net' direct-connection hint (see docs/API.md). The
+// major stays 3, so v3 clients interoperate and simply ignore it.
+const FOK_API_VERSION = '3.1';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');

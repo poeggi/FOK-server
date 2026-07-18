@@ -12,18 +12,25 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":3, "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"3.1", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
-- `api` (FOK_API_VERSION) is THE CONTRACT version of this document. It
-  bumps only on breaking changes (fields removed, semantics changed);
-  additive changes never bump it.
+- `api` (FOK_API_VERSION) is THE CONTRACT version of this document, as a
+  `MAJOR.MINOR` string.
+  - MAJOR bumps only on breaking changes (fields removed, semantics
+    changed). This is the compatibility gate.
+  - MINOR bumps on additive, backward-compatible changes (a new optional
+    signal type or field). It advertises a capability; it never breaks a
+    client on the same major.
 
-Clients MUST check `api` at startup (version.php, or the `api` field
-that every hello response carries) and disable online features with a
-friendly notice when it is newer than what they were built against,
-rather than misbehave against an incompatible server.
+Clients MUST check `api` at startup (version.php, or the `api` field that
+every hello response carries) and compare the MAJOR (the integer before
+the dot): disable online features with a friendly notice when the
+server's MAJOR is newer than what they were built against, rather than
+misbehave against an incompatible server. A newer MINOR on the same MAJOR
+is safe to talk to; a client may read the MINOR to tell whether an
+optional feature (e.g. the peer-net hint, added in 3.1) is available.
 
 ## Conventions
 
@@ -317,7 +324,7 @@ Response:
 
     {
       "ok": true,
-      "api": 3,                   contract version, see Versioning
+      "api": "3.1",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "debug": false,             the server's instruction: the client MUST
@@ -542,8 +549,9 @@ address, not the eventual UDP port, and cannot know whether two
 addresses can actually reach each other; family 0 means the address was
 unknown. It is NOT sent when relay was declared ('accept-relay', or a
 pair already relaying), since those never attempt a direct connection.
-It is additive - a client that ignores the type is unaffected, and the
-`api` contract version does not bump for it.
+It is additive - a client that ignores the type is unaffected - and it
+bumps only the api MINOR (3.1). The major stays 3, so a v3 client stays
+compatible; a client reads the minor to know the hint is available.
 
 ## The player profile object
 
