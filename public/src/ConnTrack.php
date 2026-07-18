@@ -9,10 +9,11 @@ require_once __DIR__ . '/Db.php';
  * Inferred from traffic the server relays anyway (signal handshake, duel
  * heartbeat, relay messages), so clients report nothing for it.
  *
- * States: inviting, invited, connecting, playing. 'idle' and the offline
- * filter are derived in listOnline(), never stored. mode is 'p2p' or
- * 'relay'; relay is never downgraded, the no-P2P bit counts from either
- * side.
+ * States: inviting, invited, connecting, playing, plus the terminal
+ * declined / ended that linger briefly on the Duels card (see listDuels).
+ * Presence - every online client - is a separate list, listPresence.
+ * mode is 'p2p' or 'relay'; relay is never downgraded within a duel, the
+ * no-P2P bit counts from either side.
  */
 final class ConnTrack
 {
@@ -45,6 +46,13 @@ final class ConnTrack
             self::clear($to, $from);
             return;
         }
+        if ($type === 'bye') {
+            // A clean teardown does not wipe the pair: both sides keep a
+            // short-lived 'ended' row so the duel lingers on the Duels card
+            // for FOK_DUEL_LINGER seconds instead of blinking out.
+            self::end($from, $to);
+            return;
+        }
         [$mine, $theirs, $mode] = self::BY_TYPE[$type];
         if ($mine === null) {
             self::clear($from, $to);
@@ -60,6 +68,28 @@ final class ConnTrack
     {
         self::set($a, $b, 'playing', null);
         self::set($b, $a, 'playing', null);
+    }
+
+    /**
+     * A clean teardown (bye): both sides keep a short-lived 'ended' row so
+     * the duel lingers on the Duels card for FOK_DUEL_LINGER seconds, and
+     * the relay slot is freed at once (relay_seen = 0) so a byed relay duel
+     * does not hold the cap for the whole relay window. Touches only rows
+     * that are actually THIS pairing (same guard as clear): a stranger's
+     * bye must not end a duel it has nothing to do with.
+     */
+    public static function end(string $a, string $b): void
+    {
+        self::markEnded($a, $b);
+        self::markEnded($b, $a);
+    }
+
+    private static function markEnded(string $id, string $peer): void
+    {
+        Db::get()->prepare(
+            "UPDATE conn SET state = 'ended', updated = ?, relay_seen = 0
+               WHERE id = ? AND peer = ?"
+        )->execute([time(), $id, $peer]);
     }
 
     /**
@@ -121,29 +151,24 @@ final class ConnTrack
     }
 
     /**
-     * Presence for the Connections card: who is here, newest first, with a
-     * short tail so a client that just dropped stays visible (gone=true)
-     * for FOK_DUEL_LINGER seconds. Clients in a 1:1 - a live or just-ended
-     * duel, or a quick-match seeker - are NOT here; they live on the Duels
-     * card (listDuels), so a client shows on exactly one of the two.
+     * Presence for the Connections card: every client that is here, newest
+     * first, with a short tail so one that just dropped stays visible
+     * (gone=true) for FOK_DUEL_LINGER seconds. Clients in a 1:1 are listed
+     * here too - presence is the full picture; the Duels card (listDuels)
+     * additionally breaks out those in a duel phase.
      * @return array [{id, name, ip, latency, last_seen, gone}]
      */
     public static function listPresence(int $limit = 200): array
     {
         $db = Db::get();
         $now = time();
-        // The LEFT JOIN only matches a conn row that counts as an active or
-        // just-ended duel, so c.id IS NULL means "not in a duel"; seekers
-        // are removed the same way.
         $st = $db->prepare(
-            'SELECT p.id, p.name, p.ip, p.latency, p.last_seen
-               FROM players p
-               LEFT JOIN conn c ON c.id = p.id AND c.peer IS NOT NULL AND c.updated > ?
-              WHERE p.last_seen > ? AND c.id IS NULL
-                AND p.id NOT IN (SELECT id FROM mm_queue WHERE matched_with IS NULL)
-              ORDER BY p.last_seen DESC LIMIT ' . $limit
+            'SELECT id, name, ip, latency, last_seen
+               FROM players
+              WHERE last_seen > ?
+              ORDER BY last_seen DESC LIMIT ' . $limit
         );
-        $st->execute([$now - FOK_CONN_TTL - FOK_DUEL_LINGER, $now - FOK_ONLINE_WINDOW - FOK_DUEL_LINGER]);
+        $st->execute([$now - FOK_ONLINE_WINDOW - FOK_DUEL_LINGER]);
         $out = [];
         foreach ($st->fetchAll() as $r) {
             $out[] = [
@@ -161,10 +186,11 @@ final class ConnTrack
     /**
      * The 1:1 Duels card: one row per client in a duel phase - inferred
      * from the conn row the signal handshake, duel heartbeat and relay
-     * write - plus quick-match seekers from mm_queue that have no peer yet.
-     * A row shows its live state while conn.updated is fresh (FOK_CONN_TTL)
-     * and lingers FOK_DUEL_LINGER seconds past that as 'ended', so a
-     * finished duel does not vanish the instant it goes quiet.
+     * write leave - plus quick-match seekers from mm_queue with no peer
+     * yet. A live phase shows while conn.updated is fresh (FOK_CONN_TTL); a
+     * clean bye or decline leaves a terminal row that lingers exactly
+     * FOK_DUEL_LINGER seconds, and a duel that simply goes quiet is shown
+     * as 'ended' for the same tail - so nothing blinks out mid-glance.
      * @return array [{id, name, peer, state, mode, latency, msgs, since}]
      */
     public static function listDuels(int $limit = 200): array
@@ -185,12 +211,24 @@ final class ConnTrack
         $seen = [];
         foreach ($st->fetchAll() as $r) {
             $seen[$r['id']] = true;
-            $ended = (int)$r['updated'] < $now - FOK_CONN_TTL;
+            $state = $r['state'];
+            $age = $now - (int)$r['updated'];
+            if ($state === 'ended' || $state === 'declined') {
+                // A clean teardown or a rejection: keep it exactly
+                // FOK_DUEL_LINGER seconds, then let it go.
+                if ($age > FOK_DUEL_LINGER) {
+                    continue;
+                }
+            } elseif ($age > FOK_CONN_TTL) {
+                // A live phase that stopped refreshing (no bye reached us):
+                // treat the stale row as ended and give it the same tail.
+                $state = 'ended';
+            }
             $out[] = [
                 'id' => $r['id'],
                 'name' => $r['name'],
                 'peer' => $r['peer'],
-                'state' => $ended ? 'ended' : $r['state'],
+                'state' => $state,
                 'mode' => $r['mode'],
                 'latency' => $r['latency'] === null ? null : (int)$r['latency'],
                 'msgs' => (int)$r['msgs'],
@@ -224,7 +262,9 @@ final class ConnTrack
     /**
      * $mode null keeps whatever the pair already declared (the duel
      * heartbeat does not know the mode); a 'p2p' write never overwrites a
-     * standing 'relay' for the same peer, so the no-P2P bit sticks.
+     * standing 'relay' for the same peer, so the no-P2P bit sticks - but
+     * only within a live duel: an invite that reopens a just-ended pairing
+     * (state ended/declined) starts its mode clean.
      */
     private static function set(string $id, string $peer, string $state, ?string $mode): void
     {
@@ -234,6 +274,7 @@ final class ConnTrack
                  peer = excluded.peer,
                  state = excluded.state,
                  mode = CASE WHEN conn.peer = excluded.peer
+                                  AND conn.state NOT IN (\'ended\', \'declined\')
                                   AND (excluded.mode IS NULL OR conn.mode = \'relay\')
                              THEN conn.mode ELSE excluded.mode END,
                  updated = excluded.updated'

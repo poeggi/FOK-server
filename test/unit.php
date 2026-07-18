@@ -21,6 +21,15 @@ require_once __DIR__ . '/../public/src/Friends.php';
 require_once __DIR__ . '/../public/src/RelayRate.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
 
+// Util installs a fault handler that answers 500 and exits 0 - right for a
+// request, fatal for a test run, where it would swallow a throwable (a
+// renamed method, a type error) and let the suite pass blind. Override it:
+// anything that escapes a test must FAIL the run loudly.
+set_exception_handler(static function (Throwable $e): void {
+    fwrite(STDERR, "UNCAUGHT: $e\n");
+    exit(1);
+});
+
 $tests = 0;
 function ok(bool $cond, string $what): void
 {
@@ -318,68 +327,93 @@ Db::get()->prepare('INSERT INTO signals (from_id, to_id, type, payload, created)
 ok(!Signals::any('bbbbbbbb'), 'expired signal does not count as pending');
 Signals::take('bbbbbbbb');
 
-// ConnTrack: the connection state both peers are in, inferred from the
-// signaling traffic the server relays anyway.
-function connOf(string $id): array
+// ConnTrack: the duel state both peers are in, inferred from the
+// signaling traffic the server relays anyway. A client shows on the Duels
+// card only while it is in a duel phase (listDuels); presence - every
+// online client - is a separate, fuller list (listPresence).
+function duelOf(string $id): array
 {
-    foreach (ConnTrack::listOnline() as $c) {
+    foreach (ConnTrack::listDuels() as $c) {
         if ($c['id'] === $id) {
             return $c;
         }
     }
     return [];
 }
-ok(connOf('aaaaaaaa')['state'] === 'idle', 'untracked online client is idle');
+function onPresence(string $id): bool
+{
+    foreach (ConnTrack::listPresence() as $c) {
+        if ($c['id'] === $id) {
+            return true;
+        }
+    }
+    return false;
+}
+ok(duelOf('aaaaaaaa') === [], 'an untracked client is not on the Duels card');
+ok(onPresence('aaaaaaaa'), 'but every online client is on the presence card');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
-ok(connOf('aaaaaaaa')['state'] === 'inviting', 'inviter is inviting');
-ok(connOf('aaaaaaaa')['peer'] === 'bbbbbbbb', 'inviter tracks its peer');
-ok(connOf('bbbbbbbb')['state'] === 'invited', 'invited peer sees the invite');
-ok(connOf('bbbbbbbb')['peer'] === 'aaaaaaaa', 'invited peer tracks the inviter');
-ok(connOf('aaaaaaaa')['mode'] === 'p2p', 'plain invite means p2p');
+ok(duelOf('aaaaaaaa')['state'] === 'inviting', 'inviter is inviting');
+ok(duelOf('aaaaaaaa')['peer'] === 'bbbbbbbb', 'inviter tracks its peer');
+ok(duelOf('bbbbbbbb')['state'] === 'invited', 'invited peer sees the invite');
+ok(duelOf('bbbbbbbb')['peer'] === 'aaaaaaaa', 'invited peer tracks the inviter');
+ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'plain invite means p2p');
+ok(onPresence('aaaaaaaa'), 'a dueling client is still on the presence card too');
 ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'accept');
-ok(connOf('aaaaaaaa')['state'] === 'connecting', 'accept moves both to connecting');
-ok(connOf('bbbbbbbb')['state'] === 'connecting', 'accepting peer is connecting too');
+ok(duelOf('aaaaaaaa')['state'] === 'connecting', 'accept moves both to connecting');
+ok(duelOf('bbbbbbbb')['state'] === 'connecting', 'accepting peer is connecting too');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'ice');
-ok(connOf('aaaaaaaa')['state'] === 'connecting', 'ice keeps connecting');
+ok(duelOf('aaaaaaaa')['state'] === 'connecting', 'ice keeps connecting');
 ConnTrack::playing('aaaaaaaa', 'bbbbbbbb');
-ok(connOf('aaaaaaaa')['state'] === 'playing', 'duel heartbeat means playing');
-ok(connOf('aaaaaaaa')['mode'] === 'p2p', 'playing keeps the negotiated mode');
-ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
-ok(connOf('aaaaaaaa')['state'] === 'idle', 'bye returns the sender to idle');
-ok(connOf('bbbbbbbb')['state'] === 'idle', 'bye returns the peer to idle');
-ok(connOf('aaaaaaaa')['peer'] === null, 'bye clears the peer');
+ok(duelOf('aaaaaaaa')['state'] === 'playing', 'duel heartbeat means playing');
+ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'playing keeps the negotiated mode');
 
-// ConnTrack: the no-P2P bit is honored from either side and sticks
+// bye no longer wipes the pair: both sides keep a short-lived 'ended' row
+// so the duel lingers on the Duels card for FOK_DUEL_LINGER seconds.
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
+ok(duelOf('aaaaaaaa')['state'] === 'ended', 'bye ends the duel but it lingers');
+ok(duelOf('bbbbbbbb')['state'] === 'ended', 'the peer side lingers as ended too');
+ok(duelOf('aaaaaaaa')['peer'] === 'bbbbbbbb', 'the ended row still names the peer');
+Db::get()->prepare('UPDATE conn SET updated = ? WHERE id IN (?, ?)')
+    ->execute([time() - FOK_DUEL_LINGER - 1, 'aaaaaaaa', 'bbbbbbbb']);
+ok(duelOf('aaaaaaaa') === [], 'past the linger the ended duel drops off the card');
+
+// ConnTrack: the no-P2P bit is honored from either side and sticks within
+// a duel; reopening a just-ended pairing starts its mode clean.
 ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'invite-relay');
-ok(connOf('bbbbbbbb')['mode'] === 'relay', 'invite-relay declares relay');
-ok(connOf('aaaaaaaa')['mode'] === 'relay', 'the invited peer sees relay too');
+ok(duelOf('bbbbbbbb')['mode'] === 'relay', 'invite-relay declares relay');
+ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'the invited peer sees relay too');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'accept');
-ok(connOf('aaaaaaaa')['mode'] === 'relay', 'a plain accept cannot downgrade to p2p');
+ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'a plain accept cannot downgrade to p2p');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
 ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'accept-relay');
-ok(connOf('aaaaaaaa')['mode'] === 'relay', 'accept-relay declares relay from the other side');
+ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'accept-relay declares relay from the other side');
 
-// ConnTrack: an UNDECLARED p2p -> relay fallback still shows as relay
+// ConnTrack: an UNDECLARED p2p -> relay fallback still shows as relay, and
+// a plain invite reopening the ended pairing resets the mode to p2p first.
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
-ok(connOf('aaaaaaaa')['mode'] === 'p2p', 'plain invite starts out p2p');
+ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'plain invite starts out p2p');
 ConnTrack::relaying('aaaaaaaa', 'bbbbbbbb');
-ok(connOf('aaaaaaaa')['mode'] === 'relay', 'relay traffic reports relay without a declaration');
-ok(connOf('aaaaaaaa')['state'] === 'playing', 'relay traffic means the game runs');
+ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'relay traffic reports relay without a declaration');
+ok(duelOf('aaaaaaaa')['state'] === 'playing', 'relay traffic means the game runs');
 
-// ConnTrack: a client that goes quiet mid-handshake falls back to idle
+// ConnTrack: a duel that goes quiet (no bye reached us) is shown as ended
+// for the linger window, then drops off.
 Db::get()->prepare('UPDATE conn SET updated = ? WHERE id = ?')
     ->execute([time() - FOK_CONN_TTL - 1, 'aaaaaaaa']);
-ok(connOf('aaaaaaaa')['state'] === 'idle', 'stale connection state reads as idle');
-ok(connOf('aaaaaaaa')['peer'] === null, 'stale connection reports no peer');
+ok(duelOf('aaaaaaaa')['state'] === 'ended', 'a quiet duel reads as ended');
+Db::get()->prepare('UPDATE conn SET updated = ? WHERE id = ?')
+    ->execute([time() - FOK_CONN_TTL - FOK_DUEL_LINGER - 1, 'aaaaaaaa']);
+ok(duelOf('aaaaaaaa') === [], 'past the linger the quiet duel drops off the card');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
 ConnTrack::forget('aaaaaaaa');
-ok(connOf('aaaaaaaa')['state'] === 'idle', 'forgotten client is idle');
-ok(connOf('bbbbbbbb')['state'] === 'idle', 'forget drops the peer side as well');
+ok(duelOf('aaaaaaaa') === [], 'a forgotten client is off the Duels card');
+ok(duelOf('bbbbbbbb') === [], 'forget drops the peer side as well');
 
-// ConnTrack: offline clients are not listed at all
-ok(connOf('cccccccc') === [], 'unknown client not in the online list');
+// ConnTrack: a client with no player row is on neither card.
+ok(!onPresence('cccccccc'), 'an unknown client is not on the presence card');
+ok(duelOf('cccccccc') === [], 'nor on the Duels card');
 
 // ConnTrack: relay admission is counted from the hub traffic a pair
 // really caused, not from queued messages (gone the instant the receiver
@@ -402,7 +436,7 @@ ok(ConnTrack::relayPairs() === 0, 'a pair that stopped relaying frees its slot')
 // pairs would deny the relay to everyone.
 Db::get()->exec('DELETE FROM conn');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite-relay');
-ok(connOf('aaaaaaaa')['mode'] === 'relay', 'declaration is tracked as relay mode');
+ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'declaration is tracked as relay mode');
 ok(ConnTrack::relayPairs() === 0, 'a no-p2p declaration takes no relay slot');
 ok(!ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'declaring pair holds no slot yet');
 ConnTrack::relaying('aaaaaaaa', 'bbbbbbbb');
@@ -413,12 +447,13 @@ ok(ConnTrack::relayPairs() === 1, 'real hub traffic takes the slot');
 // drop the slot of a live relayed duel and get it turned away on resume.
 ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'duel is relaying before the stranger');
 ConnTrack::note('cccccccc', 'aaaaaaaa', 'bye');
-ok(connOf('aaaaaaaa')['peer'] === 'bbbbbbbb', "a stranger's bye leaves the connection alone");
+ok(duelOf('aaaaaaaa')['peer'] === 'bbbbbbbb', "a stranger's bye leaves the connection alone");
 ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), "a stranger's bye cannot drop the relay slot");
 ConnTrack::playing('aaaaaaaa', 'bbbbbbbb');
 ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'the duel heartbeat keeps the relay slot');
 ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'bye');
-ok(connOf('aaaaaaaa')['state'] === 'idle', "the real peer's bye does end it");
+ok(duelOf('aaaaaaaa')['state'] === 'ended', "the real peer's bye ends it (it lingers)");
+ok(!ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'and frees the relay slot at once');
 Db::get()->exec('DELETE FROM conn');
 
 // Auth: verify against hash file, lockout after repeated failures

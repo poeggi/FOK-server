@@ -100,7 +100,7 @@ switch ($action) {
             Util::fail('invalid id');
         }
         // The wish only: the client honours it on its next hello and
-        // reports back what it actually did (see ConnTrack::listOnline).
+        // reports back what it actually did (see the users card).
         Presence::setDebug($id, ($_POST['on'] ?? '') === '1');
         Util::jsonOut(['ok' => true]);
 

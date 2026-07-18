@@ -106,8 +106,6 @@ const MODULES = [
             }
             box.append(table);
             sortable(table, 'conns');
-            box.append(el('p', 'muted', 'Clients in a 1:1 are on the Duels card; a dropped '
-                + 'client lingers here (gone) for a few seconds. Click a header to sort.'));
         },
     },
     {

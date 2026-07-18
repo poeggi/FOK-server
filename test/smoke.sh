@@ -658,6 +658,10 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
     expect "running duel tracked as playing" '"state":"playing"' "$R"
     expect "playing keeps the relay mode" '"mode":"relay"' "$R"
+    # Presence is the full picture now: a client in a duel is on Connections
+    # too, and only the Duels card breaks out the duel phase.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
+    expect "a dueling client also shows on Connections (online)" "$(strict "\"id\":\"$ID1\"")" "$R"
 
     # A decline leaves the decliner on a short-lived 'declined' row naming
     # who it turned down, so the Duels card shows the rejection and who
@@ -671,6 +675,10 @@ else
 
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"bye\",\"payload\":\"\"}" "$BASE/api/signal.php" > /dev/null
+    # A clean bye no longer wipes the pair: the duel lingers as 'ended' on
+    # the Duels card for FOK_DUEL_LINGER seconds instead of vanishing.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
+    expect "an ended duel lingers on the Duels card" '"state":"ended"' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
     expect "connections (presence) listed" '"conns":' "$R"
     expect "after bye a client is back on the Connections card" "$(strict "\"id\":\"$ID1\"")" "$R"
