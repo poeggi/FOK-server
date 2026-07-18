@@ -97,26 +97,35 @@ ordered() { # ordered <name> <first> <second> <actual>
     fi
 }
 
+# Log in to the admin API up front (when creds are available) so the rate
+# and ban tests below can lower their caps via `setting` - a couple of
+# requests instead of a flood. Without creds (a bare remote diagnostic run)
+# they fall back to flooding at the default caps. The admin section later
+# re-tests the login flow in full; this early login does not disturb it.
+ADMIN=0
+if [ -n "$ADMIN_USER" ]; then
+    curl -s -o /dev/null -c "$COOKIES" -X POST \
+        --data-urlencode "do=login" --data-urlencode "user=$ADMIN_USER" --data-urlencode "pass=$ADMIN_PASS" \
+        "$BASE/admin/index.php"
+    ADMIN=1
+fi
+
 R=$(curl -s "$BASE/")
 expect "landing page" "FOK" "$R"
 expect "landing shows public stats" 'client ids' "$R"
 
-# The exact path a browser at the game origin takes: CORS must be open.
-R=$(curl -s -i -H 'Origin: https://poeggi.github.io' "$BASE/api/version.php" | grep -i '^access-control-allow-origin' || true)
-expect "game origin allowed by CORS" 'poeggi.github.io' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: https://poeggi.github.io' \
-    -H 'Access-Control-Request-Method: POST' "$BASE/api/hello.php")
-expect "CORS preflight passes" '204' "$R"
-
+# The exact path a browser at the game origin takes: CORS must be open. One
+# fetch with -i carries the ACAO header AND the version body (same response).
 EXPECT_ENV=live
 [[ "$BASE" == */staging ]] && EXPECT_ENV=staging
-R=$(curl -s "$BASE/api/version.php")
+R=$(curl -s -i -H 'Origin: https://poeggi.github.io' "$BASE/api/version.php")
+expect "game origin allowed by CORS" 'poeggi.github.io' "$R"
 expect "version endpoint" '"server":"' "$R"
 expect "api contract version" '"api":' "$R"
 expect "environment reported" "\"env\":\"$EXPECT_ENV\"" "$R"
-
-R=$(curl -s "$BASE/api/scores.php")
-expect "db seeded with default entry" 'SNAKE PLISSKEN' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: https://poeggi.github.io' \
+    -H 'Access-Control-Request-Method: POST' "$BASE/api/hello.php")
+expect "CORS preflight passes" '204' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"}" "$BASE/api/hello.php")
 expect "hello registers" "$(strict '"registered":1')" "$R"
@@ -141,6 +150,7 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
 expect "score submit" '"rank":1' "$R"
 
 R=$(curl -s "$BASE/api/scores.php")
+expect "db seeded with default entry" 'SNAKE PLISSKEN' "$R"
 expect "score listed" '"name":"SMOKE"' "$R"
 expect "score has color" '"color":3' "$R"
 expect "score has shopItems" '"shopItems":{"hat":1}' "$R"
@@ -149,7 +159,11 @@ expect "score has date" '"date":"' "$R"
 R=$(curl -s "$BASE/api/scores.php?limit=1")
 expect "scores limit works" '"scores":[{' "$R"
 
-for i in $(seq 1 9); do
+# Trip the per-player submit throttle. With admin, lower the cap so a few
+# submits suffice; otherwise flood to the default cap (10).
+subs=9
+if [ "$ADMIN" -eq 1 ]; then setting score_rate_max 2; subs=3; fi
+for i in $(seq 1 "$subs"); do
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\",\"name\":\"S$i\",\"score\":$i,\"level\":1,\"diff\":1}" \
         "$BASE/api/scores.php" > /dev/null
@@ -157,6 +171,7 @@ done
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"name\":\"SPAM\",\"score\":1,\"level\":1,\"diff\":1}" "$BASE/api/scores.php")
 expect "score submissions throttled" '429' "$R"
+[ "$ADMIN" -eq 1 ] && setting score_rate_max 10
 
 R=$(curl -s "$BASE/api/time.php")
 expect "time sync endpoint" '"t":' "$R"
@@ -311,8 +326,16 @@ expect "friend name reported" "\"$ID2\":\"SMOKE TWO\"" "$FN"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"latency\":99999}" "$BASE/api/hello.php")
 expect "absurd latency rejected" '"error":"invalid latency"' "$R"
 
-# A start carries a FRESH sync proof, so every request re-reads the clock.
-now_ms() { curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2; }
+# A start carries a sync proof (pts) in server-clock ms. Rather than read
+# /api/time.php for every one, learn the client<->server skew ONCE and then
+# compute pts locally - the server tolerates minutes of drift, so second
+# resolution is ample. (The pts logic itself is exercised in unit.php.)
+# Millisecond-resolution local clock; the round-trip latency biases SKEW
+# slightly negative, so a computed pts lands just in the PAST - never the
+# future the sync gate rejects.
+_srv_ms=$(curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2)
+SKEW=$(( _srv_ms - $(date +%s%3N) ))
+now_ms() { echo $(( $(date +%s%3N) + SKEW )); }
 start_req() { # id peer epoch reason pts
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$1\",\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5}" \
@@ -554,11 +577,15 @@ curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 curl -s "$BASE/api/poll.php?id=$ID1" > /dev/null
 
 # Mass friend requests: alert + timed ban + purge of the spammer's pendings.
-for i in $(seq 10 26); do
+# With admin, lower the cap so a handful trips the ban; otherwise flood (15).
+freqs=$(seq 10 26)
+if [ "$ADMIN" -eq 1 ]; then setting friend_req_max 3; freqs=$(seq 10 16); fi
+for i in $freqs; do
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"aa0000$i\"}" "$BASE/api/friend.php")
 done
 expect "friend-request spam banned" 'banned' "$R"
+[ "$ADMIN" -eq 1 ] && setting friend_req_max 15
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"aa000099\"}" "$BASE/api/friend.php")
 expect "banned client stays banned" '429' "$R"
@@ -605,18 +632,20 @@ else
     expect "admin has settings view" 'id="settings"' "$R"
     expect "admin assets cache-busted" "admin.js?v=$VER" "$R"
 
-    R=$(curl -s "$BASE/assets/admin.css?v=$VER")
-    expect "hidden class wins the cascade" 'display: none !important' "$R"
+    # Fetch each static asset ONCE and run every assertion against the saved
+    # copy (they are byte-identical at both check sites; ?v= is the version).
+    CSS_ASSET=$(curl -s "$BASE/assets/admin.css?v=$VER")
+    expect "hidden class wins the cascade" 'display: none !important' "$CSS_ASSET"
 
-    R=$(curl -s "$BASE/assets/admin.js?v=$VER")
-    N=$(echo "$R" | grep -c "view: 'settings'" || true)
+    JS_ASSET=$(curl -s "$BASE/assets/admin.js?v=$VER")
+    N=$(echo "$JS_ASSET" | grep -c "view: 'settings'" || true)
     if [ "$N" -ge 2 ]; then
         echo "ok   config and backup modules live in the settings view ($N)"
     else
         echo "FAIL expected >=2 modules with view: 'settings', found $N"
         fail=1
     fi
-    expect "gear toggles the views" 'toggle.onclick' "$R"
+    expect "gear toggles the views" 'toggle.onclick' "$JS_ASSET"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=props")
     expect "props tile has pts anchor" '1970-01-01T00:00:00.000Z' "$R"
@@ -729,22 +758,21 @@ else
     R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=client&id=12345678")
     expect "client details 404 for an unknown id" '404' "$R"
 
-    R=$(curl -s "$BASE/assets/admin.js?v=$VER")
-    expect "connections card on the dashboard" "id: 'conns'" "$R"
-    expect "duels card on the dashboard" "id: 'duels'" "$R"
-    expect "connections card has its own interval" "every: 'admin_conns_refresh_secs'" "$R"
-    expect "duels card has its own interval" "every: 'admin_duels_refresh_secs'" "$R"
-    expect "global refresh interval sits in the top bar" "prepend(intervalControl('admin_refresh_secs'" "$R"
-    expect "the users card can toggle debug" "api('set_debug'" "$R"
-    expect "tables can be sorted by column" "function sortable(" "$R"
-    expect "sorting survives the refresh (delegated on the card body)" "_sortBound" "$R"
-    expect "an id opens the client details popup" "function showClient(" "$R"
-    expect "the details popup is wired to the client endpoint" "api('client&id='" "$R"
-    expect "ipv6 is truncated to first and last group" "function ipCell(" "$R"
-    expect "registered users has a live id/name filter" "Filter by ID or name" "$R"
-    expect "the details popup has its own auto-refresh" "clientRefreshSecs" "$R"
-    expect "statistics show the live load gauges" "Msgs in/min" "$R"
-    expect "header controls share one architecture-wide size" "--ctl-w" "$(curl -s "$BASE/assets/admin.css?v=$VER")"
+    expect "connections card on the dashboard" "id: 'conns'" "$JS_ASSET"
+    expect "duels card on the dashboard" "id: 'duels'" "$JS_ASSET"
+    expect "connections card has its own interval" "every: 'admin_conns_refresh_secs'" "$JS_ASSET"
+    expect "duels card has its own interval" "every: 'admin_duels_refresh_secs'" "$JS_ASSET"
+    expect "global refresh interval sits in the top bar" "prepend(intervalControl('admin_refresh_secs'" "$JS_ASSET"
+    expect "the users card can toggle debug" "api('set_debug'" "$JS_ASSET"
+    expect "tables can be sorted by column" "function sortable(" "$JS_ASSET"
+    expect "sorting survives the refresh (delegated on the card body)" "_sortBound" "$JS_ASSET"
+    expect "an id opens the client details popup" "function showClient(" "$JS_ASSET"
+    expect "the details popup is wired to the client endpoint" "api('client&id='" "$JS_ASSET"
+    expect "ipv6 is truncated to first and last group" "function ipCell(" "$JS_ASSET"
+    expect "registered users has a live id/name filter" "Filter by ID or name" "$JS_ASSET"
+    expect "the details popup has its own auto-refresh" "clientRefreshSecs" "$JS_ASSET"
+    expect "statistics show the live load gauges" "Msgs in/min" "$JS_ASSET"
+    expect "header controls share one architecture-wide size" "--ctl-w" "$CSS_ASSET"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
     expect "global refresh interval defaults to 30 s" '"key":"admin_refresh_secs","value":30' "$R"
