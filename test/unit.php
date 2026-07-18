@@ -51,6 +51,16 @@ ok(!Util::isValidId('c0ffee421'), 'long id rejected');
 ok(!Util::isValidId(12345678), 'non-string id rejected');
 ok(!Util::isValidId(null), 'null id rejected');
 
+// Util: TLS floor - only a positively pre-1.2 transport is refused.
+ok(Util::tlsBelow12('TLSv1') === true, 'TLS 1.0 is below the floor');
+ok(Util::tlsBelow12('TLSv1.0') === true, 'TLS 1.0 (dotted) is below the floor');
+ok(Util::tlsBelow12('TLSv1.1') === true, 'TLS 1.1 is below the floor');
+ok(Util::tlsBelow12('SSLv3') === true, 'SSLv3 is below the floor');
+ok(Util::tlsBelow12('TLSv1.2') === false, 'TLS 1.2 is accepted');
+ok(Util::tlsBelow12('TLSv1.3') === false, 'TLS 1.3 is accepted');
+ok(Util::tlsBelow12('TLSv2.0') === false, 'a future TLS is accepted');
+ok(Util::tlsBelow12('') === false, 'an absent/unknown protocol is fail-open');
+
 // Presence: registration and counting
 Presence::touch('aaaaaaaa', '1.2.3.4');
 Presence::touch('bbbbbbbb', '5.6.7.8');

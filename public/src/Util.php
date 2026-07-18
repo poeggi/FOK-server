@@ -93,6 +93,31 @@ final class Util
     }
 
     /**
+     * True only for a transport we can POSITIVELY identify as pre-TLS-1.2
+     * (SSLv2/3, TLS 1.0/1.1). An empty or unrecognised value reads as
+     * acceptable (fail-open): TLS may be terminated upstream where PHP never
+     * sees SSL_PROTOCOL, and we must not block a request we cannot judge.
+     */
+    public static function tlsBelow12(string $proto): bool
+    {
+        return $proto !== ''
+            && (str_starts_with($proto, 'SSL') || preg_match('/^TLSv1(\.[01])?$/', $proto) === 1);
+    }
+
+    /**
+     * Backstop in case the host's TLS floor is ever relaxed: refuse a
+     * request served over pre-1.2 TLS. Runs on every request (see the load
+     * hook below). The host already rejects old TLS at the handshake, so in
+     * practice this never fires - it is there for the day that changes.
+     */
+    public static function requireModernTls(): void
+    {
+        if (self::tlsBelow12($_SERVER['SSL_PROTOCOL'] ?? '')) {
+            self::fail('TLS 1.2 or higher required', 426);
+        }
+    }
+
+    /**
      * The request body, hard-capped: the only other bound is PHP's
      * post_max_size (8M default), i.e. anyone could make a worker buffer
      * megabytes. Rejected loudly (413), never silently trimmed.
@@ -284,3 +309,8 @@ final class Util
 }
 
 Util::installFaultHandler();
+// Every request that reaches PHP passes through here (all endpoints require
+// Util). Refuse anything below TLS 1.2 - a no-op while the host enforces it
+// at the handshake, a guard if that ever changes. Fail-open when the TLS
+// version is not visible (CLI tests, upstream termination).
+Util::requireModernTls();
