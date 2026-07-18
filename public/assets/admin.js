@@ -206,6 +206,24 @@ function renderClientBody(body, overlay, d) {
     kv('Mailbox', c.mailbox + ' pending signal(s)');
     if (c.friend_ban_until > now) kv('Friend-banned', 'for ' + (c.friend_ban_until - now) + ' s');
 
+    sec('Config backup');
+    if (c.backup) {
+        kv('Stored', 'yes');
+        kv('When', fmtTime(c.backup.updated) + ' (' + ago(c.backup.updated) + ')');
+        kv('Size', fmtBytes(c.backup.bytes));
+        // Manual recovery: download the config WITHOUT the token, as the
+        // snake-fok-backup.json the game imports directly.
+        const r = el('tr');
+        const v = el('td', 'kv-v');
+        const dl = el('button', 'small', 'download backup');
+        dl.onclick = () => { window.location = API + '?action=vault_export&id=' + c.id; };
+        v.append(dl);
+        r.append(el('td', 'kv-k', 'Recovery'), v);
+        tbl.append(r);
+    } else {
+        kv('Stored', 'no');
+    }
+
     body.append(tbl);
 }
 

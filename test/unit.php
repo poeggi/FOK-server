@@ -520,6 +520,8 @@ ok(Vault::restore('aaaaaaaa', $tok)['payload'] === 'updated-blob', 'the later ba
 ok(Vault::restore('bbbbbbbb', $tok) === null, 'another id keeps its own empty slot');
 $v3 = Vault::backup('bbbbbbbb', 'other', null);
 ok($v3['token'] !== $tok, 'a different id gets a different token');
+ok(Vault::peek('aaaaaaaa')['payload'] === 'updated-blob', 'peek reads a backup without the token (admin recovery)');
+ok(Vault::peek('cccccccc') === null, 'peek is null for an id with no backup');
 Db::get()->exec('DELETE FROM vault');
 
 // Auth: verify against hash file, lockout after repeated failures

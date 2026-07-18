@@ -9,6 +9,7 @@ require_once __DIR__ . '/../src/Backup.php';
 require_once __DIR__ . '/../src/Alerts.php';
 require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
+require_once __DIR__ . '/../src/Vault.php';
 
 Auth::requireLogin();
 
@@ -158,6 +159,9 @@ switch ($action) {
         $mb = $db->prepare('SELECT COUNT(*) FROM signals WHERE to_id = ?');
         $mb->execute([$id]);
         $mailbox = (int)$mb->fetchColumn();
+        // Config backup (no token: admin manual-recovery view; download via
+        // the vault_export action below).
+        $backup = Vault::peek($id);
         Util::jsonOut([
             'ok' => true,
             'now' => $now,
@@ -184,8 +188,27 @@ switch ($action) {
                 'scores' => ['count' => (int)$scores['c'],
                     'best' => $scores['best'] === null ? null : (int)$scores['best']],
                 'mailbox' => $mailbox,
+                'backup' => $backup === null ? null
+                    : ['updated' => $backup['updated'], 'bytes' => strlen($backup['payload'])],
             ],
         ]);
+
+    case 'vault_export':
+        // Manual recovery: download a client's config backup WITHOUT its
+        // token, as the same snake-fok-backup.json the game imports. Admin
+        // only (session-gated); never part of the client API.
+        $id = $_GET['id'] ?? '';
+        if (!Util::isValidId($id)) {
+            Util::fail('invalid id');
+        }
+        $vault = Vault::peek($id);
+        if ($vault === null) {
+            Util::fail('no backup', 404);
+        }
+        header('Content-Type: application/json');
+        header('Content-Disposition: attachment; filename="snake-fok-backup-' . $id . '.json"');
+        echo $vault['payload'];
+        exit;
 
     case 'scores':
         Util::jsonOut(['ok' => true, 'scores' => Scores::top()]);

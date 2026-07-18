@@ -826,17 +826,37 @@ The payload is OPAQUE to the server - stored and returned verbatim, never
 parsed - capped at 64 KB (FOK_STATS_MAX; 413 above it). One backup per id; a
 POST replaces the previous one.
 
-Payload manifest (a client convention, NOT enforced by the server): the blob
-is the client's WHOLE config, so that id + token restore everything. Pack a
-single JSON object and carry a version so a future client can migrate an
-older backup, e.g.
+Payload manifest - the FOK-snake config file (`snake-fok-backup.json`): the
+payload IS that file, so that id + token restore everything and an operator
+export (below) is a file the game imports directly. It is one JSON object;
+each field is the client's saved state stored VERBATIM as its localStorage
+string, plus an integrity checksum:
 
-    {"v": 1, "settings": {...}, "friends": [...], "highscores": [...]}
+    {
+      "v": 1,
+      "hs":      "<high-scores JSON string>",
+      "coins":   "<FOKoins, a number as a string>",
+      "ach":     "<achievements JSON string>",
+      "cfg":     "<settings JSON string>",
+      "name":    "<display name>",
+      "pid":     "<8-hex player id>",
+      "friends": "<friend-id array JSON string>",   // omitted if none
+      "crc":     <integer FNV-1a checksum, see below>
+    }
 
-The client owns this shape: bump "v" when it changes and keep readers for
-older versions. (Server-side records already keyed by id - a player's
-friendships and submitted scores - persist across a device change on their
-own; the backup carries the client's local state and its own view of them.)
+`crc` is a 32-bit FNV-1a hash of `JSON.stringify` over the fields in exactly
+this order, crc EXCLUDED: {v, hs, coins, ach, cfg, name, pid, friends}. The
+client rejects a restored file whose crc does not match (a file with no crc
+is still accepted, for backups predating it). The server stores and returns
+the blob VERBATIM and never computes or checks the crc - integrity is the
+client's guard, not the server's. (Server-side records already keyed by id -
+a player's friendships and submitted scores - also persist across a device
+change on their own.)
+
+Manual recovery (operator, NOT a client call): the admin dashboard can view
+and DOWNLOAD any client's backup WITHOUT the token - for a client that lost
+it. The download is the same `snake-fok-backup.json`, restored through the
+game's normal file import. This path lives only behind /admin.
 
 ## Admin
 

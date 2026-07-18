@@ -173,26 +173,27 @@ R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application
 expect "score submissions throttled" '429' "$R"
 [ "$ADMIN" -eq 1 ] && setting score_rate_max 10
 
-# Client config backup / restore, token-secured (see docs/API.md).
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID3&token=nope")
+# Client config backup / restore, token-secured (see docs/API.md). ID2 is a
+# registered player, so the admin client view finds its backup below.
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID2&token=nope")
 expect "restore with no backup is 404" '404' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID3\",\"payload\":\"config-blob-1\"}" "$BASE/api/backup.php")
+    -d "{\"id\":\"$ID2\",\"payload\":\"config-blob-1\"}" "$BASE/api/backup.php")
 expect "first backup stored" '"ok":true' "$R"
 expect "first backup mints a token" '"token":"' "$R"
 BTOKEN=$(echo "$R" | grep -oE '"token":"[a-f0-9]+"' | cut -d'"' -f4)
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID3")
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID2")
 expect "restore without a token is refused" '400' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID3&token=00000000000000000000000000000000")
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID2&token=00000000000000000000000000000000")
 expect "restore with a wrong token is 403" '403' "$R"
-R=$(curl -s "$BASE/api/backup.php?id=$ID3&token=$BTOKEN")
+R=$(curl -s "$BASE/api/backup.php?id=$ID2&token=$BTOKEN")
 expect "restore with the token returns the config" 'config-blob-1' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID3\",\"payload\":\"take-over\"}" "$BASE/api/backup.php")
+    -d "{\"id\":\"$ID2\",\"payload\":\"take-over\"}" "$BASE/api/backup.php")
 expect "overwrite without the token is 403" '403' "$R"
 curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID3\",\"payload\":\"config-blob-2\",\"token\":\"$BTOKEN\"}" "$BASE/api/backup.php" > /dev/null
-R=$(curl -s "$BASE/api/backup.php?id=$ID3&token=$BTOKEN")
+    -d "{\"id\":\"$ID2\",\"payload\":\"config-blob-2\",\"token\":\"$BTOKEN\"}" "$BASE/api/backup.php" > /dev/null
+R=$(curl -s "$BASE/api/backup.php?id=$ID2&token=$BTOKEN")
 expect "a tokened overwrite replaces the config" 'config-blob-2' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"nothex\",\"payload\":\"x\"}" "$BASE/api/backup.php")
 expect "backup rejects a malformed id" '"error":"invalid id"' "$R"
@@ -787,6 +788,19 @@ else
     expect "client details reject a malformed id" '"error":"invalid id"' "$R"
     R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=client&id=12345678")
     expect "client details 404 for an unknown id" '404' "$R"
+
+    # Config backup surfaced in the details popup + operator download (no
+    # token). ID2 was backed up in the public-API section above.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=client&id=$ID2")
+    expect "client details include the config backup" '"backup":' "$R"
+    expect "the backup reports its size" '"bytes":' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=vault_export&id=$ID2")
+    expect "operator exports a config without the token" 'config-blob-2' "$R"
+    R=$(curl -s -b "$COOKIES" -i "$BASE/admin/api.php?action=vault_export&id=$ID2" | grep -i '^content-disposition' || true)
+    expect "the export downloads as a snake-fok-backup file" 'snake-fok-backup' "$R"
+    R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=vault_export&id=$ID1")
+    expect "export 404s for a client with no backup" '404' "$R"
+    expect "the details popup offers a backup download" "action=vault_export" "$JS_ASSET"
 
     expect "connections card on the dashboard" "id: 'conns'" "$JS_ASSET"
     expect "duels card on the dashboard" "id: 'duels'" "$JS_ASSET"
