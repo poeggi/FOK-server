@@ -61,4 +61,20 @@ final class Debug
         }
         return $out;
     }
+
+    /**
+     * Removes the named datasets, freeing their PINs. Unknown PINs are ignored.
+     * @param string[] $pins
+     * @return int datasets removed
+     */
+    public static function delete(array $pins): int
+    {
+        if ($pins === []) {
+            return 0;
+        }
+        $marks = implode(',', array_fill(0, count($pins), '?'));
+        $st = Db::get()->prepare('DELETE FROM debug WHERE pin IN (' . $marks . ')');
+        $st->execute($pins);
+        return $st->rowCount();
+    }
 }

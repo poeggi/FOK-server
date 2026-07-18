@@ -50,6 +50,35 @@ function fmtBytes(n) {
     return n + ' B';
 }
 
+// Inline SVG icons (ASCII source, inherit currentColor) for icon-only
+// buttons, so there are no glyph fonts or external assets to load.
+const ICON = {
+    download: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" '
+        + 'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+        + '<path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>',
+    trash: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" '
+        + 'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+        + '<path d="M3 4h10M6 4V2.5h4V4M5 4l.6 9h4.8L11 4"/></svg>',
+};
+
+function iconBtn(svg, title) {
+    const b = el('button', 'small iconbtn');
+    b.innerHTML = svg;
+    b.title = title;
+    b.setAttribute('aria-label', title);
+    return b;
+}
+
+// Trigger a browser download of one debug dataset as debug-<pin>.json.
+function downloadPin(pin) {
+    const a = el('a');
+    a.href = API + '?action=debug_get&pin=' + pin;
+    a.download = 'debug-' + pin + '.json';
+    document.body.append(a);
+    a.click();
+    a.remove();
+}
+
 // Connection states as tracked by src/ConnTrack.php.
 const STATE_LABEL = {
     idle: 'idle',
@@ -385,18 +414,17 @@ const MODULES = [
             table.append(row(['Time', 'Type', 'Message'], 'th'));
             for (const a of d.alerts) {
                 const words = a.message.split(' ');
-                const cut = words.length > ALERT_PREVIEW_WORDS;
-                const preview = cut
+                const preview = words.length > ALERT_PREVIEW_WORDS
                     ? words.slice(0, ALERT_PREVIEW_WORDS).join(' ') + ' ...'
                     : a.message;
                 const link = el('span', 'msg-link', preview);
                 link.title = a.message;
-                link.onclick = () => showAlert(a);
                 const msg = el('td');
                 msg.append(link);
-                const r = el('tr');
+                const r = el('tr', 'alert-row');
                 r.append(el('td', '', fmtTime(a.created)), el('td', '', a.type), msg);
                 if (!a.seen) r.classList.add('unseen');
+                r.onclick = () => showAlert(a);
                 table.append(r);
             }
             box.append(table);
@@ -583,21 +611,64 @@ const MODULES = [
             const d = await api('debug_list');
             box.replaceChildren();
             if (!d.datasets.length) { box.append(el('p', 'muted', 'No debug reports.')); return; }
-            const table = el('table');
-            table.append(row(['PIN', 'Sent', 'Expires', 'Size', ''], 'th'));
+
+            const cbs = [];
+            const master = el('input');
+            master.type = 'checkbox';
+            master.title = 'Select all';
+            const dlSel = iconBtn(ICON.download, 'Download selected');
+            const delSel = iconBtn(ICON.trash, 'Delete selected');
+            const selected = () => cbs.filter((c) => c.checked).map((c) => c.value);
+            const updateBar = () => {
+                const n = selected().length;
+                dlSel.disabled = delSel.disabled = n === 0;
+                master.checked = n === cbs.length;
+                master.indeterminate = n > 0 && n < cbs.length;
+            };
+
+            const table = el('table', 'seltable');
+            const head = el('tr');
+            const mth = el('th');
+            mth.append(master);
+            head.append(mth);
+            for (const h of ['PIN', 'Sent', 'Expires', 'Size', '']) head.append(el('th', '', h));
+            table.append(head);
+
             for (const ds of d.datasets) {
                 const r = el('tr');
-                r.append(el('td', '', ds.pin), el('td', '', fmtTime(ds.created)),
-                    el('td', 'muted', fmtDate(ds.created + d.ttl)), el('td', 'muted', fmtBytes(ds.bytes)));
-                const dl = el('button', 'small', 'download');
-                dl.onclick = () => { window.location = API + '?action=debug_get&pin=' + ds.pin; };
-                const td = el('td');
-                td.append(dl);
-                r.append(td);
+                const cb = el('input');
+                cb.type = 'checkbox';
+                cb.value = ds.pin;
+                cb.onchange = updateBar;
+                cbs.push(cb);
+                const cbtd = el('td');
+                cbtd.append(cb);
+                const dl = iconBtn(ICON.download, 'Download');
+                dl.onclick = () => downloadPin(ds.pin);
+                const actd = el('td');
+                actd.append(dl);
+                r.append(cbtd, el('td', '', ds.pin), el('td', '', fmtTime(ds.created)),
+                    el('td', 'muted', fmtDate(ds.created + d.ttl)), el('td', 'muted', fmtBytes(ds.bytes)), actd);
                 table.append(r);
             }
-            box.append(table);
+
+            master.onchange = () => { for (const c of cbs) c.checked = master.checked; updateBar(); };
+            // Toggling all must not also sort the (empty) checkbox column.
+            master.addEventListener('mousedown', (e) => e.stopPropagation());
+            dlSel.onclick = () => selected().forEach((pin, i) => setTimeout(() => downloadPin(pin), i * 200));
+            delSel.onclick = async () => {
+                const pins = selected();
+                if (!pins.length || !confirm('Delete ' + pins.length + ' debug report(s)?')) return;
+                await api('debug_delete', { method: 'POST', body: form({ pins: pins.join(',') }) });
+                refreshModule('debug');
+            };
+
+            const bar = el('div', 'bulk-bar');
+            bar.append(dlSel, delSel);
+            box.append(bar, table);
+            updateBar();
             sortable(table, 'debug');
+            mth.classList.remove('sortable');
             box.append(el('p', 'muted', 'A client submits logs + up to two snapshots and reads out '
                 + 'the PIN; datasets self-purge after ' + Math.round(d.ttl / 3600) + ' h.'));
         },
@@ -802,7 +873,7 @@ const views = {
 
 function buildCards() {
     for (const m of MODULES) {
-        const card = el('section', 'card');
+        const card = el('section', 'card card-' + m.id);
         const head = el('h2');
         head.append(el('span', 'card-title', m.title));
         const btn = el('button', 'small refresh', 'refresh');

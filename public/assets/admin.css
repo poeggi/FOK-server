@@ -200,8 +200,26 @@ footer { text-align: center; font-size: 12px; padding: 8px 0 16px; }
 td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 /* An alert row shows the first few words; the click opens the full message.
    Keeps the row's colour (muted, or danger while unseen) via currentColor. */
-.msg-link { cursor: pointer; text-decoration: underline dotted; }
-.msg-link:hover { text-decoration: underline; }
+.msg-link { text-decoration: underline dotted; }
+.alert-row { cursor: pointer; }
+.alert-row:hover td { background: rgba(255, 255, 255, 0.03); }
+.alert-row:hover .msg-link { text-decoration: underline; }
+/* Alerts must stay put (no inner scroll) so every entry is easy to click
+   open; the message preview keeps the row from overflowing sideways. */
+#dashboard .card-alerts .card-body { max-height: none; overflow-y: visible; }
+
+/* Debug reports: a per-row select box and a bulk-action bar on top. */
+.bulk-bar { display: flex; gap: 6px; margin-bottom: 8px; }
+.seltable th:first-child, .seltable td:first-child { width: 1%; padding-right: 0; }
+.seltable input[type="checkbox"] {
+    appearance: auto; -webkit-appearance: auto;
+    width: auto; height: auto; margin: 0; padding: 0;
+    border: 0; background: none; vertical-align: middle;
+    accent-color: var(--accent); cursor: pointer;
+}
+.iconbtn svg { display: block; }
+button.iconbtn:disabled { opacity: 0.4; cursor: default; }
+button.iconbtn:disabled:hover { border-color: var(--border); }
 
 /* Registered-users live filter. */
 input.usearch { width: 100%; margin: 6px 0 8px; padding: 5px 8px; -webkit-appearance: none; }

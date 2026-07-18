@@ -247,6 +247,14 @@ switch ($action) {
         echo $ds['payload'];
         exit;
 
+    case 'debug_delete':
+        // Bulk-delete debug datasets by PIN (comma-separated). Admin only.
+        $pins = array_values(array_filter(
+            explode(',', (string)($_POST['pins'] ?? '')),
+            static fn($p) => preg_match('/^[0-9]{4}$/', $p) === 1
+        ));
+        Util::jsonOut(['ok' => true, 'deleted' => Debug::delete($pins)]);
+
     case 'scores':
         Util::jsonOut(['ok' => true, 'scores' => Scores::top()]);
 

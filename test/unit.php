@@ -564,6 +564,14 @@ ok(Debug::get($dpin) === null, 'an expired dataset is not returned');
 Debug::submit('{"b":2}');   // its prune deletes the expired row
 ok($dbgCount($dpin) === 0, 'a submit purges expired datasets');
 Db::get()->exec('DELETE FROM debug');
+$da = Debug::submit('{"a":1}');
+$db2 = Debug::submit('{"b":2}');
+Debug::submit('{"c":3}');
+ok(Debug::delete([$da, $db2]) === 2, 'delete removes the named datasets');
+ok(Debug::get($da) === null && Debug::get($db2) === null, 'a deleted dataset is gone');
+ok(count(Debug::recent()) === 1, 'delete leaves the others');
+ok(Debug::delete([]) === 0, 'delete of nothing is a no-op');
+Db::get()->exec('DELETE FROM debug');
 
 // Auth: verify against hash file, lockout after repeated failures
 file_put_contents(FOK_ADMIN_HASH_FILE, password_hash('u:p', PASSWORD_DEFAULT));
