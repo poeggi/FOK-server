@@ -57,13 +57,11 @@ const FOK_RELAY_WINDOW = 90;
 // (see Signals::expire), so an invite never just evaporates.
 const FOK_SIGNAL_TTL = 30;
 const FOK_SIGNAL_MAX_PAYLOAD = 16384;
-// A client's own stats backup: an opaque blob the client packs (scores,
-// shop items, settings - see api/backup.php and docs/API.md). Capped so a
-// single player cannot store an unbounded amount.
+// A client's config backup: an opaque blob (its whole config; see
+// api/backup.php and docs/API.md), capped per player.
 const FOK_STATS_MAX = 65536;
-// Debug datasets (see debug/submit.php): a client's log + snapshot bundle,
-// kept under an easy-to-read 4-digit PIN. Capped hard per dataset; the PIN
-// space is only 10000, so the short retention is what keeps it usable.
+// Debug datasets (see debug/submit.php): a log + snapshot bundle under a
+// 4-digit PIN. Capped hard; the short retention keeps the small PIN space usable.
 const FOK_DEBUG_MAX = 8388608;        // 8 MB per dataset
 const FOK_DEBUG_TTL = 86400;          // kept 1 day, then purged
 // Replay material of a score submission (seed + tick-stamped inputs).

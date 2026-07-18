@@ -83,8 +83,7 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
         signal.php    POST matchmaking/WebRTC signaling message
         backup.php    GET/POST client config backup and restore, token-secured
         .user.ini     PHP limits for the API only (see Capacity below)
-      debug/          client debug-report drop: POST a bundle -> 4-digit PIN,
-                      kept 1 day, 8 MB cap (own .user.ini for the big body)
+      debug/          client debug-report drop -> 4-digit PIN (1 day, 8 MB)
       admin/          session-protected admin UI + JSON API
       assets/         CSS/JS; admin dashboard is modular (see MODULES in
                       assets/admin.js - add a module object to extend it)

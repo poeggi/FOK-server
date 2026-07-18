@@ -7,12 +7,9 @@ require_once __DIR__ . '/../src/Debug.php';
 /**
  * Submit a debug dataset (see docs/API.md).
  *   POST <JSON bundle>  ->  200 {"ok": true, "pin": "0042"}
- *
- * The bundle is a JSON object the client structures - logs, debug info, and
- * up to two image snapshots (as data-URI / base64 strings). Stored VERBATIM,
- * capped at FOK_DEBUG_MAX (8 MB), kept a month, then pruned. The returned PIN
- * is the handle a user reads out to support; retrieval is admin-only (never
- * on this endpoint).
+ * The bundle (logs, debug info, up to two image snapshots as data-URI
+ * strings) is stored VERBATIM, capped at FOK_DEBUG_MAX (8 MB), kept a day.
+ * The PIN is a human handle; retrieval is admin-only.
  */
 Util::cors();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {

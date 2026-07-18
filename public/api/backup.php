@@ -5,26 +5,14 @@ require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Vault.php';
 
 /**
- * Client stats backup / restore (see docs/API.md for the payload manifest).
- *
- *   POST {"id": <8hex>, "payload": <string>, "token"?: <hex>}
- *        -> 200 {"ok": true, "token": <hex>, "updated": <unix seconds>}
- *        First backup: omit token; the server mints one and returns it -
- *        the client MUST store it (with its id). Every later backup must
- *        send that token; it comes back unchanged.
- *        -> 403 {"error": "bad token"}   a backup exists and the token is
- *                                        missing or wrong.
- *
- *   GET  ?id=<8hex>&token=<hex>
- *        -> 200 {"ok": true, "payload": <string>, "updated": <unix seconds>}
- *        -> 404 {"error": "no backup"}   nothing stored for this id
- *        -> 403 {"error": "bad token"}   wrong token
- *        Restores it on a new device from id + token alone.
- *
- * The payload is OPAQUE to the server (never parsed), capped at
- * FOK_STATS_MAX bytes. Its shape and versioning are the client's; the token
- * binds the backup to whoever made it (a client that loses the token loses
- * access - see Vault).
+ * Client config backup / restore (contract + payload manifest in docs/API.md).
+ *   POST {id, payload, token?} -> {ok, token, updated} | 403 bad token
+ *        First backup omits the token; the server mints and returns it, and
+ *        every later backup must send it (it comes back unchanged).
+ *   GET  ?id=&token=           -> {ok, payload, updated} | 404 no backup |
+ *        403 bad token
+ * Payload is OPAQUE (never parsed), capped at FOK_STATS_MAX; the token binds
+ * a backup to its owner (see Vault).
  */
 Util::cors();
 $method = $_SERVER['REQUEST_METHOD'] ?? '';

@@ -5,19 +5,12 @@ require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Util.php';
 
 /**
- * Live load gauges for the admin dashboard. Per-minute counters kept in a
- * small self-pruning table (loadmin), accumulated in memory during the
- * request and written ONCE, after the response, in a single statement -
- * the same one-write-lock discipline the rest of the hot path follows.
- *
- * "messages in" reuses the existing req_min request counter (Util::bump),
- * so it costs nothing extra here; this class adds "messages out" (what the
- * hub hands back to clients) and "db writes" (state-changing queries,
- * counted by the thin PDO wrapper below - see Db::get).
- *
- * The gauges are deliberately approximate: writes issued in the deferred
- * phase (bookkeeping) are not all counted, and a client id with no player
- * row is not chased down. A load meter only has to show the trend.
+ * Live load gauges for the admin dashboard: per-minute counters in a small
+ * self-pruning table (loadmin), accumulated in memory and written ONCE after
+ * the response, in one statement. "messages in" reuses the req_min counter
+ * (Util::bump); this adds "messages out" (hub deliveries) and "db writes"
+ * (counted by the thin PDO wrapper below). Deliberately approximate - a load
+ * meter only shows the trend.
  */
 final class Load
 {

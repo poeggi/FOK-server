@@ -4,16 +4,12 @@ declare(strict_types=1);
 require_once __DIR__ . '/Db.php';
 
 /**
- * Debug datasets: a client submits a bundle (structured logs + debug info,
- * and up to two image snapshots) and gets back a short, easy-to-read 4-digit
- * PIN that names it. A user reads the PIN out to support, who looks the
- * dataset up in the admin dashboard. Kept FOK_DEBUG_TTL (a day), then
- * purged - the PIN space is only 10000, so the short retention is what keeps
- * it usable.
- *
- * The payload is stored VERBATIM (validated as JSON at the endpoint, never
- * re-encoded here). The PIN is a human handle, NOT a secret - retrieval is
- * admin-only (session-gated), never on the client API.
+ * Debug datasets: a client submits a bundle (logs, debug info, up to two
+ * image snapshots) and gets a short 4-digit PIN naming it. The user reads
+ * the PIN to support, who looks it up in the admin dashboard. Stored
+ * VERBATIM, kept FOK_DEBUG_TTL (a day) then purged - the PIN space is only
+ * 10000, so the short retention keeps it usable. The PIN is a handle, not a
+ * secret: retrieval is admin-only.
  */
 final class Debug
 {

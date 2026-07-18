@@ -6,14 +6,10 @@
     </FilesMatch>
 </IfModule>
 
-# HSTS: once a browser has loaded this over HTTPS it upgrades any later
-# http:// to https:// ITSELF, before sending - closing the one pre-redirect
-# window the 301 leaves open. An old client (a TV browser, anything not
-# HSTS-aware) just ignores an unknown header, so it never blocks anyone; the
-# TLS 1.2 floor the host already enforces is the real gate. No
-# includeSubDomains on purpose: this binds only this host, not the rest of
-# poggensee.it. php -S ignores .htaccess, so this is verified on live, not
-# in the smoke test.
+# HSTS: a browser that has loaded the site over HTTPS then upgrades any later
+# http:// itself, closing the pre-redirect window the 301 leaves. Non-HSTS
+# clients (an old TV) ignore it, so it blocks no one. No includeSubDomains -
+# this host only. Apache-only, verified on live.
 <IfModule mod_headers.c>
     Header always set Strict-Transport-Security "max-age=31536000"
 </IfModule>

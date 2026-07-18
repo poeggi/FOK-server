@@ -4,17 +4,12 @@ declare(strict_types=1);
 require_once __DIR__ . '/Db.php';
 
 /**
- * Per-player stats backup: an OPAQUE blob the client packs (its settings,
- * friends, high scores - its whole config; see docs/API.md). The server
- * never interprets the payload. One row per player id.
- *
- * A backup is bound to its owner by a SECRET TOKEN: the first backup mints a
- * 128-bit token, returns it once, and stores only its SHA-256 hash. Every
- * later backup of the same id AND every restore must present that token; it
- * never changes. A client that loses its token loses access to its backup -
- * that is the price of not letting anyone who knows an id read or overwrite
- * it (ids are exchanged during a duel). The token is high-entropy, so a fast
- * hash is enough; comparisons are constant-time.
+ * Per-player config backup: an OPAQUE blob (the client's whole config; see
+ * docs/API.md), one row per id. Bound to its owner by a SECRET TOKEN: the
+ * first backup mints a 128-bit token (only its SHA-256 hash is stored) and
+ * every later backup and restore must present it - so knowing an id (they
+ * are shared during a duel) is not enough to read or overwrite a backup.
+ * Lose the token, lose access. Constant-time compare.
  */
 final class Vault
 {
@@ -80,12 +75,10 @@ final class Vault
     }
 
     /**
-     * Admin-only: clears a backup's token so the owner can re-enroll - its
-     * NEXT backup (sent without a token) mints a fresh one. The payload is
-     * kept, so a client that lost its token recovers: operator exports the
-     * data, resets the token, then the client re-backs-up with a new token.
-     * Briefly leaves the row claimable by anyone who knows the id, so it is a
-     * deliberate operator step taken as the client is about to re-enroll.
+     * Admin-only: clears a backup's token so the owner re-enrolls on its next
+     * backup (which mints a fresh one); the payload is kept. Recovery for a
+     * client that lost its token. Briefly claimable by anyone who knows the
+     * id, so it is a deliberate operator step.
      * @return bool false if there is no backup for the id.
      */
     public static function resetToken(string $id): bool
