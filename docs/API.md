@@ -819,8 +819,14 @@ The token (the secret that binds a backup to its owner):
 - Every LATER backup must send that `token` (it comes back unchanged), and
   every restore must send it. It NEVER changes for a given id.
 - Without the token, no one who merely knows the id (ids are exchanged
-  during a duel) can read or overwrite the backup. A client that loses its
-  token loses access to its backup - store it carefully.
+  during a duel) can read or overwrite the backup.
+- Keep the token OUT of the payload. A backup that carries its own token is
+  self-authenticating, so anyone who obtains the file (a shared copy, the
+  operator export below) would gain full read/overwrite. FOK-snake holds the
+  token in a cookie beside the id, never in the blob.
+- A client that loses its token cannot read or overwrite its backup on its
+  own; an operator can reset it (see Manual recovery) so the client
+  re-enrolls with a fresh one on its next backup.
 
 The payload is OPAQUE to the server - stored and returned verbatim, never
 parsed - capped at 64 KB (FOK_STATS_MAX; 413 above it). One backup per id; a
@@ -853,10 +859,12 @@ client's guard, not the server's. (Server-side records already keyed by id -
 a player's friendships and submitted scores - also persist across a device
 change on their own.)
 
-Manual recovery (operator, NOT a client call): the admin dashboard can view
-and DOWNLOAD any client's backup WITHOUT the token - for a client that lost
-it. The download is the same `snake-fok-backup.json`, restored through the
-game's normal file import. This path lives only behind /admin.
+Manual recovery (operator, NOT a client call): for a client that lost its
+token, the admin dashboard can (a) DOWNLOAD its backup WITHOUT the token -
+the same `snake-fok-backup.json` the game imports through its normal file
+restore - and (b) RESET the token, so the client re-enrolls on its next
+backup (a fresh token is minted; the data is kept). These paths live only
+behind /admin.
 
 ## Admin
 

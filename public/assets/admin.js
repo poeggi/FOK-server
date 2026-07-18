@@ -127,7 +127,7 @@ async function showClient(id) {
             const d = await api('client&id=' + id);
             if (!d.ok) throw new Error(d.error || 'failed');
             name.textContent = d.client.name || '(no name)';
-            renderClientBody(body, overlay, d);
+            renderClientBody(body, overlay, d, load);
         } catch (e) {
             body.replaceChildren(el('p', 'error', 'Error: ' + e.message));
         }
@@ -159,7 +159,7 @@ async function showClient(id) {
     restart();
 }
 
-function renderClientBody(body, overlay, d) {
+function renderClientBody(body, overlay, d, reload) {
     const c = d.client;
     const now = d.now;
     const ago = (t) => t ? (now - t) + ' s ago' : '-';
@@ -211,13 +211,22 @@ function renderClientBody(body, overlay, d) {
         kv('Stored', 'yes');
         kv('When', fmtTime(c.backup.updated) + ' (' + ago(c.backup.updated) + ')');
         kv('Size', fmtBytes(c.backup.bytes));
-        // Manual recovery: download the config WITHOUT the token, as the
-        // snake-fok-backup.json the game imports directly.
+        kv('Token', c.backup.enrolled ? 'set' : 'reset - client can re-enroll');
         const r = el('tr');
         const v = el('td', 'kv-v');
+        // Manual recovery: download the config WITHOUT the token, as the
+        // snake-fok-backup.json the game imports directly.
         const dl = el('button', 'small', 'download backup');
         dl.onclick = () => { window.location = API + '?action=vault_export&id=' + c.id; };
-        v.append(dl);
+        // Clear the token so a client that lost it can re-enroll on its next
+        // backup (the data is kept).
+        const rst = el('button', 'small', 'reset token');
+        rst.onclick = async () => {
+            if (!confirm('Reset the backup token for ' + c.id + '?\nIts next backup mints a new token; until then anyone who knows the id could claim it.')) return;
+            await api('vault_reset', { method: 'POST', body: form({ id: c.id }) });
+            reload();
+        };
+        v.append(dl, rst);
         r.append(el('td', 'kv-k', 'Recovery'), v);
         tbl.append(r);
     } else {

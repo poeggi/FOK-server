@@ -521,7 +521,16 @@ ok(Vault::restore('bbbbbbbb', $tok) === null, 'another id keeps its own empty sl
 $v3 = Vault::backup('bbbbbbbb', 'other', null);
 ok($v3['token'] !== $tok, 'a different id gets a different token');
 ok(Vault::peek('aaaaaaaa')['payload'] === 'updated-blob', 'peek reads a backup without the token (admin recovery)');
+ok(Vault::peek('aaaaaaaa')['enrolled'] === true, 'a backup is enrolled while it has a token');
 ok(Vault::peek('cccccccc') === null, 'peek is null for an id with no backup');
+// resetToken lets a client that lost its token re-enroll on its next backup.
+ok(Vault::resetToken('aaaaaaaa') === true, 'reset clears the token');
+ok(Vault::peek('aaaaaaaa')['enrolled'] === false, 'after a reset the backup is no longer enrolled');
+ok(Vault::restore('aaaaaaaa', $tok) === false, 'the old token no longer restores after a reset');
+$v4 = Vault::backup('aaaaaaaa', 'reenrolled', null);
+ok(is_array($v4) && $v4['token'] !== $tok, 'the next backup mints a fresh token');
+ok(Vault::peek('aaaaaaaa')['payload'] === 'reenrolled', 'the payload survives the reset and re-enroll');
+ok(Vault::resetToken('cccccccc') === false, 'reset is a no-op for an id with no backup');
 Db::get()->exec('DELETE FROM vault');
 
 // Auth: verify against hash file, lockout after repeated failures

@@ -66,12 +66,33 @@ final class Vault
      * Admin-only read: the raw backup for an id WITHOUT the token, for a
      * MANUAL recovery (an operator retrieving a config for a client that lost
      * its token). Never exposed on the client API - only behind /admin.
-     * @return array{payload:string,updated:int}|null
+     * 'enrolled' is false once the token has been reset (see resetToken).
+     * @return array{payload:string,updated:int,enrolled:bool}|null
      */
     public static function peek(string $id): ?array
     {
         $row = self::fetch($id);
-        return $row === null ? null : ['payload' => $row['payload'], 'updated' => $row['updated']];
+        return $row === null ? null : [
+            'payload' => $row['payload'],
+            'updated' => $row['updated'],
+            'enrolled' => $row['token_hash'] !== '',
+        ];
+    }
+
+    /**
+     * Admin-only: clears a backup's token so the owner can re-enroll - its
+     * NEXT backup (sent without a token) mints a fresh one. The payload is
+     * kept, so a client that lost its token recovers: operator exports the
+     * data, resets the token, then the client re-backs-up with a new token.
+     * Briefly leaves the row claimable by anyone who knows the id, so it is a
+     * deliberate operator step taken as the client is about to re-enroll.
+     * @return bool false if there is no backup for the id.
+     */
+    public static function resetToken(string $id): bool
+    {
+        $st = Db::get()->prepare("UPDATE vault SET token_hash = '' WHERE id = ?");
+        $st->execute([$id]);
+        return $st->rowCount() > 0;
     }
 
     /** @return array{payload:string,token_hash:string,updated:int}|null */

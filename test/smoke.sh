@@ -801,6 +801,16 @@ else
     R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=vault_export&id=$ID1")
     expect "export 404s for a client with no backup" '404' "$R"
     expect "the details popup offers a backup download" "action=vault_export" "$JS_ASSET"
+    # Reset the token so a client that lost it can re-enroll.
+    R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=vault_reset&id=$ID2")
+    expect "vault_reset via GET rejected" '405' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=vault_reset" -d "id=$ID2")
+    expect "operator resets a backup token" '"reset":true' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=client&id=$ID2")
+    expect "the reset backup shows not enrolled" '"enrolled":false' "$R"
+    R=$(curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID2\",\"payload\":\"re-enrolled\"}" "$BASE/api/backup.php")
+    expect "the client re-enrolls with a fresh token" '"token":"' "$R"
 
     expect "connections card on the dashboard" "id: 'conns'" "$JS_ASSET"
     expect "duels card on the dashboard" "id: 'duels'" "$JS_ASSET"

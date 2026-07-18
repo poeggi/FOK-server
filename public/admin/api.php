@@ -189,7 +189,8 @@ switch ($action) {
                     'best' => $scores['best'] === null ? null : (int)$scores['best']],
                 'mailbox' => $mailbox,
                 'backup' => $backup === null ? null
-                    : ['updated' => $backup['updated'], 'bytes' => strlen($backup['payload'])],
+                    : ['updated' => $backup['updated'], 'bytes' => strlen($backup['payload']),
+                        'enrolled' => $backup['enrolled']],
             ],
         ]);
 
@@ -209,6 +210,19 @@ switch ($action) {
         header('Content-Disposition: attachment; filename="snake-fok-backup-' . $id . '.json"');
         echo $vault['payload'];
         exit;
+
+    case 'vault_reset':
+        // Manual recovery: clear a client's backup token so it can re-enroll
+        // (its next backup mints a fresh one). Keeps the payload. State-
+        // changing, so POST-only. Admin only.
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            Util::fail('POST only', 405);
+        }
+        $id = $_POST['id'] ?? '';
+        if (!Util::isValidId($id)) {
+            Util::fail('invalid id');
+        }
+        Util::jsonOut(['ok' => true, 'reset' => Vault::resetToken($id)]);
 
     case 'scores':
         Util::jsonOut(['ok' => true, 'scores' => Scores::top()]);

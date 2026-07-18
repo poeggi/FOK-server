@@ -218,6 +218,7 @@ input.usearch { width: 100%; margin: 6px 0 8px; padding: 5px 8px; -webkit-appear
 .modal-id { color: var(--muted); font-size: 12px; }
 table.kv { font-size: 12px; }
 table.kv .kv-k { color: var(--muted); white-space: nowrap; padding-right: 14px; }
+table.kv .kv-v button { margin-right: 6px; }
 table.kv .kv-sec td {
     color: var(--accent); border-bottom: none; padding-top: 12px;
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
