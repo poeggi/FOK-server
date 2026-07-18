@@ -683,6 +683,18 @@ try {
 }
 ok($threw, 'restore rejects a non-SQLite file');
 
+// Restore must not depend on the caller having dropped its DB handle first.
+// admin/api.php holds $db = Db::get() at global scope for the WHOLE request,
+// the restore included - the one configuration this never exercised, because
+// the tests above (and no other caller) happen to hold no live reference. Pin
+// one open across the restore, exactly as the real request does.
+$name = Backup::create();
+$live = Db::get();
+$live->exec('DELETE FROM scores');
+Backup::restore(FOK_BACKUP_DIR . '/' . $name);
+ok(count(Scores::top()) === 4, 'restore works with a live handle held open (as admin/api.php does)');
+unset($live);
+
 // Cleanup
 Db::close();
 foreach (glob($tmp . '/backups/*') ?: [] as $f) {

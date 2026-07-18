@@ -51,12 +51,26 @@ final class Backup
         if (!str_starts_with($head, 'SQLite format 3')) {
             throw new RuntimeException('not a SQLite database');
         }
-        Db::close();
-        // Drop stale WAL sidecars so the restored file is read as-is.
-        @unlink(FOK_DB_FILE . '-wal');
-        @unlink(FOK_DB_FILE . '-shm');
-        if (!copy($uploadedFile, FOK_DB_FILE)) {
-            throw new RuntimeException('restore copy failed');
+        // The mirror of create(): copy pages in through SQLite's own backup
+        // API, never swap the file on disk. SQLite takes the write lock and
+        // does the WAL bookkeeping, so it is safe while a connection is open
+        // on the live database - and one ALWAYS is: admin/api.php holds a
+        // global Db::get() across the whole request, this call included.
+        // Overwriting the file behind that handle (unlink WAL + copy) let its
+        // stale committed WAL frames checkpoint back over the restored pages.
+        $src = new SQLite3($uploadedFile, SQLITE3_OPEN_READONLY);
+        $dst = new SQLite3(FOK_DB_FILE);
+        $dst->busyTimeout(5000);
+        $done = $src->backup($dst);
+        $src->close();
+        $dst->close();
+        if (!$done) {
+            // A foreign upload can fail here (e.g. an incompatible page size);
+            // that is fine, as long as it fails loudly rather than corrupting.
+            throw new RuntimeException('restore failed');
         }
+        // Any handle opened before this now holds a stale page cache; drop the
+        // shared one so the next Db::get() reopens onto the restored data.
+        Db::close();
     }
 }
