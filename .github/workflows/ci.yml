@@ -15,6 +15,7 @@ jobs:
         with:
           php-version: '8.4'
           extensions: sqlite3, pdo_sqlite, mbstring
+          coverage: none
 
       - name: Checks (syntax, ASCII, secrets, consistency, unit, smoke)
         run: bash test/checks.sh
