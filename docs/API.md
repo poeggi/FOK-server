@@ -866,6 +866,36 @@ restore - and (b) RESET the token, so the client re-enrolls on its next
 backup (a fresh token is minted; the data is kept). These paths live only
 behind /admin.
 
+## Debug reports
+
+A client can submit a debug bundle - structured logs and up to two image
+snapshots - and gets back a short 4-digit PIN that names it. The user reads
+the PIN out to support, who looks the dataset up in the admin dashboard.
+
+    POST /debug/submit.php  <JSON bundle>
+      -> 200 {"ok": true, "pin": "0042"}
+      -> 413 {"error": "dataset too large"}    over 8 MB
+
+The bundle is a single JSON object the client structures, e.g.
+
+    {
+      "app": "1.2.3", "id": "c0ffee42", "when": <ms>,
+      "logs": [...], "state": {...},
+      "images": ["data:image/png;base64,...", "data:image/webp;base64,..."]
+    }
+
+Stored VERBATIM - the server validates only that it is JSON and within the
+cap. Limits:
+
+- 8 MB per dataset (FOK_DEBUG_MAX); larger is rejected with 413.
+- Up to two images, by convention - the 8 MB cap is the hard limit.
+- Kept ONE DAY, then purged. The PIN space is small (0000-9999), so a PIN is
+  reused once its dataset expires: it is a short-lived handle, not an id.
+
+The PIN is a human handle, NOT a secret: retrieval (view / download) is
+admin-only, behind /admin. A debug dataset is never readable through the
+client API.
+
 ## Admin
 
 `/admin/` is a human web UI (session login), not part of the client API.

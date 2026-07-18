@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 16;
+    private const SCHEMA_VERSION = 17;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -200,6 +200,17 @@ final class Db
             // (see Vault). Empty for any pre-token row, which the next backup
             // re-secures.
             $pdo->exec("ALTER TABLE vault ADD COLUMN token_hash TEXT NOT NULL DEFAULT ''");
+        }
+        if ($v < 17) {
+            // Debug datasets (see Debug, debug/submit.php): a log/snapshot
+            // bundle under a 4-digit pin, pruned after FOK_DEBUG_TTL.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS debug (
+                pin TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                bytes INTEGER NOT NULL,
+                created INTEGER NOT NULL
+            )');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_debug_created ON debug (created)');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

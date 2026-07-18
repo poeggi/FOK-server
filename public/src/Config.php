@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.16.19';
+const FOK_SERVER_VERSION = '0.16.20';
 // Contract version: bumps ONLY on breaking API changes (removed fields,
 // changed semantics). Additive changes do not bump it. Clients pin this.
 // v2: friendship-gated status and invites, ms hello.now, friend
@@ -61,6 +61,11 @@ const FOK_SIGNAL_MAX_PAYLOAD = 16384;
 // shop items, settings - see api/backup.php and docs/API.md). Capped so a
 // single player cannot store an unbounded amount.
 const FOK_STATS_MAX = 65536;
+// Debug datasets (see debug/submit.php): a client's log + snapshot bundle,
+// kept under an easy-to-read 4-digit PIN. Capped hard per dataset; the PIN
+// space is only 10000, so the short retention is what keeps it usable.
+const FOK_DEBUG_MAX = 8388608;        // 8 MB per dataset
+const FOK_DEBUG_TTL = 86400;          // kept 1 day, then purged
 // Replay material of a score submission (seed + tick-stamped inputs).
 const FOK_MAX_INPUTS = 262144;
 // Hard ceiling on a client request body, derived from the biggest

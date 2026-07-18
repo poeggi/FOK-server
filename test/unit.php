@@ -22,6 +22,7 @@ require_once __DIR__ . '/../public/src/RelayRate.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
 require_once __DIR__ . '/../public/src/Load.php';
 require_once __DIR__ . '/../public/src/Vault.php';
+require_once __DIR__ . '/../public/src/Debug.php';
 
 // Util installs a fault handler that answers 500 and exits 0 - right for a
 // request, fatal for a test run, where it would swallow a throwable (a
@@ -542,6 +543,27 @@ ok(is_array($v4) && $v4['token'] !== $tok, 'the next backup mints a fresh token'
 ok(Vault::peek('aaaaaaaa')['payload'] === 'reenrolled', 'the payload survives the reset and re-enroll');
 ok(Vault::resetToken('cccccccc') === false, 'reset is a no-op for an id with no backup');
 Db::get()->exec('DELETE FROM vault');
+
+// Debug: a bundle gets a 4-digit PIN, retrievable, purged after the TTL.
+$dbgCount = static function (string $pin): int {
+    $s = Db::get()->prepare('SELECT COUNT(*) FROM debug WHERE pin = ?');
+    $s->execute([$pin]);
+    return (int)$s->fetchColumn();
+};
+Db::get()->exec('DELETE FROM debug');
+$dpin = Debug::submit('{"logs":[1,2]}');
+ok(preg_match('/^[0-9]{4}$/', $dpin) === 1, 'submit returns a 4-digit pin');
+ok(Debug::get($dpin)['payload'] === '{"logs":[1,2]}', 'get returns the dataset verbatim');
+$dother = $dpin === '0000' ? '0001' : '0000';
+ok(Debug::get($dother) === null, 'an unknown pin is null');
+$dpin2 = Debug::submit('{"a":1}');
+ok($dpin2 !== $dpin, 'a second submit gets a different pin');
+ok(count(Debug::recent()) === 2, 'recent lists both datasets');
+Db::get()->prepare('UPDATE debug SET created = ? WHERE pin = ?')->execute([time() - FOK_DEBUG_TTL - 1, $dpin]);
+ok(Debug::get($dpin) === null, 'an expired dataset is not returned');
+Debug::submit('{"b":2}');   // its prune deletes the expired row
+ok($dbgCount($dpin) === 0, 'a submit purges expired datasets');
+Db::get()->exec('DELETE FROM debug');
 
 // Auth: verify against hash file, lockout after repeated failures
 file_put_contents(FOK_ADMIN_HASH_FILE, password_hash('u:p', PASSWORD_DEFAULT));

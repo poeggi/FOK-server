@@ -204,6 +204,18 @@ R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application
     --data-binary "@$DATA/bigbak.json" "$BASE/api/backup.php")
 expect "oversized backup rejected with 413" '413' "$R"
 
+# Debug reports: submit a bundle, get a 4-digit PIN (retrieved by the admin
+# section below via $DPIN).
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"logs":["boom"],"images":[]}' "$BASE/debug/submit.php")
+expect "debug submit accepted" '"ok":true' "$R"
+DPIN=$(echo "$R" | grep -oE '"pin":"[0-9]{4}"' | cut -d'"' -f4)
+if [ "${#DPIN}" -eq 4 ]; then echo "ok   debug submit returns a 4-digit pin"; else echo "FAIL debug pin not 4 digits: $DPIN"; fail=1; fi
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d 'not json' "$BASE/debug/submit.php")
+expect "debug rejects a non-JSON bundle" '"error":"dataset must be a non-empty JSON object"' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/debug/submit.php")
+expect "debug submit via GET rejected" '405' "$R"
+
 R=$(curl -s "$BASE/api/time.php")
 expect "time sync endpoint" '"t":' "$R"
 NOW_MS=$(echo "$R" | grep -oE '"t":[0-9]+' | cut -d: -f2)
@@ -811,6 +823,17 @@ else
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID2\",\"payload\":\"re-enrolled\"}" "$BASE/api/backup.php")
     expect "the client re-enrolls with a fresh token" '"token":"' "$R"
+
+    # Debug reports: the operator lists and downloads the bundle submitted
+    # above (DPIN), never through the client API.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=debug_list")
+    expect "debug reports listed with a purge window" '"ttl":86400' "$R"
+    expect "the submitted report is listed by its pin" "\"pin\":\"$DPIN\"" "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=debug_get&pin=$DPIN")
+    expect "operator downloads a debug report" 'boom' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=debug_get&pin=abcd")
+    expect "debug_get rejects a malformed pin" '"error":"invalid pin"' "$R"
+    expect "debug reports card on the dashboard" "id: 'debug'" "$JS_ASSET"
 
     expect "connections card on the dashboard" "id: 'conns'" "$JS_ASSET"
     expect "duels card on the dashboard" "id: 'duels'" "$JS_ASSET"

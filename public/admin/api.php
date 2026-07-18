@@ -10,6 +10,7 @@ require_once __DIR__ . '/../src/Alerts.php';
 require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Vault.php';
+require_once __DIR__ . '/../src/Debug.php';
 
 Auth::requireLogin();
 
@@ -223,6 +224,28 @@ switch ($action) {
             Util::fail('invalid id');
         }
         Util::jsonOut(['ok' => true, 'reset' => Vault::resetToken($id)]);
+
+    case 'debug_list':
+        // Debug datasets a client submitted (see debug/submit.php). ttl + now
+        // let the dashboard show when each one expires.
+        Util::jsonOut(['ok' => true, 'now' => time(), 'ttl' => FOK_DEBUG_TTL,
+            'datasets' => Debug::recent()]);
+
+    case 'debug_get':
+        // Download one dataset by its 4-digit PIN (the handle a user reads to
+        // support). Admin only; never on the client API.
+        $pin = $_GET['pin'] ?? '';
+        if (!preg_match('/^[0-9]{4}$/', $pin)) {
+            Util::fail('invalid pin');
+        }
+        $ds = Debug::get($pin);
+        if ($ds === null) {
+            Util::fail('unknown pin', 404);
+        }
+        header('Content-Type: application/json');
+        header('Content-Disposition: attachment; filename="debug-' . $pin . '.json"');
+        echo $ds['payload'];
+        exit;
 
     case 'scores':
         Util::jsonOut(['ok' => true, 'scores' => Scores::top()]);

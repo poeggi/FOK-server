@@ -523,6 +523,32 @@ const MODULES = [
         },
     },
     {
+        id: 'debug',
+        title: 'Debug reports',
+        async refresh(box) {
+            const d = await api('debug_list');
+            box.replaceChildren();
+            if (!d.datasets.length) { box.append(el('p', 'muted', 'No debug reports.')); return; }
+            const table = el('table');
+            table.append(row(['PIN', 'Sent', 'Expires', 'Size', ''], 'th'));
+            for (const ds of d.datasets) {
+                const r = el('tr');
+                r.append(el('td', '', ds.pin), el('td', '', fmtTime(ds.created)),
+                    el('td', 'muted', fmtTime(ds.created + d.ttl)), el('td', 'muted', fmtBytes(ds.bytes)));
+                const dl = el('button', 'small', 'download');
+                dl.onclick = () => { window.location = API + '?action=debug_get&pin=' + ds.pin; };
+                const td = el('td');
+                td.append(dl);
+                r.append(td);
+                table.append(r);
+            }
+            box.append(table);
+            sortable(table, 'debug');
+            box.append(el('p', 'muted', 'A client submits logs + up to two snapshots and reads out '
+                + 'the PIN; datasets self-purge after ' + Math.round(d.ttl / 3600) + ' h.'));
+        },
+    },
+    {
         id: 'props',
         title: 'Properties',
         view: 'settings',
