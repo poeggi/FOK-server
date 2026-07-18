@@ -55,6 +55,6 @@ $loggedIn = Auth::isLoggedIn();
 <main id="settings" class="dashboard hidden"></main>
 <script src="../assets/admin.js?v=<?= FOK_SERVER_VERSION ?>"></script>
 <?php endif; ?>
-<footer class="muted">FOK-server v<?= FOK_SERVER_VERSION ?> (API v<?= FOK_API_VERSION ?>)<?= FOK_ENV === 'staging' ? ' STAGING' : '' ?></footer>
+<footer class="muted">FOK-server v<?= FOK_SERVER_VERSION ?> (API v<?= FOK_API_VERSION ?>)<?= FOK_ENV === 'staging' ? ' STAGING' : '' ?><span id="srvtime"></span></footer>
 </body>
 </html>

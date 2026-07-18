@@ -416,6 +416,18 @@ ok(duelOf('bbbbbbbb') === [], 'forget drops the peer side as well');
 ok(!onPresence('cccccccc'), 'an unknown client is not on the presence card');
 ok(duelOf('cccccccc') === [], 'nor on the Duels card');
 
+// ConnTrack: a quick-match seeker shows as matchmaking only while it is
+// actively polling; one that went quiet drops off (as the matchmaker does).
+Db::get()->exec('DELETE FROM conn');
+Db::get()->exec('DELETE FROM mm_queue');
+Db::get()->prepare('INSERT INTO mm_queue (id, since, last_poll) VALUES (?, ?, ?)')
+    ->execute(['aaaaaaaa', time(), time()]);
+ok(duelOf('aaaaaaaa')['state'] === 'matchmaking', 'an active seeker shows as matchmaking');
+Db::get()->prepare('UPDATE mm_queue SET last_poll = ? WHERE id = ?')
+    ->execute([time() - FOK_MATCH_WINDOW - 1, 'aaaaaaaa']);
+ok(duelOf('aaaaaaaa') === [], 'a seeker that stopped polling drops off the Duels card');
+Db::get()->exec('DELETE FROM mm_queue');
+
 // ConnTrack: relay admission is counted from the hub traffic a pair
 // really caused, not from queued messages (gone the instant the receiver
 // drains them) and not from what a client claims.

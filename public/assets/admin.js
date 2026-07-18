@@ -241,8 +241,11 @@ const MODULES = [
             stat('Msgs out/min', L.out, 'live');
             stat('DB writes/min', L.db_writes, 'live');
             box.append(grid);
-            box.append(el('p', 'muted', 'Server v' + d.server_version + ', PHP ' + d.php +
-                ', ' + fmtTime(d.now) + '. Live gauges: last full minute.'));
+            box.append(el('p', 'muted', 'Server v' + d.server_version +
+                '. Live gauges: last full minute.'));
+            // Server clock lives in the page footer, refreshed with the stats.
+            const srvtime = document.getElementById('srvtime');
+            if (srvtime) srvtime.textContent = ' - ' + fmtTime(d.now);
         },
     },
     {

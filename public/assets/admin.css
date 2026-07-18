@@ -85,7 +85,9 @@ button.small { padding: 2px 8px; font-size: 13px; }
     font-size: 12px;
     text-align: center;
 }
-button.refresh { height: var(--ctl-h); display: inline-flex; align-items: center; }
+/* Every small button (refresh, close, delete, toggles) is the control
+   height, so they line up with each other and with the interval field. */
+button.small { height: var(--ctl-h); display: inline-flex; align-items: center; justify-content: center; }
 
 .error { color: var(--danger); }
 .muted { color: var(--muted); font-size: 13px; }

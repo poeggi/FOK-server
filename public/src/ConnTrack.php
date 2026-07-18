@@ -261,12 +261,18 @@ final class ConnTrack
             ];
         }
         // Quick-match seekers with no peer yet: half a duel, shown the
-        // instant they start looking.
-        foreach ($db->query(
+        // instant they start looking. Only ACTIVE seekers - the matchmaker
+        // drops one from the queue once it stops polling for FOK_MATCH_WINDOW
+        // (Matchmaking::seek), but that prune only runs when someone else
+        // seeks; without the same filter here a seeker that quietly left
+        // would linger on the card as "matchmaking" forever.
+        $seekers = $db->prepare(
             'SELECT m.id, m.since, p.name, p.latency
                FROM mm_queue m JOIN players p ON p.id = m.id
-              WHERE m.matched_with IS NULL'
-        )->fetchAll() as $r) {
+              WHERE m.matched_with IS NULL AND m.last_poll > ?'
+        );
+        $seekers->execute([$now - FOK_MATCH_WINDOW]);
+        foreach ($seekers->fetchAll() as $r) {
             if (isset($seen[$r['id']])) {
                 continue;
             }
