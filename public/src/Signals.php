@@ -12,9 +12,10 @@ require_once __DIR__ . '/Settings.php';
  */
 final class Signals
 {
-    // Client-sendable types. 'friend' (friendship notifications) and
-    // 'undelivered' (see expire()) are server-generated and deliberately
-    // NOT in this list, so a client cannot forge them.
+    // Client-sendable types. 'friend' (friendship notifications),
+    // 'undelivered' (see expire()) and 'peer-net' (see
+    // Presence::announceNet) are server-generated and deliberately NOT in
+    // this list, so a client cannot forge them.
     public const TYPES = ['invite', 'invite-relay', 'accept', 'accept-relay', 'decline', 'offer', 'answer', 'ice', 'bye', 'chat'];
 
     // Types that establish a connection: the sender is waiting for an

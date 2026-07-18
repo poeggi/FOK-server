@@ -504,6 +504,13 @@ Types (fixed set, anything else is rejected):
               (clients cannot send it: 400)         "undelivered",
                                                     "peer": "8-hex",
                                                     "type": <lost type>}
+    peer-net  RESERVED - server-generated only     payload: JSON {"event":
+              (clients cannot send it: 400)          "peer-net",
+                                                     "peer": "8-hex",
+                                                     "ip": <peer server-seen>,
+                                                     "family": 4|6|0,
+                                                     "self_ip": <your ip>,
+                                                     "self_family": 4|6|0}
 
 The 'friend' signal is the friendship NOTIFICATION: the server delivers
 it into the peer's mailbox when a friend request is created for them or
@@ -521,6 +528,22 @@ is told instead of waiting forever on the ok:true it got. It is addressed
 offer a retry. It is raised on the next mailbox read, so it arrives with
 the sender's next hello. The reverse does NOT hold: no receipt is not a
 delivery confirmation, only the absence of an expiry.
+
+The 'peer-net' signal is a DIRECT-CONNECTION HINT. The moment a 1:1
+pairing is confirmed - a plain 'accept' of an invite, or a fresh quick
+match - and BEFORE the WebRTC offer/answer, the server drops one into
+BOTH mailboxes. It carries the peer's server-observed IP and address
+family (the address that peer reaches the server from) plus the
+recipient's own, so a client can compare the two. When both sides share
+a family (two IPv6, or two IPv4) a direct path is likely, so the client
+SHOULD try the direct ICE path first and fall back to relay only if that
+fails. It is a hint, not a guarantee: the server sees the request source
+address, not the eventual UDP port, and cannot know whether two
+addresses can actually reach each other; family 0 means the address was
+unknown. It is NOT sent when relay was declared ('accept-relay', or a
+pair already relaying), since those never attempt a direct connection.
+It is additive - a client that ignores the type is unaffected, and the
+`api` contract version does not bump for it.
 
 ## The player profile object
 
@@ -644,6 +667,9 @@ friend list; the hello `friends` field tells A whether B is online):
        payload = JSON {"sdp": <description>, "seed": n, "profile": ...}.
        The offerer ALWAYS generates the seed; both clients start the
        deterministic duel sim from it (startDuel(seed)).
+       Both sides also receive a 'peer-net' hint here (delivered with the
+       accept) carrying each other's server-observed IP and family; a
+       same-family pair SHOULD prefer the direct ICE path first.
     4. B sets the remote description, answers: B -> signal answer.
     5. Both sides exchange ice messages as candidates arrive.
     6. When the DataChannel opens on both ends, BOTH clients stop

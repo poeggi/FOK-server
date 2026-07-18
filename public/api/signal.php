@@ -96,6 +96,14 @@ if (!Signals::send($id, $to, $type, $payload)) {
 }
 // Only a queued message says anything about the connection.
 ConnTrack::note($id, $to, $type);
+
+// A plain 'accept' confirms a P2P pairing: hand both sides the peer-net
+// hint now, before offer/answer, so a same-family pair can try direct
+// first. Skipped when relay was declared (accept-relay, or either side
+// already relaying) - those will not attempt a direct connection.
+if ($type === 'accept' && !ConnTrack::isRelaying($id, $to)) {
+    Presence::announceNet($id, $to);
+}
 Util::bump('signal');
 
 Util::jsonOut(['ok' => true]);

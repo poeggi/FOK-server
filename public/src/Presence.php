@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/Util.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Signals.php';
 require_once __DIR__ . '/ConnTrack.php';
@@ -103,6 +104,45 @@ final class Presence
             ];
         }
         return $out;
+    }
+
+    /**
+     * Peer-net hint: at the moment a 1:1 pairing is confirmed (an accepted
+     * invite, a fresh quick match) and BEFORE the P2P handshake, tell each
+     * side the other's server-observed IP plus its own, so that two peers on
+     * the same address family can try a direct connection first (see the
+     * 'peer-net' signal in docs/API.md). Both IPs are read from the players
+     * table - each side just touched its own row, so both are current. A
+     * side the server has never seen is skipped: nothing to announce.
+     */
+    public static function announceNet(string $a, string $b): void
+    {
+        $st = Db::get()->prepare('SELECT id, ip FROM players WHERE id IN (?, ?)');
+        $st->execute([$a, $b]);
+        $ip = [];
+        foreach ($st->fetchAll() as $row) {
+            $ip[$row['id']] = (string)$row['ip'];
+        }
+        if (!isset($ip[$a], $ip[$b])) {
+            return;
+        }
+        $na = Util::ipInfo($ip[$a]);
+        $nb = Util::ipInfo($ip[$b]);
+        self::sendNet($a, $b, $na, $nb);
+        self::sendNet($b, $a, $nb, $na);
+    }
+
+    /** Queues one peer-net signal: $to learns $peer's net, plus its own. */
+    private static function sendNet(string $to, string $peer, array $selfNet, array $peerNet): void
+    {
+        Signals::send($peer, $to, 'peer-net', (string)json_encode([
+            'event' => 'peer-net',
+            'peer' => $peer,
+            'ip' => $peerNet['ip'],
+            'family' => $peerNet['family'],
+            'self_ip' => $selfNet['ip'],
+            'self_family' => $selfNet['family'],
+        ]));
     }
 
     /**

@@ -47,6 +47,28 @@ final class Util
         return $_SERVER['REMOTE_ADDR'] ?? '?';
     }
 
+    /**
+     * Classifies a server-observed IP for the peer-net hint (see
+     * Presence::announceNet): its address family, so two peers can tell
+     * whether a direct same-family path is even possible. An IPv4-mapped
+     * IPv6 form (::ffff:a.b.c.d) counts as IPv4 and is returned dotted.
+     * family is 4, 6, or 0 when the address is unknown/unparseable.
+     * @return array{ip:string,family:int}
+     */
+    public static function ipInfo(string $ip): array
+    {
+        if (str_starts_with($ip, '::ffff:') && filter_var(substr($ip, 7), FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            $ip = substr($ip, 7);
+        }
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return ['ip' => $ip, 'family' => 4];
+        }
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            return ['ip' => $ip, 'family' => 6];
+        }
+        return ['ip' => $ip, 'family' => 0];
+    }
+
     public static function nowMs(): int
     {
         return (int)round(microtime(true) * 1000);

@@ -287,6 +287,13 @@ expect "accept reply sent" '"ok":true' "$R"
 R=$(curl -s "$BASE/api/poll.php?id=$ID1")
 expect "accept reply reaches the inviter" '"type":"accept"' "$R"
 expect "accept carries the peer profile" 'SMOKE TWO' "$R"
+# The accept just confirmed a P2P pairing, so both sides also get a
+# peer-net hint (delivered alongside the accept for the inviter).
+expect "accept hands the inviter a peer-net hint" '"type":"peer-net"' "$R"
+expect "the peer-net carries an address family" 'family' "$R"
+expect "the peer-net carries the recipient own address" 'self_ip' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+expect "the accepter also gets a peer-net hint" '"type":"peer-net"' "$R"
 
 # Decline is delivered too.
 curl -s -X POST -H 'Content-Type: application/json' \

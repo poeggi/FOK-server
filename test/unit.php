@@ -62,6 +62,12 @@ ok(Util::tlsBelow12('TLSv1.3') === false, 'TLS 1.3 is accepted');
 ok(Util::tlsBelow12('TLSv2.0') === false, 'a future TLS is accepted');
 ok(Util::tlsBelow12('') === false, 'an absent/unknown protocol is fail-open');
 
+// Util: address-family classification for the peer-net hint.
+ok(Util::ipInfo('1.2.3.4') === ['ip' => '1.2.3.4', 'family' => 4], 'ipv4 classified as family 4');
+ok(Util::ipInfo('2a01:db8::5') === ['ip' => '2a01:db8::5', 'family' => 6], 'ipv6 classified as family 6');
+ok(Util::ipInfo('::ffff:1.2.3.4') === ['ip' => '1.2.3.4', 'family' => 4], 'ipv4-mapped ipv6 unwrapped to family 4');
+ok(Util::ipInfo('?')['family'] === 0, 'an unknown address is family 0');
+
 // Presence: registration and counting
 Presence::touch('aaaaaaaa', '1.2.3.4');
 Presence::touch('bbbbbbbb', '5.6.7.8');
@@ -572,6 +578,24 @@ ok(Debug::get($da) === null && Debug::get($db2) === null, 'a deleted dataset is 
 ok(count(Debug::recent()) === 1, 'delete leaves the others');
 ok(Debug::delete([]) === 0, 'delete of nothing is a no-op');
 Db::get()->exec('DELETE FROM debug');
+
+// peer-net: a confirmed pairing hands each side the other's IP + family,
+// plus its own, as a server-generated 'peer-net' signal.
+Db::get()->exec('DELETE FROM signals');
+Presence::touch('a1a1a1a1', '1.2.3.4');
+Presence::touch('b2b2b2b2', '2a01:db8::9');
+Presence::announceNet('a1a1a1a1', 'b2b2b2b2');
+$pnA = Signals::take('a1a1a1a1');
+$pnB = Signals::take('b2b2b2b2');
+ok(count($pnA) === 1 && $pnA[0]['type'] === 'peer-net', 'each side gets one peer-net signal');
+$dA = json_decode($pnA[0]['payload'], true);
+ok($dA['peer'] === 'b2b2b2b2' && $dA['ip'] === '2a01:db8::9' && $dA['family'] === 6, 'the hint carries the peer ip and family');
+ok($dA['self_ip'] === '1.2.3.4' && $dA['self_family'] === 4, 'the hint carries the recipient own ip and family');
+$dB = json_decode($pnB[0]['payload'], true);
+ok($dB['peer'] === 'a1a1a1a1' && $dB['ip'] === '1.2.3.4' && $dB['family'] === 4, 'the mirror hint points the other way');
+Presence::announceNet('a1a1a1a1', 'zzzzzzzz');
+ok(Signals::take('a1a1a1a1') === [], 'a never-seen peer yields no hint');
+Db::get()->exec('DELETE FROM signals');
 
 // Auth: verify against hash file, lockout after repeated failures
 file_put_contents(FOK_ADMIN_HASH_FILE, password_hash('u:p', PASSWORD_DEFAULT));

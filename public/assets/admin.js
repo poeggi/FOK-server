@@ -518,7 +518,6 @@ const MODULES = [
         async refresh(box) {
             const d = await api('users');
             box.replaceChildren();
-            box.append(el('p', 'muted', d.total + ' registered, showing latest ' + d.users.length));
             // Live filter over id and name; the last known IP moved to the
             // per-client details popup (click an id), so it is off the list.
             const search = el('input', 'usearch');
