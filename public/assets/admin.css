@@ -6,6 +6,11 @@
     --accent: #3ddc84;
     --danger: #e05555;
     --border: #2a3442;
+    /* One definition for the small header controls, used everywhere: the
+       refresh-interval field and every refresh button share these, so they
+       always line up. Width holds a two-digit value plus the spinner. */
+    --ctl-h: 26px;
+    --ctl-w: 52px;
 }
 
 * { box-sizing: border-box; }
@@ -70,17 +75,17 @@ button.small { padding: 2px 8px; font-size: 13px; }
 
 /* Refresh-interval control: one in the top bar (global), one per card
    that carries its own interval. */
+/* Interval field and refresh button share one size everywhere (--ctl-*),
+   so they always line up: top bar, every card head, the details popup. */
 .interval { display: inline-flex; align-items: center; gap: 5px; }
 .interval input {
-    width: 52px;
-    height: 26px;
+    width: var(--ctl-w);
+    height: var(--ctl-h);
     padding: 3px 6px;
     font-size: 12px;
     text-align: center;
 }
-.interval.slim input { width: 40px; padding: 3px 4px; }
-/* Refresh buttons line up with the interval field: same height everywhere. */
-button.refresh { height: 26px; display: inline-flex; align-items: center; }
+button.refresh { height: var(--ctl-h); display: inline-flex; align-items: center; }
 
 .error { color: var(--danger); }
 .muted { color: var(--muted); font-size: 13px; }
@@ -118,21 +123,23 @@ button.refresh { height: 26px; display: inline-flex; align-items: center; }
 
 .statgrid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+    gap: 6px;
     margin-bottom: 8px;
 }
 
 .stat {
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 7px;
+    border-radius: 7px;
+    padding: 5px 6px;
     text-align: center;
 }
 
-.stat-value { font-size: 20px; color: var(--accent); }
-.stat-label { font-size: 11px; color: var(--muted); }
+.stat-value { font-size: 16px; color: var(--accent); }
+.stat-label { font-size: 10px; color: var(--muted); }
+/* Live-load cells read as gauges, not counts. */
+.stat.live .stat-value { color: var(--text); }
 
 table { border-collapse: collapse; width: 100%; font-size: 12px; }
 th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }

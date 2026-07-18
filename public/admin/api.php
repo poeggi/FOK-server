@@ -47,6 +47,8 @@ switch ($action) {
             'scores_total' => $scoreCount,
             'db_rows' => $dbRows,
             'load' => $load,
+            // Live gauges: totals over the last complete minute.
+            'load_live' => Load::lastMinute(),
             'db_size' => is_file(FOK_DB_FILE) ? filesize(FOK_DB_FILE) : 0,
             'php' => PHP_VERSION,
             'server_version' => FOK_SERVER_VERSION,

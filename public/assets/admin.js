@@ -86,43 +86,84 @@ function ipCell(ip) {
 // One condensed popup with everything known about a client: identity,
 // presence, its 1:1 / connection state, relay counters, matchmaking,
 // friendships, scores and mailbox. Opened by clicking any id.
+// Popup-local auto-refresh cadence (seconds), shared by every details
+// popup; not a server setting. 0 = off.
+let clientRefreshSecs = 2;
+
 function closeModal(overlay) {
+    if (overlay._stop) overlay._stop();
     if (overlay._onKey) document.removeEventListener('keydown', overlay._onKey);
     overlay.remove();
+}
+
+// A refresh-interval control not backed by a server setting (the popup).
+function localIntervalControl(get, set) {
+    const wrap = el('label', 'interval');
+    const input = el('input');
+    input.type = 'number';
+    input.min = '0';
+    input.value = get();
+    input.title = 'Auto-refresh interval in seconds (0 = off)';
+    input.onchange = () => { const s = Math.max(0, parseInt(input.value, 10) || 0); input.value = s; set(s); };
+    wrap.append(input, el('span', 'muted', 's'));
+    return wrap;
 }
 
 async function showClient(id) {
     const overlay = el('div', 'modal-backdrop');
     const modal = el('div', 'modal');
     overlay.append(modal);
+
+    // The head is built once and stays put; only the body re-renders, so
+    // the interval control keeps focus and the popup does not flicker.
+    const head = el('div', 'modal-head');
+    const title = el('div', 'modal-title');
+    const name = el('span', 'modal-name', id);
+    title.append(name, el('span', 'modal-id', id));
+    const body = el('div', 'modal-body');
+
+    const load = async () => {
+        try {
+            const d = await api('client&id=' + id);
+            if (!d.ok) throw new Error(d.error || 'failed');
+            name.textContent = d.client.name || '(no name)';
+            renderClientBody(body, overlay, d);
+        } catch (e) {
+            body.replaceChildren(el('p', 'error', 'Error: ' + e.message));
+        }
+    };
+
+    let timer = 0;
+    const restart = () => {
+        if (timer) clearInterval(timer);
+        timer = clientRefreshSecs > 0 ? setInterval(load, clientRefreshSecs * 1000) : 0;
+    };
+    overlay._stop = () => { if (timer) clearInterval(timer); };
+
+    const ctl = localIntervalControl(() => clientRefreshSecs, (s) => { clientRefreshSecs = s; restart(); });
+    const refresh = el('button', 'small refresh', 'refresh');
+    refresh.onclick = load;
+    const close = el('button', 'small', 'close');
+    close.onclick = () => closeModal(overlay);
+    head.append(title, ctl, refresh, close);
+    modal.append(head, body);
+
     overlay.onmousedown = (e) => { if (e.target === overlay) closeModal(overlay); };
     const onKey = (e) => { if (e.key === 'Escape') closeModal(overlay); };
     overlay._onKey = onKey;
     document.addEventListener('keydown', onKey);
-    modal.append(el('p', 'muted', 'Loading ' + id + ' ...'));
+
+    body.append(el('p', 'muted', 'Loading ' + id + ' ...'));
     document.body.append(overlay);
-    try {
-        const d = await api('client&id=' + id);
-        if (!d.ok) throw new Error(d.error || 'failed');
-        renderClient(modal, overlay, d);
-    } catch (e) {
-        modal.replaceChildren(el('p', 'error', 'Error: ' + e.message));
-    }
+    await load();
+    restart();
 }
 
-function renderClient(modal, overlay, d) {
+function renderClientBody(body, overlay, d) {
     const c = d.client;
     const now = d.now;
     const ago = (t) => t ? (now - t) + ' s ago' : '-';
-    modal.replaceChildren();
-
-    const head = el('div', 'modal-head');
-    const title = el('div', 'modal-title');
-    title.append(el('span', 'modal-name', c.name || '(no name)'), el('span', 'modal-id', c.id));
-    const close = el('button', 'small', 'close');
-    close.onclick = () => closeModal(overlay);
-    head.append(title, close);
-    modal.append(head);
+    body.replaceChildren();
 
     const tbl = el('table', 'kv');
     const sec = (t) => { const r = el('tr', 'kv-sec'); const td = el('td', '', t); td.colSpan = 2; r.append(td); tbl.append(r); };
@@ -165,7 +206,7 @@ function renderClient(modal, overlay, d) {
     kv('Mailbox', c.mailbox + ' pending signal(s)');
     if (c.friend_ban_until > now) kv('Friend-banned', 'for ' + (c.friend_ban_until - now) + ' s');
 
-    modal.append(tbl);
+    body.append(tbl);
 }
 
 // Registered-users live filter (id or name), kept across the manual
@@ -180,8 +221,8 @@ const MODULES = [
             const d = await api('stats');
             box.replaceChildren();
             const grid = el('div', 'statgrid');
-            const stat = (label, value) => {
-                const s = el('div', 'stat');
+            const stat = (label, value, cls) => {
+                const s = el('div', 'stat' + (cls ? ' ' + cls : ''));
                 s.append(el('div', 'stat-value', String(value)), el('div', 'stat-label', label));
                 grid.append(s);
             };
@@ -194,9 +235,14 @@ const MODULES = [
             stat('Scores stored', d.scores_total);
             stat('DB entries', d.db_rows);
             stat('DB size', fmtBytes(d.db_size));
+            // Live gauges: totals over the last complete minute.
+            const L = d.load_live || { in: 0, out: 0, db_writes: 0 };
+            stat('Msgs in/min', L.in, 'live');
+            stat('Msgs out/min', L.out, 'live');
+            stat('DB writes/min', L.db_writes, 'live');
             box.append(grid);
             box.append(el('p', 'muted', 'Server v' + d.server_version + ', PHP ' + d.php +
-                ', ' + fmtTime(d.now)));
+                ', ' + fmtTime(d.now) + '. Live gauges: last full minute.'));
         },
     },
     {

@@ -42,4 +42,6 @@ while (!Signals::any($id)) {
     usleep(FOK_POLL_CHECK_USEC);
 }
 
-Util::jsonOut(['ok' => true, 'signals' => Signals::take($id)]);
+$signals = Signals::take($id);
+Load::tick('msg_out', count($signals));
+Util::jsonOut(['ok' => true, 'signals' => $signals]);

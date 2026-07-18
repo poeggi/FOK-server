@@ -20,6 +20,7 @@ require_once __DIR__ . '/../public/src/Starts.php';
 require_once __DIR__ . '/../public/src/Friends.php';
 require_once __DIR__ . '/../public/src/RelayRate.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
+require_once __DIR__ . '/../public/src/Load.php';
 
 // Util installs a fault handler that answers 500 and exits 0 - right for a
 // request, fatal for a test run, where it would swallow a throwable (a
@@ -455,6 +456,39 @@ ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'bye');
 ok(duelOf('aaaaaaaa')['state'] === 'ended', "the real peer's bye ends it (it lingers)");
 ok(!ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'and frees the relay slot at once');
 Db::get()->exec('DELETE FROM conn');
+
+// Load: per-minute gauges accumulate in memory and flush in one write.
+// (Keep no statement handle alive across the run - a live PDOStatement
+// pins its connection open and breaks the later restore test on Windows.)
+$loadVal = static function (string $metric): int {
+    $st = Db::get()->prepare('SELECT value FROM loadmin WHERE bucket = ? AND metric = ?');
+    $st->execute([gmdate('YmdHi'), $metric]);
+    return (int)$st->fetchColumn();
+};
+Load::flush();                            // drain anything pending from above
+Db::get()->exec('DELETE FROM loadmin');   // one write: counted as db load
+Load::tick('msg_out', 3);
+Load::tick('msg_out', 2);
+Load::flush();
+ok($loadVal('msg_out') === 5, 'msg_out accumulates then flushes in one write');
+
+// The PDO wrapper counts a write query as db load, a read as none.
+Load::flush();
+Db::get()->exec('DELETE FROM loadmin');   // exactly one write since the flush
+Db::get()->query('SELECT 1');             // a read: must not count
+Load::flush();
+ok($loadVal('db_w') === 1, 'the wrapper counts one write and no reads');
+
+// lastMinute reports the previous COMPLETE minute's totals.
+Db::get()->exec('DELETE FROM loadmin');
+$prevMin = gmdate('YmdHi', time() - 60);
+Db::get()->prepare('INSERT INTO loadmin (bucket, metric, value) VALUES (?, ?, ?), (?, ?, ?)')
+    ->execute([$prevMin, 'msg_out', 7, $prevMin, 'db_w', 4]);
+$lm = Load::lastMinute();
+ok($lm['out'] === 7, 'lastMinute reports the previous minute messages out');
+ok($lm['db_writes'] === 4, 'lastMinute reports the previous minute db writes');
+ok(array_key_exists('in', $lm), 'lastMinute carries messages-in from the req_min counter');
+Db::get()->exec('DELETE FROM loadmin');
 
 // Auth: verify against hash file, lockout after repeated failures
 file_put_contents(FOK_ADMIN_HASH_FILE, password_hash('u:p', PASSWORD_DEFAULT));

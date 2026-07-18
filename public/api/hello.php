@@ -93,6 +93,8 @@ if (isset($body['friends'])) {
     }
 }
 
+$signals = Signals::take($id);
+Load::tick('msg_out', count($signals));
 $out = [
     'ok' => true,
     'api' => FOK_API_VERSION,
@@ -101,7 +103,7 @@ $out = [
     // turns it off again. It reports back what it actually did via the
     // debug field of the next hello.
     'debug' => $debug,
-    'signals' => Signals::take($id),
+    'signals' => $signals,
 ] + Presence::counts();
 
 if ($friends !== null) {

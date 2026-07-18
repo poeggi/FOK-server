@@ -2,11 +2,16 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
+// The connection is a thin PDO subclass that counts write queries for the
+// admin load gauges (see Load). Requiring it here keeps Load available in
+// every request (endpoint -> Util -> Db -> Load), the cycle is load-safe:
+// nothing extends across it.
+require_once __DIR__ . '/Load.php';
 
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 13;
+    private const SCHEMA_VERSION = 14;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -31,9 +36,10 @@ final class Db
             if (!is_dir(FOK_DATA_DIR)) {
                 mkdir(FOK_DATA_DIR, 0770, true);
             }
-            $pdo = new PDO('sqlite:' . FOK_DB_FILE, null, null, [
+            $pdo = new LoadPDO('sqlite:' . FOK_DB_FILE, null, null, [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_STATEMENT_CLASS => [LoadStatement::class],
             ]);
             $pdo->exec('PRAGMA journal_mode = WAL');
             $pdo->exec('PRAGMA busy_timeout = 5000');
@@ -167,6 +173,16 @@ final class Db
                 mark_total INTEGER NOT NULL DEFAULT 0,
                 mark_time INTEGER NOT NULL DEFAULT 0,
                 blocked_until INTEGER NOT NULL DEFAULT 0
+            )');
+        }
+        if ($v < 14) {
+            // Per-minute load gauges for the admin dashboard (see Load).
+            // Self-pruning: only the last few minutes are ever kept.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS loadmin (
+                bucket TEXT NOT NULL,
+                metric TEXT NOT NULL,
+                value INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (bucket, metric)
             )');
         }
         // Only ever written when a step actually ran: this is a WRITE, and

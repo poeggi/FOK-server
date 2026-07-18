@@ -636,6 +636,8 @@ else
     expect "admin stats db rows" '"db_rows":' "$R"
     expect "admin stats friendships" '"friendships":' "$R"
     expect "admin stats pending friendships" '"friendships_pending":' "$R"
+    expect "admin stats carry the live load gauges" '"load_live":' "$R"
+    expect "live load gauges include db writes" '"db_writes":' "$R"
 
     # Connection tracker: the admin sees the state the signaling implies.
     # These types need no friendship, so they work after the unfriend above.
@@ -740,6 +742,9 @@ else
     expect "the details popup is wired to the client endpoint" "api('client&id='" "$R"
     expect "ipv6 is truncated to first and last group" "function ipCell(" "$R"
     expect "registered users has a live id/name filter" "Filter by ID or name" "$R"
+    expect "the details popup has its own auto-refresh" "clientRefreshSecs" "$R"
+    expect "statistics show the live load gauges" "Msgs in/min" "$R"
+    expect "header controls share one architecture-wide size" "--ctl-w" "$(curl -s "$BASE/assets/admin.css?v=$VER")"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
     expect "global refresh interval defaults to 30 s" '"key":"admin_refresh_secs","value":30' "$R"

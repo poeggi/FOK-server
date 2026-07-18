@@ -76,6 +76,7 @@ if ($method === 'GET') {
             }
         }
         if ($rows !== []) {
+            Load::tick('msg_out', count($rows));
             Util::jsonOut(['ok' => true, 'messages' => array_map(static fn(array $r) => [
                 'seq' => (int)$r['id'],
                 'payload' => $r['payload'],
