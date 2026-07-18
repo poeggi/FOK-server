@@ -799,37 +799,44 @@ Notes:
 - Signaling payloads fit the 16 KB limit; send one signal per ICE
   candidate rather than batching.
 
-## Stats backup / restore (prepared)
+## Stats backup / restore
 
-A client may back its own progress up to the server and restore it on a new
-device. The server side is ready; clients may adopt it without further
-server work.
+A client can back its OWN config up to the server and restore it on another
+device from its id and a secret token alone. Live; clients may use it now.
 
-    POST /api/backup.php {"id": "c0ffee42", "payload": "<string>"}
-      -> 200 {"ok": true, "updated": <unix seconds>}
-    GET  /api/backup.php?id=c0ffee42
+    POST /api/backup.php {"id": "c0ffee42", "payload": "<string>", "token"?: "<hex>"}
+      -> 200 {"ok": true, "token": "<hex>", "updated": <unix seconds>}
+    GET  /api/backup.php?id=c0ffee42&token=<hex>
       -> 200 {"ok": true, "payload": "<string>", "updated": <unix seconds>}
       -> 404 {"error": "no backup"}       nothing stored for this id
+      -> 403 {"error": "bad token"}       missing or wrong token
+
+The token (the secret that binds a backup to its owner):
+
+- The FIRST backup of an id omits `token`; the server MINTS a 128-bit token
+  and returns it. The client MUST store it alongside its id (e.g. in its
+  cookie / local storage) - it is shown only when created.
+- Every LATER backup must send that `token` (it comes back unchanged), and
+  every restore must send it. It NEVER changes for a given id.
+- Without the token, no one who merely knows the id (ids are exchanged
+  during a duel) can read or overwrite the backup. A client that loses its
+  token loses access to its backup - store it carefully.
 
 The payload is OPAQUE to the server - stored and returned verbatim, never
-parsed. One backup per player id; a POST replaces the previous one. Capped
-at 64 KB (FOK_STATS_MAX); larger is rejected with 413.
+parsed - capped at 64 KB (FOK_STATS_MAX; 413 above it). One backup per id; a
+POST replaces the previous one.
 
-Payload manifest (a client convention, NOT enforced by the server): pack a
+Payload manifest (a client convention, NOT enforced by the server): the blob
+is the client's WHOLE config, so that id + token restore everything. Pack a
 single JSON object and carry a version so a future client can migrate an
 older backup, e.g.
 
-    {"v": 1, "scores": [...], "shop": {...}, "settings": {...}}
+    {"v": 1, "settings": {...}, "friends": [...], "highscores": [...]}
 
 The client owns this shape: bump "v" when it changes and keep readers for
-older versions.
-
-SECURITY (not yet): restore and overwrite are keyed by player id ALONE, and
-IDs are exchanged during a duel - so anyone who learns an ID can read or
-replace that player's backup. This is intentionally open for now. Before a
-client stores anything sensitive, we will bind a backup to a shared secret:
-the client sets a secret on its first backup (the server keeps only a hash),
-and restore/overwrite then require it.
+older versions. (Server-side records already keyed by id - a player's
+friendships and submitted scores - persist across a device change on their
+own; the backup carries the client's local state and its own view of them.)
 
 ## Admin
 

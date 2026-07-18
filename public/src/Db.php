@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 15;
+    private const SCHEMA_VERSION = 16;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -193,6 +193,13 @@ final class Db
                 payload TEXT NOT NULL,
                 updated INTEGER NOT NULL
             )');
+        }
+        if ($v < 16) {
+            // Secret token (SHA-256 hash) that binds a backup to its owner:
+            // minted on the first backup, required for restore and overwrite
+            // (see Vault). Empty for any pre-token row, which the next backup
+            // re-secures.
+            $pdo->exec("ALTER TABLE vault ADD COLUMN token_hash TEXT NOT NULL DEFAULT ''");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

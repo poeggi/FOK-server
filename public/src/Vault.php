@@ -4,39 +4,74 @@ declare(strict_types=1);
 require_once __DIR__ . '/Db.php';
 
 /**
- * Per-player stats backup: an OPAQUE blob the client packs (its scores, shop
- * items, settings - whatever it wants to carry to a new device). The server
- * never interprets the payload; the format and its versioning are the
- * client's, documented as a manifest in docs/API.md. One row per player id.
+ * Per-player stats backup: an OPAQUE blob the client packs (its settings,
+ * friends, high scores - its whole config; see docs/API.md). The server
+ * never interprets the payload. One row per player id.
  *
- * SECURITY (future): retrieval and overwrite are keyed by player id ALONE,
- * and ids are exchanged during a duel - so anyone who learns an id can read
- * or replace that player's backup. This is deliberately open for now. Before
- * clients trust it with anything sensitive, bind a backup to a shared secret:
- * store a hash of a client-supplied secret on the first backup and require it
- * for both restore and overwrite. See the matching note in api/backup.php.
+ * A backup is bound to its owner by a SECRET TOKEN: the first backup mints a
+ * 128-bit token, returns it once, and stores only its SHA-256 hash. Every
+ * later backup of the same id AND every restore must present that token; it
+ * never changes. A client that loses its token loses access to its backup -
+ * that is the price of not letting anyone who knows an id read or overwrite
+ * it (ids are exchanged during a duel). The token is high-entropy, so a fast
+ * hash is enough; comparisons are constant-time.
  */
 final class Vault
 {
-    /** Stores (or replaces) a player's backup; returns the stored timestamp. */
-    public static function put(string $id, string $payload): int
+    /**
+     * Stores (or replaces) a player's backup. The first backup for an id (or
+     * a pre-token row) mints a new token; a later one must present the
+     * matching token, which is returned unchanged.
+     * @return array{token:string,updated:int}|null null = missing/wrong token.
+     */
+    public static function backup(string $id, string $payload, ?string $token): ?array
     {
+        $row = self::fetch($id);
+        if ($row === null || $row['token_hash'] === '') {
+            $token = bin2hex(random_bytes(16));
+            $hash = hash('sha256', $token);
+        } elseif ($token !== null && hash_equals($row['token_hash'], hash('sha256', $token))) {
+            $hash = $row['token_hash'];
+        } else {
+            return null;
+        }
         $now = time();
         Db::get()->prepare(
-            'INSERT INTO vault (id, payload, updated) VALUES (?, ?, ?)
-             ON CONFLICT (id) DO UPDATE SET payload = excluded.payload, updated = excluded.updated'
-        )->execute([$id, $payload, $now]);
-        return $now;
+            'INSERT INTO vault (id, payload, token_hash, updated) VALUES (?, ?, ?, ?)
+             ON CONFLICT (id) DO UPDATE SET payload = excluded.payload,
+                 token_hash = excluded.token_hash, updated = excluded.updated'
+        )->execute([$id, $payload, $hash, $now]);
+        return ['token' => $token, 'updated' => $now];
     }
 
-    /** @return array{payload:string,updated:int}|null the backup, or null if none. */
-    public static function get(string $id): ?array
+    /**
+     * Restores a player's backup; the token must match the one minted on the
+     * first backup.
+     * @return array{payload:string,updated:int}|false|null
+     *   array = ok, false = wrong token, null = no backup for this id.
+     */
+    public static function restore(string $id, string $token): array|false|null
     {
-        $st = Db::get()->prepare('SELECT payload, updated FROM vault WHERE id = ?');
+        $row = self::fetch($id);
+        if ($row === null) {
+            return null;
+        }
+        if (!hash_equals($row['token_hash'], hash('sha256', $token))) {
+            return false;
+        }
+        return ['payload' => $row['payload'], 'updated' => $row['updated']];
+    }
+
+    /** @return array{payload:string,token_hash:string,updated:int}|null */
+    private static function fetch(string $id): ?array
+    {
+        $st = Db::get()->prepare('SELECT payload, token_hash, updated FROM vault WHERE id = ?');
         $st->execute([$id]);
         $row = $st->fetch();
-        return $row === false
-            ? null
-            : ['payload' => $row['payload'], 'updated' => (int)$row['updated']];
+        return $row === false ? null : [
+            'payload' => $row['payload'],
+            'token_hash' => (string)$row['token_hash'],
+            'updated' => (int)$row['updated'],
+        ];
     }
 }

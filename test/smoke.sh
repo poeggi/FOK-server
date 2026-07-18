@@ -173,20 +173,32 @@ R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application
 expect "score submissions throttled" '429' "$R"
 [ "$ADMIN" -eq 1 ] && setting score_rate_max 10
 
-# Client stats backup / restore: an opaque per-id blob (see docs/API.md).
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID3")
+# Client config backup / restore, token-secured (see docs/API.md).
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID3&token=nope")
 expect "restore with no backup is 404" '404' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID3\",\"payload\":\"backup-blob-123\"}" "$BASE/api/backup.php")
-expect "stats backup stored" '"ok":true' "$R"
-expect "backup reports its timestamp" '"updated":' "$R"
-R=$(curl -s "$BASE/api/backup.php?id=$ID3")
-expect "stats restore returns the payload verbatim" 'backup-blob-123' "$R"
+    -d "{\"id\":\"$ID3\",\"payload\":\"config-blob-1\"}" "$BASE/api/backup.php")
+expect "first backup stored" '"ok":true' "$R"
+expect "first backup mints a token" '"token":"' "$R"
+BTOKEN=$(echo "$R" | grep -oE '"token":"[a-f0-9]+"' | cut -d'"' -f4)
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID3")
+expect "restore without a token is refused" '400' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID3&token=00000000000000000000000000000000")
+expect "restore with a wrong token is 403" '403' "$R"
+R=$(curl -s "$BASE/api/backup.php?id=$ID3&token=$BTOKEN")
+expect "restore with the token returns the config" 'config-blob-1' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID3\",\"payload\":\"take-over\"}" "$BASE/api/backup.php")
+expect "overwrite without the token is 403" '403' "$R"
+curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID3\",\"payload\":\"config-blob-2\",\"token\":\"$BTOKEN\"}" "$BASE/api/backup.php" > /dev/null
+R=$(curl -s "$BASE/api/backup.php?id=$ID3&token=$BTOKEN")
+expect "a tokened overwrite replaces the config" 'config-blob-2' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"nothex\",\"payload\":\"x\"}" "$BASE/api/backup.php")
 expect "backup rejects a malformed id" '"error":"invalid id"' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID3\"}" "$BASE/api/backup.php")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID4\"}" "$BASE/api/backup.php")
 expect "backup rejects a missing payload" '"error":"invalid payload"' "$R"
-{ printf '{"id":"%s","payload":"' "$ID3"; head -c 70000 /dev/zero | tr '\0' 'x'; printf '"}'; } > "$DATA/bigbak.json"
+{ printf '{"id":"%s","payload":"' "$ID4"; head -c 70000 /dev/zero | tr '\0' 'x'; printf '"}'; } > "$DATA/bigbak.json"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     --data-binary "@$DATA/bigbak.json" "$BASE/api/backup.php")
 expect "oversized backup rejected with 413" '413' "$R"

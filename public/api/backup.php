@@ -7,24 +7,24 @@ require_once __DIR__ . '/../src/Vault.php';
 /**
  * Client stats backup / restore (see docs/API.md for the payload manifest).
  *
- *   POST {"id": <8hex>, "payload": <string>}
- *        -> 200 {"ok": true, "updated": <unix seconds>}
- *        stores (or replaces) this player's backup.
+ *   POST {"id": <8hex>, "payload": <string>, "token"?: <hex>}
+ *        -> 200 {"ok": true, "token": <hex>, "updated": <unix seconds>}
+ *        First backup: omit token; the server mints one and returns it -
+ *        the client MUST store it (with its id). Every later backup must
+ *        send that token; it comes back unchanged.
+ *        -> 403 {"error": "bad token"}   a backup exists and the token is
+ *                                        missing or wrong.
  *
- *   GET  ?id=<8hex>
+ *   GET  ?id=<8hex>&token=<hex>
  *        -> 200 {"ok": true, "payload": <string>, "updated": <unix seconds>}
- *        -> 404 {"error": "no backup"}     nothing stored for this id
- *        restores it on a new device.
+ *        -> 404 {"error": "no backup"}   nothing stored for this id
+ *        -> 403 {"error": "bad token"}   wrong token
+ *        Restores it on a new device from id + token alone.
  *
- * The payload is OPAQUE to the server (it is never parsed), capped at
- * FOK_STATS_MAX bytes. Its shape and versioning are the client's - see the
- * manifest in docs/API.md.
- *
- * SECURITY (future): restore and overwrite are keyed by player id ALONE, and
- * ids are exchanged during a duel, so anyone who learns an id can read or
- * replace that player's backup. This is intentionally open for now. Before
- * clients trust it with anything sensitive, gate restore (and overwrite)
- * behind a shared secret the client sets on its first backup.
+ * The payload is OPAQUE to the server (never parsed), capped at
+ * FOK_STATS_MAX bytes. Its shape and versioning are the client's; the token
+ * binds the backup to whoever made it (a client that loses the token loses
+ * access - see Vault).
  */
 Util::cors();
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
@@ -34,11 +34,18 @@ if ($method === 'GET') {
     if (!Util::isValidId($id)) {
         Util::fail('invalid id');
     }
-    $row = Vault::get($id);
-    if ($row === null) {
+    $token = $_GET['token'] ?? '';
+    if ($token === '') {
+        Util::fail('token required');
+    }
+    $res = Vault::restore($id, $token);
+    if ($res === null) {
         Util::fail('no backup', 404);
     }
-    Util::jsonOut(['ok' => true, 'payload' => $row['payload'], 'updated' => $row['updated']]);
+    if ($res === false) {
+        Util::fail('bad token', 403);
+    }
+    Util::jsonOut(['ok' => true, 'payload' => $res['payload'], 'updated' => $res['updated']]);
 }
 
 if ($method !== 'POST') {
@@ -57,5 +64,12 @@ if (!is_string($payload) || $payload === '') {
 if (strlen($payload) > FOK_STATS_MAX) {
     Util::fail('payload too large', 413);
 }
-
-Util::jsonOut(['ok' => true, 'updated' => Vault::put($id, $payload)]);
+$token = $body['token'] ?? null;
+if ($token !== null && !is_string($token)) {
+    Util::fail('invalid token');
+}
+$res = Vault::backup($id, $payload, $token);
+if ($res === null) {
+    Util::fail('bad token', 403);
+}
+Util::jsonOut(['ok' => true, 'token' => $res['token'], 'updated' => $res['updated']]);

@@ -503,16 +503,23 @@ ok($lm['db_writes'] === 4, 'lastMinute reports the previous minute db writes');
 ok(array_key_exists('in', $lm), 'lastMinute carries messages-in from the req_min counter');
 Db::get()->exec('DELETE FROM loadmin');
 
-// Vault: opaque per-player stats backup, one row per id, restorable.
-ok(Vault::get('aaaaaaaa') === null, 'no backup for a fresh id');
-$vts = Vault::put('aaaaaaaa', '{"v":1,"scores":[1,2]}');
-ok($vts > 0, 'put returns the stored timestamp');
-$vrow = Vault::get('aaaaaaaa');
-ok($vrow !== null && $vrow['payload'] === '{"v":1,"scores":[1,2]}', 'get returns the payload verbatim');
-ok($vrow['updated'] === $vts, 'get returns the stored timestamp');
-Vault::put('aaaaaaaa', 'replaced');
-ok(Vault::get('aaaaaaaa')['payload'] === 'replaced', 'put replaces the previous backup');
-ok(Vault::get('bbbbbbbb') === null, 'another id keeps its own empty slot');
+// Vault: token-secured per-player config backup, one row per id.
+ok(Vault::restore('aaaaaaaa', 'x') === null, 'restore of a fresh id is null (no backup)');
+$v1 = Vault::backup('aaaaaaaa', '{"v":1,"settings":{}}', null);
+ok(is_array($v1) && $v1['updated'] > 0, 'first backup succeeds and reports a timestamp');
+ok(isset($v1['token']) && strlen($v1['token']) === 32, 'first backup mints a 128-bit token');
+$tok = $v1['token'];
+$r = Vault::restore('aaaaaaaa', $tok);
+ok($r !== null && $r !== false && $r['payload'] === '{"v":1,"settings":{}}', 'restore with the token returns the payload');
+ok(Vault::restore('aaaaaaaa', 'wrongtoken') === false, 'restore with a wrong token is refused');
+ok(Vault::backup('aaaaaaaa', 'take-over', 'wrongtoken') === null, 'overwrite with a wrong token is refused');
+ok(Vault::backup('aaaaaaaa', 'take-over', null) === null, 'overwrite without a token is refused');
+$v2 = Vault::backup('aaaaaaaa', 'updated-blob', $tok);
+ok(is_array($v2) && $v2['token'] === $tok, 'a later backup keeps the same token');
+ok(Vault::restore('aaaaaaaa', $tok)['payload'] === 'updated-blob', 'the later backup replaced the payload');
+ok(Vault::restore('bbbbbbbb', $tok) === null, 'another id keeps its own empty slot');
+$v3 = Vault::backup('bbbbbbbb', 'other', null);
+ok($v3['token'] !== $tok, 'a different id gets a different token');
 Db::get()->exec('DELETE FROM vault');
 
 // Auth: verify against hash file, lockout after repeated failures

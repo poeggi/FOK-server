@@ -81,7 +81,7 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
         relay.php     in-duel message relay (P2P fallback), long-polled
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
-        backup.php    GET/POST client stats backup and restore (prepared)
+        backup.php    GET/POST client config backup and restore, token-secured
         .user.ini     PHP limits for the API only (see Capacity below)
       admin/          session-protected admin UI + JSON API
       assets/         CSS/JS; admin dashboard is modular (see MODULES in
