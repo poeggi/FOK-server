@@ -31,6 +31,17 @@ require_once __DIR__ . '/../src/RelayRate.php';
  * first message through the hub until FOK_RELAY_WINDOW after its last,
  * so a running duel is never turned away. Expect ~200-400 ms one-way:
  * relay INPUT events and hashes, not high-rate state (see docs/API.md).
+ *
+ * TODO: replace this concept. The blocking one-worker-per-long-poll model
+ * is a dead end: each relayed player holds an FPM worker for the whole
+ * duel, so relay_max_duels can never exceed a fraction of the shared-
+ * hosting pool (a few dozen workers, not configurable from here).
+ * Concurrency is bounded by the process model, not by CPU or DB, and the
+ * poll interval adds latency no persistent link would. Move the relay to a
+ * persistent async process (single event-loop / WebSocket hub holding many
+ * connections at once) on a VPS or container: a duel then costs a socket
+ * and some RAM instead of a blocked worker, concurrency scales into the
+ * thousands, and forwarding becomes a push with no poll term.
  */
 Util::cors();
 $method = $_SERVER['REQUEST_METHOD'] ?? '';

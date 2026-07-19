@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.16.25';
+const FOK_SERVER_VERSION = '0.16.26';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -83,7 +83,7 @@ const FOK_CHAT_MAX_LEN = 120;
 // Long-poll mailbox check interval. The hold duration cap is the
 // poll_wait_max setting; it must stay small enough that concurrent
 // handshakes cannot exhaust the shared-hosting FPM worker pool.
-const FOK_POLL_CHECK_USEC = 150000;
+const FOK_POLL_CHECK_USEC = 20000;
 
 // Abuse caps (HTTP 429): pending signals per recipient, score submissions
 // per player within the rate window.

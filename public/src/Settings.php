@@ -23,7 +23,7 @@ final class Settings
         'poll_wait_max' => [8, 'Max long-poll hold (seconds)'],
         'start_lead_min_ms' => [200, 'Min lead time for server-issued level starts (ms)'],
         'start_sync_max_age_ms' => [2000, 'Reject a start whose sync proof is older than (ms)'],
-        'relay_max_duels' => [3, 'Max concurrent relayed duels (protects FPM workers)'],
+        'relay_max_duels' => [10, 'Max concurrent relayed duels (protects FPM workers)'],
         'relay_max_payload' => [2048, 'Max relayed message bytes'],
         'relay_pending_cap' => [128, 'Max undelivered relay messages per receiver'],
         'relay_ttl' => [30, 'Undelivered relay message lifetime (seconds)'],
