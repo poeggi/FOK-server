@@ -42,7 +42,19 @@ final class Db
                 PDO::ATTR_STATEMENT_CLASS => [LoadStatement::class],
             ]);
             $pdo->exec('PRAGMA journal_mode = WAL');
-            $pdo->exec('PRAGMA busy_timeout = 5000');
+            // NORMAL (vs the WAL default FULL) drops the fsync on every
+            // commit, syncing only at checkpoint: it shortens how long each
+            // write holds the single writer, which is the contention ceiling
+            // behind the FPM worker pool. Safe here - a power loss can lose
+            // only the last transaction (monitoring counters), never corrupt
+            // the file, and never on a mere application crash.
+            $pdo->exec('PRAGMA synchronous = NORMAL');
+            // A contended write waits at most this long for the lock, then
+            // throws SQLITE_BUSY (caught as a clean 500) instead of parking a
+            // worker. Well above the worst honest pileup (~18 workers times a
+            // few ms each), yet low enough that a database stall frees workers
+            // fast rather than pinning the whole pool for the timeout.
+            $pdo->exec('PRAGMA busy_timeout = 2000');
             $pdo->exec('PRAGMA foreign_keys = ON');
             self::migrate($pdo);
             self::$pdo = $pdo;
