@@ -57,6 +57,15 @@ optional feature (e.g. the peer-net hint, added in 3.1) is available.
   not sent CORS headers. The one exception is `t.txt`, which is served by
   Apache without PHP and so cannot consult that allowlist: it answers any
   origin, and discloses nothing the standard HTTP `Date` header does not.
+- Transport: HTTPS only, TLS 1.3, HTTP/2 (ALPN `h2`, with HTTP/1.1
+  fallback); connections are persistent (keep-alive). Clients should REUSE
+  one connection across requests - browsers do this automatically. It
+  matters for the long-poll pattern: over HTTP/2 a held poll GET and any
+  outbound POSTs share one multiplexed connection, with no per-request TLS
+  handshake and no HTTP-level head-of-line blocking between them. This is
+  transport only: it keeps connections up, it does NOT let the server push
+  without a held request (each held request still occupies one worker).
+  HTTP/3 / QUIC is not offered.
 - Clients must gate ALL calls on the user's offline setting
   (`!cfg.offline` in FOK-snake): when offline is ON, never contact the
   server.
@@ -382,18 +391,18 @@ only carries the bit.
 
 ## GET /api/poll.php - fast signal poll (matchmaking window only)
 
-    GET /api/poll.php?id=c0ffee42[&wait=8]
+    GET /api/poll.php?id=c0ffee42[&wait=9]
 
     -> 204 No Content                          nothing pending
     -> 200 {"ok":true,"signals":[...]}         pending messages, drained
 
-With `wait` (seconds, capped server-side at 8) this is a LONG POLL: the
-server holds the request open and answers the moment a signal arrives,
-checking every 150 ms. This is the lowest-latency delivery path -
-during an active handshake, loop `wait=8` requests back-to-back and a
-relayed signal reaches you in ~150 ms plus network, instead of a full
-poll interval. Without `wait` it degrades to the plain cheap poll (one
-indexed read, 204).
+With `wait` (seconds, capped server-side at 9 by default,
+admin-configurable) this is a LONG POLL: the server holds the request
+open and answers the moment a signal arrives, checking every 20 ms. This
+is the lowest-latency delivery path - during an active handshake, loop
+`wait=9` requests back-to-back and a relayed signal reaches you in ~20 ms
+plus network, instead of a full poll interval. Without `wait` it degrades
+to the plain cheap poll (one indexed read, 204).
 
 Same drain semantics as hello's `signals`. Use it ONLY while waiting
 for or performing matchmaking/signaling; stop when the DataChannel
@@ -741,10 +750,10 @@ indicator so latency self-explains.
                                     tell the user the server is full and
                                     end the match attempt
 
-    GET /api/relay.php?id=me&peer=opponent&wait=8
+    GET /api/relay.php?id=me&peer=opponent&wait=9
       -> {"ok":true,"messages":[{"seq":n,"payload":"...","created":s}]}
          oldest first, delivered exactly once
-      -> 204 after the hold when nothing arrived (loop wait=8 requests
+      -> 204 after the hold when nothing arrived (loop wait=9 requests
          back-to-back while in relay mode, like poll.php)
 
 payload is opaque to the server (max 2 KB, defaults admin-configurable);

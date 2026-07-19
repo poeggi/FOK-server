@@ -13,7 +13,7 @@ require_once __DIR__ . '/../src/Signals.php';
  *
  * With wait > 0 (long poll, capped by the poll_wait_max setting) the
  * request is held open and answers the moment a signal arrives, checking
- * the mailbox every 150 ms: signal forwarding latency is then ~150 ms
+ * the mailbox every 20 ms: signal forwarding latency is then ~20 ms
  * instead of a full client poll interval. The hold cap keeps concurrent
  * handshakes from exhausting the shared-hosting FPM worker pool.
  *
