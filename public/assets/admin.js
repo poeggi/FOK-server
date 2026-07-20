@@ -428,7 +428,12 @@ function renderPerf(box, d) {
         r.append(dot, el('td', '', c.label), val);
         table.append(r);
     }
-    box.append(table);
+    // Scrolls inside the card like the log does: the alerts card opts out of
+    // the dashboard's own body scroll, so each tab bounds its own content
+    // instead of letting the card grow down the whole page.
+    const view = el('div', 'perfview');
+    view.append(table);
+    box.append(view);
 }
 
 const MODULES = [

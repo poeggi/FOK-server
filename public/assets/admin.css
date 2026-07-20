@@ -247,6 +247,8 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 
 /* Performance tab: a capability reads at a glance from its verdict, so the
    status carries the colour and the note explains what is lost. */
+/* Same bounded scroll as the log view: the card must not grow down the page. */
+.perfview { max-height: 46vh; overflow-y: auto; }
 .badge.perf-good { border-color: var(--accent); color: var(--accent); }
 .badge.perf-warn { border-color: #b7861f; color: #e0b055; }
 .badge.perf-bad { border-color: var(--danger); color: var(--danger); }
