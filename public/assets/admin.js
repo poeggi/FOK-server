@@ -150,7 +150,11 @@ function infoModal(titleText, bodyNode) {
     const close = el('button', 'small', 'close');
     close.onclick = () => closeModal(overlay);
     head.append(title, close);
-    modal.append(head, bodyNode);
+    // Wrapped so this popup gets the same head-stays-put, body-scrolls
+    // treatment as the client popup (see admin.css).
+    const body = el('div', 'modal-body');
+    body.append(bodyNode);
+    modal.append(head, body);
     overlay.append(modal);
     overlay.onmousedown = (e) => { if (e.target === overlay) closeModal(overlay); };
     const onKey = (e) => { if (e.key === 'Escape') closeModal(overlay); };
@@ -342,7 +346,11 @@ function renderAlerts(box, d) {
         r.onclick = () => showAlert(a);
         table.append(r);
     }
-    box.append(table);
+    // The list is the scroll region; the count above and the button below
+    // stay put, so "Mark all seen" is reachable without scrolling to it.
+    const view = el('div', 'pane');
+    view.append(table);
+    box.append(view);
     if (d.unseen) {
         const btn = el('button', '', 'Mark all seen');
         btn.onclick = async () => {
@@ -386,7 +394,7 @@ function renderLogs(box) {
         box.append(el('p', 'muted', d.entries.length ? 'No entries at this level.' : 'Log is empty.'));
         return;
     }
-    const view = el('div', 'logview');
+    const view = el('div', 'pane logview');
     for (const e of shown) view.append(el('div', 'logline log-' + e.level, e.text));
     box.append(view);
     box.append(el('p', 'muted', 'Showing ' + shown.length + ' of ' + d.entries.length
@@ -428,10 +436,9 @@ function renderPerf(box, d) {
         r.append(dot, el('td', '', c.label), val);
         table.append(r);
     }
-    // Scrolls inside the card like the log does: the alerts card opts out of
-    // the dashboard's own body scroll, so each tab bounds its own content
-    // instead of letting the card grow down the whole page.
-    const view = el('div', 'perfview');
+    // The bar above stays put and this scrolls - the .pane half of the one
+    // height model (see admin.css), same as the log and the alert list.
+    const view = el('div', 'pane');
     view.append(table);
     box.append(view);
 }
@@ -693,13 +700,17 @@ const MODULES = [
                 r._search = (u.id + ' ' + (u.name || '')).toLowerCase();
                 table.append(r);
             }
-            box.append(table);
+            // The filter field above must not scroll away from the list it
+            // filters, so the list is the .pane and the field stays put.
+            const view = el('div', 'pane');
+            view.append(table);
+            box.append(view);
             sortable(table, 'users');
             const applyFilter = () => {
                 usersFilter = search.value.trim().toLowerCase();
                 for (const r of table.querySelectorAll('tr')) {
                     if (r._search === undefined) continue;
-                    r.style.display = (!usersFilter || r._search.includes(usersFilter)) ? '' : 'none';
+                    r.classList.toggle('hidden', !!usersFilter && !r._search.includes(usersFilter));
                 }
             };
             search.oninput = applyFilter;
@@ -795,7 +806,10 @@ const MODULES = [
 
             const bar = el('div', 'bulk-bar');
             bar.append(dlSel, delSel);
-            box.append(bar, table);
+            // Bulk actions stay put above the scrolling list (see admin.css).
+            const view = el('div', 'pane');
+            view.append(table);
+            box.append(bar, view);
             updateBar();
             sortable(table, 'debug');
             mth.classList.remove('sortable');
@@ -921,7 +935,11 @@ function sortable(table, id) {
     // so a click - mousedown then mouseup on the SAME element - is often
     // lost when the row is replaced between press and release. mousedown
     // fires on the press alone and cannot be eaten that way.
-    const box = table.parentNode;
+    // Bind on the card body, not the table's immediate parent: a table may
+    // sit inside a .pane wrapper that is rebuilt on every refresh, and the
+    // body is the element that survives one (see the height model in
+    // admin.css). Falls back for a table rendered outside a card.
+    const box = table.closest('.card-body') || table.parentNode;
     if (box && !box._sortBound) {
         box._sortBound = true;
         box.addEventListener('mousedown', (e) => {

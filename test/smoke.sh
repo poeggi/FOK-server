@@ -689,6 +689,25 @@ else
     # The global td rule is nowrap; the popup value cell must override it or
     # a long alert message runs off the side instead of growing the popup.
     expect "popup values wrap instead of overflowing" 'overflow-wrap: anywhere' "$CSS_ASSET"
+    # Every scrollable box takes its height from the --pane-h token. A
+    # component rule with its own vh height is exactly how the alerts card
+    # drifted taller than the rest, twice; keep the single source.
+    N=$(echo "$CSS_ASSET" | grep -oE '[0-9]+vh' | wc -l | tr -d ' ')
+    if [ "$N" -eq 1 ]; then
+        echo "ok   card heights come from one --pane-h token"
+    else
+        echo "FAIL admin.css should hold exactly 1 vh height (--pane-h), found $N"
+        fail=1
+    fi
+    # Small buttons were declared three times with conflicting padding and
+    # font size, so the head controls only lined up by accident of order.
+    N=$(echo "$CSS_ASSET" | grep -cE '^button\.small \{' || true)
+    if [ "$N" -eq 1 ]; then
+        echo "ok   small buttons have a single definition"
+    else
+        echo "FAIL button.small should be declared once, found $N"
+        fail=1
+    fi
 
     JS_ASSET=$(curl -s "$BASE/assets/admin.js?v=$VER")
     N=$(echo "$JS_ASSET" | grep -c "view: 'settings'" || true)

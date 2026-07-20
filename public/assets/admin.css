@@ -1,16 +1,53 @@
+/* FOK-server admin styles.
+ *
+ * ONE height model, used by every card, every tab and every popup:
+ *
+ *   a scroll box (.card-body / .modal-body) is capped at --pane-h and is a
+ *   flex column. Its "bar" children (tab rows, filter rows, status lines,
+ *   footnotes) keep their natural height and stay put; exactly ONE child
+ *   carries .pane and takes the remaining space with its own scrollbar.
+ *
+ * That is why every card ends up the same height whatever is inside it, and
+ * why a filter row never scrolls away from the list it filters. A panel with
+ * no .pane child simply scrolls as a whole - also fine, same cap.
+ *
+ * Nothing here may set a height in a component rule: heights come from
+ * --pane-h alone, or the cards drift apart again (they did, twice).
+ */
+
 :root {
     --bg: #10141a;
     --card: #1a212b;
     --text: #d8e0ea;
     --muted: #7d8894;
-    --accent: #3ddc84;
-    --danger: #e05555;
     --border: #2a3442;
+
+    /* Semantic status. Every badge, log line and capability verdict draws
+       from these pairs, so a state reads the same colour wherever it
+       appears. -line is the outline, the plain name is text/fill. */
+    --accent: #3ddc84;
+    --good: #3ddc84;
+    --good-line: #3ddc84;
+    --warn: #e0b055;
+    --warn-line: #b7861f;
+    --info: #79aee8;
+    --info-line: #3f6ea8;
+    --danger: #e05555;
+    --danger-line: #e05555;
+
+    /* The single height budget for scrollable content (see the note above). */
+    --pane-h: 34vh;
+
     /* One definition for the small header controls, used everywhere: the
        refresh-interval field and every refresh button share these, so they
        always line up. Width holds a two-digit value plus the spinner. */
     --ctl-h: 26px;
     --ctl-w: 52px;
+
+    --r-surface: 10px;    /* cards, popups */
+    --r-ctl: 6px;         /* inputs, buttons, panes */
+    --r-pill: 999px;      /* badges, chips */
+    --gap: 12px;
 }
 
 * { box-sizing: border-box; }
@@ -21,6 +58,15 @@ body {
     color: var(--text);
     font: 13.5px/1.45 system-ui, sans-serif;
 }
+
+/* Utility class; must win against any later display rule (.dashboard). */
+.hidden { display: none !important; }
+
+.error { color: var(--danger); }
+.muted { color: var(--muted); font-size: 13px; }
+
+
+/* ---------------------------------------------------------------- chrome */
 
 header {
     display: flex;
@@ -44,39 +90,38 @@ header nav { display: flex; align-items: center; gap: 20px; }
 }
 #viewtoggle.active { border-color: var(--accent); color: var(--accent); }
 
-/* Utility class; must win against any later display rule (.dashboard). */
-.hidden { display: none !important; }
+footer { text-align: center; font-size: 12px; padding: 8px 0 16px; }
 
-.login { max-width: 320px; margin: 80px auto; }
-.login form { display: flex; flex-direction: column; gap: 12px; }
-.login label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
 
-.login button {
-    margin-top: 28px;
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #10241a;
-    font-weight: 700;
-}
-.login button:hover { filter: brightness(1.15); }
+/* ------------------------------------------------------------- controls */
 
 input, button {
     font: inherit;
     color: var(--text);
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--r-ctl);
     padding: 8px 10px;
 }
 
 button { cursor: pointer; }
 button:hover { border-color: var(--accent); }
-button.small { padding: 2px 8px; font-size: 13px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* Refresh-interval control: one in the top bar (global), one per card
-   that carries its own interval. */
-/* Interval field and refresh button share one size everywhere (--ctl-*),
-   so they always line up: top bar, every card head, the details popup. */
+/* THE definition of a small button - card heads, popup heads, table rows and
+   bulk bars all use this one, so they line up with each other and with the
+   interval field. Do not re-declare it further down. */
+button.small {
+    height: var(--ctl-h);
+    padding: 0 8px;
+    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Refresh-interval control: one in the top bar (global), one per card that
+   carries its own interval, one in the client popup. */
 .interval { display: inline-flex; align-items: center; gap: 5px; }
 .interval input {
     width: var(--ctl-w);
@@ -85,66 +130,107 @@ button.small { padding: 2px 8px; font-size: 13px; }
     font-size: 12px;
     text-align: center;
 }
-/* Every small button (refresh, close, delete, toggles) is the control
-   height, so they line up with each other and with the interval field. */
-button.small { height: var(--ctl-h); display: inline-flex; align-items: center; justify-content: center; }
 
-.error { color: var(--danger); }
-.muted { color: var(--muted); font-size: 13px; }
+.iconbtn svg { display: block; }
+button.iconbtn:disabled { opacity: 0.4; cursor: default; }
+button.iconbtn:disabled:hover { border-color: var(--border); }
+
+/* Settings-form number inputs only; must NOT match the interval control in
+   the card head, or it would override its (narrower) width. */
+.card-body input[type="number"] { width: 90px; padding: 3px 6px; }
+.card form > button { margin-top: 10px; }
+
+/* Registered-users live filter. */
+input.usearch { width: 100%; margin: 6px 0 8px; padding: 5px 8px; -webkit-appearance: none; }
+
+
+/* ------------------------------------------------- surfaces: card, popup */
 
 .dashboard {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 12px;
-    padding: 12px;
+    gap: var(--gap);
+    padding: var(--gap);
 }
 
-.card {
+/* A card and a popup are the same surface, so they share the token set and
+   the head/body split; only the framing differs. */
+.card, .modal {
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px;
-    overflow-x: auto;
+    border-radius: var(--r-surface);
 }
+.card { padding: var(--gap); overflow-x: auto; }
 
-/* Keep the dashboard on one screen: long card content scrolls inside. */
-#dashboard .card-body { max-height: 34vh; overflow-y: auto; }
-
-/* One flex row, so the head controls can never overlap the card body -
-   a floated control escapes the heading box and lands on the content. */
-.card h2 {
+/* One flex row, so the head controls can never overlap the body - a floated
+   control escapes the heading box and lands on the content. */
+.card h2, .modal-head {
     margin: 0 0 8px;
     font-size: 14px;
     display: flex;
     align-items: center;
     gap: 10px;
 }
-/* The title keeps the space; every control sits at the right edge, with
-   the refresh button always last so it lines up across the cards. */
-.card h2 .card-title { white-space: nowrap; margin-right: auto; }
+/* The title keeps the space; every control sits at the right edge, with the
+   refresh button always last so it lines up across the cards. */
+.card h2 .card-title, .modal-title { margin-right: auto; }
+.card h2 .card-title { white-space: nowrap; }
 
-.statgrid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
-    gap: 6px;
-    margin-bottom: 8px;
+.modal-backdrop {
+    position: fixed; inset: 0; z-index: 100; padding: 16px;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex; align-items: center; justify-content: center;
+}
+.modal {
+    padding: 14px 16px;
+    width: 100%; max-width: 460px;
+    display: flex; flex-direction: column;
+}
+.modal-title { display: flex; flex-direction: column; }
+.modal-name { font-size: 15px; }
+.modal-id { color: var(--muted); font-size: 12px; }
+
+
+/* -------------------------------------------------- the one height model */
+
+/* The scroll boxes: capped, flex column. #dashboard scopes the cap, so the
+   settings view - one long form, nothing to pin - keeps scrolling with the
+   page as before. */
+#dashboard .card-body, .modal-body {
+    max-height: var(--pane-h);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+/* The popup is free-standing rather than one cell of a grid, so it may use
+   more of the screen than a card does - but through the same model. */
+.modal-body { max-height: calc(var(--pane-h) * 2); }
+
+/* Inside a scroll box every child keeps its natural height, so a bar or a
+   table is never squeezed and clipped. */
+#dashboard .card-body > *, .modal-body > *, .tabpanel > * { flex: 0 0 auto; }
+
+/* The exceptions: the tab panel fills the box, and the one .pane per box
+   takes what the bars leave and scrolls. min-height:0 is what actually lets
+   a flex item shrink below its content and show a scrollbar. */
+#dashboard .card-body > .tabpanel { flex: 1 1 auto; }
+.tabpanel { display: flex; flex-direction: column; min-height: 0; }
+#dashboard .card-body > .pane, .tabpanel > .pane, .modal-body > .pane {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
 }
 
-.stat {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    padding: 5px 6px;
-    text-align: center;
-}
+/* A box that delegates its scroll to an inner .pane must not also scroll, or
+   the two fight and the card grows past the cap. */
+#dashboard .card-body:has(.pane), .modal-body:has(.pane) { overflow-y: hidden; }
 
-.stat-value { font-size: 16px; color: var(--accent); }
-.stat-label { font-size: 10px; color: var(--muted); }
-/* Live-load cells read as gauges, not counts. */
-.stat.live .stat-value { color: var(--text); }
+
+/* --------------------------------------------------------------- tables */
 
 table { border-collapse: collapse; width: 100%; font-size: 12px; }
 th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--muted); font-weight: normal; }
+
 th.sortable { cursor: pointer; user-select: none; }
 th.sort-asc::after, th.sort-desc::after {
     content: ""; display: inline-block; margin-left: 5px;
@@ -152,108 +238,16 @@ th.sort-asc::after, th.sort-desc::after {
 }
 th.sort-asc::after { border-bottom: 5px solid currentColor; }
 th.sort-desc::after { border-top: 5px solid currentColor; }
-tr.gone td { opacity: 0.5; }
-th { color: var(--muted); font-weight: normal; }
+
 tr.online td:first-child { color: var(--accent); }
+tr.gone td { opacity: 0.5; }
 tr.unseen td { color: var(--danger); }
-
-/* Connection state, colored by how busy the client is. */
-.badge {
-    display: inline-block;
-    padding: 0 6px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    font-size: 11px;
-    color: var(--muted);
-}
-.badge.inviting, .badge.invited { border-color: #b7861f; color: #e0b055; }
-.badge.connecting { border-color: #3f6ea8; color: #79aee8; }
-.badge.playing { border-color: var(--accent); color: var(--accent); }
-.badge.matchmaking { border-color: #b7861f; color: #e0b055; }
-.badge.declined { border-color: var(--danger); color: var(--danger); }
-.badge.ended { opacity: 0.55; }
-
-/* dbg-off keeps the muted default: it is the normal state. */
-.badge.dbg-on { border-color: var(--accent); color: var(--accent); }
-.badge.dbg-pending { border-color: #b7861f; color: #e0b055; }
-.badge.dbg-self { border-color: #3f6ea8; color: #79aee8; }
-
-/* Cells are already nowrap; flex here would collapse the column width. */
-.debug-cell .badge { margin-right: 6px; }
-button.small { padding: 0 6px; font-size: 11px; }
-
-/* Settings-form number inputs only; must NOT match the interval control in
-   the card head, or it would override its (narrower) width. */
-.card-body input[type="number"] { width: 90px; padding: 3px 6px; }
-.card form > button { margin-top: 10px; }
-
-.restore { margin-top: 12px; }
-
-footer { text-align: center; font-size: 12px; padding: 8px 0 16px; }
-.exportrow { margin-top: 14px; display: flex; align-items: center; gap: 18px; }
-.exportrow a { color: var(--accent); }
 
 /* A client id is a link into its details popup; a truncated IPv6 shows the
    full address on hover. */
 .id-link { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
 .id-link:hover { text-decoration: underline; }
 td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
-/* An alert row shows the first few words; the click opens the full message.
-   Keeps the row's colour (muted, or danger while unseen) via currentColor. */
-.msg-link { text-decoration: underline dotted; }
-.alert-row { cursor: pointer; }
-.alert-row:hover td { background: rgba(255, 255, 255, 0.03); }
-.alert-row:hover .msg-link { text-decoration: underline; }
-/* Alerts must stay put (no inner scroll) so every entry is easy to click
-   open; the message preview keeps the row from overflowing sideways. The
-   log panel below provides its own bounded scroll. */
-#dashboard .card-alerts .card-body { max-height: none; overflow-y: visible; }
-
-/* Alerts / Logs tabbed card: a tab row above the panel, active tab marked
-   with an accent underline. */
-.tabbar { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
-.tabbar .tab {
-    background: transparent; border: 0; border-bottom: 2px solid transparent;
-    border-radius: 0; padding: 4px 12px; color: var(--muted);
-}
-.tabbar .tab:hover { color: var(--text); }
-.tabbar .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-
-/* Log filter row: severity chips on the left, Clear pushed to the right. */
-.logbar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-.logbar .grow { margin-left: auto; }
-.chip {
-    padding: 2px 10px; font-size: 12px; border-radius: 999px;
-    background: transparent; color: var(--muted);
-}
-.chip.active { border-color: var(--accent); color: var(--accent); }
-
-/* Scrollable monospace log. Each entry keeps its whitespace so a stack
-   trace stays readable; colour marks the severity. */
-.logview {
-    max-height: 46vh; overflow-y: auto;
-    border: 1px solid var(--border); border-radius: 6px;
-    background: var(--bg); padding: 4px 8px;
-}
-.logline {
-    font: 11.5px/1.4 ui-monospace, Menlo, Consolas, monospace;
-    white-space: pre-wrap; word-break: break-word;
-    padding: 2px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.03);
-}
-.logline:last-child { border-bottom: 0; }
-.log-error { color: var(--danger); }
-.log-warn { color: #e0b055; }
-.log-info { color: var(--muted); }
-
-/* Performance tab: a capability reads at a glance from its verdict, so the
-   status carries the colour and the note explains what is lost. */
-/* Same bounded scroll as the log view: the card must not grow down the page. */
-.perfview { max-height: 46vh; overflow-y: auto; }
-.badge.perf-good { border-color: var(--accent); color: var(--accent); }
-.badge.perf-warn { border-color: #b7861f; color: #e0b055; }
-.badge.perf-bad { border-color: var(--danger); color: var(--danger); }
-.card-alerts td { white-space: normal; }
-.card-alerts .perf-note { display: block; }
 
 /* Debug reports: a per-row select box and a bulk-action bar on top. */
 .bulk-bar { display: flex; gap: 6px; margin-bottom: 8px; }
@@ -264,37 +258,137 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
     border: 0; background: none; vertical-align: middle;
     accent-color: var(--accent); cursor: pointer;
 }
-.iconbtn svg { display: block; }
-button.iconbtn:disabled { opacity: 0.4; cursor: default; }
-button.iconbtn:disabled:hover { border-color: var(--border); }
 
-/* Registered-users live filter. */
-input.usearch { width: 100%; margin: 6px 0 8px; padding: 5px 8px; -webkit-appearance: none; }
 
-/* Client details popup. */
-.modal-backdrop {
-    position: fixed; inset: 0; z-index: 100; padding: 16px;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex; align-items: center; justify-content: center;
+/* --------------------------------------------------------------- badges */
+
+.badge {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
 }
-.modal {
-    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-    padding: 14px 16px; width: 100%; max-width: 460px; max-height: 84vh; overflow: auto;
+
+/* Every badge state resolves to one of four verdicts. Grouped here rather
+   than coloured one by one, so "connecting" and "debug self" can never
+   drift apart. */
+.badge.playing, .badge.dbg-on, .badge.perf-good {
+    border-color: var(--good-line); color: var(--good);
 }
-.modal-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.modal-title { display: flex; flex-direction: column; margin-right: auto; }
-.modal-name { font-size: 15px; }
-.modal-id { color: var(--muted); font-size: 12px; }
+.badge.inviting, .badge.invited, .badge.matchmaking,
+.badge.dbg-pending, .badge.perf-warn {
+    border-color: var(--warn-line); color: var(--warn);
+}
+.badge.connecting, .badge.dbg-self { border-color: var(--info-line); color: var(--info); }
+.badge.declined, .badge.perf-bad { border-color: var(--danger-line); color: var(--danger); }
+/* dbg-off and "ended" keep the muted default: they are the normal states. */
+.badge.ended { opacity: 0.55; }
+
+/* Cells are already nowrap; flex here would collapse the column width. */
+.debug-cell .badge { margin-right: 6px; }
+
+
+/* ---------------------------------------------- statistics card, gauges */
+
+.statgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+    gap: 6px;
+    margin-bottom: 8px;
+}
+.stat {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 5px 6px;
+    text-align: center;
+}
+.stat-value { font-size: 16px; color: var(--accent); }
+.stat-label { font-size: 10px; color: var(--muted); }
+/* Live-load cells read as gauges, not counts. */
+.stat.live .stat-value { color: var(--text); }
+
+
+/* ------------------------------------ alerts & diagnostics (tabbed card) */
+
+/* Tab row above the panel, active tab marked with an accent underline. */
+.tabbar { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.tabbar .tab {
+    background: transparent; border: 0; border-bottom: 2px solid transparent;
+    border-radius: 0; padding: 4px 12px; color: var(--muted);
+}
+.tabbar .tab:hover { color: var(--text); }
+.tabbar .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Filter/action row: chips or a note on the left, action pushed right. */
+.logbar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.logbar .grow { margin-left: auto; }
+.chip {
+    padding: 2px 10px; font-size: 12px; border-radius: var(--r-pill);
+    background: transparent; color: var(--muted);
+}
+.chip.active { border-color: var(--accent); color: var(--accent); }
+
+/* An alert row shows the first few words; the click opens the full message.
+   Keeps the row's colour (muted, or danger while unseen) via currentColor. */
+.msg-link { text-decoration: underline dotted; }
+.alert-row { cursor: pointer; }
+.alert-row:hover td { background: rgba(255, 255, 255, 0.03); }
+.alert-row:hover .msg-link { text-decoration: underline; }
+
+/* Alert messages and capability notes wrap instead of forcing the card wide
+   (the global td rule is nowrap). */
+.card-alerts td { white-space: normal; }
+
+/* The log pane is framed as a console; .pane above gives it its scroll. */
+.logview {
+    border: 1px solid var(--border); border-radius: var(--r-ctl);
+    background: var(--bg); padding: 4px 8px;
+}
+.logline {
+    font: 11.5px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-word;
+    padding: 2px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+.logline:last-child { border-bottom: 0; }
+.log-error { color: var(--danger); }
+.log-warn { color: var(--warn); }
+.log-info { color: var(--muted); }
+
+
+/* ------------------------------------------------------ popup internals */
+
 table.kv { font-size: 12px; }
 table.kv .kv-k { color: var(--muted); white-space: nowrap; padding-right: 14px; }
 /* Values wrap instead of stretching the popup sideways (the global td rule
    is nowrap): a long alert message reflows, and an unbroken token like an
    IPv6 address breaks rather than overflowing. The popup then grows in
-   height by itself up to the .modal cap, so a message that fits the screen
-   never needs scrolling. */
+   height by itself up to the .modal-body cap, so a message that fits the
+   screen never needs scrolling. */
 table.kv .kv-v { white-space: normal; overflow-wrap: anywhere; }
 table.kv .kv-v button { margin-right: 6px; }
 table.kv .kv-sec td {
     color: var(--accent); border-bottom: none; padding-top: 12px;
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
 }
+
+
+/* -------------------------------------------------------- login, export */
+
+.login { max-width: 320px; margin: 80px auto; }
+.login form { display: flex; flex-direction: column; gap: var(--gap); }
+.login label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
+.login button {
+    margin-top: 28px;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #10241a;
+    font-weight: 700;
+}
+.login button:hover { filter: brightness(1.15); }
+
+.restore { margin-top: var(--gap); }
+.exportrow { margin-top: 14px; display: flex; align-items: center; gap: 18px; }
+.exportrow a { color: var(--accent); }
