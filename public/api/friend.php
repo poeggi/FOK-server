@@ -65,7 +65,9 @@ switch ($action) {
     case 'request':
         $st = Db::get()->prepare('SELECT friend_ban_until FROM players WHERE id = ?');
         $st->execute([$id]);
-        if ((int)$st->fetchColumn() > time()) {
+        $bannedUntil = (int)$st->fetchColumn();
+        $st->closeCursor();
+        if ($bannedUntil > time()) {
             Util::fail('friend requests banned', 429);
         }
         $r = Friends::request($id, $peer);
@@ -83,7 +85,9 @@ switch ($action) {
                 "SELECT COUNT(*) FROM friends WHERE requester = ? AND state = 'pending' AND created > ?"
             );
             $st->execute([$id, time() - 3600]);
-            if ((int)$st->fetchColumn() > Settings::int('friend_req_max')) {
+            $unanswered = (int)$st->fetchColumn();
+            $st->closeCursor();
+            if ($unanswered > Settings::int('friend_req_max')) {
                 $ban = Settings::int('friend_ban_seconds');
                 $db->prepare('UPDATE players SET friend_ban_until = ? WHERE id = ?')
                     ->execute([time() + $ban, $id]);

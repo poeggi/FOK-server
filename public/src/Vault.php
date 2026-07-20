@@ -94,6 +94,7 @@ final class Vault
         $st = Db::get()->prepare('SELECT payload, token_hash, updated FROM vault WHERE id = ?');
         $st->execute([$id]);
         $row = $st->fetch();
+        $st->closeCursor();
         return $row === false ? null : [
             'payload' => $row['payload'],
             'token_hash' => (string)$row['token_hash'],

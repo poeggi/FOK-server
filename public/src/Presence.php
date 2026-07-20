@@ -39,6 +39,9 @@ final class Presence
         );
         $st->execute([$id, $ip, $now, $now, $latency, $name, $acceptUntil, $active, $acceptUntil, $active]);
         $row = $st->fetch();
+        // An INSERT ... RETURNING is a write: finish it before anything else
+        // touches the database (see Db).
+        $st->closeCursor();
         // Nobody may watch their own first hello report zero online, so a
         // registration drops the cache. The repeat heartbeats that are
         // virtually all the traffic leave it alone.
@@ -64,7 +67,9 @@ final class Presence
     {
         $st = Db::get()->prepare('SELECT accept_until FROM players WHERE id = ?');
         $st->execute([$id]);
-        return (int)$st->fetchColumn() > time();
+        $until = (int)$st->fetchColumn();
+        $st->closeCursor();
+        return $until > time();
     }
 
     public static function touchDuel(string $id, string $peer): void
@@ -78,7 +83,9 @@ final class Presence
         );
         $st->execute([$a, $b, $now, $now]);
         // A duel starting is visible; the heartbeats keeping it alive are not.
-        if ((int)$st->fetchColumn() === 1) {
+        $started = (int)$st->fetchColumn() === 1;
+        $st->closeCursor();
+        if ($started) {
             self::flushCounts();
         }
     }
@@ -189,6 +196,7 @@ final class Presence
         $now = time();
         $st = $db->query('SELECT online, playing, registered, updated FROM stats WHERE id = 1');
         $row = $st->fetch();
+        $st->closeCursor();
         if ($row !== false && (int)$row['updated'] > $now - FOK_COUNTS_TTL) {
             return [
                 'online' => (int)$row['online'],
@@ -200,9 +208,13 @@ final class Presence
         $online->execute([$now - FOK_ONLINE_WINDOW]);
         $duels = $db->prepare('SELECT COUNT(*) FROM duels WHERE last_seen > ?');
         $duels->execute([$now - FOK_DUEL_WINDOW]);
+        $onlineN = (int)$online->fetchColumn();
+        $online->closeCursor();
+        $duelsN = (int)$duels->fetchColumn();
+        $duels->closeCursor();
         $out = [
-            'online' => (int)$online->fetchColumn(),
-            'playing' => 2 * (int)$duels->fetchColumn(),
+            'online' => $onlineN,
+            'playing' => 2 * $duelsN,
             'registered' => (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn(),
         ];
         $db->prepare(

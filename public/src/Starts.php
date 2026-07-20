@@ -75,6 +75,7 @@ final class Starts
             $st = $db->prepare('SELECT epoch, start_pts FROM starts WHERE a = ? AND b = ?');
             $st->execute([$a, $b]);
             $row = $st->fetch();
+            $st->closeCursor();
             if ($row !== false) {
                 $stored = (int)$row['epoch'];
                 // Identical answer however late this peer is: the whole
@@ -94,6 +95,7 @@ final class Starts
             $st = $db->prepare('SELECT MAX(COALESCE(latency, 100)) FROM players WHERE id IN (?, ?)');
             $st->execute([$a, $b]);
             $worstLatency = (int)$st->fetchColumn();
+            $st->closeCursor();
             $lead = max(Settings::int('start_lead_min_ms'), 150 + 2 * $worstLatency);
             $startPts = $now + min($lead, 3000);
 

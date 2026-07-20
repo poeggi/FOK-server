@@ -28,7 +28,9 @@ final class Signals
         $db = Db::get();
         $st = $db->prepare('SELECT COUNT(*) FROM signals WHERE to_id = ? AND created >= ?');
         $st->execute([$to, time() - Settings::int('signal_ttl')]);
-        if ((int)$st->fetchColumn() >= Settings::int('mailbox_cap')) {
+        $pending = (int)$st->fetchColumn();
+        $st->closeCursor();
+        if ($pending >= Settings::int('mailbox_cap')) {
             return false;
         }
         // Losing this to a momentary lock drops a signal - an ice candidate
@@ -49,7 +51,9 @@ final class Signals
     {
         $st = Db::get()->prepare('SELECT 1 FROM signals WHERE to_id = ? AND created >= ? LIMIT 1');
         $st->execute([$to, time() - Settings::int('signal_ttl')]);
-        return $st->fetchColumn() !== false;
+        $any = $st->fetchColumn() !== false;
+        $st->closeCursor();
+        return $any;
     }
 
     /**

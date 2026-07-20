@@ -30,7 +30,9 @@ final class RelayRate
     {
         $st = Db::get()->prepare('SELECT blocked_until FROM relay_rate WHERE id = ?');
         $st->execute([$id]);
-        return (int)$st->fetchColumn() > time();
+        $until = (int)$st->fetchColumn();
+        $st->closeCursor();
+        return $until > time();
     }
 
     /**
@@ -45,6 +47,7 @@ final class RelayRate
         $st = $db->prepare('SELECT total, mark_total, mark_time, blocked_until FROM relay_rate WHERE id = ?');
         $st->execute([$id]);
         $row = $st->fetch();
+        $st->closeCursor();
 
         $total = ($row ? (int)$row['total'] : 0) + 1;
         $markTotal = $row ? (int)$row['mark_total'] : $total - 1;

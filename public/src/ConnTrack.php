@@ -124,7 +124,9 @@ final class ConnTrack
                AND ((id = ? AND peer = ?) OR (id = ? AND peer = ?)) LIMIT 1'
         );
         $st->execute([time() - FOK_RELAY_WINDOW, $a, $b, $b, $a]);
-        return $st->fetchColumn() !== false;
+        $relaying = $st->fetchColumn() !== false;
+        $st->closeCursor();
+        return $relaying;
     }
 
     /**
@@ -141,7 +143,9 @@ final class ConnTrack
                FROM conn WHERE peer IS NOT NULL AND relay_seen > ?"
         );
         $st->execute([time() - FOK_RELAY_WINDOW]);
-        return (int)$st->fetchColumn();
+        $pairs = (int)$st->fetchColumn();
+        $st->closeCursor();
+        return $pairs;
     }
 
     /**
@@ -157,6 +161,7 @@ final class ConnTrack
         );
         $st->execute([$id]);
         $row = $st->fetch();
+        $st->closeCursor();
         if ($row === false) {
             return null;
         }

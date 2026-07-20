@@ -26,6 +26,7 @@ final class Matchmaking
             $st = $db->prepare('SELECT matched_with, role FROM mm_queue WHERE id = ?');
             $st->execute([$id]);
             $row = $st->fetch();
+            $st->closeCursor();
             if ($row && $row['matched_with'] !== null) {
                 $db->prepare('DELETE FROM mm_queue WHERE id = ?')->execute([$id]);
                 $db->exec('COMMIT');
@@ -42,6 +43,7 @@ final class Matchmaking
             );
             $st->execute([$id]);
             $peer = $st->fetchColumn();
+            $st->closeCursor();
             if ($peer === false) {
                 $db->exec('COMMIT');
                 return ['waiting' => true];

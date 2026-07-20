@@ -42,6 +42,7 @@ final class Debug
         $st = Db::get()->prepare('SELECT payload, created FROM debug WHERE pin = ? AND created > ?');
         $st->execute([$pin, time() - FOK_DEBUG_TTL]);
         $row = $st->fetch();
+        $st->closeCursor();
         return $row === false ? null : ['payload' => $row['payload'], 'created' => (int)$row['created']];
     }
 

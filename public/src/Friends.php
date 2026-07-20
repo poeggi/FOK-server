@@ -31,6 +31,7 @@ final class Friends
             $st = $db->prepare('SELECT state, requester FROM friends WHERE a = ? AND b = ?');
             $st->execute([$a, $b]);
             $row = $st->fetch();
+            $st->closeCursor();
             if ($row) {
                 if ($row['state'] === 'accepted') {
                     $db->exec('COMMIT');
@@ -96,7 +97,9 @@ final class Friends
         [$a, $b] = $me < $peer ? [$me, $peer] : [$peer, $me];
         $st = Db::get()->prepare('SELECT 1 FROM friends WHERE a = ? AND b = ? AND state = ?');
         $st->execute([$a, $b, 'accepted']);
-        return $st->fetchColumn() !== false;
+        $friends = $st->fetchColumn() !== false;
+        $st->closeCursor();
+        return $friends;
     }
 
     /** @return array set of ids (from $ids) that are accepted friends of $me */

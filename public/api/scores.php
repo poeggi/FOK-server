@@ -80,7 +80,9 @@ Util::checkPts($body['pts'] ?? null, "player $id");
 Presence::touch($id, Util::clientIp());
 $recent = Db::get()->prepare('SELECT COUNT(*) FROM scores WHERE player_id = ? AND created > ?');
 $recent->execute([$id, time() - Settings::int('score_rate_window')]);
-if ((int)$recent->fetchColumn() >= Settings::int('score_rate_max')) {
+$recentN = (int)$recent->fetchColumn();
+$recent->closeCursor();
+if ($recentN >= Settings::int('score_rate_max')) {
     Alerts::raise('spam', "Client spam: score submissions throttled for player $id");
     Util::fail('too many submissions', 429);
 }

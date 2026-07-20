@@ -22,7 +22,9 @@ final class Alerts
         $db = Db::get();
         $st = $db->prepare('SELECT 1 FROM alerts WHERE type = ? AND created > ? LIMIT 1');
         $st->execute([$type, time() - Settings::int('alert_cooldown')]);
-        if ($st->fetchColumn() !== false) {
+        $recent = $st->fetchColumn() !== false;
+        $st->closeCursor();
+        if ($recent) {
             return;
         }
         $db->prepare('INSERT INTO alerts (type, message, created, seen) VALUES (?, ?, ?, 0)')

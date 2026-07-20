@@ -41,6 +41,7 @@ final class Auth
         $st = $db->prepare('SELECT fails, locked_until FROM admin_fails WHERE ip = ?');
         $st->execute([$ip]);
         $row = $st->fetch();
+        $st->closeCursor();
         if ($row && (int)$row['locked_until'] > $now) {
             return false;
         }

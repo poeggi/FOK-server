@@ -291,6 +291,7 @@ final class Util
         $st = $db->prepare("SELECT value FROM counters WHERE bucket = 'meta' AND metric = 'player_sweep'");
         $st->execute();
         $last = (int)$st->fetchColumn();
+        $st->closeCursor();
         if ($last < time() - 3600) {
             $db->prepare(
                 "INSERT INTO counters (bucket, metric, value) VALUES ('meta', 'player_sweep', ?)
@@ -320,6 +321,7 @@ final class Util
             $ip = self::clientIp();
             $st->execute([$ip, gmdate('YmdHi')]);
             $n = (int)$st->fetchColumn();
+            $st->closeCursor();
             if ($n > Settings::int('alert_invalid_per_min')) {
                 Alerts::raise('spam', "Client spam: $n invalid requests this minute from $ip");
             }

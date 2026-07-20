@@ -72,6 +72,17 @@ final class Db
     }
 
     /**
+     * READ CURSORS MUST BE CLOSED BEFORE WRITING. A fetch that stops early -
+     * fetchColumn(), fetch() - leaves the statement open, which keeps this
+     * connection on a read snapshot. If another connection commits while that
+     * snapshot is held, the next write here fails with SQLITE_BUSY IMMEDIATELY
+     * (measured: 0.3 ms with busy_timeout at 4000). The busy handler is
+     * deliberately not called, because waiting cannot refresh a stale
+     * snapshot - only ending the read can. So neither busy_timeout nor
+     * retry() below can do anything about it, and a duel where both peers
+     * commit constantly hits it on nearly every request. Every early fetch
+     * is followed by closeCursor(); fetchAll() finishes the statement itself.
+     *
      * Runs a write through a transient lock. WAL leaves exactly one writer,
      * so two requests writing at the same moment - a relayed duel sends from
      * both ends at once - can still collide after busy_timeout is spent.

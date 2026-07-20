@@ -133,6 +133,7 @@ switch ($action) {
             latency, debug, debug_active, accept_until, friend_ban_until FROM players WHERE id = ?');
         $st->execute([$id]);
         $p = $st->fetch();
+        $st->closeCursor();
         if ($p === false) {
             Util::fail('unknown client', 404);
         }
@@ -145,9 +146,11 @@ switch ($action) {
         $rr = $db->prepare('SELECT total, blocked_until FROM relay_rate WHERE id = ?');
         $rr->execute([$id]);
         $rate = $rr->fetch() ?: null;
+        $rr->closeCursor();
         $mm = $db->prepare('SELECT since, matched_with FROM mm_queue WHERE id = ?');
         $mm->execute([$id]);
         $queue = $mm->fetch() ?: null;
+        $mm->closeCursor();
         $fr = $db->prepare("SELECT state, COUNT(*) c FROM friends
             WHERE a = ? OR b = ? GROUP BY state");
         $fr->execute([$id, $id]);
@@ -158,9 +161,11 @@ switch ($action) {
         $sc = $db->prepare('SELECT COUNT(*) c, MAX(score) best FROM scores WHERE player_id = ?');
         $sc->execute([$id]);
         $scores = $sc->fetch();
+        $sc->closeCursor();
         $mb = $db->prepare('SELECT COUNT(*) FROM signals WHERE to_id = ?');
         $mb->execute([$id]);
         $mailbox = (int)$mb->fetchColumn();
+        $mb->closeCursor();
         // Config backup (no token: admin manual-recovery view; download via
         // the vault_export action below).
         $backup = Vault::peek($id);

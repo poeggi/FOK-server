@@ -48,7 +48,9 @@ final class Scores
 
         $rank = Db::get()->prepare('SELECT COUNT(*) FROM scores WHERE score > ?');
         $rank->execute([$score]);
-        return (int)$rank->fetchColumn() + 1;
+        $above = (int)$rank->fetchColumn();
+        $rank->closeCursor();
+        return $above + 1;
     }
 
     public static function delete(int $id): void

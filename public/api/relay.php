@@ -61,8 +61,11 @@ if ($method === 'GET') {
     $deadline = microtime(true) + $wait;
     while (true) {
         $peek->execute([$id, $peer]);
+        $pending = $peek->fetchColumn() !== false;
+        // Finish the read before the drain writes (see Db).
+        $peek->closeCursor();
         $rows = [];
-        if ($peek->fetchColumn() !== false) {
+        if ($pending) {
             // Draining is ONE atomic statement: DELETE ... RETURNING keeps
             // the exactly-once guarantee - two overlapping polls must never
             // both be handed the same message, a replayed input desyncs the
@@ -148,7 +151,9 @@ if (random_int(1, 50) === 1) {
 
 $st = $db->prepare('SELECT COUNT(*) FROM relay WHERE to_id = ?');
 $st->execute([$peer]);
-if ((int)$st->fetchColumn() >= Settings::int('relay_pending_cap')) {
+$backlog = (int)$st->fetchColumn();
+$st->closeCursor();
+if ($backlog >= Settings::int('relay_pending_cap')) {
     Alerts::raise('spam', "Relay backlog full for $peer (sender $id)");
     Util::fail('relay backlog full', 429);
 }

@@ -487,6 +487,39 @@ ok(duelOf('aaaaaaaa')['state'] === 'ended', "the real peer's bye ends it (it lin
 ok(!ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'and frees the relay slot at once');
 Db::get()->exec('DELETE FROM conn');
 
+// An early fetch - fetchColumn(), fetch() - that leaves its statement open
+// pins this connection to a read snapshot. Once ANOTHER connection commits,
+// the next write here fails instantly with SQLITE_BUSY, and neither
+// busy_timeout nor a retry can do anything about it (the busy handler is not
+// even called). This is invisible single-threaded, so drive it with a second
+// connection: every read below must leave the connection able to write.
+$other = new PDO('sqlite:' . FOK_DB_FILE, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+$other->exec('PRAGMA busy_timeout = 4000');
+// NOTE: a statement held only in a local that goes out of scope is destroyed
+// on return, which closes its cursor - so calling such a helper proves
+// nothing. Only a handle still IN SCOPE when the request writes again is
+// dangerous, which is the shape this drives directly.
+$writeWorks = static function (bool $close) use ($other): bool {
+    $st = Db::get()->prepare('SELECT 1 FROM players LIMIT 1');
+    $st->execute();
+    $st->fetchColumn();                       // stops early: statement stays open
+    if ($close) {
+        $st->closeCursor();
+    }
+    $other->exec("INSERT INTO alerts (type, message, created, seen) VALUES ('cursor', 'x', " . time() . ', 1)');
+    try {
+        Db::get()->exec("DELETE FROM alerts WHERE type = 'cursor'");
+        $ok = true;
+    } catch (PDOException $e) {
+        $ok = false;
+    }
+    $st->closeCursor();
+    return $ok;
+};
+ok(!$writeWorks(false), 'an in-scope open read cursor blocks the next write');
+ok($writeWorks(true), 'closeCursor releases the snapshot and the write goes through');
+$other = null;   // no live handle may outlive this (see the restore test)
+
 // Load: per-minute gauges accumulate in memory and flush in one write.
 // (Keep no statement handle alive across the run - a live PDOStatement
 // pins its connection open and breaks the later restore test on Windows.)
