@@ -1014,7 +1014,7 @@ else
     sig "$ID1" "$ID2" bye '' > /dev/null
     R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
     expect "bye clears the backlog on the configured transport" '204' "$R"
-    setting relay_apcu 0
+    setting relay_apcu 1   # back to the default (shared memory where usable)
     curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 
     # An invite nobody picks up must not evaporate behind its ok:true:
