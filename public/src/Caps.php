@@ -38,11 +38,11 @@ final class Caps
         if ($row !== false && $row['version'] === FOK_SERVER_VERSION) {
             $stored['version'] = (string)$row['version'];
             $stored['checked'] = (int)$row['checked'];
-            return self::$cache = $stored;
+            return self::$cache = self::withRelayRow($stored);
         }
         // Missing or from another release: assess once, carrying forward the
         // findings that only a repeat probe can establish (see refresh).
-        return self::$cache = self::assess($stored);
+        return self::$cache = self::withRelayRow(self::assess($stored));
     }
 
     /** Operator-triggered re-assessment (admin Performance tab). */
@@ -50,7 +50,33 @@ final class Caps
     {
         $current = self::get();
         self::$cache = null;
-        return self::$cache = self::assess($current);
+        return self::$cache = self::withRelayRow(self::assess($current));
+    }
+
+    /**
+     * The transport row is computed on READ and never stored. relay_apcu is
+     * an operator switch that can change at any moment, so a stored verdict
+     * would keep reporting the previous transport until somebody pressed
+     * Update - the card would be lying about the thing it exists to show.
+     */
+    private static function withRelayRow(array $c): array
+    {
+        $usable = ($c['apcu'] ?? false) === true;
+        $wanted = Settings::int('relay_apcu') === 1;
+        $live = $wanted && $usable;
+        $c['relay_backend'] = $live ? 'apcu' : 'database';
+        $c['checks'][] = [
+            'key' => 'relay_backend',
+            'label' => 'Relay transport',
+            'value' => $live ? 'APCu shared memory' : 'database',
+            'status' => $live ? 'good' : ($wanted ? 'bad' : 'warn'),
+            'note' => $live
+                ? 'relay traffic never touches the SQLite writer'
+                : ($wanted
+                    ? 'APCu was requested but is not usable - falling back, expect lock contention'
+                    : 'set relay_apcu to 1 to move relay traffic off the database'),
+        ];
+        return $c;
     }
 
     /** True when the relay may use shared memory instead of the database. */
@@ -148,17 +174,6 @@ final class Caps
         $writable = is_writable(FOK_DATA_DIR);
         $add('data_dir', 'Data directory', $writable ? 'writable' : 'NOT writable',
             $writable ? 'good' : 'bad', $writable ? '' : 'backups and the error log cannot be written');
-
-        // What the relay will actually do, which is the point of the card.
-        $wanted = Settings::int('relay_apcu') === 1;
-        $backend = ($wanted && $usable) ? 'APCu shared memory' : 'database';
-        $add('relay_backend', 'Relay transport', $backend,
-            ($wanted && $usable) ? 'good' : ($wanted ? 'bad' : 'warn'),
-            ($wanted && $usable)
-                ? 'relay traffic never touches the SQLite writer'
-                : ($wanted
-                    ? 'APCu was requested but is not usable - falling back, expect lock contention'
-                    : 'set relay_apcu to 1 to move relay traffic off the database'));
 
         $out = [
             'version' => FOK_SERVER_VERSION,

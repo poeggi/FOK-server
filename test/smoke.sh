@@ -985,6 +985,18 @@ else
     # exercise shared memory for real. Neither environment can be skipped
     # without losing one half of the switch.
     setting relay_apcu 1
+    # PROVE which transport the assertions below actually exercise. They are
+    # deliberately identical on both, so a green run says nothing about which
+    # one ran - on a host with APCu this must report apcu, and without it the
+    # fallback. Self-adapting, so it is a real check in BOTH environments.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=caps")
+    if [[ "$R" == *'"apcu":true'* ]]; then
+        expect "relay uses APCu where the host offers it" '"relay_backend":"apcu"' "$R"
+        echo "  (transport under test: APCu shared memory)"
+    else
+        expect "relay falls back to the database without APCu" '"relay_backend":"database"' "$R"
+        echo "  (transport under test: database fallback)"
+    fi
     R=$(rly "$ID1" "$ID2" 'TRANSPORT:1')
     expect "configured transport accepts a message" '"ok":true' "$R"
     rly "$ID1" "$ID2" 'TRANSPORT:2' > /dev/null
