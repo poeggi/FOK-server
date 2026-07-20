@@ -245,6 +245,14 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 .log-warn { color: #e0b055; }
 .log-info { color: var(--muted); }
 
+/* Performance tab: a capability reads at a glance from its verdict, so the
+   status carries the colour and the note explains what is lost. */
+.badge.perf-good { border-color: var(--accent); color: var(--accent); }
+.badge.perf-warn { border-color: #b7861f; color: #e0b055; }
+.badge.perf-bad { border-color: var(--danger); color: var(--danger); }
+.card-alerts td { white-space: normal; }
+.card-alerts .perf-note { display: block; }
+
 /* Debug reports: a per-row select box and a bulk-action bar on top. */
 .bulk-bar { display: flex; gap: 6px; margin-bottom: 8px; }
 .seltable th:first-child, .seltable td:first-child { width: 1%; padding-right: 0; }

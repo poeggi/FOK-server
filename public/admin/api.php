@@ -8,6 +8,7 @@ require_once __DIR__ . '/../src/Scores.php';
 require_once __DIR__ . '/../src/Backup.php';
 require_once __DIR__ . '/../src/Alerts.php';
 require_once __DIR__ . '/../src/Logs.php';
+require_once __DIR__ . '/../src/Caps.php';
 require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Vault.php';
@@ -294,6 +295,16 @@ switch ($action) {
         }
         Alerts::markSeen();
         Util::jsonOut(['ok' => true]);
+
+    case 'caps':
+        Util::jsonOut(['ok' => true, 'now' => time()] + Caps::get());
+
+    case 'caps_refresh':
+        // Re-assessment is a write, so POST-only.
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            Util::fail('POST only', 405);
+        }
+        Util::jsonOut(['ok' => true, 'now' => time()] + Caps::refresh());
 
     case 'log':
         Util::jsonOut(['ok' => true] + Logs::tail());

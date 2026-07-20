@@ -315,9 +315,10 @@ let usersFilter = '';
 // Alerts card state, kept across the card's live refreshes: the open tab,
 // the log severity filter, and the last log payload so switching filters is
 // instant without a refetch.
-let alertsTab = 'alerts';   // 'alerts' | 'logs'
+let alertsTab = 'alerts';   // 'alerts' | 'logs' | 'perf'
 let logFilter = 'all';      // 'all' | 'warn' | 'error'
 let lastLog = null;
+let lastCaps = null;
 
 function renderAlerts(box, d) {
     box.replaceChildren();
@@ -391,6 +392,43 @@ function renderLogs(box) {
     box.append(el('p', 'muted', 'Showing ' + shown.length + ' of ' + d.entries.length
         + ' recent entries' + (d.truncated ? ', tail of ' + fmtBytes(d.bytes) + ' log' : '')
         + '. Newest first.'));
+}
+
+// Host capability assessment. Probed server-side once per release and read
+// from the database after that (see src/Caps.php), so opening this tab costs
+// nothing; Update forces a fresh assessment.
+function renderPerf(box, d) {
+    box.replaceChildren();
+    const bar = el('div', 'logbar');
+    const when = d.checked
+        ? 'assessed ' + fmtTime(d.checked) + ' for v' + d.version
+        : 'not assessed yet';
+    bar.append(el('span', 'muted', when), el('span', 'grow'));
+    const upd = el('button', 'small', 'Update');
+    upd.onclick = async () => {
+        upd.disabled = true;
+        upd.textContent = 'checking...';
+        const r = await api('caps_refresh', { method: 'POST' });
+        lastCaps = r;
+        renderPerf(box, r);
+    };
+    bar.append(upd);
+    box.append(bar);
+
+    const table = el('table');
+    table.append(row(['', 'Capability', 'Value'], 'th'));
+    for (const c of (d.checks || [])) {
+        const r = el('tr');
+        const dot = el('td');
+        dot.append(el('span', 'badge perf-' + c.status, c.status));
+        const val = el('td');
+        val.append(el('div', '', c.value));
+        // The note is why it matters, not decoration: it says what is lost.
+        if (c.note) val.append(el('div', 'muted', c.note));
+        r.append(dot, el('td', '', c.label), val);
+        table.append(r);
+    }
+    box.append(table);
 }
 
 const MODULES = [
@@ -484,7 +522,7 @@ const MODULES = [
     },
     {
         id: 'alerts',
-        title: 'Alerts & logs',
+        title: 'Alerts & diagnostics',
         async refresh(box) {
             // The tab bar is built once and kept, so a live refresh never
             // steals the open tab; only the panel below it re-renders.
@@ -498,7 +536,7 @@ const MODULES = [
                     b.onclick = () => { if (alertsTab !== key) { alertsTab = key; refreshModule('alerts'); } };
                     return b;
                 };
-                bar.append(mkTab('alerts', 'Alerts'), mkTab('logs', 'Logs'));
+                bar.append(mkTab('alerts', 'Alerts'), mkTab('logs', 'Logs'), mkTab('perf', 'Performance'));
                 panel = el('div', 'tabpanel');
                 box.append(bar, panel);
             }
@@ -511,6 +549,14 @@ const MODULES = [
             if (alertsTab === 'logs') {
                 lastLog = await api('log');
                 renderLogs(panel);
+            } else if (alertsTab === 'perf') {
+                // Read ONCE and keep. The assessment only changes on a new
+                // release or an explicit Update, so the card's live refresh
+                // must not keep asking for it.
+                if (lastCaps === null) {
+                    lastCaps = await api('caps');
+                }
+                renderPerf(panel, lastCaps);
             } else {
                 renderAlerts(panel, await api('alerts'));
             }

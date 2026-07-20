@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 17;
+    private const SCHEMA_VERSION = 18;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -269,6 +269,16 @@ final class Db
                 created INTEGER NOT NULL
             )');
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_debug_created ON debug (created)');
+        }
+        if ($v < 18) {
+            // Host capability assessment (see Caps): probed once per release
+            // and read from here afterwards, so no request pays for it.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS caps (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                version TEXT NOT NULL,
+                checked INTEGER NOT NULL,
+                data TEXT NOT NULL
+            )');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

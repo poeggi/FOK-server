@@ -24,10 +24,23 @@ par="${DEPLOY_PARALLEL:-6}"
 
 # One transfer. --retry rides out a transient connection cap: a shared host
 # may refuse the Nth simultaneous FTPS connection, so back off and retry.
+#
+# Uploaded to a .tmp name and RENAMED into place, never written over the
+# live file: this webroot is serving while the deploy runs, and overwriting
+# in place leaves a window where the file on disk is truncated. A request
+# landing in it reads half a file - seen live as
+# 'PHP Fatal error: Class "Util" not found' when src/Util.php was mid-upload.
+# Rename within a directory is atomic, so a request sees either the whole old
+# file or the whole new one. The quote paths are basenames on purpose: curl
+# changes into the target directory for the transfer, and the server rejects
+# a RNFR carrying the directory again. RNTO over an existing file is verified
+# to overwrite on this host.
 put_one() {
-    local f="$1" rel="${1#public/}"
+    local f="$1" rel="${1#public/}" base
+    base="${rel##*/}"
     curl -sS --ssl-reqd --retry 3 --retry-delay 1 --user "$FTP_USER:$FTP_PASS" \
-        --ftp-create-dirs -T "$f" "ftp://$FTP_HOST/$prefix$rel"
+        --ftp-create-dirs -T "$f" "ftp://$FTP_HOST/$prefix$rel.tmp" \
+        -Q "-RNFR $base.tmp" -Q "-RNTO $base"
     echo "  $prefix$rel"
 }
 export -f put_one

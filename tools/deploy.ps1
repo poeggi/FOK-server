@@ -44,8 +44,15 @@ $files = if ($Only) {
 $done = 0
 foreach ($f in $files) {
     $rel = $f.FullName.Substring($root.Path.Length + 1) -replace '\\', '/'
-    $url = "ftp://$($cred.host)/$prefix$rel"
-    & curl.exe -sS --ssl-reqd --user "$($cred.user):$($cred.pass)" --ftp-create-dirs -T $f.FullName $url
+    # Upload to .tmp and RENAME into place - never overwrite the live file.
+    # The webroot is serving during the deploy, and an in-place write leaves
+    # a window where the file is truncated (seen live as a fatal 'Class not
+    # found' while src/Util.php was mid-upload). Rename is atomic. The quote
+    # paths are basenames: curl changes into the target directory first.
+    $url = "ftp://$($cred.host)/$prefix$rel.tmp"
+    $leaf = $rel.Substring($rel.LastIndexOf('/') + 1)
+    & curl.exe -sS --ssl-reqd --user "$($cred.user):$($cred.pass)" --ftp-create-dirs -T $f.FullName $url `
+        -Q "-RNFR $leaf.tmp" -Q "-RNTO $leaf"
     if ($LASTEXITCODE -ne 0) { Write-Error "Upload failed: $rel" }
     $done++
     Write-Host "  $prefix$rel"

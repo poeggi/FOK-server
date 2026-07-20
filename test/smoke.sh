@@ -883,6 +883,17 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=alerts")
     expect "unseen count cleared" '"unseen":0' "$R"
 
+    # Host capability assessment: probed once per release, stored, and read
+    # back afterwards - so the version it reports must be THIS build.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=caps")
+    expect "capabilities assessed" '"checks"' "$R"
+    expect "assessment is for this release" "\"version\":\"$VER\"" "$R"
+    expect "capabilities name the relay transport" '"key":"relay_backend"' "$R"
+    R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=caps_refresh")
+    expect "caps_refresh via GET rejected" '405' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=caps_refresh")
+    expect "operator can force a re-assessment" '"checks"' "$R"
+
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
     expect "settings listed" '"key":"admin_max_fails"' "$R"
 
