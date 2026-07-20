@@ -58,33 +58,33 @@ if ($method === 'GET') {
     // idle: SQLite has one writer, and a waiting poll must not fight the
     // duels that are actually sending.
     $peek = $db->prepare('SELECT 1 FROM relay WHERE to_id = ? AND from_id = ? LIMIT 1');
-    $st = $db->prepare('SELECT id, payload, created FROM relay WHERE to_id = ? AND from_id = ? ORDER BY id');
+    // Draining is ONE atomic statement. An explicit BEGIN IMMEDIATE around
+    // a SELECT, a DELETE and a COMMIT took the single writer three times
+    // and held it across all three; DELETE ... RETURNING keeps the same
+    // exactly-once guarantee - two overlapping polls must never both be
+    // handed the same message, a replayed input desyncs the duel - in one
+    // implicit transaction with one lock acquisition.
+    $take = $db->prepare('DELETE FROM relay WHERE to_id = ? AND from_id = ? RETURNING id, payload, created');
     $deadline = microtime(true) + $wait;
     while (true) {
         $peek->execute([$id, $peer]);
         $rows = [];
         if ($peek->fetchColumn() !== false) {
-            // Read and drain in ONE transaction: two overlapping polls
-            // must never both be handed the same message - replayed
-            // inputs desync the duel.
-            $db->exec('BEGIN IMMEDIATE');
-            try {
-                $st->execute([$id, $peer]);
-                $rows = $st->fetchAll();
-                if ($rows !== []) {
-                    $ids = array_column($rows, 'id');
-                    $ph = implode(',', array_fill(0, count($ids), '?'));
-                    $db->prepare("DELETE FROM relay WHERE id IN ($ph)")->execute($ids);
-                }
-                $db->exec('COMMIT');
-            } catch (Throwable $e) {
-                // SQLite auto-rolls back on some faults; a bare ROLLBACK
-                // would then throw and mask the real error.
-                if ($db->inTransaction()) {
-                    $db->exec('ROLLBACK');
-                }
-                throw $e;
-            }
+            $rows = Db::retry(static function () use ($take, $id, $peer) {
+                $take->execute([$id, $peer]);
+                return $take->fetchAll();
+            });
+            // RETURNING does not promise an order; oldest first is the
+            // wire contract.
+            usort($rows, static fn(array $x, array $y) => (int)$x['id'] <=> (int)$y['id']);
+            // Delivery must not depend on how recently the backlog was
+            // swept: anything past its TTL is dropped here, which is what
+            // lets the sweep on the POST side be occasional.
+            $cut = time() - Settings::int('relay_ttl');
+            $rows = array_values(array_filter(
+                $rows,
+                static fn(array $r) => (int)$r['created'] >= $cut
+            ));
         }
         if ($rows !== []) {
             Load::tick('msg_out', count($rows));
@@ -125,7 +125,15 @@ Util::checkPts($body['pts'] ?? null, "player $id");
 
 $db = Db::get();
 $now = time();
-$db->prepare('DELETE FROM relay WHERE created < ?')->execute([$now - Settings::int('relay_ttl')]);
+// Sweeping the expired backlog on EVERY message cost a second write
+// transaction per relayed message, purely for housekeeping, on the one
+// writer the duel itself is queueing for. Delivery already drops anything
+// past its TTL (see the GET path), so this only has to keep the table
+// small. Sampled per request rather than by clock, so it never lines up
+// into a burst across concurrent senders.
+if (random_int(1, 50) === 1) {
+    $db->prepare('DELETE FROM relay WHERE created < ?')->execute([$now - Settings::int('relay_ttl')]);
+}
 
 $st = $db->prepare('SELECT COUNT(*) FROM relay WHERE to_id = ?');
 $st->execute([$peer]);
@@ -144,8 +152,9 @@ if (!ConnTrack::isRelaying($id, $peer)
     Util::fail('relay busy', 503);
 }
 
-$db->prepare('INSERT INTO relay (pair, from_id, to_id, payload, created) VALUES (?, ?, ?, ?, ?)')
-    ->execute([$pair, $id, $peer, $payload, $now]);
+Db::retry(static fn() => $db->prepare(
+    'INSERT INTO relay (pair, from_id, to_id, payload, created) VALUES (?, ?, ?, ?, ?)'
+)->execute([$pair, $id, $peer, $payload, $now]));
 // Ground truth for "this pair runs through the hub": no declared
 // no-P2P bit is needed to end up here.
 ConnTrack::relaying($id, $peer);

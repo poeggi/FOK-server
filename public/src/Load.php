@@ -51,10 +51,22 @@ final class Load
         if (self::$pending === []) {
             return;
         }
+        $pending = self::$pending;
+        self::$pending = [];
+        // Writing a row per request to record that the request wrote rows
+        // made the monitoring itself a leading source of load on the single
+        // SQLite writer - on the relay path it doubled the write
+        // transactions a game message costs. One request in load_sample
+        // flushes and counts for all of them, so the trend survives at a
+        // fraction of the lock traffic; the gauges are explicitly
+        // approximate (see the class docblock). Set load_sample to 1 for
+        // exact, per-request figures.
+        $sample = max(1, Settings::int('load_sample'));
+        if ($sample > 1 && random_int(1, $sample) !== 1) {
+            return;
+        }
         self::$flushing = true;
         try {
-            $pending = self::$pending;
-            self::$pending = [];
             $db = Db::get();
             $bucket = gmdate('YmdHi');
             $rows = [];
@@ -63,7 +75,8 @@ final class Load
                 $rows[] = '(?, ?, ?)';
                 $args[] = $bucket;
                 $args[] = $metric;
-                $args[] = $n;
+                // Scaled back up: this flush stands in for $sample requests.
+                $args[] = $n * $sample;
             }
             $db->prepare(
                 'INSERT INTO loadmin (bucket, metric, value) VALUES ' . implode(', ', $rows) .

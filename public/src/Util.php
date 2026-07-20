@@ -18,6 +18,11 @@ final class Util
     {
         set_exception_handler(static function (Throwable $e): void {
             error_log('FOK fault: ' . $e);
+            // The request is already lost, and the usual reason is a locked
+            // database - which is exactly what the queued bookkeeping would
+            // go on to retry. Running it here piles more writes onto the
+            // jammed writer and logs a second fault for work nobody awaits.
+            self::$deferred = [];
             if (!headers_sent()) {
                 self::jsonOut(['ok' => false, 'error' => 'server fault'], 500);
             }
@@ -28,6 +33,7 @@ final class Util
             $e = error_get_last();
             $fatal = E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR;
             if ($e !== null && ($e['type'] & $fatal) !== 0 && !headers_sent()) {
+                self::$deferred = [];
                 self::jsonOut(['ok' => false, 'error' => 'server fault'], 500);
             }
             // Endpoints that answer without jsonOut (backup download) would

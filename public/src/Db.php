@@ -50,11 +50,13 @@ final class Db
             // the file, and never on a mere application crash.
             $pdo->exec('PRAGMA synchronous = NORMAL');
             // A contended write waits at most this long for the lock, then
-            // throws SQLITE_BUSY (caught as a clean 500) instead of parking a
-            // worker. Well above the worst honest pileup (~18 workers times a
-            // few ms each), yet low enough that a database stall frees workers
-            // fast rather than pinning the whole pool for the timeout.
-            $pdo->exec('PRAGMA busy_timeout = 2000');
+            // throws SQLITE_BUSY. Nothing catches that per-statement, so it
+            // surfaces as the generic 500 "server fault" and the write is
+            // simply lost - a dropped signal or game message. Hence both the
+            // higher ceiling here and Db::retry() on the writes that matter;
+            // still low enough that a real database stall frees workers
+            // rather than pinning the whole pool.
+            $pdo->exec('PRAGMA busy_timeout = 4000');
             $pdo->exec('PRAGMA foreign_keys = ON');
             self::migrate($pdo);
             self::$pdo = $pdo;
@@ -67,6 +69,39 @@ final class Db
     public static function close(): void
     {
         self::$pdo = null;
+    }
+
+    /**
+     * Runs a write through a transient lock. WAL leaves exactly one writer,
+     * so two requests writing at the same moment - a relayed duel sends from
+     * both ends at once - can still collide after busy_timeout is spent.
+     * Losing that write means a dropped signal or a dropped game message,
+     * i.e. a broken duel, which is worth a few ms of backoff rather than the
+     * 500 the caller would otherwise get. Read paths do not need this: in
+     * WAL a reader never blocks and is never blocked.
+     */
+    public static function retry(callable $fn, int $tries = 3): mixed
+    {
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                return $fn();
+            } catch (PDOException $e) {
+                if ($attempt >= $tries || !self::isLocked($e)) {
+                    throw $e;
+                }
+                // Jittered and growing: two writers that just collided must
+                // not line up again on the retry.
+                usleep(random_int(2000, 8000) * $attempt);
+            }
+        }
+    }
+
+    // SQLITE_BUSY (5) and SQLITE_LOCKED (6) arrive as driver-specific codes;
+    // the SQLSTATE is the generic HY000, so it cannot be matched on.
+    private static function isLocked(PDOException $e): bool
+    {
+        $code = (int)($e->errorInfo[1] ?? 0);
+        return $code === 5 || $code === 6;
     }
 
     /**

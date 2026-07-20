@@ -686,6 +686,9 @@ else
     # copy (they are byte-identical at both check sites; ?v= is the version).
     CSS_ASSET=$(curl -s "$BASE/assets/admin.css?v=$VER")
     expect "hidden class wins the cascade" 'display: none !important' "$CSS_ASSET"
+    # The global td rule is nowrap; the popup value cell must override it or
+    # a long alert message runs off the side instead of growing the popup.
+    expect "popup values wrap instead of overflowing" 'overflow-wrap: anywhere' "$CSS_ASSET"
 
     JS_ASSET=$(curl -s "$BASE/assets/admin.js?v=$VER")
     N=$(echo "$JS_ASSET" | grep -c "view: 'settings'" || true)

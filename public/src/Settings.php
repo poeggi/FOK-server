@@ -38,6 +38,7 @@ final class Settings
         'alert_online' => [200, 'Alert: concurrent online players above'],
         'alert_invalid_per_min' => [30, 'Alert: invalid requests per IP per minute above'],
         'alert_cooldown' => [900, 'Alert de-duplication window (seconds)'],
+        'load_sample' => [10, 'Load-gauge write sampling (1 = exact, every request)'],
         'admin_refresh_secs' => [30, 'Admin dashboard refresh interval (seconds, 0 = off)'],
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)'],
         'admin_duels_refresh_secs' => [1, 'Duels card refresh interval (seconds, 0 = off)'],

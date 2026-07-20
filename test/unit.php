@@ -495,6 +495,9 @@ $loadVal = static function (string $metric): int {
     $st->execute([gmdate('YmdHi'), $metric]);
     return (int)$st->fetchColumn();
 };
+// Exact gauges for the assertions below: in production one request in
+// load_sample flushes and stands in for the rest (see Load::flush).
+Settings::set('load_sample', 1);
 Load::flush();                            // drain anything pending from above
 Db::get()->exec('DELETE FROM loadmin');   // one write: counted as db load
 Load::tick('msg_out', 3);

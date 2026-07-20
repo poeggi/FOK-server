@@ -31,9 +31,12 @@ final class Signals
         if ((int)$st->fetchColumn() >= Settings::int('mailbox_cap')) {
             return false;
         }
-        $db->prepare(
+        // Losing this to a momentary lock drops a signal - an ice candidate
+        // or an invite - which the client can only report as a failed
+        // connection, so it is retried rather than surfaced as a 500.
+        Db::retry(static fn() => $db->prepare(
             'INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)'
-        )->execute([$from, $to, $type, $payload, time()]);
+        )->execute([$from, $to, $type, $payload, time()]));
         return true;
     }
 
@@ -95,25 +98,18 @@ final class Signals
     {
         $db = Db::get();
         self::expire($db);
-        $db->exec('BEGIN IMMEDIATE');
-        try {
-            $st = $db->prepare('SELECT id, from_id, type, payload, created FROM signals WHERE to_id = ? ORDER BY id');
+        // One atomic statement instead of BEGIN IMMEDIATE around a SELECT,
+        // a DELETE and a COMMIT: same exactly-once guarantee, one lock
+        // acquisition on the single writer instead of a held transaction.
+        $rows = Db::retry(static function () use ($db, $to) {
+            $st = $db->prepare(
+                'DELETE FROM signals WHERE to_id = ? RETURNING id, from_id, type, payload, created'
+            );
             $st->execute([$to]);
-            $rows = $st->fetchAll();
-            if ($rows !== []) {
-                $ids = array_column($rows, 'id');
-                $ph = implode(',', array_fill(0, count($ids), '?'));
-                $db->prepare("DELETE FROM signals WHERE id IN ($ph)")->execute($ids);
-            }
-            $db->exec('COMMIT');
-        } catch (Throwable $e) {
-            // SQLite auto-rolls back on some faults; a bare ROLLBACK
-            // would then throw and mask the real error.
-            if ($db->inTransaction()) {
-                $db->exec('ROLLBACK');
-            }
-            throw $e;
-        }
+            return $st->fetchAll();
+        });
+        // RETURNING does not promise an order; oldest first is the contract.
+        usort($rows, static fn(array $x, array $y) => (int)$x['id'] <=> (int)$y['id']);
         return array_map(static fn(array $r) => [
             'from' => $r['from_id'],
             'type' => $r['type'],
