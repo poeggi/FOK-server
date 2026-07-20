@@ -7,6 +7,7 @@ require_once __DIR__ . '/../src/Alerts.php';
 require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/RelayRate.php';
+require_once __DIR__ . '/../src/RelayStore.php';
 
 /**
  * In-duel message relay - the FALLBACK when the peer-to-peer DataChannel
@@ -53,60 +54,14 @@ if ($method === 'GET') {
         Util::fail('invalid id/peer');
     }
     $wait = min((int)($_GET['wait'] ?? 0), Settings::int('poll_wait_max'));
-    $db = Db::get();
-    // The hold loop peeks with an indexed read and takes no lock while
-    // idle: SQLite has one writer, and a waiting poll must not fight the
-    // duels that are actually sending.
-    $peek = $db->prepare('SELECT 1 FROM relay WHERE to_id = ? AND from_id = ? LIMIT 1');
+    // The hold loop peeks and takes no lock while idle: a waiting poll must
+    // not fight the duels that are actually sending (see RelayStore).
     $deadline = microtime(true) + $wait;
     while (true) {
-        $peek->execute([$id, $peer]);
-        $pending = $peek->fetchColumn() !== false;
-        // Finish the read before the drain writes (see Db).
-        $peek->closeCursor();
-        $rows = [];
-        if ($pending) {
-            // Draining is ONE atomic statement: DELETE ... RETURNING keeps
-            // the exactly-once guarantee - two overlapping polls must never
-            // both be handed the same message, a replayed input desyncs the
-            // duel - without an explicit BEGIN IMMEDIATE held across a
-            // SELECT, a DELETE and a COMMIT.
-            //
-            // The handle MUST NOT outlive the drain. This is a WRITE, and
-            // SQLite holds the write lock until the statement finishes, so
-            // one prepared above the hold loop pins the single writer for
-            // the whole long poll and locks every other duel out. It is
-            // also never reused across a retry: re-executing a handle left
-            // dirty by a failed attempt raises SQLITE_MISUSE. Hence prepared
-            // per drain and closed the moment the rows are in PHP.
-            $rows = Db::retry(static function () use ($db, $id, $peer) {
-                $st = $db->prepare(
-                    'DELETE FROM relay WHERE to_id = ? AND from_id = ? RETURNING id, payload, created'
-                );
-                $st->execute([$id, $peer]);
-                $out = $st->fetchAll();
-                $st->closeCursor();
-                return $out;
-            });
-            // RETURNING does not promise an order; oldest first is the
-            // wire contract.
-            usort($rows, static fn(array $x, array $y) => (int)$x['id'] <=> (int)$y['id']);
-            // Delivery must not depend on how recently the backlog was
-            // swept: anything past its TTL is dropped here, which is what
-            // lets the sweep on the POST side be occasional.
-            $cut = time() - Settings::int('relay_ttl');
-            $rows = array_values(array_filter(
-                $rows,
-                static fn(array $r) => (int)$r['created'] >= $cut
-            ));
-        }
+        $rows = RelayStore::hasAny($id, $peer) ? RelayStore::drain($id, $peer) : [];
         if ($rows !== []) {
             Load::tick('msg_out', count($rows));
-            Util::jsonOut(['ok' => true, 'messages' => array_map(static fn(array $r) => [
-                'seq' => (int)$r['id'],
-                'payload' => $r['payload'],
-                'created' => (int)$r['created'],
-            ], $rows)]);
+            Util::jsonOut(['ok' => true, 'messages' => $rows]);
         }
         if (microtime(true) >= $deadline || connection_aborted()) {
             http_response_code(204);
@@ -137,29 +92,14 @@ if (!is_string($payload) || $payload === '' || strlen($payload) > Settings::int(
 }
 Util::checkPts($body['pts'] ?? null, "player $id");
 
-$db = Db::get();
 $now = time();
-// Sweeping the expired backlog on EVERY message cost a second write
-// transaction per relayed message, purely for housekeeping, on the one
-// writer the duel itself is queueing for. Delivery already drops anything
-// past its TTL (see the GET path), so this only has to keep the table
-// small. Sampled per request rather than by clock, so it never lines up
-// into a burst across concurrent senders.
-if (random_int(1, 50) === 1) {
-    $db->prepare('DELETE FROM relay WHERE created < ?')->execute([$now - Settings::int('relay_ttl')]);
-}
+RelayStore::sweep($now);
 
-$st = $db->prepare('SELECT COUNT(*) FROM relay WHERE to_id = ?');
-$st->execute([$peer]);
-$backlog = (int)$st->fetchColumn();
-$st->closeCursor();
-if ($backlog >= Settings::int('relay_pending_cap')) {
+if (RelayStore::pending($peer) >= Settings::int('relay_pending_cap')) {
     Alerts::raise('spam', "Relay backlog full for $peer (sender $id)");
     Util::fail('relay backlog full', 429);
 }
 
-[$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
-$pair = "$a:$b";
 // Only a pair without a slot is checked: a duel already relaying must
 // never be cut off mid-game by a full server.
 if (!ConnTrack::isRelaying($id, $peer)
@@ -168,9 +108,7 @@ if (!ConnTrack::isRelaying($id, $peer)
     Util::fail('relay busy', 503);
 }
 
-Db::retry(static fn() => $db->prepare(
-    'INSERT INTO relay (pair, from_id, to_id, payload, created) VALUES (?, ?, ?, ?, ?)'
-)->execute([$pair, $id, $peer, $payload, $now]));
+RelayStore::push($id, $peer, $payload, $now);
 // Ground truth for "this pair runs through the hub": no declared
 // no-P2P bit is needed to end up here.
 ConnTrack::relaying($id, $peer);

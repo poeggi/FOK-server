@@ -7,6 +7,7 @@ require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Friends.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Starts.php';
+require_once __DIR__ . '/../src/RelayStore.php';
 
 /**
  * Matchmaking / WebRTC signaling relay.
@@ -70,9 +71,7 @@ if (($type === 'invite-relay' || $type === 'accept-relay')
 // 'bye' ends the pairing, so its relay backlog dies with it: an
 // undelivered input must never reach the pair's next duel.
 if ($type === 'bye') {
-    $db = Db::get();
-    [$a, $b] = $id < $to ? [$id, $to] : [$to, $id];
-    $db->prepare('DELETE FROM relay WHERE pair = ?')->execute(["$a:$b"]);
+    RelayStore::forgetPair($id, $to);
 }
 
 // The start epoch counts halts within ONE connection, so it resets with

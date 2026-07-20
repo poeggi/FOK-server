@@ -977,6 +977,34 @@ else
     curl -s "$BASE/api/poll.php?id=$ID1" > /dev/null
     curl -s "$BASE/api/poll.php?id=$ID4" > /dev/null
 
+    # The relay transport switch. Observable behaviour must be IDENTICAL on
+    # either side of it - that is the whole point of the abstraction. There is
+    # no APCu under the local php -S, so a local run exercises the documented
+    # fallback (asked for APCu, cannot have it, must keep working on the
+    # database); the staging run is real FPM with APCu, so the same assertions
+    # exercise shared memory for real. Neither environment can be skipped
+    # without losing one half of the switch.
+    setting relay_apcu 1
+    R=$(rly "$ID1" "$ID2" 'TRANSPORT:1')
+    expect "configured transport accepts a message" '"ok":true' "$R"
+    rly "$ID1" "$ID2" 'TRANSPORT:2' > /dev/null
+    R=$(curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1&wait=2")
+    expect "configured transport delivers" 'TRANSPORT:1' "$R"
+    expect "configured transport delivers the second message" 'TRANSPORT:2' "$R"
+    ordered "configured transport preserves order" 'TRANSPORT:1' 'TRANSPORT:2' "$R"
+    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
+    expect "configured transport delivers exactly once" '204' "$R"
+    R=$(rly "$ID2" "$ID1" 'TRANSPORT:back')
+    expect "configured transport carries the other direction too" '"ok":true' "$R"
+    R=$(curl -s "$BASE/api/relay.php?id=$ID1&peer=$ID2&wait=2")
+    expect "the reverse direction is separate" 'TRANSPORT:back' "$R"
+    rly "$ID1" "$ID2" 'TRANSPORT:orphan' > /dev/null
+    sig "$ID1" "$ID2" bye '' > /dev/null
+    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
+    expect "bye clears the backlog on the configured transport" '204' "$R"
+    setting relay_apcu 0
+    curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+
     # An invite nobody picks up must not evaporate behind its ok:true:
     # the sender is told. (The sweep runs on the next mailbox read, so
     # the inviter's own heartbeat both raises and delivers the receipt.)
