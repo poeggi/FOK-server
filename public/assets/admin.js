@@ -585,7 +585,9 @@ const MODULES = [
                 table.append(r);
             }
             form.append(table);
-            const save = el('button', '', 'Save');
+            // "Apply and Save": these settings take effect on the next
+            // request, not on a restart - the button says so.
+            const save = el('button', '', 'Apply and Save');
             save.type = 'submit';
             form.append(save);
             form.onsubmit = async (ev) => {
