@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.16.28';
+const FOK_SERVER_VERSION = '0.16.29';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -39,6 +39,16 @@ define('FOK_DATA_DIR', getenv('FOK_DATA_DIR') ?: (FOK_ENV === 'staging'
 define('FOK_DB_FILE', FOK_DATA_DIR . '/fok.db');
 define('FOK_ADMIN_HASH_FILE', FOK_DATA_DIR . '/admin.hash');
 define('FOK_BACKUP_DIR', FOK_DATA_DIR . '/backups');
+
+// Errors and warnings are pinned to a file in the data dir. That dir sits
+// ABOVE the docroot, so the log is never web-served; and the host's default
+// error-log destination is not reachable over our deploy (FTP) access, which
+// stops at the docroot - so this pin is what lets the admin Logs tab read it.
+define('FOK_ERROR_LOG', FOK_DATA_DIR . '/php-error.log');
+ini_set('error_log', FOK_ERROR_LOG);
+// The Logs tab reads at most this much of the log's tail (newest entry
+// first), so an unrotated log is never loaded whole.
+const FOK_LOG_TAIL_BYTES = 131072;
 
 // A player counts as online while its last heartbeat is within this window.
 const FOK_ONLINE_WINDOW = 60;

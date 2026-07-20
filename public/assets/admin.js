@@ -312,6 +312,87 @@ function renderClientBody(body, overlay, d, reload) {
 // refreshes that follow a debug toggle or a delete.
 let usersFilter = '';
 
+// Alerts card state, kept across the card's live refreshes: the open tab,
+// the log severity filter, and the last log payload so switching filters is
+// instant without a refetch.
+let alertsTab = 'alerts';   // 'alerts' | 'logs'
+let logFilter = 'all';      // 'all' | 'warn' | 'error'
+let lastLog = null;
+
+function renderAlerts(box, d) {
+    box.replaceChildren();
+    if (!d.alerts.length) { box.append(el('p', 'muted', 'No alerts.')); return; }
+    box.append(el('p', d.unseen ? 'error' : 'muted',
+        d.unseen ? d.unseen + ' unseen alert(s)' : 'All alerts seen.'));
+    const table = el('table');
+    table.append(row(['Time', 'Type', 'Message'], 'th'));
+    for (const a of d.alerts) {
+        const words = a.message.split(' ');
+        const preview = words.length > ALERT_PREVIEW_WORDS
+            ? words.slice(0, ALERT_PREVIEW_WORDS).join(' ') + ' ...'
+            : a.message;
+        const link = el('span', 'msg-link', preview);
+        link.title = a.message;
+        const msg = el('td');
+        msg.append(link);
+        const r = el('tr', 'alert-row');
+        r.append(el('td', '', fmtTime(a.created)), el('td', '', a.type), msg);
+        if (!a.seen) r.classList.add('unseen');
+        r.onclick = () => showAlert(a);
+        table.append(r);
+    }
+    box.append(table);
+    if (d.unseen) {
+        const btn = el('button', '', 'Mark all seen');
+        btn.onclick = async () => {
+            await api('alerts_seen', { method: 'POST' });
+            refreshModule('alerts');
+        };
+        box.append(btn);
+    }
+}
+
+// Severity ladder for the Logs filter: 'all' shows everything, 'warn' shows
+// warnings and errors, 'error' shows errors only.
+function logKeep(level) {
+    if (logFilter === 'all') return true;
+    if (logFilter === 'warn') return level !== 'info';
+    return level === 'error';
+}
+
+function renderLogs(box) {
+    box.replaceChildren();
+    const d = lastLog || { entries: [], bytes: 0, truncated: false };
+
+    const bar = el('div', 'logbar');
+    const chip = (key, label) => {
+        const c = el('button', 'chip' + (logFilter === key ? ' active' : ''), label);
+        c.onclick = () => { logFilter = key; renderLogs(box); };
+        return c;
+    };
+    bar.append(chip('all', 'All'), chip('warn', 'Warnings'), chip('error', 'Errors'), el('span', 'grow'));
+    const clear = el('button', 'small', 'Clear');
+    clear.onclick = async () => {
+        if (!confirm('Clear the whole server log?')) return;
+        await api('log_clear', { method: 'POST' });
+        refreshModule('alerts');
+    };
+    bar.append(clear);
+    box.append(bar);
+
+    const shown = d.entries.filter((e) => logKeep(e.level));
+    if (!shown.length) {
+        box.append(el('p', 'muted', d.entries.length ? 'No entries at this level.' : 'Log is empty.'));
+        return;
+    }
+    const view = el('div', 'logview');
+    for (const e of shown) view.append(el('div', 'logline log-' + e.level, e.text));
+    box.append(view);
+    box.append(el('p', 'muted', 'Showing ' + shown.length + ' of ' + d.entries.length
+        + ' recent entries' + (d.truncated ? ', tail of ' + fmtBytes(d.bytes) + ' log' : '')
+        + '. Newest first.'));
+}
+
 const MODULES = [
     {
         id: 'stats',
@@ -403,38 +484,35 @@ const MODULES = [
     },
     {
         id: 'alerts',
-        title: 'Alerts',
+        title: 'Alerts & logs',
         async refresh(box) {
-            const d = await api('alerts');
-            box.replaceChildren();
-            if (!d.alerts.length) { box.append(el('p', 'muted', 'No alerts.')); return; }
-            box.append(el('p', d.unseen ? 'error' : 'muted',
-                d.unseen ? d.unseen + ' unseen alert(s)' : 'All alerts seen.'));
-            const table = el('table');
-            table.append(row(['Time', 'Type', 'Message'], 'th'));
-            for (const a of d.alerts) {
-                const words = a.message.split(' ');
-                const preview = words.length > ALERT_PREVIEW_WORDS
-                    ? words.slice(0, ALERT_PREVIEW_WORDS).join(' ') + ' ...'
-                    : a.message;
-                const link = el('span', 'msg-link', preview);
-                link.title = a.message;
-                const msg = el('td');
-                msg.append(link);
-                const r = el('tr', 'alert-row');
-                r.append(el('td', '', fmtTime(a.created)), el('td', '', a.type), msg);
-                if (!a.seen) r.classList.add('unseen');
-                r.onclick = () => showAlert(a);
-                table.append(r);
-            }
-            box.append(table);
-            if (d.unseen) {
-                const btn = el('button', '', 'Mark all seen');
-                btn.onclick = async () => {
-                    await api('alerts_seen', { method: 'POST' });
-                    refreshModule('alerts');
+            // The tab bar is built once and kept, so a live refresh never
+            // steals the open tab; only the panel below it re-renders.
+            let panel = box.querySelector('.tabpanel');
+            if (!panel) {
+                box.replaceChildren();
+                const bar = el('div', 'tabbar');
+                const mkTab = (key, label) => {
+                    const b = el('button', 'tab', label);
+                    b.dataset.tab = key;
+                    b.onclick = () => { if (alertsTab !== key) { alertsTab = key; refreshModule('alerts'); } };
+                    return b;
                 };
-                box.append(btn);
+                bar.append(mkTab('alerts', 'Alerts'), mkTab('logs', 'Logs'));
+                panel = el('div', 'tabpanel');
+                box.append(bar, panel);
+            }
+            for (const b of box.querySelectorAll('.tabbar .tab')) {
+                b.classList.toggle('active', b.dataset.tab === alertsTab);
+            }
+            // The log is fetched ONLY while its tab is open: populated on
+            // select, then live-followed by this card's own refresh. The
+            // default Alerts tab never pays to read the log file.
+            if (alertsTab === 'logs') {
+                lastLog = await api('log');
+                renderLogs(panel);
+            } else {
+                renderAlerts(panel, await api('alerts'));
             }
         },
     },

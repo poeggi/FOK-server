@@ -205,8 +205,45 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 .alert-row:hover td { background: rgba(255, 255, 255, 0.03); }
 .alert-row:hover .msg-link { text-decoration: underline; }
 /* Alerts must stay put (no inner scroll) so every entry is easy to click
-   open; the message preview keeps the row from overflowing sideways. */
+   open; the message preview keeps the row from overflowing sideways. The
+   log panel below provides its own bounded scroll. */
 #dashboard .card-alerts .card-body { max-height: none; overflow-y: visible; }
+
+/* Alerts / Logs tabbed card: a tab row above the panel, active tab marked
+   with an accent underline. */
+.tabbar { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.tabbar .tab {
+    background: transparent; border: 0; border-bottom: 2px solid transparent;
+    border-radius: 0; padding: 4px 12px; color: var(--muted);
+}
+.tabbar .tab:hover { color: var(--text); }
+.tabbar .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Log filter row: severity chips on the left, Clear pushed to the right. */
+.logbar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.logbar .grow { margin-left: auto; }
+.chip {
+    padding: 2px 10px; font-size: 12px; border-radius: 999px;
+    background: transparent; color: var(--muted);
+}
+.chip.active { border-color: var(--accent); color: var(--accent); }
+
+/* Scrollable monospace log. Each entry keeps its whitespace so a stack
+   trace stays readable; colour marks the severity. */
+.logview {
+    max-height: 46vh; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); padding: 4px 8px;
+}
+.logline {
+    font: 11.5px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-word;
+    padding: 2px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+.logline:last-child { border-bottom: 0; }
+.log-error { color: var(--danger); }
+.log-warn { color: #e0b055; }
+.log-info { color: var(--muted); }
 
 /* Debug reports: a per-row select box and a bulk-action bar on top. */
 .bulk-bar { display: flex; gap: 6px; margin-bottom: 8px; }
