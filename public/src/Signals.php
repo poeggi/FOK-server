@@ -67,6 +67,9 @@ final class Signals
         $st = $db->prepare('DELETE FROM signals WHERE created < ? RETURNING from_id, to_id, type');
         $st->execute([$cut]);
         $rows = $st->fetchAll();
+        // Closed before the receipt inserts below: this DELETE holds the
+        // write lock until its statement finishes.
+        $st->closeCursor();
         if ($rows === []) {
             return;
         }
@@ -101,12 +104,17 @@ final class Signals
         // One atomic statement instead of BEGIN IMMEDIATE around a SELECT,
         // a DELETE and a COMMIT: same exactly-once guarantee, one lock
         // acquisition on the single writer instead of a held transaction.
+        // The handle stays local and is closed at once: DELETE ... RETURNING
+        // is a write, and SQLite holds the write lock until the statement
+        // finishes.
         $rows = Db::retry(static function () use ($db, $to) {
             $st = $db->prepare(
                 'DELETE FROM signals WHERE to_id = ? RETURNING id, from_id, type, payload, created'
             );
             $st->execute([$to]);
-            return $st->fetchAll();
+            $out = $st->fetchAll();
+            $st->closeCursor();
+            return $out;
         });
         // RETURNING does not promise an order; oldest first is the contract.
         usort($rows, static fn(array $x, array $y) => (int)$x['id'] <=> (int)$y['id']);

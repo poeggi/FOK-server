@@ -58,21 +58,32 @@ if ($method === 'GET') {
     // idle: SQLite has one writer, and a waiting poll must not fight the
     // duels that are actually sending.
     $peek = $db->prepare('SELECT 1 FROM relay WHERE to_id = ? AND from_id = ? LIMIT 1');
-    // Draining is ONE atomic statement. An explicit BEGIN IMMEDIATE around
-    // a SELECT, a DELETE and a COMMIT took the single writer three times
-    // and held it across all three; DELETE ... RETURNING keeps the same
-    // exactly-once guarantee - two overlapping polls must never both be
-    // handed the same message, a replayed input desyncs the duel - in one
-    // implicit transaction with one lock acquisition.
-    $take = $db->prepare('DELETE FROM relay WHERE to_id = ? AND from_id = ? RETURNING id, payload, created');
     $deadline = microtime(true) + $wait;
     while (true) {
         $peek->execute([$id, $peer]);
         $rows = [];
         if ($peek->fetchColumn() !== false) {
-            $rows = Db::retry(static function () use ($take, $id, $peer) {
-                $take->execute([$id, $peer]);
-                return $take->fetchAll();
+            // Draining is ONE atomic statement: DELETE ... RETURNING keeps
+            // the exactly-once guarantee - two overlapping polls must never
+            // both be handed the same message, a replayed input desyncs the
+            // duel - without an explicit BEGIN IMMEDIATE held across a
+            // SELECT, a DELETE and a COMMIT.
+            //
+            // The handle MUST NOT outlive the drain. This is a WRITE, and
+            // SQLite holds the write lock until the statement finishes, so
+            // one prepared above the hold loop pins the single writer for
+            // the whole long poll and locks every other duel out. It is
+            // also never reused across a retry: re-executing a handle left
+            // dirty by a failed attempt raises SQLITE_MISUSE. Hence prepared
+            // per drain and closed the moment the rows are in PHP.
+            $rows = Db::retry(static function () use ($db, $id, $peer) {
+                $st = $db->prepare(
+                    'DELETE FROM relay WHERE to_id = ? AND from_id = ? RETURNING id, payload, created'
+                );
+                $st->execute([$id, $peer]);
+                $out = $st->fetchAll();
+                $st->closeCursor();
+                return $out;
             });
             // RETURNING does not promise an order; oldest first is the
             // wire contract.
