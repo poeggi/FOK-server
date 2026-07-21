@@ -267,6 +267,8 @@ Db::get()->prepare('INSERT INTO relay_rate (id, total, mark_total, mark_time, bl
     ->execute(['dddddddd', 1000, 0, time() - 3]);
 RelayRate::record('dddddddd'); // ~334 msg/s over 3 s, far over the 128 default
 ok(RelayRate::blocked('dddddddd'), 'a client over the sustained relay rate is blocked');
+ok(!RelayRate::usesApcu(), 'rate-limiting follows the database transport without shared APCu');
+ok(RelayRate::totalOf('dddddddd') === 1001, 'the running message total is readable for the admin gauge');
 Db::get()->prepare('INSERT INTO relay_rate (id, total, mark_total, mark_time, blocked_until) VALUES (?, ?, ?, ?, 0)')
     ->execute(['eeeeeeee', 10, 0, time() - 3]);
 RelayRate::record('eeeeeeee'); // ~3 msg/s, comfortably under the cap

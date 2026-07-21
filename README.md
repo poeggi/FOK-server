@@ -179,7 +179,7 @@ What limits this server, in order:
    shows up as latency, then 500s (busy_timeout is 5 s), so the long
    polls peek lock-free and take the write lock only to drain.
 3. **Relayed duels**, the most expensive client: a long poll each plus
-   ~30 messages/s. relay_max_duels (default 3) is the honest "busy".
+   ~30 messages/s. relay_max_duels (default 9) is the honest "busy".
 
 The server's own bookkeeping does not sit in the client's latency:
 Util::defer runs the counters, the threshold sweep and the hourly player
@@ -246,7 +246,7 @@ host-level. If this outgrows shared hosting, fix workers first.
       -> {"ok":true,"messages":[...]} | 204   (P2P fallback relay)
     GET  /api/poll.php?id=cafe0001&wait=8
       -> 204 (nothing pending) | {"ok":true,"signals":[...]}
-         (wait=N long-polls: answers ~150 ms after a signal arrives)
+         (wait=N long-polls: answers ~20 ms after a signal arrives)
     POST /api/match.php  {"id":"cafe0001","action":"seek|cancel"}
       -> {"ok":true,"waiting":true}
        | {"ok":true,"matched":"...","role":"...","peer_name":"..."}

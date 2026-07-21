@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/RelayRate.php';
 
 /**
  * Per-client state of the current 1:1 connection, one row per player.
@@ -237,6 +238,10 @@ final class ConnTrack
               ORDER BY c.updated DESC LIMIT ' . $limit
         );
         $st->execute([$now - FOK_CONN_TTL - FOK_DUEL_LINGER]);
+        // The per-client message count lives with the rate-limiter, which
+        // follows the relay's transport: on shared memory the rr.total column
+        // is never written, so read the live figure instead of the stale JOIN.
+        $rrApcu = RelayRate::usesApcu();
         $out = [];
         $seen = [];
         foreach ($st->fetchAll() as $r) {
@@ -261,7 +266,7 @@ final class ConnTrack
                 'state' => $state,
                 'mode' => $r['mode'],
                 'latency' => $r['latency'] === null ? null : (int)$r['latency'],
-                'msgs' => (int)$r['msgs'],
+                'msgs' => $rrApcu ? RelayRate::totalOf($r['id']) : (int)$r['msgs'],
                 'since' => (int)$r['updated'],
             ];
         }
