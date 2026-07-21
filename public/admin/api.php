@@ -13,52 +13,45 @@ require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Vault.php';
 require_once __DIR__ . '/../src/Debug.php';
+require_once __DIR__ . '/../src/AdminData.php';
 
 Auth::requireLogin();
 
 $action = $_GET['action'] ?? '';
 $db = Db::get();
 
+/**
+ * State-changing actions are POST-only: a GET could be triggered cross-site
+ * by top-level navigation despite the SameSite=Lax cookie.
+ */
+function requirePost(): void
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        Util::fail('POST only', 405);
+    }
+}
+/** A validated 8-hex client id, from GET (default) or POST. */
+function requireId(string $src = 'GET'): string
+{
+    $id = $src === 'POST' ? ($_POST['id'] ?? '') : ($_GET['id'] ?? '');
+    if (!Util::isValidId($id)) {
+        Util::fail('invalid id');
+    }
+    return $id;
+}
+/** Send an inline text/JSON body as a named download and stop. */
+function download(string $filename, string $body, string $type = 'application/json'): never
+{
+    header('Content-Type: ' . $type);
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    echo $body;
+    exit;
+}
+
 switch ($action) {
+    // ---- dashboard cards (read-only) ----
     case 'stats':
-        $counts = Presence::counts();
-        $st = $db->prepare('SELECT bucket, metric, value FROM counters WHERE bucket >= ? ORDER BY bucket');
-        $st->execute([gmdate('YmdH', time() - 24 * 3600)]);
-        $load = [];
-        foreach ($st->fetchAll() as $r) {
-            $load[$r['bucket']][$r['metric']] = (int)$r['value'];
-        }
-        $scoreCount = (int)$db->query('SELECT COUNT(*) FROM scores')->fetchColumn();
-        $dbRows = 0;
-        foreach (['players', 'scores', 'signals', 'duels', 'mm_queue', 'counters',
-            'alerts', 'settings', 'admin_fails', 'ipcount', 'friends', 'relay',
-            'starts', 'conn', 'stats'] as $table) {
-            $dbRows += (int)$db->query("SELECT COUNT(*) FROM $table")->fetchColumn();
-        }
-        $relaying = ConnTrack::relayPairs();
-        $friendships = (int)$db->query(
-            "SELECT COUNT(*) FROM friends WHERE state = 'accepted'"
-        )->fetchColumn();
-        $friendshipsPending = (int)$db->query(
-            "SELECT COUNT(*) FROM friends WHERE state = 'pending'"
-        )->fetchColumn();
-        Util::jsonOut([
-            'ok' => true,
-            'counts' => $counts,
-            'relaying' => $relaying,
-            'friendships' => $friendships,
-            'friendships_pending' => $friendshipsPending,
-            'scores_total' => $scoreCount,
-            'db_rows' => $dbRows,
-            'load' => $load,
-            // Live gauges: totals over the last complete minute.
-            'load_live' => Load::lastMinute(),
-            'db_size' => is_file(FOK_DB_FILE) ? filesize(FOK_DB_FILE) : 0,
-            'php' => PHP_VERSION,
-            'server_version' => FOK_SERVER_VERSION,
-            'env' => FOK_ENV,
-            'now' => time(),
-        ]);
+        Util::jsonOut(['ok' => true] + AdminData::stats());
 
     case 'props':
         $ms = Util::nowMs();
@@ -95,19 +88,21 @@ switch ($action) {
     case 'duels':
         Util::jsonOut(['ok' => true, 'now' => time(), 'duels' => ConnTrack::listDuels()]);
 
+    // ---- clients ----
+    case 'client':
+        // One condensed, read-only view of everything known about a client,
+        // gathered from the tables each subsystem already keeps (AdminData).
+        $c = AdminData::client(requireId());
+        if ($c === null) {
+            Util::fail('unknown client', 404);
+        }
+        Util::jsonOut(['ok' => true] + $c);
+
     case 'set_debug':
-        // State-changing, so POST-only: a GET could be triggered cross-site
-        // by top-level navigation despite the SameSite=Lax cookie.
-        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-            Util::fail('POST only', 405);
-        }
-        $id = $_POST['id'] ?? '';
-        if (!Util::isValidId($id)) {
-            Util::fail('invalid id');
-        }
-        // The wish only: the client honours it on its next hello and
-        // reports back what it actually did (see the users card).
-        Presence::setDebug($id, ($_POST['on'] ?? '') === '1');
+        requirePost();
+        // The wish only: the client honours it on its next hello and reports
+        // back what it actually did (see the users card).
+        Presence::setDebug(requireId('POST'), ($_POST['on'] ?? '') === '1');
         Util::jsonOut(['ok' => true]);
 
     case 'users':
@@ -121,126 +116,39 @@ switch ($action) {
         Util::jsonOut(['ok' => true, 'total' => $total, 'online_window' => FOK_ONLINE_WINDOW,
             'now' => time(), 'users' => $users]);
 
-    case 'client':
-        // One condensed view of everything known about a single client:
-        // identity, presence, its 1:1 / connection state, relay counters,
-        // matchmaking, friendships, scores and pending mailbox. Read-only,
-        // gathered from the tables each subsystem already keeps.
-        $id = $_GET['id'] ?? '';
-        if (!Util::isValidId($id)) {
-            Util::fail('invalid id');
-        }
-        $st = $db->prepare('SELECT id, name, ip, first_seen, last_seen, hello_count,
-            latency, debug, debug_active, accept_until, friend_ban_until FROM players WHERE id = ?');
-        $st->execute([$id]);
-        $p = $st->fetch();
-        $st->closeCursor();
-        if ($p === false) {
-            Util::fail('unknown client', 404);
-        }
-        $now = time();
-        $duel = ConnTrack::stateOf($id);
-        if ($duel !== null) {
-            $duel['age'] = $now - $duel['updated'];
-            $duel['live'] = $duel['updated'] > $now - FOK_CONN_TTL;
-        }
-        $rr = $db->prepare('SELECT total, blocked_until FROM relay_rate WHERE id = ?');
-        $rr->execute([$id]);
-        $rate = $rr->fetch() ?: null;
-        $rr->closeCursor();
-        $mm = $db->prepare('SELECT since, matched_with FROM mm_queue WHERE id = ?');
-        $mm->execute([$id]);
-        $queue = $mm->fetch() ?: null;
-        $mm->closeCursor();
-        $fr = $db->prepare("SELECT state, COUNT(*) c FROM friends
-            WHERE a = ? OR b = ? GROUP BY state");
-        $fr->execute([$id, $id]);
-        $friends = ['accepted' => 0, 'pending' => 0];
-        foreach ($fr->fetchAll() as $f) {
-            $friends[$f['state']] = (int)$f['c'];
-        }
-        $sc = $db->prepare('SELECT COUNT(*) c, MAX(score) best FROM scores WHERE player_id = ?');
-        $sc->execute([$id]);
-        $scores = $sc->fetch();
-        $sc->closeCursor();
-        $mb = $db->prepare('SELECT COUNT(*) FROM signals WHERE to_id = ?');
-        $mb->execute([$id]);
-        $mailbox = (int)$mb->fetchColumn();
-        $mb->closeCursor();
-        // Config backup (no token: admin manual-recovery view; download via
-        // the vault_export action below).
-        $backup = Vault::peek($id);
-        Util::jsonOut([
-            'ok' => true,
-            'now' => $now,
-            'online_window' => FOK_ONLINE_WINDOW,
-            'client' => [
-                'id' => $p['id'],
-                'name' => $p['name'],
-                'ip' => $p['ip'],
-                'first_seen' => (int)$p['first_seen'],
-                'last_seen' => (int)$p['last_seen'],
-                'hello_count' => (int)$p['hello_count'],
-                'latency' => $p['latency'] === null ? null : (int)$p['latency'],
-                'online' => (int)$p['last_seen'] > $now - FOK_ONLINE_WINDOW,
-                'debug' => (int)$p['debug'] === 1,
-                'debug_active' => (int)$p['debug_active'] === 1,
-                'accept_until' => (int)$p['accept_until'],
-                'friend_ban_until' => (int)$p['friend_ban_until'],
-                'duel' => $duel,
-                'relay_rate' => $rate === null ? null
-                    : ['total' => (int)$rate['total'], 'blocked_until' => (int)$rate['blocked_until']],
-                'matchmaking' => $queue === null ? null
-                    : ['since' => (int)$queue['since'], 'matched_with' => $queue['matched_with']],
-                'friends' => $friends,
-                'scores' => ['count' => (int)$scores['c'],
-                    'best' => $scores['best'] === null ? null : (int)$scores['best']],
-                'mailbox' => $mailbox,
-                'backup' => $backup === null ? null
-                    : ['updated' => $backup['updated'], 'bytes' => strlen($backup['payload']),
-                        'enrolled' => $backup['enrolled']],
-            ],
-        ]);
+    case 'delete_player':
+        // Reads $_POST['id'], so a GET (no such field) fails as 'invalid id'
+        // rather than deleting - that empty-id path is the guard here.
+        $id = requireId('POST');
+        $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
+        ConnTrack::forget($id);
+        Util::jsonOut(['ok' => true]);
 
+    // ---- config vault (per-client backup) ----
     case 'vault_export':
         // Manual recovery: download a client's config backup WITHOUT its
-        // token, as the same snake-fok-backup.json the game imports. Admin
-        // only (session-gated); never part of the client API.
-        $id = $_GET['id'] ?? '';
-        if (!Util::isValidId($id)) {
-            Util::fail('invalid id');
-        }
+        // token, as the same snake-fok-backup.json the game imports.
+        $id = requireId();
         $vault = Vault::peek($id);
         if ($vault === null) {
             Util::fail('no backup', 404);
         }
-        header('Content-Type: application/json');
-        header('Content-Disposition: attachment; filename="snake-fok-backup-' . $id . '.json"');
-        echo $vault['payload'];
-        exit;
+        download('snake-fok-backup-' . $id . '.json', $vault['payload']);
 
     case 'vault_reset':
-        // Manual recovery: clear a client's backup token so it can re-enroll
-        // (its next backup mints a fresh one). Keeps the payload. State-
-        // changing, so POST-only. Admin only.
-        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-            Util::fail('POST only', 405);
-        }
-        $id = $_POST['id'] ?? '';
-        if (!Util::isValidId($id)) {
-            Util::fail('invalid id');
-        }
-        Util::jsonOut(['ok' => true, 'reset' => Vault::resetToken($id)]);
+        // Clear a client's backup token so it can re-enroll (its next backup
+        // mints a fresh one); keeps the payload.
+        requirePost();
+        Util::jsonOut(['ok' => true, 'reset' => Vault::resetToken(requireId('POST'))]);
 
+    // ---- debug datasets ----
     case 'debug_list':
-        // Debug datasets a client submitted (see debug/submit.php). ttl + now
-        // let the dashboard show when each one expires.
+        // ttl + now let the dashboard show when each one expires.
         Util::jsonOut(['ok' => true, 'now' => time(), 'ttl' => FOK_DEBUG_TTL,
             'datasets' => Debug::recent()]);
 
     case 'debug_get':
-        // Download one dataset by its 4-digit PIN (the handle a user reads to
-        // support). Admin only; never on the client API.
+        // Download one dataset by its 4-digit PIN (the handle a user reads out).
         $pin = $_GET['pin'] ?? '';
         if (!preg_match('/^[0-9]{4}$/', $pin)) {
             Util::fail('invalid pin');
@@ -249,19 +157,17 @@ switch ($action) {
         if ($ds === null) {
             Util::fail('unknown pin', 404);
         }
-        header('Content-Type: application/json');
-        header('Content-Disposition: attachment; filename="debug-' . $pin . '.json"');
-        echo $ds['payload'];
-        exit;
+        download('debug-' . $pin . '.json', $ds['payload']);
 
     case 'debug_delete':
-        // Bulk-delete debug datasets by PIN (comma-separated). Admin only.
+        // Bulk-delete debug datasets by PIN (comma-separated).
         $pins = array_values(array_filter(
             explode(',', (string)($_POST['pins'] ?? '')),
             static fn($p) => preg_match('/^[0-9]{4}$/', $p) === 1
         ));
         Util::jsonOut(['ok' => true, 'deleted' => Debug::delete($pins)]);
 
+    // ---- scores ----
     case 'scores':
         Util::jsonOut(['ok' => true, 'scores' => Scores::top()]);
 
@@ -273,15 +179,7 @@ switch ($action) {
         Scores::delete($id);
         Util::jsonOut(['ok' => true]);
 
-    case 'delete_player':
-        $id = $_POST['id'] ?? '';
-        if (!Util::isValidId($id)) {
-            Util::fail('invalid id');
-        }
-        $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
-        ConnTrack::forget($id);
-        Util::jsonOut(['ok' => true]);
-
+    // ---- alerts ----
     case 'alerts':
         Util::jsonOut([
             'ok' => true,
@@ -290,32 +188,28 @@ switch ($action) {
         ]);
 
     case 'alerts_seen':
-        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-            Util::fail('POST only', 405);
-        }
+        requirePost();
         Alerts::markSeen();
         Util::jsonOut(['ok' => true]);
 
+    // ---- host capabilities ----
     case 'caps':
         Util::jsonOut(['ok' => true, 'now' => time()] + Caps::get());
 
     case 'caps_refresh':
-        // Re-assessment is a write, so POST-only.
-        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-            Util::fail('POST only', 405);
-        }
+        requirePost();   // re-assessment is a write
         Util::jsonOut(['ok' => true, 'now' => time()] + Caps::refresh());
 
+    // ---- server log ----
     case 'log':
         Util::jsonOut(['ok' => true] + Logs::tail());
 
     case 'log_clear':
-        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-            Util::fail('POST only', 405);
-        }
+        requirePost();
         Logs::clear();
         Util::jsonOut(['ok' => true]);
 
+    // ---- settings ----
     case 'settings':
         Util::jsonOut(['ok' => true, 'settings' => Settings::all()]);
 
@@ -324,15 +218,10 @@ switch ($action) {
         foreach (Settings::all() as $s) {
             $map[$s['key']] = $s['value'];
         }
-        header('Content-Type: application/json');
-        header('Content-Disposition: attachment; filename="fok-config.json"');
-        echo json_encode($map, JSON_PRETTY_PRINT);
-        exit;
+        download('fok-config.json', (string)json_encode($map, JSON_PRETTY_PRINT));
 
     case 'config_import':
-        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-            Util::fail('POST only', 405);
-        }
+        requirePost();
         $map = json_decode((string)($_POST['config'] ?? ''), true);
         if (!is_array($map) || $map === []) {
             Util::fail('invalid config JSON');
@@ -351,9 +240,7 @@ switch ($action) {
         Util::jsonOut(['ok' => true, 'settings' => Settings::all()]);
 
     case 'settings_save':
-        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-            Util::fail('POST only', 405);
-        }
+        requirePost();
         foreach (Settings::DEFS as $key => $def) {
             if (!isset($_POST[$key])) {
                 continue;
@@ -366,12 +253,9 @@ switch ($action) {
         }
         Util::jsonOut(['ok' => true, 'settings' => Settings::all()]);
 
+    // ---- database backups ----
     case 'backup_create':
-        // State-changing, so POST-only: a GET could be triggered cross-site
-        // by top-level navigation despite the SameSite=Lax cookie.
-        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-            Util::fail('POST only', 405);
-        }
+        requirePost();
         Util::jsonOut(['ok' => true, 'name' => Backup::create()]);
 
     case 'backup_list':

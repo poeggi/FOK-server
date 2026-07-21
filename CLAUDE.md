@@ -81,7 +81,9 @@ endpoint - it is the contract the FOK-snake client is built against.
 
 Update all four together or CI/state drifts: the endpoint, docs/API.md,
 README.md's sketch, and the tests (test/unit.php for logic,
-test/smoke.sh for the HTTP behavior).
+test/smoke.sh for the HTTP behavior - a thin runner that sources the
+feature parts in test/smoke/*.sh in order; add HTTP tests to the matching
+part, they share one server and run top to bottom).
 
 ## Workflow
 
