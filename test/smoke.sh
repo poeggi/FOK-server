@@ -421,9 +421,11 @@ expect "the new start echoes its epoch" '"epoch":1' "$R"
 R=$(start_req "$ID1" "$ID2" 2 resume "$(now_ms)")
 expect "a resume from pause issues a start" '"epoch":2' "$R"
 
-# A peer left behind is told loudly, not handed a start it would misplace.
-R=$(start_req "$ID2" "$ID1" 0 first "$(now_ms)")
-expect "a stale epoch is refused" 'stale epoch' "$R"
+# A peer left behind WITHIN a run is told loudly, not handed a start it would
+# misplace. A begin-play reason (first/rematch) is exempt - it resets the line
+# instead (see the relay-rematch test below) - so this probes with 'level'.
+R=$(start_req "$ID2" "$ID1" 0 level "$(now_ms)")
+expect "a stale in-run epoch is refused" 'stale epoch' "$R"
 
 # The sync gate: a start is a moment on the shared clock. pts is required
 # for every reason and can never be in the future.
@@ -579,12 +581,19 @@ expect "and the inbound is still there for the GET" 'IN:keep' "$R"
 # Clean up ID1's inbound (the acks ID2 sent) so later tests start clean.
 curl -s "$BASE/api/relay.php?id=$ID1&peer=$ID2" > /dev/null
 
-# Aborting a relayed duel takes its undelivered backlog with it: a stale
-# input from the finished duel must never land in the next one.
+# Aborting a relayed duel: its undelivered backlog dies with it (a stale input
+# must never reach the next duel), AND the peer's held GET is told the pair is
+# gone (v3.3) instead of being left to time out - the relay's answer to a P2P
+# DataChannel close. 'accept' first, so the bye has a conn row to mark ended.
+sig "$ID1" "$ID2" accept '' > /dev/null
+R=$(curl -s -w '\n%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
+expect "a live pairing is not reported gone" '204' "$R"
 rly "$ID1" "$ID2" 'IN:stale' > /dev/null
 sig "$ID1" "$ID2" bye '' > /dev/null
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
-expect "bye drops the pair's relay backlog" '204' "$R"
+R=$(curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1")
+expect "after a bye the relay GET reports the peer gone" '"gone":true' "$R"
+# The stale input did not leak: a gone reply carries no messages, and the
+# backlog was dropped with the pair (forgetPair).
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 
 # --- ... and now a normal connection again, start to finish.
@@ -632,6 +641,15 @@ sig "$ID1" "$ID2" offer 'sdp-rematch' > /dev/null
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 R=$(start_req "$ID1" "$ID2" 0 first "$(now_ms)")
 expect "an offer opens a fresh epoch line too (quick match)" '"start_pts":' "$R"
+# A RELAY rematch reuses the hub with NO new offer, so nothing calls
+# Starts::forget - the begin-play reason itself must reset the stale line or
+# the pair 409s until it ages out. Advance the pair, then a 'rematch' at
+# epoch 0 with no handshake in between still gets a start, and the peer joins.
+start_req "$ID1" "$ID2" 3 level "$(now_ms)" > /dev/null
+R=$(start_req "$ID1" "$ID2" 0 rematch "$(now_ms)")
+expect "a relay rematch resets a stale epoch line with no handshake" '"start_pts":' "$R"
+R=$(start_req "$ID2" "$ID1" 0 rematch "$(now_ms)")
+expect "and the peer joins the reset line" '"start_pts":' "$R"
 sig "$ID1" "$ID2" bye '' > /dev/null
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 
@@ -1065,8 +1083,11 @@ else
     expect "the reverse direction is separate" 'TRANSPORT:back' "$R"
     rly "$ID1" "$ID2" 'TRANSPORT:orphan' > /dev/null
     sig "$ID1" "$ID2" bye '' > /dev/null
-    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
-    expect "bye clears the backlog on the configured transport" '204' "$R"
+    # bye tears the pair down: the held GET reports gone (v3.3, from ConnTrack,
+    # so transport-independent) and the orphan backlog dies with it (a gone
+    # reply carries no messages).
+    R=$(curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1")
+    expect "bye tears down the pair on the configured transport" '"gone":true' "$R"
     setting relay_apcu_assume_shared 0   # back to the safe auto-proof default
     setting relay_apcu 1   # back to the default (shared memory where usable)
     curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null

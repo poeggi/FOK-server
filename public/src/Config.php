@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.17.0';
+const FOK_SERVER_VERSION = '0.17.1';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -29,7 +29,13 @@ const FOK_SERVER_VERSION = '0.17.0';
 // the server received the message) in both replies, to tell a mailbox delay
 // apart from an FPM queue delay. Major stays 3; v3.1 clients send no "pull",
 // get the old {"ok":true}, and ignore "age".
-const FOK_API_VERSION = '3.2';
+// v3.3: additive relay leave signal. A held GET /api/relay.php returns
+// {"ok":true,"gone":true} once the pairing is torn down (a bye/decline
+// marked the conn ended), so a relayed peer learns the other side left at
+// once instead of waiting out its own liveness timeout - the relay's answer
+// to a P2P DataChannel close. Major stays 3; a client that does not read
+// "gone" simply keeps timing out as before.
+const FOK_API_VERSION = '3.3';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');

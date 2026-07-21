@@ -235,8 +235,10 @@ $s4 = Starts::request('aaaaaaaa', 'bbbbbbbb', 1, 'respawn');
 ok($s4 > Util::nowMs(), 'a new epoch issues a fresh start');
 ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 1, 'respawn') === $s4, 'the peer joins the new epoch');
 
-// A peer left behind is told so, never handed a start it would misplace.
-ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first') === null, 'a stale epoch is refused');
+// A peer left behind WITHIN a run is told so, never handed a start it would
+// misplace. An in-run reason (level/respawn/resume) is gated; a begin-play
+// reason is exempt (see the reset test below), so this probes with 'level'.
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'level') === null, 'a stale in-run epoch is refused');
 
 $startRow = (function (): array {
     $st = Db::get()->prepare('SELECT epoch, reason FROM starts WHERE a = ? AND b = ?');
@@ -245,6 +247,15 @@ $startRow = (function (): array {
 })();
 ok((int)$startRow['epoch'] === 1 && $startRow['reason'] === 'respawn', 'the pair records epoch and reason');
 ok(in_array('resume', Starts::REASONS, true), 'a resume from pause is a start reason');
+
+// A start that BEGINS play (first/rematch) must never be refused by a stale
+// epoch line left over from a torn-down connection: a relay rematch reuses the
+// hub with no new offer, so nothing calls Starts::forget (see signal.php), and
+// the pair would otherwise sit at a 409 until the row aged out. The pair is at
+// epoch 1 here; a fresh 'rematch' at epoch 0 RESETS the line rather than 409.
+$reset = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'rematch');
+ok(is_int($reset) && $reset > Util::nowMs(), 'a begin-play start resets a stale epoch line instead of 409');
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'rematch') === $reset, 'and the peer joins the reset line');
 
 // The epoch counts halts within ONE connection, so the pair's next duel
 // opens at epoch 0 again instead of being refused forever. The reset hangs
@@ -258,7 +269,7 @@ ok($again > Util::nowMs(), 'a rematch on a fresh epoch line gets a start');
 // not reach a duel it has nothing to do with.
 Starts::request('aaaaaaaa', 'bbbbbbbb', 1, 'level');
 Starts::forget('aaaaaaaa', 'cccccccc');
-ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first') === null, "a stranger's bye leaves the pair's epoch alone");
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'level') === null, "a stranger's bye leaves the pair's epoch alone");
 
 // RelayRate: the relay table is drained on delivery, so the send rate is
 // tracked as a running total per client. mark_time is pre-set so a full
@@ -509,9 +520,14 @@ ok(duelOf('aaaaaaaa')['peer'] === 'bbbbbbbb', "a stranger's bye leaves the conne
 ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), "a stranger's bye cannot drop the relay slot");
 ConnTrack::playing('aaaaaaaa', 'bbbbbbbb');
 ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'the duel heartbeat keeps the relay slot');
+// peerLeft is the relay leave signal: a live duel is NOT gone; the real
+// peer's bye makes it gone at once (a relayed peer holding a GET reads this
+// instead of waiting out its liveness timeout).
+ok(!ConnTrack::peerLeft('aaaaaaaa', 'bbbbbbbb'), 'a live duel does not read as the peer having left');
 ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'bye');
 ok(duelOf('aaaaaaaa')['state'] === 'ended', "the real peer's bye ends it (it lingers)");
 ok(!ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'and frees the relay slot at once');
+ok(ConnTrack::peerLeft('aaaaaaaa', 'bbbbbbbb'), "the real peer's bye reads as gone");
 Db::get()->exec('DELETE FROM conn');
 
 // An early fetch - fetchColumn(), fetch() - that leaves its statement open

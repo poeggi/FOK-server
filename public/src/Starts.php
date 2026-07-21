@@ -84,7 +84,17 @@ final class Starts
                     $db->exec('COMMIT');
                     return (int)$row['start_pts'];
                 }
-                if ($stored > $epoch) {
+                // A peer behind the pair's epoch WITHIN a run must not be
+                // handed a start from the wrong origin, so 409 it. But a start
+                // that BEGINS play (first/rematch) is epoch 0 on a fresh
+                // connection: a higher stored epoch there is a leftover line
+                // from a torn-down one - and a relay rematch reuses the hub
+                // with no new offer, so nothing calls Starts::forget to clear
+                // it (see signal.php). That stranded the rematch at a 409 until
+                // the row aged out. Reset the line for a begin-play reason
+                // rather than refuse the new game; the second peer's identical
+                // begin then reads the fresh row and both stay aligned.
+                if ($stored > $epoch && !in_array($reason, self::SYNC_GATED_REASONS, true)) {
                     $db->exec('COMMIT');
                     return null;
                 }

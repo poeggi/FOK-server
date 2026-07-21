@@ -34,6 +34,9 @@ require_once __DIR__ . '/../src/RelayStore.php';
  *   -> 200 {"ok":true,"messages":[{"seq":n,"payload":"...","created":s,"age":ms}]}
  *      oldest first, drained on delivery (exactly-once). "age" is ms on the
  *      server before this delivery (mailbox delay vs FPM-queue delay).
+ *   -> 200 {"ok":true,"gone":true}  the pairing was torn down (a bye/decline
+ *      marked it ended): the peer left, end the session now (v3.3). A client
+ *      that ignores it falls back to its own liveness timeout.
  *   -> 204 nothing pending (after the long-poll hold, like poll.php)
  *
  * Every relayed duel occupies FPM workers with its long polls, so
@@ -74,6 +77,11 @@ if ($method === 'GET') {
     // keeps the wider interval.
     $checkUsec = RelayStore::usingApcu() ? FOK_POLL_CHECK_USEC_APCU : FOK_POLL_CHECK_USEC;
     $deadline = microtime(true) + $wait;
+    // A held GET is the only channel a relayed peer is watching mid-game (it
+    // is not polling the signal mailbox), so it is where the server tells it
+    // the other side left. peerLeft is a DB read, so it is rate-limited to
+    // about once a second rather than run on every tight APCu poll.
+    $nextLeftCheck = 0.0;
     while (true) {
         $rows = RelayStore::hasAny($id, $peer) ? RelayStore::drain($id, $peer) : [];
         if ($rows !== []) {
@@ -81,7 +89,18 @@ if ($method === 'GET') {
             Load::peak('relay_age_ms', max(array_column($rows, 'age')));
             Util::jsonOut(['ok' => true, 'messages' => $rows]);
         }
-        if (microtime(true) >= $deadline || connection_aborted()) {
+        $t = microtime(true);
+        if ($t >= $nextLeftCheck) {
+            $nextLeftCheck = $t + 1.0;
+            if (ConnTrack::peerLeft($id, $peer)) {
+                // The peer tore the pairing down (bye/decline): say so at once
+                // (v3.3), the relay's answer to a P2P DataChannel close. A
+                // client that does not read "gone" ignores it and falls back
+                // to its own liveness timeout as before.
+                Util::jsonOut(['ok' => true, 'gone' => true]);
+            }
+        }
+        if ($t >= $deadline || connection_aborted()) {
             http_response_code(204);
             exit;
         }

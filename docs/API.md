@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"3.2", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"3.3", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -333,7 +333,7 @@ Response:
 
     {
       "ok": true,
-      "api": "3.2",               contract version, see Versioning
+      "api": "3.3",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "debug": false,             the server's instruction: the client MUST
@@ -763,8 +763,17 @@ indicator so latency self-explains.
     GET /api/relay.php?id=me&peer=opponent&wait=9
       -> {"ok":true,"messages":[{"seq":n,"payload":"...","created":s,"age":ms}]}
          oldest first, delivered exactly once
+      -> {"ok":true,"gone":true}   the pairing was torn down (a bye/decline
+         marked it ended): the peer LEFT - end the session now (v3.3)
       -> 204 after the hold when nothing arrived (loop wait=9 requests
          back-to-back while in relay mode, like poll.php)
+
+LEAVE ("gone", v3.3). In relay mode the peer is watching only its held GET,
+not the signal mailbox, so a P2P DataChannel-close has no equivalent: without
+this the peer sat in the game until its own liveness timeout after the other
+side left. The held GET now answers {"ok":true,"gone":true} the moment the
+pairing is torn down (a bye or decline). Read it and end the session, same as
+an in-band bye. A v3.2 client ignores it and keeps timing out.
 
 PIGGYBACK ("pull", v3.2). A relayed duel POSTs constantly (an input plus a
 keepalive), so a sender can collect its OWN inbound on those responses

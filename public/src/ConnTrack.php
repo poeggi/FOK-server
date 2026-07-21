@@ -131,6 +131,32 @@ final class ConnTrack
     }
 
     /**
+     * Has the pairing $id had with $peer been explicitly torn down? A bye or
+     * decline marks both sides' conn rows 'ended'/'declined' (see end/note).
+     * A relayed peer holding a GET checks this so it learns the other side
+     * left AT ONCE, instead of waiting out its own liveness timeout - the
+     * relay's answer to a P2P DataChannel close. Only an explicit teardown
+     * counts; a silent drop (tab closed, no bye) is left to that timeout.
+     */
+    public static function peerLeft(string $id, string $peer): bool
+    {
+        // Live hub traffic from EITHER side means the pair is playing (again),
+        // so a stale 'ended' row from a previous match must not be read as a
+        // leave and kill the fresh one. A bye zeroes relay_seen (see end), so
+        // this is false exactly when the teardown is real.
+        if (self::isRelaying($id, $peer)) {
+            return false;
+        }
+        $st = Db::get()->prepare(
+            "SELECT 1 FROM conn WHERE id = ? AND peer = ? AND state IN ('ended', 'declined') LIMIT 1"
+        );
+        $st->execute([$id, $peer]);
+        $left = $st->fetchColumn() !== false;
+        $st->closeCursor();
+        return $left;
+    }
+
+    /**
      * Pairs running through the hub. Counted from relay_seen, not from
      * queued relay messages: those are deleted as the receiver drains
      * them, so a healthy duel would count as zero and the cap would
