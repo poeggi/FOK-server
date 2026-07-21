@@ -45,8 +45,8 @@ function fmtDate(unix) {
 const ALERT_PREVIEW_WORDS = 4;
 
 function fmtBytes(n) {
-    if (n > 1048576) return (n / 1048576).toFixed(1) + ' MB';
-    if (n > 1024) return (n / 1024).toFixed(1) + ' KB';
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
     return n + ' B';
 }
 
@@ -447,6 +447,9 @@ const MODULES = [
     {
         id: 'stats',
         title: 'Statistics',
+        // Own fast interval like Connections: the online counts and the live
+        // gauges (and the footer server clock) change second to second.
+        every: 'admin_stats_refresh_secs',
         async refresh(box) {
             const d = await api('stats');
             box.replaceChildren();
@@ -965,7 +968,7 @@ const boxes = {};
 
 // Cards on the global interval. Cards with an 'every' of their own are
 // not listed; the rest refresh on page load or on their refresh button.
-const LIVE = ['stats', 'alerts'];
+const LIVE = ['alerts'];
 
 const settings = {};
 const timers = {};

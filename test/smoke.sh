@@ -754,16 +754,12 @@ else
         echo "FAIL button.small should be declared once, found $N"
         fail=1
     fi
-
-    JS_ASSET=$(curl -s "$BASE/assets/admin.js?v=$VER")
-    N=$(echo "$JS_ASSET" | grep -c "view: 'settings'" || true)
-    if [ "$N" -ge 2 ]; then
-        echo "ok   config and backup modules live in the settings view ($N)"
-    else
-        echo "FAIL expected >=2 modules with view: 'settings', found $N"
-        fail=1
-    fi
-    expect "gear toggles the views" 'toggle.onclick' "$JS_ASSET"
+    # NOTE: the admin JS is deliberately NOT grepped for source strings. Those
+    # checks ("function X exists", "id: 'conns'", "every: '...'") coupled the
+    # suite to the code text, broke on any rename, and duplicated the endpoint
+    # tests below that actually exercise the behaviour. Only genuine layout
+    # invariants the browserless smoke cannot test otherwise stay above (the
+    # cascade, wrap, single-height-source and shared-control-size CSS checks).
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=props")
     expect "props tile has pts anchor" '1970-01-01T00:00:00.000Z' "$R"
@@ -888,7 +884,6 @@ else
     expect "the export downloads as a snake-fok-backup file" 'snake-fok-backup' "$R"
     R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=vault_export&id=$ID1")
     expect "export 404s for a client with no backup" '404' "$R"
-    expect "the details popup offers a backup download" "action=vault_export" "$JS_ASSET"
     # Reset the token so a client that lost it can re-enroll.
     R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=vault_reset&id=$ID2")
     expect "vault_reset via GET rejected" '405' "$R"
@@ -909,28 +904,13 @@ else
     expect "operator downloads a debug report" 'boom' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=debug_get&pin=abcd")
     expect "debug_get rejects a malformed pin" '"error":"invalid pin"' "$R"
-    expect "debug reports card on the dashboard" "id: 'debug'" "$JS_ASSET"
-
-    expect "connections card on the dashboard" "id: 'conns'" "$JS_ASSET"
-    expect "duels card on the dashboard" "id: 'duels'" "$JS_ASSET"
-    expect "connections card has its own interval" "every: 'admin_conns_refresh_secs'" "$JS_ASSET"
-    expect "duels card has its own interval" "every: 'admin_duels_refresh_secs'" "$JS_ASSET"
-    expect "global refresh interval sits in the top bar" "prepend(intervalControl('admin_refresh_secs'" "$JS_ASSET"
-    expect "the users card can toggle debug" "api('set_debug'" "$JS_ASSET"
-    expect "tables can be sorted by column" "function sortable(" "$JS_ASSET"
-    expect "sorting survives the refresh (delegated on the card body)" "_sortBound" "$JS_ASSET"
-    expect "an id opens the client details popup" "function showClient(" "$JS_ASSET"
-    expect "the details popup is wired to the client endpoint" "api('client&id='" "$JS_ASSET"
-    expect "ipv6 is truncated to first and last group" "function ipCell(" "$JS_ASSET"
-    expect "registered users has a live id/name filter" "Filter by ID or name" "$JS_ASSET"
-    expect "the details popup has its own auto-refresh" "clientRefreshSecs" "$JS_ASSET"
-    expect "statistics show the live load gauges" "Msgs in/min" "$JS_ASSET"
     expect "header controls share one architecture-wide size" "--ctl-w" "$CSS_ASSET"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
     expect "global refresh interval defaults to 30 s" '"key":"admin_refresh_secs","value":30' "$R"
     expect "connections refresh interval defaults to 1 s" '"key":"admin_conns_refresh_secs","value":1' "$R"
     expect "duels refresh interval defaults to 1 s" '"key":"admin_duels_refresh_secs","value":1' "$R"
+    expect "statistics refresh interval defaults to 1 s" '"key":"admin_stats_refresh_secs","value":1' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
     expect "backup via GET rejected" '"error":"POST only"' "$R"

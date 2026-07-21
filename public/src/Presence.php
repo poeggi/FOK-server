@@ -24,7 +24,7 @@ final class Presence
         // null leaves accept_until untouched (non-hello endpoints); hello
         // always passes a bool, so leaving the screen clears the flag.
         $acceptUntil = $autoAccept === null ? null
-            : ($autoAccept ? $now + Settings::int('auto_accept_window') : 0);
+            : ($autoAccept ? $now + FOK_AUTO_ACCEPT_WINDOW : 0);
         $active = $debugActive === null ? null : (int)$debugActive;
         $st = Db::get()->prepare(
             'INSERT INTO players (id, ip, first_seen, last_seen, hello_count, latency, name, accept_until, debug_active)

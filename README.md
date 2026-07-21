@@ -174,7 +174,7 @@ What limits this server, in order:
    a few dozen. No PHP setting changes that. Thousands of IDLE clients on
    the 30 s heartbeat are cheap (~170 short req/s at 5000 clients);
    thousands matchmaking at once are not - that is ~1 held worker each,
-   and the reason poll_wait_max and relay_max_duels exist.
+   and the reason FOK_POLL_WAIT_MAX and relay_max_duels exist.
 2. **SQLite has one writer.** Every hello writes. Sustained contention
    shows up as latency, then 500s (busy_timeout is 5 s), so the long
    polls peek lock-free and take the write lock only to drain.

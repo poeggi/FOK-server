@@ -69,7 +69,7 @@ if ($method === 'GET') {
     if (!Util::isValidId($id) || !Util::isValidId($peer) || $id === $peer) {
         Util::fail('invalid id/peer');
     }
-    $wait = min((int)($_GET['wait'] ?? 0), Settings::int('poll_wait_max'));
+    $wait = min((int)($_GET['wait'] ?? 0), FOK_POLL_WAIT_MAX);
     // The hold loop peeks and takes no lock while idle: a waiting poll must
     // not fight the duels that are actually sending (see RelayStore). On the
     // APCu transport a peek is two shared-memory reads, so it can poll tight

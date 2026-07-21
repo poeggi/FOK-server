@@ -11,7 +11,7 @@ require_once __DIR__ . '/../src/Signals.php';
  *                            only, no database writes)
  *   -> 200 {"ok":true,"signals":[...]}   pending messages, drained on read
  *
- * With wait > 0 (long poll, capped by the poll_wait_max setting) the
+ * With wait > 0 (long poll, capped by FOK_POLL_WAIT_MAX) the
  * request is held open and answers the moment a signal arrives, checking
  * the mailbox every 20 ms: signal forwarding latency is then ~20 ms
  * instead of a full client poll interval. The hold cap keeps concurrent
@@ -31,7 +31,7 @@ $id = $_GET['id'] ?? null;
 if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
-$wait = min((int)($_GET['wait'] ?? 0), Settings::int('poll_wait_max'));
+$wait = min((int)($_GET['wait'] ?? 0), FOK_POLL_WAIT_MAX);
 
 $deadline = microtime(true) + $wait;
 while (!Signals::any($id)) {

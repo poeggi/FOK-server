@@ -20,7 +20,6 @@ final class Settings
         'score_rate_max' => [FOK_SCORE_RATE_MAX, 'Max score submissions per window'],
         'score_rate_window' => [FOK_SCORE_RATE_WINDOW, 'Score submission window (seconds)'],
         'chat_max_len' => [FOK_CHAT_MAX_LEN, 'Max chat message bytes'],
-        'poll_wait_max' => [9, 'Max long-poll hold (seconds)'],
         'start_lead_min_ms' => [200, 'Min lead time for server-issued level starts (ms)'],
         'start_sync_max_age_ms' => [2000, 'Reject a start whose sync proof is older than (ms)'],
         'relay_max_duels' => [9, 'Max concurrent relayed duels (protects FPM workers)'],
@@ -29,7 +28,6 @@ final class Settings
         'relay_ttl' => [30, 'Undelivered relay message lifetime (seconds)'],
         'relay_rate_max' => [128, 'Max relay messages per second per client (sustained)'],
         'relay_rate_block_secs' => [30, 'Relay rate-limit block duration (seconds)'],
-        'auto_accept_window' => [60, 'Auto-accept flag validity after a hello (seconds)'],
         'friend_req_max' => [15, 'Ban: unanswered friend requests per hour above'],
         'friend_ban_seconds' => [3600, 'Friend-request ban duration (seconds)'],
         'player_ttl_days' => [180, 'Remove players not seen for N days (0 = never)'],
@@ -44,6 +42,7 @@ final class Settings
         'admin_refresh_secs' => [30, 'Admin dashboard refresh interval (seconds, 0 = off)'],
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)'],
         'admin_duels_refresh_secs' => [1, 'Duels card refresh interval (seconds, 0 = off)'],
+        'admin_stats_refresh_secs' => [1, 'Statistics card refresh interval (seconds, 0 = off)'],
     ];
 
     private static ?array $cache = null;

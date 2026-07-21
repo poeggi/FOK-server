@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.17.1';
+const FOK_SERVER_VERSION = '0.17.2';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -67,6 +67,10 @@ const FOK_LOG_TAIL_BYTES = 131072;
 
 // A player counts as online while its last heartbeat is within this window.
 const FOK_ONLINE_WINDOW = 60;
+// How long the QR-screen auto-accept flag a hello may set stays valid, so a
+// scanned invite is accepted without a manual tap (see Presence). A protocol/
+// UX constant, not an operator knob.
+const FOK_AUTO_ACCEPT_WINDOW = 60;
 // Presence counters are cached this long: every hello returns them, so
 // they must never be counted per request (see Presence::counts).
 const FOK_COUNTS_TTL = 5;
@@ -112,9 +116,14 @@ const FOK_MAX_INPUTS = 262144;
 const FOK_MAX_BODY = FOK_MAX_INPUTS + 16384;
 // Chat messages are hard-capped much lower than SDP payloads.
 const FOK_CHAT_MAX_LEN = 120;
-// Long-poll mailbox check interval. The hold duration cap is the
-// poll_wait_max setting; it must stay small enough that concurrent
-// handshakes cannot exhaust the shared-hosting FPM worker pool.
+// Max seconds a long poll (poll.php / relay.php) holds the request open.
+// Coupled to the client (it sends wait=9) and the FPM worker model, and kept
+// under the max_execution_time backstop (api/.user.ini) - a design constant,
+// not a runtime knob.
+const FOK_POLL_WAIT_MAX = 9;
+// Long-poll mailbox check interval. The hold duration cap is FOK_POLL_WAIT_MAX;
+// it must stay small enough that concurrent handshakes cannot exhaust the
+// shared-hosting FPM worker pool.
 const FOK_POLL_CHECK_USEC = 20000;
 // The relay hold loop on the APCu transport checks with two shared-memory
 // reads (sub-microsecond), not a database query, so it can poll far tighter

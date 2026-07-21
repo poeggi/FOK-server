@@ -189,25 +189,6 @@ final class Caps
                 : 'the relay cannot leave the database'
         );
 
-        // Redis would give a blocking pop (no poll interval), but the
-        // extension is only a client - it says nothing about a server.
-        $redisExt = extension_loaded('redis') && class_exists('Redis');
-        $redisUp = false;
-        if ($redisExt) {
-            try {
-                $r = new Redis();
-                $redisUp = @$r->connect('127.0.0.1', 6379, 0.2);
-                if ($redisUp) {
-                    $r->close();
-                }
-            } catch (Throwable $e) {
-                $redisUp = false;
-            }
-        }
-        $add('redis', 'Redis server', $redisExt ? ($redisUp ? 'reachable' : 'no server') : 'no extension',
-            $redisUp ? 'good' : 'info',
-            $redisUp ? '' : 'not required; a blocking pop would remove the poll interval');
-
         $db = Db::get();
         $ver = (string)$db->query('SELECT sqlite_version()')->fetchColumn();
         $journal = (string)$db->query('PRAGMA journal_mode')->fetchColumn();
