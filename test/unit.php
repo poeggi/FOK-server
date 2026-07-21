@@ -281,8 +281,8 @@ ok(!RelayRate::blocked('ffffffff'), 'an unseen client is never blocked');
 // and push() must report success so the caller does not turn it into a 503.
 ok(Caps::apcuShared() === false, 'APCu is never proven shared in a single-process test');
 ok(!RelayStore::usingApcu(), 'the relay uses the database transport without shared APCu');
-ok(RelayStore::push('11111111', '22222222', 'IN:1', time()) === true, 'a relayed message enqueues');
-RelayStore::push('11111111', '22222222', 'IN:2', time());
+ok(RelayStore::push('11111111', '22222222', 'IN:1') === true, 'a relayed message enqueues');
+RelayStore::push('11111111', '22222222', 'IN:2');
 ok(RelayStore::hasAny('22222222', '11111111'), 'the receiver sees a pending message');
 ok(!RelayStore::hasAny('11111111', '22222222'), 'the sender has nothing pending back');
 ok(RelayStore::pending('22222222', '11111111') === 2, 'pending counts the receiver backlog from the sender');
@@ -291,6 +291,10 @@ ok(RelayStore::shouldTrackRelay('11111111', '22222222', time()),
 $drained = RelayStore::drain('22222222', '11111111');
 ok(count($drained) === 2 && $drained[0]['payload'] === 'IN:1' && $drained[1]['payload'] === 'IN:2',
     'the backlog drains oldest first');
+// created is exposed in whole seconds; age is ms the message spent on the server.
+ok($drained[0]['created'] >= time() - 2 && $drained[0]['created'] <= time(),
+    'created is exposed in whole seconds');
+ok($drained[0]['age'] >= 0 && $drained[0]['age'] < 5000, 'age is milliseconds on the server');
 ok(RelayStore::drain('22222222', '11111111') === [], 'a drained backlog is empty (exactly-once)');
 ok(RelayStore::pending('22222222', '11111111') === 0, 'a drained backlog is no longer pending');
 

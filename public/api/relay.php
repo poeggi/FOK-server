@@ -14,8 +14,14 @@ require_once __DIR__ . '/../src/RelayStore.php';
  * cannot be established. The server becomes the hub and forwards opaque
  * messages between the two peers of a duel.
  *
- * POST {"id": sender, "peer": recipient, "payload": string, "pts": ms?}
+ * POST {"id": sender, "peer": recipient, "payload": string, "pts": ms?,
+ *       "pull": bool?}
  *   -> {"ok":true}
+ *   -> {"ok":true,"messages":[...]}  when "pull" is set and the sender has
+ *                                inbound pending: piggybacked so delivery
+ *                                does not depend on the held GET alone. The
+ *                                messages are DRAINED, so a client that does
+ *                                not read them loses them (v3.2, docs/API.md).
  *   -> 429 "relay backlog full"  receiver stopped fetching; back off
  *   -> 429 "relay store full"    hub shared memory momentarily full; the
  *                                message was refused - resend it
@@ -25,8 +31,9 @@ require_once __DIR__ . '/../src/RelayStore.php';
  *                                cannot start relaying now
  *
  * GET ?id=<me>&peer=<sender>[&wait=<seconds>]
- *   -> 200 {"ok":true,"messages":[{"seq":n,"payload":"...","created":s}]}
- *      oldest first, drained on delivery (exactly-once)
+ *   -> 200 {"ok":true,"messages":[{"seq":n,"payload":"...","created":s,"age":ms}]}
+ *      oldest first, drained on delivery (exactly-once). "age" is ms on the
+ *      server before this delivery (mailbox delay vs FPM-queue delay).
  *   -> 204 nothing pending (after the long-poll hold, like poll.php)
  *
  * Every relayed duel occupies FPM workers with its long polls, so
@@ -71,6 +78,7 @@ if ($method === 'GET') {
         $rows = RelayStore::hasAny($id, $peer) ? RelayStore::drain($id, $peer) : [];
         if ($rows !== []) {
             Load::tick('msg_out', count($rows));
+            Load::peak('relay_age_ms', max(array_column($rows, 'age')));
             Util::jsonOut(['ok' => true, 'messages' => $rows]);
         }
         if (microtime(true) >= $deadline || connection_aborted()) {
@@ -118,7 +126,7 @@ if (!ConnTrack::isRelaying($id, $peer)
     Util::fail('relay busy', 503);
 }
 
-if (!RelayStore::push($id, $peer, $payload, $now)) {
+if (!RelayStore::push($id, $peer, $payload)) {
     // Shared memory was momentarily full: the message was REFUSED, not
     // delivered (see RelayStore::push). 429 (back off and RESEND), not the
     // 503 "relay busy" the admission cap returns - that one tells the client
@@ -139,4 +147,19 @@ Util::bump('relay');
 // after the response is flushed, never in its latency.
 Util::defer(static fn() => RelayRate::record($id));
 
-Util::jsonOut(['ok' => true]);
+$out = ['ok' => true];
+if (!empty($body['pull'])) {
+    // Piggyback the sender's OWN inbound (from the peer) onto this response,
+    // so delivery does not hang on the held GET alone when the FPM pool is
+    // saturated (v3.2, see docs/API.md). Only when the client asked: the
+    // messages are DRAINED here, so a client that will not read them back
+    // must not set "pull". Exactly-once holds across both drain sites, so a
+    // message goes to whichever of POST-pull and GET arrives first.
+    $rows = RelayStore::hasAny($id, $peer) ? RelayStore::drain($id, $peer) : [];
+    if ($rows !== []) {
+        Load::tick('msg_out', count($rows));
+        Load::peak('relay_age_ms', max(array_column($rows, 'age')));
+        $out['messages'] = $rows;
+    }
+}
+Util::jsonOut($out);

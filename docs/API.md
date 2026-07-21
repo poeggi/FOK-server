@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"3.1", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"3.2", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -333,7 +333,7 @@ Response:
 
     {
       "ok": true,
-      "api": "3.1",               contract version, see Versioning
+      "api": "3.2",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "debug": false,             the server's instruction: the client MUST
@@ -746,8 +746,11 @@ remote side trails and the model absorbs the lag. Show a "relay mode"
 indicator so latency self-explains.
 
     POST /api/relay.php {"id":me, "peer":opponent, "payload":"...",
-                         "pts": ms?}
+                         "pts": ms?, "pull": bool?}
       -> {"ok":true}
+      -> {"ok":true,"messages":[{"seq":n,"payload":"...","created":s,"age":ms}]}
+                                    only when "pull":true AND inbound was
+                                    pending (piggyback, see below)
       -> 429 "relay backlog full"   receiver stopped fetching; back off
       -> 429 "relay store full"     hub shared memory was momentarily full
                                     and refused this message; RESEND it, do
@@ -758,10 +761,24 @@ indicator so latency self-explains.
                                     end the match attempt
 
     GET /api/relay.php?id=me&peer=opponent&wait=9
-      -> {"ok":true,"messages":[{"seq":n,"payload":"...","created":s}]}
+      -> {"ok":true,"messages":[{"seq":n,"payload":"...","created":s,"age":ms}]}
          oldest first, delivered exactly once
       -> 204 after the hold when nothing arrived (loop wait=9 requests
          back-to-back while in relay mode, like poll.php)
+
+PIGGYBACK ("pull", v3.2). A relayed duel POSTs constantly (an input plus a
+keepalive), so a sender can collect its OWN inbound on those responses
+instead of leaning entirely on the held GET - which stalls if the FPM pool
+is saturated. Set "pull":true on the POST and read messages[] off the reply,
+through the SAME exactly-once/seq dedup as the GET (a message drains to
+whichever of the two arrives first, never both). It is drained on return, so
+a client that does not consume the reply LOSES it: only set "pull" if you do.
+A v3.1 server ignores it and answers the plain {"ok":true}. With "pull" the
+held GET can be dropped or slowed, which also frees server workers.
+
+"age" (ms, v3.2) is how long the message sat on the server before this
+delivery - it separates "waited in the mailbox" (a store/poll delay) from
+"queued before PHP even ran" (pool exhaustion). "created" stays whole seconds.
 
 payload is opaque to the server (max 2 KB, defaults admin-configurable);
 seq is a server-assigned increasing number for ordering. Keep sending

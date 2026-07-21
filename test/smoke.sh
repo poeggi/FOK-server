@@ -80,6 +80,10 @@ rlycode() { # like rly, but prints the HTTP status instead of the body
     curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$1\",\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php"
 }
+rlypull() { # rlypull <from> <peer> <payload> : POST with pull, print body
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"payload\":\"$3\",\"pull\":true}" "$BASE/api/relay.php"
+}
 hello() { # hello <id>
     curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$1\"}" "$BASE/api/hello.php"
 }
@@ -555,6 +559,25 @@ rly "$ID1" "$ID2" 'IN:3' > /dev/null
 R=$(curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1")
 ordered "slow receiver gets the whole backlog, oldest first" 'IN:1' 'IN:3' "$R"
 expect "backlog keeps the middle message" 'IN:2' "$R"
+expect "relayed messages carry an age (ms on the server)" '"age":' "$R"
+
+# Piggyback (v3.2): a POST with "pull" returns the poster's OWN pending
+# inbound, so delivery does not hang on the held GET alone. ID1 -> ID2, then
+# ID2 posts (to ID1) and pulls: it must get IN:pull back, drained exactly once.
+rly "$ID1" "$ID2" 'IN:pull' > /dev/null
+R=$(rlypull "$ID2" "$ID1" 'ack')
+expect "a POST with pull piggybacks the poster's inbound" 'IN:pull' "$R"
+expect "a piggybacked message carries an age" '"age":' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
+expect "a pulled message is not then delivered again by the GET" '204' "$R"
+# A POST without pull must NOT drain the poster's inbound (old-client safety).
+rly "$ID1" "$ID2" 'IN:keep' > /dev/null
+R=$(rly "$ID2" "$ID1" 'ack2')
+expect "a POST without pull returns no messages" '"ok":true}' "$R"
+R=$(curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1")
+expect "and the inbound is still there for the GET" 'IN:keep' "$R"
+# Clean up ID1's inbound (the acks ID2 sent) so later tests start clean.
+curl -s "$BASE/api/relay.php?id=$ID1&peer=$ID2" > /dev/null
 
 # Aborting a relayed duel takes its undelivered backlog with it: a stale
 # input from the finished duel must never land in the next one.
@@ -744,6 +767,7 @@ else
     expect "admin stats pending friendships" '"friendships_pending":' "$R"
     expect "admin stats carry the live load gauges" '"load_live":' "$R"
     expect "live load gauges include db writes" '"db_writes":' "$R"
+    expect "live load gauges include the relay age peak" '"relay_age_ms":' "$R"
 
     # Connection tracker: the admin sees the state the signaling implies.
     # These types need no friendship, so they work after the unfriend above.

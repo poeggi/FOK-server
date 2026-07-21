@@ -466,10 +466,13 @@ const MODULES = [
             stat('DB entries', d.db_rows);
             stat('DB size', fmtBytes(d.db_size));
             // Live gauges: totals over the last complete minute.
-            const L = d.load_live || { in: 0, out: 0, db_writes: 0 };
+            const L = d.load_live || { in: 0, out: 0, db_writes: 0, relay_age_ms: 0 };
             stat('Msgs in/min', L.in, 'live');
             stat('Msgs out/min', L.out, 'live');
             stat('DB writes/min', L.db_writes, 'live');
+            // Peak hub message age last minute: a mailbox delay (store/poll)
+            // vs an FPM-queue delay before PHP ran. 0 when nothing relayed.
+            stat('Relay age max', (L.relay_age_ms || 0) + ' ms', 'live');
             box.append(grid);
             box.append(el('p', 'muted', 'Server v' + d.server_version +
                 '. Live gauges: last full minute.'));

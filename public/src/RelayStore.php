@@ -109,16 +109,26 @@ final class RelayStore
         return self::PREFIX . "$to:$from:m:";
     }
 
+    /** Server clock in milliseconds - the granularity a message is stamped at. */
+    private static function nowMs(): int
+    {
+        return (int)round(microtime(true) * 1000);
+    }
+
     /**
      * Enqueue one message from $from to $to. Returns false only when the APCu
      * store is full and the message did NOT go in: a game input is never
      * silently dropped - the caller turns a false into a retryable failure so
      * the sender resends. The database transport enqueues durably and always
      * returns true (a hard failure throws through Db::retry).
+     *
+     * The message is stamped in ms (created is stored ms, exposed as whole
+     * seconds on delivery) so drain can report its age - see docs/API.md.
      */
-    public static function push(string $from, string $to, string $payload, int $now): bool
+    public static function push(string $from, string $to, string $payload): bool
     {
         $ttl = Settings::int('relay_ttl');
+        $ms = self::nowMs();
         if (self::usingApcu()) {
             // The sequence outlives the messages on purpose: it must keep
             // increasing while a duel runs, and the messages under it expire
@@ -126,7 +136,7 @@ final class RelayStore
             $seq = apcu_inc(self::seqKey($to, $from), 1, $ok, 86400);
             $stored = apcu_store(
                 self::msgPrefix($to, $from) . sprintf('%012d', $seq),
-                ['p' => $payload, 'c' => $now],
+                ['p' => $payload, 'c' => $ms],
                 $ttl
             );
             if ($stored !== true) {
@@ -145,7 +155,7 @@ final class RelayStore
         [$a, $b] = $from < $to ? [$from, $to] : [$to, $from];
         Db::retry(static fn() => $db->prepare(
             'INSERT INTO relay (pair, from_id, to_id, payload, created) VALUES (?, ?, ?, ?, ?)'
-        )->execute(["$a:$b", $from, $to, $payload, $now]));
+        )->execute(["$a:$b", $from, $to, $payload, $ms]));
         return true;
     }
 
@@ -158,7 +168,17 @@ final class RelayStore
         if (self::usingApcu()) {
             // Two shared-memory reads, no scan: the sequence is the high
             // water mark and the ack is how far this receiver has got.
-            return (int)apcu_fetch(self::seqKey($to, $from)) > (int)apcu_fetch(self::ackKey($to, $from));
+            $seq = (int)apcu_fetch(self::seqKey($to, $from));
+            $ack = (int)apcu_fetch(self::ackKey($to, $from));
+            if ($seq < $ack) {
+                // seq below ack is impossible in normal running: the counter
+                // was evicted (and re-seeded low) under shared-memory pressure
+                // while the ack survived, which this cheap gate would read as
+                // "nothing pending" forever - stranding any live messages. Fall
+                // back to the authoritative scan and realign the counter.
+                return self::repairDesync($to, $from);
+            }
+            return $seq > $ack;
         }
         $st = Db::get()->prepare('SELECT 1 FROM relay WHERE to_id = ? AND from_id = ? LIMIT 1');
         $st->execute([$to, $from]);
@@ -168,12 +188,35 @@ final class RelayStore
     }
 
     /**
+     * Recover from a seq < ack desync (see hasAny): realign the ack to the
+     * surviving sequence so the gate works again, and answer the truth from
+     * the message keys themselves. Rare - an operator should hear about the
+     * shared-memory pressure that caused it. drain() delivers by scanning the
+     * keys regardless of the counters, so a true here hands the caller a drain
+     * that actually clears the stranded messages.
+     */
+    private static function repairDesync(string $to, string $from): bool
+    {
+        Alerts::raise('perf', 'Relay seq/ack desync repaired: APCu evicted a relay '
+            . 'counter under memory pressure. Raise the APCu size if this recurs.');
+        apcu_store(self::ackKey($to, $from), (int)apcu_fetch(self::seqKey($to, $from)), 86400);
+        foreach (new APCUIterator('/^' . preg_quote(self::msgPrefix($to, $from), '/') . '/') as $e) {
+            return true;   // a live message key exists - deliver it
+        }
+        return false;
+    }
+
+    /**
      * Take everything pending for $to from $from, oldest first, exactly once.
-     * @return array<int, array{seq:int, payload:string, created:int}>
+     * created is whole seconds (the wire contract); age is ms the message
+     * spent on the server before this delivery (see docs/API.md).
+     * @return array<int, array{seq:int, payload:string, created:int, age:int}>
      */
     public static function drain(string $to, string $from): array
     {
-        $cut = time() - Settings::int('relay_ttl');
+        // Stored created is ms; the TTL is seconds, the wire 'created' seconds.
+        $nowMs = self::nowMs();
+        $cut = $nowMs - Settings::int('relay_ttl') * 1000;
         $out = [];
         if (self::usingApcu()) {
             $prefix = self::msgPrefix($to, $from);
@@ -200,7 +243,8 @@ final class RelayStore
                 $out[] = [
                     'seq' => (int)substr($k, strlen($prefix)),
                     'payload' => (string)$v['p'],
-                    'created' => (int)$v['c'],
+                    'created' => intdiv((int)$v['c'], 1000),
+                    'age' => max(0, $nowMs - (int)$v['c']),
                 ];
             }
             apcu_store(self::ackKey($to, $from), $hi, 86400);
@@ -226,7 +270,8 @@ final class RelayStore
                 continue;
             }
             $out[] = ['seq' => (int)$r['id'], 'payload' => (string)$r['payload'],
-                'created' => (int)$r['created']];
+                'created' => intdiv((int)$r['created'], 1000),
+                'age' => max(0, $nowMs - (int)$r['created'])];
         }
         usort($out, static fn(array $x, array $y) => $x['seq'] <=> $y['seq']);
         return $out;
@@ -298,7 +343,8 @@ final class RelayStore
         if (self::usingApcu() || random_int(1, 50) !== 1) {
             return;
         }
+        // created is stored in ms (see push); the cutoff must match.
         Db::get()->prepare('DELETE FROM relay WHERE created < ?')
-            ->execute([$now - Settings::int('relay_ttl')]);
+            ->execute([($now - Settings::int('relay_ttl')) * 1000]);
     }
 }

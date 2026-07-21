@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.16.43';
+const FOK_SERVER_VERSION = '0.17.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -20,7 +20,16 @@ const FOK_SERVER_VERSION = '0.16.43';
 // SYNC_GATED_REASONS); the in-run halts let the client resync as it goes.
 // v3.1: additive 'peer-net' direct-connection hint (see docs/API.md). The
 // major stays 3, so v3 clients interoperate and simply ignore it.
-const FOK_API_VERSION = '3.1';
+// v3.2: additive relay piggyback. POST /api/relay.php accepts an optional
+// "pull": true; when set, the response also drains and returns the poster's
+// own pending inbound as "messages":[...] (same shape as the GET), so
+// delivery no longer depends on the held GET alone. A client MUST set it
+// only if it reads those messages back - they are drained, so an unread
+// response loses them. Relayed messages also gain an additive "age" (ms since
+// the server received the message) in both replies, to tell a mailbox delay
+// apart from an FPM queue delay. Major stays 3; v3.1 clients send no "pull",
+// get the old {"ok":true}, and ignore "age".
+const FOK_API_VERSION = '3.2';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');

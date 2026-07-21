@@ -225,7 +225,7 @@ host-level. If this outgrows shared hosting, fix workers first.
 ## API sketch
 
     GET  /api/version.php
-      -> {"ok":true,"server":"<x.y.z>","api":"3.1","env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":"3.2","env":"live"}
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
     GET  /api/time.php
@@ -233,7 +233,7 @@ host-level. If this outgrows shared hosting, fix workers first.
     POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,
                           "friends":[...]?}
-      -> {"ok":true,"api":"3.1","now":ms,"debug":bool,"online":n,"playing":n,
+      -> {"ok":true,"api":"3.2","now":ms,"debug":bool,"online":n,"playing":n,
           "registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_online":{...}?, "friends_latency":{...}?,
