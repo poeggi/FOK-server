@@ -105,7 +105,7 @@ Util::checkPts($body['pts'] ?? null, "player $id");
 $now = time();
 RelayStore::sweep($now);
 
-if (RelayStore::pending($peer) >= Settings::int('relay_pending_cap')) {
+if (RelayStore::pending($peer, $id) >= Settings::int('relay_pending_cap')) {
     Alerts::raise('spam', "Relay backlog full for $peer (sender $id)");
     Util::fail('relay backlog full', 429);
 }

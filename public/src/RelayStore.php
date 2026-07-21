@@ -232,18 +232,37 @@ final class RelayStore
         return $out;
     }
 
-    /** Undelivered messages waiting for $to, from anyone (the backlog cap). */
-    public static function pending(string $to): int
+    /**
+     * Undelivered messages waiting for $to. With $from it is the backlog from
+     * that ONE sender, and on APCu it is O(1): the gap between the sequence and
+     * the receiver's ack for that direction - no per-message key scan. A
+     * relayed receiver has a single sender (its duel peer), so that gap IS its
+     * backlog, and the POST checks it on every message. Without $from it counts
+     * across all senders (admin/rare). The gap can momentarily exceed the live
+     * key count when a receiver has stopped draining (messages expire but the
+     * ack stays put) - which is exactly the "receiver gone" case the cap is
+     * there to catch, so counting the gap is if anything the truer signal.
+     */
+    public static function pending(string $to, ?string $from = null): int
     {
         if (self::usingApcu()) {
+            if ($from !== null) {
+                $gap = (int)apcu_fetch(self::seqKey($to, $from)) - (int)apcu_fetch(self::ackKey($to, $from));
+                return $gap > 0 ? $gap : 0;
+            }
             $n = 0;
             foreach (new APCUIterator('/^' . preg_quote(self::PREFIX . "$to:", '/') . '.*:m:/') as $e) {
                 $n++;
             }
             return $n;
         }
-        $st = Db::get()->prepare('SELECT COUNT(*) FROM relay WHERE to_id = ?');
-        $st->execute([$to]);
+        if ($from !== null) {
+            $st = Db::get()->prepare('SELECT COUNT(*) FROM relay WHERE to_id = ? AND from_id = ?');
+            $st->execute([$to, $from]);
+        } else {
+            $st = Db::get()->prepare('SELECT COUNT(*) FROM relay WHERE to_id = ?');
+            $st->execute([$to]);
+        }
         $n = (int)$st->fetchColumn();
         $st->closeCursor();
         return $n;

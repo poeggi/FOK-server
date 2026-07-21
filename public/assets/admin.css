@@ -220,6 +220,13 @@ input.usearch { width: 100%; margin: 6px 0 8px; padding: 5px 8px; -webkit-appear
     flex: 1 1 auto; min-height: 0; overflow-y: auto;
 }
 
+/* The tabbed card holds panels of DIFFERENT natural heights (a few alerts vs
+   a long log vs the capability table), so sizing to content would resize the
+   tile every time you switch tabs - opening Performance grew it. Pin it to the
+   height budget: the tile stays put and the active tab's .pane absorbs the
+   difference by scrolling. Uses the same --pane-h, no new height. */
+#dashboard .card-body:has(.tabpanel) { height: var(--pane-h); }
+
 /* A box that delegates its scroll to an inner .pane must not also scroll, or
    the two fight and the card grows past the cap. */
 #dashboard .card-body:has(.pane), .modal-body:has(.pane) { overflow-y: hidden; }

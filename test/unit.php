@@ -285,12 +285,14 @@ ok(RelayStore::push('11111111', '22222222', 'IN:1', time()) === true, 'a relayed
 RelayStore::push('11111111', '22222222', 'IN:2', time());
 ok(RelayStore::hasAny('22222222', '11111111'), 'the receiver sees a pending message');
 ok(!RelayStore::hasAny('11111111', '22222222'), 'the sender has nothing pending back');
+ok(RelayStore::pending('22222222', '11111111') === 2, 'pending counts the receiver backlog from the sender');
 ok(RelayStore::shouldTrackRelay('11111111', '22222222', time()),
     'the database transport tracks the pair on every message');
 $drained = RelayStore::drain('22222222', '11111111');
 ok(count($drained) === 2 && $drained[0]['payload'] === 'IN:1' && $drained[1]['payload'] === 'IN:2',
     'the backlog drains oldest first');
 ok(RelayStore::drain('22222222', '11111111') === [], 'a drained backlog is empty (exactly-once)');
+ok(RelayStore::pending('22222222', '11111111') === 0, 'a drained backlog is no longer pending');
 
 // The debug flag: the admin's wish and the client's report are separate
 ok(Presence::touch('eeeeeeee', '1.2.3.4') === false, 'debug is off for a new player');

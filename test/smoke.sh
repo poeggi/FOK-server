@@ -699,6 +699,11 @@ else
         echo "FAIL admin.css should hold exactly 1 vh height (--pane-h), found $N"
         fail=1
     fi
+    # The tabbed card is pinned to the height budget so switching tabs (into
+    # Performance especially) does not resize the tile - the active tab's pane
+    # scrolls instead. Same token, so the vh count above stays 1.
+    expect "the tabbed card is pinned so tabs do not resize it" \
+        '.card-body:has(.tabpanel) { height: var(--pane-h); }' "$CSS_ASSET"
     # Small buttons were declared three times with conflicting padding and
     # font size, so the head controls only lined up by accident of order.
     N=$(echo "$CSS_ASSET" | grep -cE '^button\.small \{' || true)
@@ -1004,6 +1009,11 @@ else
     # exercise shared memory for real. Neither environment can be skipped
     # without losing one half of the switch.
     setting relay_apcu 1
+    # A single-process test server (php -S) cannot spawn a second FPM worker,
+    # so the cross-worker sharing proof can never fire on its own - assert it
+    # here so a host that offers APCu actually exercises the shared-memory
+    # transport below instead of the fallback. Reset afterwards.
+    setting relay_apcu_assume_shared 1
     # PROVE which transport the assertions below actually exercise. They are
     # deliberately identical on both, so a green run says nothing about which
     # one ran - on a host with APCu this must report apcu, and without it the
@@ -1033,6 +1043,7 @@ else
     sig "$ID1" "$ID2" bye '' > /dev/null
     R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
     expect "bye clears the backlog on the configured transport" '204' "$R"
+    setting relay_apcu_assume_shared 0   # back to the safe auto-proof default
     setting relay_apcu 1   # back to the default (shared memory where usable)
     curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 

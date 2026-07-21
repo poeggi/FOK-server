@@ -76,6 +76,13 @@ final class Caps
         if (!function_exists('apcu_enabled') || !apcu_enabled()) {
             return self::$shared = false;
         }
+        // An operator who has verified this host's APCu is shared across
+        // workers - or the test suite, which cannot spawn a second worker to
+        // prove it - can assert sharing and skip the proof below. Default off:
+        // the safe path proves sharing before trusting it.
+        if (Settings::int('relay_apcu_assume_shared') === 1) {
+            return self::$shared = true;
+        }
         if (apcu_fetch(self::SHARED_KEY) === 1) {
             return self::$shared = true;   // some worker proved it; all see this
         }
