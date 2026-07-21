@@ -30,8 +30,12 @@ require_once __DIR__ . '/../src/RelayStore.php';
  * Every relayed duel occupies FPM workers with its long polls, so
  * admission is capped (relay_max_duels). A pair holds its slot from its
  * first message through the hub until FOK_RELAY_WINDOW after its last,
- * so a running duel is never turned away. Expect ~200-400 ms one-way:
- * relay INPUT events and hashes, not high-rate state (see docs/API.md).
+ * so a running duel is never turned away. Budget ~200-400 ms one-way as a
+ * CONSERVATIVE upper bound - what the client's prediction model should be
+ * built to absorb, not a measured typical. The server's own share is small:
+ * about the poll interval on the database transport, ~1 ms on shared memory
+ * (see FOK_POLL_CHECK_USEC_APCU); the rest is client cadence and the network.
+ * Relay INPUT events and hashes, not high-rate state (see docs/API.md).
  *
  * TODO: replace this concept. The blocking one-worker-per-long-poll model
  * is a dead end: each relayed player holds an FPM worker for the whole
@@ -55,7 +59,11 @@ if ($method === 'GET') {
     }
     $wait = min((int)($_GET['wait'] ?? 0), Settings::int('poll_wait_max'));
     // The hold loop peeks and takes no lock while idle: a waiting poll must
-    // not fight the duels that are actually sending (see RelayStore).
+    // not fight the duels that are actually sending (see RelayStore). On the
+    // APCu transport a peek is two shared-memory reads, so it can poll tight
+    // and deliver in about a millisecond; the database peek is a query and
+    // keeps the wider interval.
+    $checkUsec = RelayStore::usingApcu() ? FOK_POLL_CHECK_USEC_APCU : FOK_POLL_CHECK_USEC;
     $deadline = microtime(true) + $wait;
     while (true) {
         $rows = RelayStore::hasAny($id, $peer) ? RelayStore::drain($id, $peer) : [];
@@ -67,7 +75,7 @@ if ($method === 'GET') {
             http_response_code(204);
             exit;
         }
-        usleep(FOK_POLL_CHECK_USEC);
+        usleep($checkUsec);
     }
 }
 
@@ -108,10 +116,20 @@ if (!ConnTrack::isRelaying($id, $peer)
     Util::fail('relay busy', 503);
 }
 
-RelayStore::push($id, $peer, $payload, $now);
-// Ground truth for "this pair runs through the hub": no declared
-// no-P2P bit is needed to end up here.
-ConnTrack::relaying($id, $peer);
+if (!RelayStore::push($id, $peer, $payload, $now)) {
+    // Shared memory was full: the message was REFUSED, not delivered (see
+    // RelayStore::push). Tell the sender to retry rather than letting it
+    // treat a lost input as sent - a dropped input is exactly what desyncs
+    // the duel and shows up as the intermittent burst.
+    Util::fail('relay busy, retry', 503);
+}
+// Ground truth for "this pair runs through the hub": no declared no-P2P bit
+// is needed to end up here. On the APCu transport this database write is a
+// mere liveness marker and is throttled off the per-message hot path (see
+// RelayStore::shouldTrackRelay).
+if (RelayStore::shouldTrackRelay($id, $peer, $now)) {
+    ConnTrack::relaying($id, $peer);
+}
 Util::bump('relay');
 // Deferred, like bump: count this message and check the sender's rate
 // after the response is flushed, never in its latency.

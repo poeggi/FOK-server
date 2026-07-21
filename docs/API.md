@@ -735,10 +735,14 @@ with {"profile": ...} - then both call start.php and use relay.php
 immediately. The server checks relay capacity at the declaring signal
 itself, so a full relay answers 503 "relay busy" before any game setup
 is wasted. When neither side declared the bit, nothing is checked
-early and the 5 s-fallback path applies unchanged. Expect ~200-400 ms one-way
-latency: relay INPUT events, state hashes and control messages - never
-high-rate state. The local snake stays instant; the remote side trails
-and the prediction/correction model absorbs it. Show a "relay mode"
+early and the 5 s-fallback path applies unchanged. Budget ~200-400 ms
+one-way as a CONSERVATIVE upper bound - the figure the prediction/correction
+model should be built to absorb, not a measured typical. The server's own
+contribution is small (about the poll interval, and roughly a millisecond
+when the hub runs on shared memory); the rest is client poll cadence, round
+trips and the wider internet. Relay INPUT events, state hashes and control
+messages only - never high-rate state. The local snake stays instant; the
+remote side trails and the model absorbs the lag. Show a "relay mode"
 indicator so latency self-explains.
 
     POST /api/relay.php {"id":me, "peer":opponent, "payload":"...",

@@ -45,16 +45,50 @@ final class RelayStore
         if (!$wanted) {
             return self::$apcu = false;
         }
-        if (Caps::apcu()) {
-            return self::$apcu = true;
+        if (!Caps::apcu()) {
+            // Asked for, not available: say so where an operator will see it.
+            // Alerts de-duplicates per type within alert_cooldown, so a busy
+            // server raises this once, not once per message.
+            Alerts::raise('perf', 'Relay fell back to the database: APCu was requested '
+                . '(relay_apcu=1) but is not usable on this host. Expect SQLite write '
+                . 'contention and dropped messages under relayed play.');
+            return self::$apcu = false;
         }
-        // Asked for, not available: say so where an operator will see it.
-        // Alerts de-duplicates per type within alert_cooldown, so a busy
-        // server raises this once, not once per message.
-        Alerts::raise('perf', 'Relay fell back to the database: APCu was requested '
-            . '(relay_apcu=1) but is not usable on this host. Expect SQLite write '
-            . 'contention and dropped messages under relayed play.');
-        return self::$apcu = false;
+        // Enabled is not enough. A per-worker APCu segment would take a
+        // message from the sender's worker that the receiver's worker never
+        // sees - silent loss. Use shared memory only once it is PROVEN shared
+        // across workers; until then the database transport carries the relay
+        // (slower, but never lossy). No alert: this is the normal warm-up
+        // right after a deploy and clears itself within a few requests (see
+        // Caps::apcuShared); the Performance tab's relay row shows the state.
+        if (!Caps::apcuShared()) {
+            return self::$apcu = false;
+        }
+        return self::$apcu = true;
+    }
+
+    /**
+     * Should the pair's conn liveness row be refreshed for THIS message?
+     * On the APCu transport the relay never touches the database except that
+     * marker (ConnTrack::relaying), which the admin cards and the duel cap
+     * read over FOK_RELAY_WINDOW. Writing it per message would put the single
+     * SQLite writer back on the hot path APCu exists to clear, so on APCu it
+     * is throttled to once per pair per FOK_RELAY_TRACK_THROTTLE, held in the
+     * cache itself. On the database transport there is no cheap throttle store
+     * and the message write already took the writer, so the row is written
+     * every time (returns true) - identical to the old behaviour.
+     */
+    public static function shouldTrackRelay(string $from, string $to, int $now): bool
+    {
+        if (!self::usingApcu()) {
+            return true;
+        }
+        $key = self::PREFIX . "track:$from:$to";
+        if (apcu_fetch($key) !== false) {
+            return false;   // refreshed within the throttle window
+        }
+        apcu_store($key, $now, FOK_RELAY_TRACK_THROTTLE);
+        return true;
     }
 
     // ---- keys (APCu) -------------------------------------------------
@@ -75,8 +109,14 @@ final class RelayStore
         return self::PREFIX . "$to:$from:m:";
     }
 
-    /** Enqueue one message from $from to $to. */
-    public static function push(string $from, string $to, string $payload, int $now): void
+    /**
+     * Enqueue one message from $from to $to. Returns false only when the APCu
+     * store is full and the message did NOT go in: a game input is never
+     * silently dropped - the caller turns a false into a retryable failure so
+     * the sender resends. The database transport enqueues durably and always
+     * returns true (a hard failure throws through Db::retry).
+     */
+    public static function push(string $from, string $to, string $payload, int $now): bool
     {
         $ttl = Settings::int('relay_ttl');
         if (self::usingApcu()) {
@@ -84,18 +124,29 @@ final class RelayStore
             // increasing while a duel runs, and the messages under it expire
             // on their own after relay_ttl.
             $seq = apcu_inc(self::seqKey($to, $from), 1, $ok, 86400);
-            apcu_store(
+            $stored = apcu_store(
                 self::msgPrefix($to, $from) . sprintf('%012d', $seq),
                 ['p' => $payload, 'c' => $now],
                 $ttl
             );
-            return;
+            if ($stored !== true) {
+                // Shared memory is full. The seq was already incremented; that
+                // gap is harmless (drain sorts by key and acks to the high
+                // water mark, so it self-heals). What must NOT happen is
+                // acking a message that never enqueued, so report the refusal.
+                Alerts::raise('perf', 'Relay APCu store failed: shared memory is full. '
+                    . 'A relayed message was refused and the sender will retry; raise '
+                    . 'the APCu size or lower the relay limits.');
+                return false;
+            }
+            return true;
         }
         $db = Db::get();
         [$a, $b] = $from < $to ? [$from, $to] : [$to, $from];
         Db::retry(static fn() => $db->prepare(
             'INSERT INTO relay (pair, from_id, to_id, payload, created) VALUES (?, ?, ?, ?, ?)'
         )->execute(["$a:$b", $from, $to, $payload, $now]));
+        return true;
     }
 
     /**

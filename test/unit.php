@@ -20,6 +20,8 @@ require_once __DIR__ . '/../public/src/Starts.php';
 require_once __DIR__ . '/../public/src/Friends.php';
 require_once __DIR__ . '/../public/src/RelayRate.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
+require_once __DIR__ . '/../public/src/Caps.php';
+require_once __DIR__ . '/../public/src/RelayStore.php';
 require_once __DIR__ . '/../public/src/Load.php';
 require_once __DIR__ . '/../public/src/Vault.php';
 require_once __DIR__ . '/../public/src/Debug.php';
@@ -270,6 +272,23 @@ Db::get()->prepare('INSERT INTO relay_rate (id, total, mark_total, mark_time, bl
 RelayRate::record('eeeeeeee'); // ~3 msg/s, comfortably under the cap
 ok(!RelayRate::blocked('eeeeeeee'), 'a client under the sustained relay rate is not blocked');
 ok(!RelayRate::blocked('ffffffff'), 'an unseen client is never blocked');
+
+// RelayStore on the database transport. A single-process test can never
+// prove APCu is shared across workers (there is only this worker), so the
+// store must fall back to the database and stay exactly-once and ordered -
+// and push() must report success so the caller does not turn it into a 503.
+ok(Caps::apcuShared() === false, 'APCu is never proven shared in a single-process test');
+ok(!RelayStore::usingApcu(), 'the relay uses the database transport without shared APCu');
+ok(RelayStore::push('11111111', '22222222', 'IN:1', time()) === true, 'a relayed message enqueues');
+RelayStore::push('11111111', '22222222', 'IN:2', time());
+ok(RelayStore::hasAny('22222222', '11111111'), 'the receiver sees a pending message');
+ok(!RelayStore::hasAny('11111111', '22222222'), 'the sender has nothing pending back');
+ok(RelayStore::shouldTrackRelay('11111111', '22222222', time()),
+    'the database transport tracks the pair on every message');
+$drained = RelayStore::drain('22222222', '11111111');
+ok(count($drained) === 2 && $drained[0]['payload'] === 'IN:1' && $drained[1]['payload'] === 'IN:2',
+    'the backlog drains oldest first');
+ok(RelayStore::drain('22222222', '11111111') === [], 'a drained backlog is empty (exactly-once)');
 
 // The debug flag: the admin's wish and the client's report are separate
 ok(Presence::touch('eeeeeeee', '1.2.3.4') === false, 'debug is off for a new player');

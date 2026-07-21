@@ -194,9 +194,12 @@ not how long it waits. Both counters go in one multi-row upsert, so a
 hello takes it twice (heartbeat + counters) instead of three times; the
 heartbeat write is irreducible, since it IS the heartbeat. Dropping the
 counters off the writer altogether would need shared memory between
-workers, and this host has no APCu - the Properties card reports that,
-along with opcache, whether the deferred flush is really available, and
-what opening the database cost the request that drew the card.
+workers; whether this host has APCu that is usable AND shared across
+workers is assessed live on the Properties card, not assumed here. The
+relay already moves ITS OWN traffic onto shared memory whenever the card
+confirms it (see docs/API.md); the counters have not followed. The same
+card reports opcache, whether the deferred flush is really available, and
+what opening the database cost the request that drew it.
 
 `public/api/.user.ini` holds the only PHP settings we own (no FPM pool
 access on shared hosting): body, memory and runtime caps for the game API
