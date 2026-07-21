@@ -749,6 +749,9 @@ indicator so latency self-explains.
                          "pts": ms?}
       -> {"ok":true}
       -> 429 "relay backlog full"   receiver stopped fetching; back off
+      -> 429 "relay store full"     hub shared memory was momentarily full
+                                    and refused this message; RESEND it, do
+                                    not treat it as delivered
       -> 429 "relay rate limit"     you are sending too fast; back off
       -> 503 "relay busy"           concurrent relayed-duel cap reached:
                                     tell the user the server is full and

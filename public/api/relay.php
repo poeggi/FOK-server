@@ -17,6 +17,8 @@ require_once __DIR__ . '/../src/RelayStore.php';
  * POST {"id": sender, "peer": recipient, "payload": string, "pts": ms?}
  *   -> {"ok":true}
  *   -> 429 "relay backlog full"  receiver stopped fetching; back off
+ *   -> 429 "relay store full"    hub shared memory momentarily full; the
+ *                                message was refused - resend it
  *   -> 429 "relay rate limit"    sender sustained too high a send rate;
  *                                blocked for relay_rate_block_secs
  *   -> 503 "relay busy"          concurrent-duel cap reached; the pair
@@ -117,11 +119,13 @@ if (!ConnTrack::isRelaying($id, $peer)
 }
 
 if (!RelayStore::push($id, $peer, $payload, $now)) {
-    // Shared memory was full: the message was REFUSED, not delivered (see
-    // RelayStore::push). Tell the sender to retry rather than letting it
-    // treat a lost input as sent - a dropped input is exactly what desyncs
-    // the duel and shows up as the intermittent burst.
-    Util::fail('relay busy, retry', 503);
+    // Shared memory was momentarily full: the message was REFUSED, not
+    // delivered (see RelayStore::push). 429 (back off and RESEND), not the
+    // 503 "relay busy" the admission cap returns - that one tells the client
+    // to give up the match, and a transient full cache must never end a live
+    // duel. A dropped input is exactly what desyncs a duel into the
+    // intermittent burst, so the sender must resend, never treat it as sent.
+    Util::fail('relay store full, resend', 429);
 }
 // Ground truth for "this pair runs through the hub": no declared no-P2P bit
 // is needed to end up here. On the APCu transport this database write is a
