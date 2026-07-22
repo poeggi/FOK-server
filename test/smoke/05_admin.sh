@@ -292,7 +292,14 @@ else
     # setting relay_rate_max 128
 
     # A full hub rejects a NEW relayed duel loudly - but a duel that is
-    # already relaying must never be cut off by it.
+    # already relaying must never be cut off by it. The admission cap is
+    # transport-independent (it counts relay_seen in the conn table), so pin it
+    # to the database here: a single-process php -S keeps APCu state across
+    # these back-to-back sub-tests (a throttled relay_seen refresh and undrained
+    # queues leak between them) in ways this precise setup was never written
+    # for. Real APCu delivery has its own section below (relay_apcu 1), and
+    # staging exercises that on real shared memory.
+    setting relay_apcu 0
     setting relay_max_duels 1
     rly "$ID1" "$ID2" 'holding the slot' > /dev/null
     R=$(rlycode "$ID3" "$ID4" 'may i')
