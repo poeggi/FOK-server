@@ -277,12 +277,21 @@ final class RelayStore
                 // window is meaningless, so fall back to the authoritative scan.
                 return self::drainScan($to, $from, $prefix, $cut, $nowMs);
             }
+            $ackTo = $hi;
             for ($seq = $lo + 1; $seq <= $hi; $seq++) {
                 $k = $prefix . sprintf('%012d', $seq);
                 $v = apcu_fetch($k, $ok);
-                // A gap - a push that bumped the seq but failed to store, or a
-                // key already expired or evicted - simply has no entry: skip it.
                 if (!$ok) {
+                    // A hole. push bumps the sequence (apcu_inc) a beat BEFORE
+                    // it stores the message, so a concurrent drain can read the
+                    // top seq for a message whose store has not landed yet:
+                    // never ack past that top, or it would be skipped for good
+                    // and lost. A hole BELOW the top is a permanent gap - a
+                    // store that failed and was resent at a higher seq (see
+                    // push), or an expired key - so ack past it and move on.
+                    if ($seq === $hi) {
+                        $ackTo = $hi - 1;
+                    }
                     continue;
                 }
                 // apcu_delete wins for exactly one racing poll; the loser must
@@ -300,7 +309,7 @@ final class RelayStore
                     'age' => max(0, $nowMs - (int)$v['c']),
                 ];
             }
-            apcu_store(self::ackKey($to, $from), $hi, 86400);
+            apcu_store(self::ackKey($to, $from), $ackTo, 86400);
             return $out;
         }
 
