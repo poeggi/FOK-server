@@ -314,8 +314,6 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 }
 .stat-value { font-size: 16px; color: var(--accent); }
 .stat-label { font-size: 10px; color: var(--muted); }
-/* Live-load cells read as gauges, not counts. */
-.stat.live .stat-value { color: var(--text); }
 
 
 /* ------------------------------------ alerts & diagnostics (tabbed card) */

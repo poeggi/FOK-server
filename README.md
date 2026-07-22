@@ -3,6 +3,9 @@
 Central game server for FOK Snake (and future games). Runs as plain PHP on
 shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 
+Version 1.0.0 is the first stable release: the API contract (3.3) and the
+admin, relay and matchmaking surfaces are considered production-stable.
+
 ## What it does
 
 - Presence: clients send periodic heartbeats with their 32-bit player ID
