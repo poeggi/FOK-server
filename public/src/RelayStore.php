@@ -46,24 +46,25 @@ final class RelayStore
             return self::$apcu = false;
         }
         if (!Caps::apcu()) {
-            // Asked for, not available: say so where an operator will see it.
-            // Alerts de-duplicates per type within alert_cooldown, so a busy
-            // server raises this once, not once per message.
-            Alerts::raise('perf', 'Relay fell back to the database: APCu was requested '
+            // Asked for (relay_apcu defaults ON) but the host cannot offer it:
+            // warn where an operator will see it - the admin Alerts tab AND the
+            // server log. Both de-duplicate to the alert_cooldown window (the
+            // log line is gated on raise() reporting a fresh alert), so a
+            // persistent fallback warns steadily without flooding either.
+            $msg = 'Relay fell back to the database: APCu was requested '
                 . '(relay_apcu=1) but is not usable on this host. Expect SQLite write '
-                . 'contention and dropped messages under relayed play.');
+                . 'contention and dropped messages under relayed play.';
+            if (Alerts::raise('perf', $msg)) {
+                error_log('FOK relay: ' . $msg);
+            }
             return self::$apcu = false;
         }
-        // Enabled is not enough. A per-worker APCu segment would take a
-        // message from the sender's worker that the receiver's worker never
-        // sees - silent loss. Use shared memory only once it is PROVEN shared
-        // across workers; until then the database transport carries the relay
-        // (slower, but never lossy). No alert: this is the normal warm-up
-        // right after a deploy and clears itself within a few requests (see
-        // Caps::apcuShared); the Performance tab's relay row shows the state.
-        if (!Caps::apcuShared()) {
-            return self::$apcu = false;
-        }
+        // APCu is usable, so the relay runs on shared memory - the default. The
+        // host's APCu is trusted to be shared across the pool's workers; if it
+        // were per-worker instead, cross-worker messages would be lost with no
+        // runtime signal (there is no proof of sharing, by design). Force the
+        // database transport with relay_apcu=0 if a host is ever suspected of
+        // per-worker APCu.
         return self::$apcu = true;
     }
 

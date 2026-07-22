@@ -86,7 +86,6 @@ if ($method === 'GET') {
         $rows = RelayStore::hasAny($id, $peer) ? RelayStore::drain($id, $peer) : [];
         if ($rows !== []) {
             Load::tick('msg_out', count($rows));
-            Load::peak('relay_age_ms', max(array_column($rows, 'age')));
             Util::jsonOut(['ok' => true, 'messages' => $rows]);
         }
         $t = microtime(true);
@@ -177,7 +176,6 @@ if (!empty($body['pull'])) {
     $rows = RelayStore::hasAny($id, $peer) ? RelayStore::drain($id, $peer) : [];
     if ($rows !== []) {
         Load::tick('msg_out', count($rows));
-        Load::peak('relay_age_ms', max(array_column($rows, 'age')));
         $out['messages'] = $rows;
     }
 }

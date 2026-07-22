@@ -271,6 +271,12 @@ Starts::request('aaaaaaaa', 'bbbbbbbb', 1, 'level');
 Starts::forget('aaaaaaaa', 'cccccccc');
 ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'level') === null, "a stranger's bye leaves the pair's epoch alone");
 
+// Force the database relay transport (relay_apcu=0) so this single-process
+// test exercises its exactly-once/ordering deterministically, whether or not
+// the CLI has APCu. The APCu transport is exercised by the staging smoke run
+// on real FPM (test/smoke/05_admin.sh).
+Settings::set('relay_apcu', 0);
+
 // RelayRate: the relay table is drained on delivery, so the send rate is
 // tracked as a running total per client. mark_time is pre-set so a full
 // slice has already passed and the very next record() checks the rate.
@@ -278,7 +284,7 @@ Db::get()->prepare('INSERT INTO relay_rate (id, total, mark_total, mark_time, bl
     ->execute(['dddddddd', 1000, 0, time() - 3]);
 RelayRate::record('dddddddd'); // ~334 msg/s over 3 s, far over the 128 default
 ok(RelayRate::blocked('dddddddd'), 'a client over the sustained relay rate is blocked');
-ok(!RelayRate::usesApcu(), 'rate-limiting follows the database transport without shared APCu');
+ok(!RelayRate::usesApcu(), 'rate-limiting follows the database transport when APCu is off');
 ok(RelayRate::totalOf('dddddddd') === 1001, 'the running message total is readable for the admin gauge');
 Db::get()->prepare('INSERT INTO relay_rate (id, total, mark_total, mark_time, blocked_until) VALUES (?, ?, ?, ?, 0)')
     ->execute(['eeeeeeee', 10, 0, time() - 3]);
@@ -286,12 +292,10 @@ RelayRate::record('eeeeeeee'); // ~3 msg/s, comfortably under the cap
 ok(!RelayRate::blocked('eeeeeeee'), 'a client under the sustained relay rate is not blocked');
 ok(!RelayRate::blocked('ffffffff'), 'an unseen client is never blocked');
 
-// RelayStore on the database transport. A single-process test can never
-// prove APCu is shared across workers (there is only this worker), so the
-// store must fall back to the database and stay exactly-once and ordered -
-// and push() must report success so the caller does not turn it into a 503.
-ok(Caps::apcuShared() === false, 'APCu is never proven shared in a single-process test');
-ok(!RelayStore::usingApcu(), 'the relay uses the database transport without shared APCu');
+// RelayStore on the database transport (forced above): exactly-once and
+// ordered, and push() reports success so the caller does not turn it into a
+// 503.
+ok(!RelayStore::usingApcu(), 'the relay uses the database transport when APCu is off');
 ok(RelayStore::push('11111111', '22222222', 'IN:1') === true, 'a relayed message enqueues');
 RelayStore::push('11111111', '22222222', 'IN:2');
 ok(RelayStore::hasAny('22222222', '11111111'), 'the receiver sees a pending message');

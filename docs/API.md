@@ -738,9 +738,11 @@ is wasted. When neither side declared the bit, nothing is checked
 early and the 5 s-fallback path applies unchanged. Budget ~200-400 ms
 one-way as a CONSERVATIVE upper bound - the figure the prediction/correction
 model should be built to absorb, not a measured typical. The server's own
-contribution is small (about the poll interval, and roughly a millisecond
-when the hub runs on shared memory); the rest is client poll cadence, round
-trips and the wider internet. Relay INPUT events, state hashes and control
+contribution is small: the hub runs on APCu shared memory BY DEFAULT and
+forwards in roughly a millisecond; the wider poll interval only adds latency
+when it has fallen back to the database transport (APCu switched off with
+relay_apcu, or not offered by the host). The rest is client poll cadence,
+round trips and the wider internet. Relay INPUT events, state hashes and control
 messages only - never high-rate state. The local snake stays instant; the
 remote side trails and the model absorbs the lag. Show a "relay mode"
 indicator so latency self-explains.

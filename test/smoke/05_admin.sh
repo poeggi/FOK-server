@@ -80,7 +80,6 @@ else
     expect "admin stats pending friendships" '"friendships_pending":' "$R"
     expect "admin stats carry the live load gauges" '"load_live":' "$R"
     expect "live load gauges include db writes" '"db_writes":' "$R"
-    expect "live load gauges include the relay age peak" '"relay_age_ms":' "$R"
 
     # Connection tracker: the admin sees the state the signaling implies.
     # These types need no friendship, so they work after the unfriend above.
@@ -330,11 +329,6 @@ else
     # exercise shared memory for real. Neither environment can be skipped
     # without losing one half of the switch.
     setting relay_apcu 1
-    # A single-process test server (php -S) cannot spawn a second FPM worker,
-    # so the cross-worker sharing proof can never fire on its own - assert it
-    # here so a host that offers APCu actually exercises the shared-memory
-    # transport below instead of the fallback. Reset afterwards.
-    setting relay_apcu_assume_shared 1
     # PROVE which transport the assertions below actually exercise. They are
     # deliberately identical on both, so a green run says nothing about which
     # one ran - on a host with APCu this must report apcu, and without it the
@@ -367,7 +361,6 @@ else
     # reply carries no messages).
     R=$(curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1")
     expect "bye tears down the pair on the configured transport" '"gone":true' "$R"
-    setting relay_apcu_assume_shared 0   # back to the safe auto-proof default
     setting relay_apcu 1   # back to the default (shared memory where usable)
     curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 

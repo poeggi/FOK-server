@@ -16,8 +16,6 @@ final class Load
 {
     /** @var array<string,int> metric => count accumulated this request (summed) */
     private static array $pending = [];
-    /** @var array<string,int> metric => max seen this request (peak, not summed) */
-    private static array $peak = [];
     private static bool $registered = false;
     // While the flush runs, its OWN writes must not count themselves.
     private static bool $flushing = false;
@@ -28,20 +26,6 @@ final class Load
             return;
         }
         self::$pending[$metric] = (self::$pending[$metric] ?? 0) + $n;
-        self::arm();
-    }
-
-    /**
-     * A gauge kept as the MAX over the minute, not a running total - for
-     * "worst relay age this minute" and the like. Flushed unsampled (sampling
-     * would miss the very peaks it exists to show).
-     */
-    public static function peak(string $metric, int $value): void
-    {
-        if ($value <= 0 || self::$flushing) {
-            return;
-        }
-        self::$peak[$metric] = max(self::$peak[$metric] ?? 0, $value);
         self::arm();
     }
 
@@ -70,33 +54,15 @@ final class Load
      *  table tiny. */
     public static function flush(): void
     {
-        if (self::$pending === [] && self::$peak === []) {
+        if (self::$pending === []) {
             return;
         }
         $pending = self::$pending;
-        $peak = self::$peak;
         self::$pending = [];
-        self::$peak = [];
         self::$flushing = true;
         try {
             $db = Db::get();
             $bucket = gmdate('YmdHi');
-            // Peak gauges (MAX over the minute) must be written every time:
-            // sampling would miss the very peaks they exist to report.
-            if ($peak !== []) {
-                $rows = [];
-                $args = [];
-                foreach ($peak as $metric => $v) {
-                    $rows[] = '(?, ?, ?)';
-                    $args[] = $bucket;
-                    $args[] = $metric;
-                    $args[] = $v;
-                }
-                $db->prepare(
-                    'INSERT INTO loadmin (bucket, metric, value) VALUES ' . implode(', ', $rows) .
-                    ' ON CONFLICT (bucket, metric) DO UPDATE SET value = MAX(value, excluded.value)'
-                )->execute($args);
-            }
             // Sum counters: writing a row per request to record that the
             // request wrote rows made the monitoring itself a leading source of
             // load on the single SQLite writer - on the relay path it doubled
@@ -132,9 +98,8 @@ final class Load
 
     /**
      * The last COMPLETE minute's totals - a true 60 s figure that steps once
-     * a minute. "in" comes from the shared req_min request counter;
-     * relay_age_ms is a peak (the worst hub message age delivered), not a sum.
-     * @return array{in:int,out:int,db_writes:int,relay_age_ms:int}
+     * a minute. "in" comes from the shared req_min request counter.
+     * @return array{in:int,out:int,db_writes:int}
      */
     public static function lastMinute(): array
     {
@@ -152,7 +117,6 @@ final class Load
             'in' => (int)$rq->fetchColumn(),
             'out' => $m['msg_out'] ?? 0,
             'db_writes' => $m['db_w'] ?? 0,
-            'relay_age_ms' => $m['relay_age_ms'] ?? 0,
         ];
     }
 }

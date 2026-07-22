@@ -194,10 +194,10 @@ not how long it waits. Both counters go in one multi-row upsert, so a
 hello takes it twice (heartbeat + counters) instead of three times; the
 heartbeat write is irreducible, since it IS the heartbeat. Dropping the
 counters off the writer altogether would need shared memory between
-workers; whether this host has APCu that is usable AND shared across
-workers is assessed live on the Properties card, not assumed here. The
-relay already moves ITS OWN traffic onto shared memory whenever the card
-confirms it (see docs/API.md); the counters have not followed. The same
+workers; whether this host has usable APCu is assessed live on the
+Properties card. The relay already runs ITS OWN traffic over APCu shared
+memory BY DEFAULT (falling back to the database only when APCu is switched
+off or unavailable, see docs/API.md); the counters have not followed. The same
 card reports opcache, whether the deferred flush is really available, and
 what opening the database cost the request that drew it.
 

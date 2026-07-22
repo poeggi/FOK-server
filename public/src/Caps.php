@@ -21,11 +21,7 @@ require_once __DIR__ . '/Settings.php';
  */
 final class Caps
 {
-    private const MARK_KEY = 'fok:caps:mark';
-    private const SHARED_KEY = 'fok:caps:shared';
-
     private static ?array $cache = null;
-    private static ?bool $shared = null;
 
     /** Assessment for THIS release, probing only if missing or stale. */
     public static function get(): array
@@ -52,49 +48,7 @@ final class Caps
     public static function refresh(): array
     {
         self::$cache = null;
-        self::$shared = null;   // re-read the shared proof from the cache
         return self::$cache = self::withRelayRow(self::assess());
-    }
-
-    /**
-     * Is APCu shared across this pool's workers, not a per-worker segment?
-     * The relay MUST know: a per-worker cache would take a message from the
-     * sender's worker that the receiver's worker never sees - silent loss.
-     * It cannot be answered within one request (a single worker proves
-     * nothing), so the proof lives in the cache itself: each worker leaves
-     * its pid, and the first worker to find ANOTHER worker's mark sets a
-     * flag every worker then reads. Cheap (a fetch, sometimes a store),
-     * self-extinguishing once proven, and needs no operator action - two
-     * workers each serving one request is enough. If the cache is flushed it
-     * simply re-proves within a few requests.
-     */
-    public static function apcuShared(): bool
-    {
-        if (self::$shared !== null) {
-            return self::$shared;
-        }
-        if (!function_exists('apcu_enabled') || !apcu_enabled()) {
-            return self::$shared = false;
-        }
-        // An operator who has verified this host's APCu is shared across
-        // workers - or the test suite, which cannot spawn a second worker to
-        // prove it - can assert sharing and skip the proof below. Default off:
-        // the safe path proves sharing before trusting it.
-        if (Settings::int('relay_apcu_assume_shared') === 1) {
-            return self::$shared = true;
-        }
-        if (apcu_fetch(self::SHARED_KEY) === 1) {
-            return self::$shared = true;   // some worker proved it; all see this
-        }
-        $mark = apcu_fetch(self::MARK_KEY, $ok);
-        $me = getmypid();
-        if ($ok && is_array($mark) && (int)($mark['pid'] ?? 0) !== $me) {
-            apcu_store(self::SHARED_KEY, 1, 86400);   // proven: broadcast to all
-            return self::$shared = true;
-        }
-        // Not proven yet: leave my mark for the next distinct worker.
-        apcu_store(self::MARK_KEY, ['pid' => $me, 'at' => time()], 86400);
-        return self::$shared = false;
     }
 
     /**
@@ -107,27 +61,22 @@ final class Caps
     {
         $usable = ($c['apcu'] ?? false) === true;
         $wanted = Settings::int('relay_apcu') === 1;
-        // Enabled is not enough: the relay only moves off the database once
-        // APCu is PROVEN shared across workers (see apcuShared and
-        // RelayStore::usingApcu), or a per-worker cache would silently lose
-        // cross-worker messages.
-        $shared = $usable && self::apcuShared();
-        $live = $wanted && $shared;
+        // APCu is the default transport: usable shared memory is trusted to be
+        // shared across the pool's workers (see RelayStore::usingApcu). The
+        // relay stays on the database only when APCu is switched off or the
+        // host cannot offer it.
+        $live = $wanted && $usable;
         $c['relay_backend'] = $live ? 'apcu' : 'database';
         $c['checks'][] = [
             'key' => 'relay_backend',
             'label' => 'Relay transport',
             'value' => $live ? 'APCu shared memory' : 'database',
-            'status' => $live ? 'good' : (!$wanted || $usable ? 'warn' : 'bad'),
+            'status' => $live ? 'good' : ($wanted ? 'bad' : 'warn'),
             'note' => $live
                 ? 'relay traffic never touches the SQLite writer'
                 : (!$wanted
                     ? 'set relay_apcu to 1 to move relay traffic off the database'
-                    : ($usable
-                        ? 'APCu is enabled but not yet confirmed shared across workers - '
-                            . 'relay stays on the database until it is (usually within a '
-                            . 'few requests of a deploy)'
-                        : 'APCu was requested but is not usable - falling back, expect lock contention')),
+                    : 'APCu was requested but is not usable - falling back, expect lock contention'),
         ];
         return $c;
     }
@@ -173,20 +122,13 @@ final class Caps
             apcu_store('fok:caps:rt', 1, 60);
             $roundTrip = apcu_fetch('fok:caps:rt') === 1;
         }
-        // Whether the cache is really shared between workers is proven in the
-        // cache itself over successive requests, not within this one - see
-        // apcuShared().
-        $shared = self::apcuShared();
         $usable = $enabled && $iterator && $roundTrip;
         $add(
             'apcu',
             'APCu shared memory',
-            $enabled ? ($shared ? 'enabled, shared across workers' : 'enabled, this worker') : 'unavailable',
-            $usable ? ($shared ? 'good' : 'warn') : 'bad',
-            $usable
-                ? ($shared ? '' : 'not yet confirmed shared across workers - the relay '
-                    . 'waits for that (auto-confirmed once a second worker serves a request)')
-                : 'the relay cannot leave the database'
+            $usable ? 'enabled' : ($enabled ? 'enabled, unusable' : 'unavailable'),
+            $usable ? 'good' : 'bad',
+            $usable ? '' : 'the relay cannot leave the database'
         );
 
         $db = Db::get();
@@ -208,7 +150,6 @@ final class Caps
             'version' => FOK_SERVER_VERSION,
             'checked' => time(),
             'apcu' => $usable,
-            'apcu_shared' => $shared,
             'checks' => $checks,
         ];
         Db::get()->prepare(

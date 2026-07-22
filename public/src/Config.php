@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '0.17.3';
+const FOK_SERVER_VERSION = '0.17.4';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -125,12 +125,13 @@ const FOK_POLL_WAIT_MAX = 9;
 // it must stay small enough that concurrent handshakes cannot exhaust the
 // shared-hosting FPM worker pool.
 const FOK_POLL_CHECK_USEC = 20000;
-// The relay hold loop on the APCu transport checks with two shared-memory
-// reads (sub-microsecond), not a database query, so it can poll far tighter
-// and deliver a hub message in about a millisecond instead of a full poll
-// interval. This is as close to a push as a pollable store gets; a true
-// wakeup with no poll term needs the persistent hub (see relay.php). The
-// database transport keeps the wider FOK_POLL_CHECK_USEC.
+// The relay hold loop on the APCu transport (the DEFAULT) checks with two
+// shared-memory reads (sub-microsecond), not a database query, so it can poll
+// far tighter and deliver a hub message in about a millisecond instead of a
+// full poll interval. This is as close to a push as a pollable store gets; a
+// true wakeup with no poll term needs the persistent hub (see relay.php). The
+// database transport - used only on fallback (relay_apcu=0 or APCu
+// unavailable) - keeps the wider FOK_POLL_CHECK_USEC.
 const FOK_POLL_CHECK_USEC_APCU = 2000;
 
 // Abuse caps (HTTP 429): pending signals per recipient, score submissions
