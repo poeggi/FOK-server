@@ -463,13 +463,13 @@ const MODULES = [
             stat('Playing 1:1', d.counts.playing);
             stat('Relaying', d.relaying);
             stat('Users registered', d.counts.registered);
-            stat('Friendships', d.friendships + ' (' + d.friendships_pending + ' pending)');
+            stat('FS act./pend.', d.friendships + '/' + d.friendships_pending);
             stat('Scores stored', d.scores_total);
             stat('DB entries', d.db_rows);
             stat('DB size', fmtBytes(d.db_size));
             // Live gauges: totals over the last complete minute.
             const L = d.load_live || { in: 0, out: 0, db_writes: 0 };
-            stat('Msgs in/out/min', L.in + ' / ' + L.out, 'live');
+            stat('Msgs in|out /min', L.in + ' | ' + L.out, 'live');
             stat('DB writes/min', L.db_writes, 'live');
             box.append(grid);
             box.append(el('p', 'muted', 'Server v' + d.server_version +
