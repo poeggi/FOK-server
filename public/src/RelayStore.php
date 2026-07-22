@@ -92,6 +92,34 @@ final class RelayStore
         return true;
     }
 
+    /**
+     * The cheap per-pair "this duel already holds a relay slot" marker, in the
+     * pair's own APCu namespace. Present means admitted: the relay POST can
+     * skip the real concurrent-duel cap check (a conn read, plus a COUNT for a
+     * new pair) on every message and just forward. Absent means the question
+     * must be asked for real - a new pair, a relay-window of silence, or an
+     * evicted marker (see relay.php). On the database transport there is no
+     * such marker, so this is always false and the POST gates on ConnTrack
+     * every message, exactly as before.
+     */
+    public static function admitted(string $a, string $b): bool
+    {
+        return self::usingApcu() && apcu_fetch(self::admitKey($a, $b)) !== false;
+    }
+
+    /**
+     * Mark the pair admitted, or refresh the marker's life. Called on every
+     * relayed message so it lives as long as the duel does, while its TTL
+     * (FOK_RELAY_WINDOW, the same window the slot is counted over) frees the
+     * slot once the traffic stops. A no-op on the database transport.
+     */
+    public static function markAdmitted(string $a, string $b): void
+    {
+        if (self::usingApcu()) {
+            apcu_store(self::admitKey($a, $b), 1, FOK_RELAY_WINDOW);
+        }
+    }
+
     // ---- keys (APCu) -------------------------------------------------
     // One stream per DIRECTION: to:from. A pair has two, and each has a
     // single sender and a single receiver.
@@ -108,6 +136,14 @@ final class RelayStore
     private static function msgPrefix(string $to, string $from): string
     {
         return self::PREFIX . "$to:$from:m:";
+    }
+
+    /** The pair's admission marker (see admitted): ONE per pair, unordered, so
+     *  both directions of the duel share it. */
+    private static function admitKey(string $a, string $b): string
+    {
+        [$x, $y] = $a < $b ? [$a, $b] : [$b, $a];
+        return self::PREFIX . "admit:$x:$y";
     }
 
     /** Server clock in milliseconds - the granularity a message is stamped at. */
@@ -175,9 +211,18 @@ final class RelayStore
                 // seq below ack is impossible in normal running: the counter
                 // was evicted (and re-seeded low) under shared-memory pressure
                 // while the ack survived, which this cheap gate would read as
-                // "nothing pending" forever - stranding any live messages. Fall
-                // back to the authoritative scan and realign the counter.
-                return self::repairDesync($to, $from);
+                // "nothing pending" forever - stranding any live messages.
+                // Fall back to the authoritative scan: if a key is stranded,
+                // say so and let drain() deliver it and realign the ack (it
+                // detects the same desync); if none survives, realign here so
+                // the gate stops re-scanning on every poll.
+                Alerts::raise('perf', 'Relay seq/ack desync: APCu evicted a relay '
+                    . 'counter under memory pressure. Raise the APCu size if this recurs.');
+                if (self::anyKey($to, $from)) {
+                    return true;
+                }
+                apcu_store(self::ackKey($to, $from), $seq, 86400);
+                return false;
             }
             return $seq > $ack;
         }
@@ -189,20 +234,15 @@ final class RelayStore
     }
 
     /**
-     * Recover from a seq < ack desync (see hasAny): realign the ack to the
-     * surviving sequence so the gate works again, and answer the truth from
-     * the message keys themselves. Rare - an operator should hear about the
-     * shared-memory pressure that caused it. drain() delivers by scanning the
-     * keys regardless of the counters, so a true here hands the caller a drain
-     * that actually clears the stranded messages.
+     * Is any message key present for this direction, ignoring the counters?
+     * The authoritative answer behind the cheap seq/ack gate when the counters
+     * cannot be trusted (seq < ack, see hasAny). Costs a keyspace scan, hence
+     * only on that rare desync - the normal gate is two O(1) reads.
      */
-    private static function repairDesync(string $to, string $from): bool
+    private static function anyKey(string $to, string $from): bool
     {
-        Alerts::raise('perf', 'Relay seq/ack desync repaired: APCu evicted a relay '
-            . 'counter under memory pressure. Raise the APCu size if this recurs.');
-        apcu_store(self::ackKey($to, $from), (int)apcu_fetch(self::seqKey($to, $from)), 86400);
         foreach (new APCUIterator('/^' . preg_quote(self::msgPrefix($to, $from), '/') . '/') as $e) {
-            return true;   // a live message key exists - deliver it
+            return true;
         }
         return false;
     }
@@ -221,28 +261,40 @@ final class RelayStore
         $out = [];
         if (self::usingApcu()) {
             $prefix = self::msgPrefix($to, $from);
-            // Read the high water mark BEFORE draining: everything at or
-            // below it is accounted for afterwards, delivered or expired, so
-            // acking to it also clears messages that died untaken instead of
-            // leaving hasAny() permanently true.
+            // Deliver the window (ack, hi]. The ack is how far this receiver has
+            // already taken; hi is the high water mark, read BEFORE draining so
+            // everything at or below it is accounted for afterwards - delivered
+            // or expired - and acking to it also clears messages that died
+            // untaken instead of leaving hasAny() true forever. Each message is
+            // addressed by its seq (the key IS the zero-padded seq), so this
+            // fetches only the handful actually pending - bounded by
+            // relay_pending_cap, which the POST enforces - instead of scanning
+            // the whole shared-memory keyspace on every single delivery.
+            $lo = (int)apcu_fetch(self::ackKey($to, $from));
             $hi = (int)apcu_fetch(self::seqKey($to, $from));
-            $keys = [];
-            foreach (new APCUIterator('/^' . preg_quote($prefix, '/') . '/') as $entry) {
-                $keys[] = $entry['key'];
+            if ($hi < $lo) {
+                // An evicted, re-seeded counter (see hasAny): the addressed
+                // window is meaningless, so fall back to the authoritative scan.
+                return self::drainScan($to, $from, $prefix, $cut, $nowMs);
             }
-            sort($keys);   // the seq is zero-padded, so this is numeric order
-            foreach ($keys as $k) {
+            for ($seq = $lo + 1; $seq <= $hi; $seq++) {
+                $k = $prefix . sprintf('%012d', $seq);
                 $v = apcu_fetch($k, $ok);
-                // apcu_delete wins for exactly one racing poll; the loser
-                // must not deliver the same message again.
-                if (!$ok || !apcu_delete($k) || !is_array($v)) {
+                // A gap - a push that bumped the seq but failed to store, or a
+                // key already expired or evicted - simply has no entry: skip it.
+                if (!$ok) {
+                    continue;
+                }
+                // apcu_delete wins for exactly one racing poll; the loser must
+                // not deliver the same message again.
+                if (!apcu_delete($k) || !is_array($v)) {
                     continue;
                 }
                 if ((int)$v['c'] < $cut) {
                     continue;   // past its TTL: drop, never deliver
                 }
                 $out[] = [
-                    'seq' => (int)substr($k, strlen($prefix)),
+                    'seq' => $seq,
                     'payload' => (string)$v['p'],
                     'created' => intdiv((int)$v['c'], 1000),
                     'age' => max(0, $nowMs - (int)$v['c']),
@@ -275,6 +327,41 @@ final class RelayStore
                 'age' => max(0, $nowMs - (int)$r['created'])];
         }
         usort($out, static fn(array $x, array $y) => $x['seq'] <=> $y['seq']);
+        return $out;
+    }
+
+    /**
+     * Authoritative fallback for drain() when the counters cannot be trusted
+     * (seq < ack: an evicted, re-seeded counter - see hasAny). Scans the pair's
+     * surviving message keys directly, delivers each exactly once, and realigns
+     * the ack to the sequence so the cheap addressed path works again. Rare, and
+     * the reason it is only a fallback: it costs a keyspace scan.
+     * @return array<int, array{seq:int, payload:string, created:int, age:int}>
+     */
+    private static function drainScan(string $to, string $from, string $prefix, int $cut, int $nowMs): array
+    {
+        $out = [];
+        $keys = [];
+        foreach (new APCUIterator('/^' . preg_quote($prefix, '/') . '/') as $entry) {
+            $keys[] = $entry['key'];
+        }
+        sort($keys);   // the seq is zero-padded, so this is numeric order
+        foreach ($keys as $k) {
+            $v = apcu_fetch($k, $ok);
+            if (!$ok || !apcu_delete($k) || !is_array($v)) {
+                continue;
+            }
+            if ((int)$v['c'] < $cut) {
+                continue;
+            }
+            $out[] = [
+                'seq' => (int)substr($k, strlen($prefix)),
+                'payload' => (string)$v['p'],
+                'created' => intdiv((int)$v['c'], 1000),
+                'age' => max(0, $nowMs - (int)$v['c']),
+            ];
+        }
+        apcu_store(self::ackKey($to, $from), (int)apcu_fetch(self::seqKey($to, $from)), 86400);
         return $out;
     }
 
@@ -328,6 +415,9 @@ final class RelayStore
                 apcu_delete(self::seqKey($to, $from));
                 apcu_delete(self::ackKey($to, $from));
             }
+            // The pair's slot is released too: a rematch re-competes for
+            // admission (see relay.php) rather than coasting on a stale marker.
+            apcu_delete(self::admitKey($a, $b));
             return;
         }
         [$x, $y] = $a < $b ? [$a, $b] : [$b, $a];

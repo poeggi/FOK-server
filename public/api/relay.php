@@ -136,13 +136,27 @@ if (RelayStore::pending($peer, $id) >= Settings::int('relay_pending_cap')) {
     Util::fail('relay backlog full', 429);
 }
 
-// Only a pair without a slot is checked: a duel already relaying must
-// never be cut off mid-game by a full server.
-if (!ConnTrack::isRelaying($id, $peer)
-    && ConnTrack::relayPairs() >= Settings::int('relay_max_duels')) {
-    Alerts::raise('relay', 'Relay duel cap reached: new relayed duel rejected');
-    Util::fail('relay busy', 503);
+// The concurrent-duel cap is asked ONCE, when a duel starts relaying, not on
+// every packet: a running pair carries a cheap APCu admission marker, so a set
+// marker means "already holds a slot, forward it". Only its absence - a new
+// pair, a relay-window of silence, or an evicted marker - pays for the real
+// check (a conn read, plus a COUNT for a genuinely new pair).
+if (!RelayStore::admitted($id, $peer)) {
+    // No marker: consult the authoritative slot record FIRST, so an APCu
+    // eviction can never cut off a live duel - only a pair that holds no slot
+    // THERE either is genuinely new and subject to the cap.
+    if (!ConnTrack::isRelaying($id, $peer)
+        && ConnTrack::relayPairs() >= Settings::int('relay_max_duels')) {
+        $msg = 'Relay duel cap reached: new relayed duel rejected';
+        if (Alerts::raise('relay', $msg)) {
+            error_log('FOK relay: ' . $msg);
+        }
+        Util::fail('relay busy', 503);
+    }
 }
+// Set or refresh the marker so the pair stays admitted for as long as it keeps
+// relaying (a no-op on the database transport, which gates on ConnTrack above).
+RelayStore::markAdmitted($id, $peer);
 
 if (!RelayStore::push($id, $peer, $payload)) {
     // Shared memory was momentarily full: the message was REFUSED, not
