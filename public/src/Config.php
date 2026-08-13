@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.0.0';
+const FOK_SERVER_VERSION = '1.0.1';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -35,7 +35,12 @@ const FOK_SERVER_VERSION = '1.0.0';
 // once instead of waiting out its own liveness timeout - the relay's answer
 // to a P2P DataChannel close. Major stays 3; a client that does not read
 // "gone" simply keeps timing out as before.
-const FOK_API_VERSION = '3.3';
+// v3.4: additive per-player stats. New GET/POST /api/stats.php lets a client
+// save cumulative gameplay counters (games, levels cleared, furthest level,
+// deaths, duels, playtime) and read them back to restore progress on another
+// device (see docs/API.md). Self-reported, stored monotonically. Major stays
+// 3; a client that does not use it is unaffected.
+const FOK_API_VERSION = '3.4';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
@@ -145,6 +150,23 @@ const FOK_MAX_NAME_LEN = 15;
 // A quick-match seeker drops out of the queue after this many quiet seconds.
 const FOK_MATCH_WINDOW = 10;
 const FOK_MAX_FRIENDS = 64;
+
+// Per-player self-reported gameplay stats (see PStats, api/stats.php): one row
+// of cumulative counters per id, so a client can save its progress and restore
+// it on another device. They are CLIENT-ASSERTED (no server authority), so
+// stored MONOTONICALLY - a submitted value never lowers the stored one, so a
+// stale or replaying device cannot roll the totals back - and hard-capped. A
+// count field is bounded by FOK_PSTATS_COUNT_MAX, the furthest-level marker by
+// the score level range (99), total playtime by FOK_PSTATS_SECONDS_MAX; an
+// over-cap value is clamped, not rejected, so a client never gets stuck.
+const FOK_PSTATS_COUNT_MAX = 1000000000;
+const FOK_PSTATS_SECONDS_MAX = 4000000000;
+// A given id's stats row is rewritten at most this often, to keep a chatty or
+// abusive client off the single SQLite writer - submit at end of a run or
+// session, never per frame. A submission inside the window is accepted and
+// reflected back but persists on the next one (the client holds the running
+// totals and resends), so at most one write per id per window reaches disk.
+const FOK_PSTATS_WRITE_THROTTLE = 10;
 
 // Game clients are served from these origins (CORS allowlist).
 const FOK_ALLOWED_ORIGINS = [

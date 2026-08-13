@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"3.3", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"3.4", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -333,7 +333,7 @@ Response:
 
     {
       "ok": true,
-      "api": "3.3",               contract version, see Versioning
+      "api": "3.4",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "debug": false,             the server's instruction: the client MUST
@@ -429,6 +429,8 @@ Response:
           "diff": 2,
           "color": 3,
           "shopItems": {"hat": 1},
+          "completed": true,       bool (3.4): the run cleared the final level
+                                   (finished the game), not merely reached it
           "date": "16.07.26",      DD.MM.YY, same format as the local list
           "created": 1784182950    unix seconds, for exact ordering
         }
@@ -436,9 +438,10 @@ Response:
     }
 
 Entries carry the same fields as a FOK-snake local top-10 entry
-(name, score, level, diff, color, shopItems, date) plus rank, player_id
-and created. Sorted by score descending, ties broken by earlier
-submission.
+(name, score, level, diff, color, shopItems, date) plus rank, player_id,
+completed and created. Sorted by score descending, ties broken by earlier
+submission - `completed` does not change the ordering, it distinguishes a
+finished game from a run that only reached the same level.
 
 ## POST /api/scores.php - submit a score
 
@@ -456,6 +459,9 @@ Request:
       "shopItems": {"hat": 1},    optional, object, max 2 KB as JSON
       "seed": 305419896,          optional, the 32-bit game seed
       "inputs": [[12,1],[40,2]],  optional, tick-stamped input log, max 256 KB as JSON
+      "completed": true,          optional bool (3.4), default false: the run
+                                  CLEARED the final level (finished the game),
+                                  not merely reached it; client-asserted
       "pts": 1784190295123        optional, PTS of the game-over moment
                                   (never in the future, see PTS validation)
     }
@@ -943,6 +949,48 @@ the same `snake-fok-backup.json` the game imports through its normal file
 restore - and (b) RESET the token, so the client re-enrolls on its next
 backup (a fresh token is minted; the data is kept). These paths live only
 behind /admin.
+
+## Per-player stats
+
+Added in contract 3.4 (additive). A client saves its cumulative gameplay
+counters and reads them back to restore progress on another device. Unlike the
+config backup above, these are PARSED - typed integers the server aggregates
+and the admin dashboard shows.
+
+    GET  /api/stats.php?id=c0ffee42
+      -> 200 {"ok": true, "stats": {...}, "updated": <unix seconds>}
+    POST /api/stats.php {"id": "c0ffee42", "stats": {...}}
+      -> 200 {"ok": true, "stats": {...}, "updated": <unix seconds>}
+
+`stats` is an object of counters; all fields are optional ints >= 0:
+
+    {
+      "games":        142,   games played
+      "levels":       310,   levels cleared (cumulative)
+      "best_level":   17,    furthest level reached (0..99)
+      "deaths":       190,   deaths
+      "duels":        44,    1:1 duels played
+      "duels_won":    21,    1:1 duels won
+      "play_seconds": 86400  total playtime, seconds
+    }
+
+Send your RUNNING TOTALS (the whole counter, not a delta). The server keeps
+each field's high-water mark:
+
+- Stored MONOTONICALLY - a submitted value never lowers the stored one, so a
+  stale or replaying device cannot roll the totals back. Send at the end of a
+  run or session, not per frame.
+- Each field is hard-capped (counts at 1e9, `best_level` at 99, `play_seconds`
+  at ~4e9); an over-cap value is CLAMPED, not rejected, so a client never gets
+  stuck. A malformed field is ignored; the rest still apply.
+- The response echoes the resulting stats (with any unsent fields at their
+  stored value). GET returns all zeros for an id with nothing stored yet.
+- These are SELF-REPORTED (no token, no server authority): knowing an id (they
+  are shared during a duel) lets anyone raise a counter up to its cap, never
+  lower or corrupt it. They are progress / vanity figures, not a trust signal.
+- Writes are throttled per id: a submission within a few seconds of the last
+  stored one is accepted and echoed but persists on the next submission (your
+  totals are cumulative, so nothing is lost), keeping the single writer clear.
 
 ## Debug reports
 

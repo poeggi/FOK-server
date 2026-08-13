@@ -7,6 +7,7 @@ require_once __DIR__ . '/Presence.php';
 require_once __DIR__ . '/ConnTrack.php';
 require_once __DIR__ . '/Load.php';
 require_once __DIR__ . '/Vault.php';
+require_once __DIR__ . '/PStats.php';
 
 /**
  * Read-only aggregation for the admin dashboard's two heaviest views - the
@@ -19,7 +20,7 @@ final class AdminData
     // Every table the "DB entries" tile sums (see the Statistics card).
     private const TABLES = ['players', 'scores', 'signals', 'duels', 'mm_queue',
         'counters', 'alerts', 'settings', 'admin_fails', 'ipcount', 'friends',
-        'relay', 'starts', 'conn', 'stats'];
+        'relay', 'starts', 'conn', 'stats', 'pstats'];
 
     /** The Statistics card: live counts, stored totals and the load gauges. */
     public static function stats(): array
@@ -90,6 +91,7 @@ final class AdminData
         $mailbox = (int)$mb->fetchColumn();
         $mb->closeCursor();
         $backup = Vault::peek($id);
+        $stats = PStats::get($id);
         return [
             'now' => $now,
             'online_window' => FOK_ONLINE_WINDOW,
@@ -118,6 +120,7 @@ final class AdminData
                 'backup' => $backup === null ? null
                     : ['updated' => $backup['updated'], 'bytes' => strlen($backup['payload']),
                         'enrolled' => $backup['enrolled']],
+                'stats' => $stats,
             ],
         ];
     }

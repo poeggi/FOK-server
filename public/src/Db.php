@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 18;
+    private const SCHEMA_VERSION = 20;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -279,6 +279,33 @@ final class Db
                 checked INTEGER NOT NULL,
                 data TEXT NOT NULL
             )');
+        }
+        if ($v < 19) {
+            // Per-player self-reported gameplay stats (see PStats,
+            // api/stats.php): one cumulative-counter row per id, stored
+            // monotonically. Kept apart from the opaque config backup (vault),
+            // which is never parsed - these are PARSED, so they are queryable
+            // and shown on the admin dashboard.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS pstats (
+                id TEXT PRIMARY KEY,
+                games INTEGER NOT NULL DEFAULT 0,
+                levels INTEGER NOT NULL DEFAULT 0,
+                best_level INTEGER NOT NULL DEFAULT 0,
+                deaths INTEGER NOT NULL DEFAULT 0,
+                duels INTEGER NOT NULL DEFAULT 0,
+                duels_won INTEGER NOT NULL DEFAULT 0,
+                play_seconds INTEGER NOT NULL DEFAULT 0,
+                updated INTEGER NOT NULL DEFAULT 0
+            )');
+        }
+        if ($v < 20) {
+            // A score entry can mark that the run COMPLETED the game - cleared
+            // the FINAL level - as opposed to merely reaching a level and dying
+            // (see api/scores.php). The client asserts it: the server does not
+            // know how many levels the game has, so it cannot derive completion
+            // from the level number. Default 0 = not completed, for every
+            // existing row and any submission that omits the flag.
+            $pdo->exec('ALTER TABLE scores ADD COLUMN completed INTEGER NOT NULL DEFAULT 0');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

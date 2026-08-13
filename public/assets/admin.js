@@ -309,6 +309,19 @@ function renderClientBody(body, overlay, d, reload) {
         kv('Stored', 'no');
     }
 
+    sec('Gameplay stats (self-reported)');
+    const st = c.stats;
+    if (st && st.updated) {
+        kv('Games', st.games);
+        kv('Levels cleared', st.levels + ', furthest ' + st.best_level);
+        kv('Deaths', st.deaths);
+        kv('Duels', st.duels + ' (' + st.duels_won + ' won)');
+        kv('Playtime', st.play_seconds + ' s');
+        kv('Updated', fmtTime(st.updated) + ' (' + ago(st.updated) + ')');
+    } else {
+        kv('Stored', 'none');
+    }
+
     body.append(tbl);
 }
 

@@ -24,6 +24,7 @@ require_once __DIR__ . '/../public/src/Caps.php';
 require_once __DIR__ . '/../public/src/RelayStore.php';
 require_once __DIR__ . '/../public/src/Load.php';
 require_once __DIR__ . '/../public/src/Vault.php';
+require_once __DIR__ . '/../public/src/PStats.php';
 require_once __DIR__ . '/../public/src/Debug.php';
 
 // Util installs a fault handler that answers 500 and exits 0 - right for a
@@ -118,14 +119,18 @@ ok($top[1]['name'] === 'TESTER', 'name is trimmed');
 ok($top[2]['name'] === 'SNAKE PLISSKEN', 'fresh db seeded with default entry');
 ok($top[2]['score'] === 82, 'seed entry has 82 points');
 ok($top[2]['date'] === '26.11.97', 'seed entry keeps the classic date');
-foreach (['rank', 'player_id', 'name', 'score', 'level', 'diff', 'color', 'shopItems', 'date', 'created'] as $field) {
+foreach (['rank', 'player_id', 'name', 'score', 'level', 'diff', 'color', 'shopItems', 'completed', 'date', 'created'] as $field) {
     ok(array_key_exists($field, $top[0]), "entry has $field");
 }
 ok($top[1]['color'] === 5, 'color preserved');
 ok(is_object($top[1]['shopItems']) && $top[1]['shopItems']->hat === 1, 'shopItems preserved as object');
 ok(preg_match('/^\d{2}\.\d{2}\.\d{2}$/', $top[0]['date']) === 1, 'date is DD.MM.YY');
+ok($top[0]['completed'] === false, 'a score defaults to not completed');
+$rank = Scores::submit('cccccccc', 'FINISHER', 500, 10, 1, 0, '{}', null, null, true);
+ok(Scores::top()[0]['completed'] === true, 'a run that cleared the final level is marked completed');
+ok(Scores::top()[1]['completed'] === false, 'a same-level run that did not finish stays not completed');
 $long = Scores::submit('aaaaaaaa', str_repeat('X', 40), 1, 1, 1, 0, '{}', null, null);
-ok(mb_strlen(Scores::top()[3]['name']) === FOK_MAX_NAME_LEN, 'name capped at max length');
+ok(mb_strlen(Scores::top()[4]['name']) === FOK_MAX_NAME_LEN, 'name capped at max length');
 
 // Presence: targeted online + latency info
 $info = Presence::infoOf(['aaaaaaaa', 'cccccccc']);
@@ -633,6 +638,42 @@ ok(Vault::peek('aaaaaaaa')['payload'] === 'reenrolled', 'the payload survives th
 ok(Vault::resetToken('cccccccc') === false, 'reset is a no-op for an id with no backup');
 Db::get()->exec('DELETE FROM vault');
 
+// PStats: per-player self-reported gameplay stats - monotonic, capped and
+// write-throttled (see PStats, api/stats.php).
+Db::get()->exec('DELETE FROM pstats');
+$ps = PStats::submit('e1e1e1e1',
+    ['games' => 5, 'levels' => 10, 'best_level' => 3, 'deaths' => 4,
+     'duels' => 2, 'duels_won' => 1, 'play_seconds' => 600]);
+ok($ps['games'] === 5 && $ps['best_level'] === 3, 'first submit stores and echoes the counters');
+ok(PStats::get('e1e1e1e1')['games'] === 5, 'get reads the stored stats');
+ok(PStats::get('a5a5a5a5')['games'] === 0 && PStats::get('a5a5a5a5')['updated'] === 0,
+    'an id with nothing stored reads as zeros');
+// Age the row past the write throttle so the next submit persists.
+$age = static function (string $id): void {
+    Db::get()->prepare('UPDATE pstats SET updated = ? WHERE id = ?')->execute([time() - 60, $id]);
+};
+$age('e1e1e1e1');
+$ps = PStats::submit('e1e1e1e1', ['games' => 1, 'best_level' => 2]);
+ok($ps['games'] === 5 && $ps['best_level'] === 3, 'a lower submit never lowers the stored totals');
+$age('e1e1e1e1');
+$ps = PStats::submit('e1e1e1e1', ['games' => 9, 'best_level' => 2]);
+ok($ps['games'] === 9 && PStats::get('e1e1e1e1')['games'] === 9, 'a higher field grows and persists');
+ok($ps['best_level'] === 3, 'a field is held while another in the same submit grows');
+$age('e1e1e1e1');
+$ps = PStats::submit('e1e1e1e1', ['best_level' => 500, 'play_seconds' => 5000000000]);
+ok($ps['best_level'] === 99, 'best_level is clamped to 99, not rejected');
+ok($ps['play_seconds'] === FOK_PSTATS_SECONDS_MAX, 'play_seconds is clamped to its cap');
+$age('e1e1e1e1');
+$ps = PStats::submit('e1e1e1e1', ['deaths' => 'x', 'duels' => -3, 'duels_won' => 7]);
+ok($ps['deaths'] === 4 && $ps['duels'] === 2, 'malformed and negative fields are ignored');
+ok($ps['duels_won'] === 7, 'a valid field still applies when a sibling is malformed');
+// Write throttle: a second submit within the window echoes but does not persist.
+PStats::submit('f0f0f0f0', ['games' => 1]);
+$ps = PStats::submit('f0f0f0f0', ['games' => 2]);
+ok($ps['games'] === 2, 'a throttled submit still echoes the merged value');
+ok(PStats::get('f0f0f0f0')['games'] === 1, 'the throttled growth is not yet persisted');
+Db::get()->exec('DELETE FROM pstats');
+
 // Debug: a bundle gets a 4-digit PIN, retrievable, purged after the TTL.
 $dbgCount = static function (string $pin): int {
     $s = Db::get()->prepare('SELECT COUNT(*) FROM debug WHERE pin = ?');
@@ -716,6 +757,14 @@ ok(Alerts::unseenCount() === 0, 'mark seen clears unseen count');
 Alerts::raise('test-y', 'new after seen');
 ok(Alerts::unseenCount() === 1, 'new alert counts as unseen');
 
+// Alerts: player IDs in a message resolve to the current name at read time
+// (player aaaaaaaa was named ALPHA above); an unknown 8-hex token stays bare.
+Alerts::raise('test-name', 'PTS from player aaaaaaaa (sender deadbeef)');
+$named = array_values(array_filter(
+    Alerts::recent(), static fn(array $a) => $a['type'] === 'test-name'))[0];
+ok($named['message'] === 'PTS from player aaaaaaaa "ALPHA" (sender deadbeef)',
+    'alert names known player id, leaves unknown id bare');
+
 // Auth: lockout threshold is configurable at runtime
 Settings::set('admin_max_fails', 2);
 Auth::login('u', 'wrong', '9.9.9.5');
@@ -787,7 +836,7 @@ ok(is_file(FOK_BACKUP_DIR . '/' . $name), 'backup file exists');
 Db::get()->exec('DELETE FROM scores');
 ok(Scores::top() === [], 'scores wiped');
 Backup::restore(FOK_BACKUP_DIR . '/' . $name);
-ok(count(Scores::top()) === 4, 'restore brings scores back');
+ok(count(Scores::top()) === 5, 'restore brings scores back');
 $bad = $tmp . '/not-a-db';
 file_put_contents($bad, 'hello world');
 $threw = false;
@@ -807,7 +856,7 @@ $name = Backup::create();
 $live = Db::get();
 $live->exec('DELETE FROM scores');
 Backup::restore(FOK_BACKUP_DIR . '/' . $name);
-ok(count(Scores::top()) === 4, 'restore works with a live handle held open (as admin/api.php does)');
+ok(count(Scores::top()) === 5, 'restore works with a live handle held open (as admin/api.php does)');
 unset($live);
 
 // Cleanup

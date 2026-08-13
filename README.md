@@ -3,8 +3,9 @@
 Central game server for FOK Snake (and future games). Runs as plain PHP on
 shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 
-Version 1.0.0 is the first stable release: the API contract (3.3) and the
-admin, relay and matchmaking surfaces are considered production-stable.
+Version 1.0.0 was the first stable release; 1.0.1 adds per-player stats over
+an additive contract (3.4). The admin, relay and matchmaking surfaces are
+considered production-stable.
 
 ## What it does
 
@@ -85,6 +86,8 @@ admin, relay and matchmaking surfaces are considered production-stable.
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
         backup.php    GET/POST client config backup and restore, token-secured
+        stats.php     GET/POST per-player gameplay stats (self-reported,
+                      monotonic: games, levels, deaths, duels, playtime)
         .user.ini     PHP limits for the API only (see Capacity below)
       debug/          client debug-report drop -> 4-digit PIN (1 day, 8 MB)
       admin/          session-protected admin UI + JSON API
@@ -228,7 +231,7 @@ host-level. If this outgrows shared hosting, fix workers first.
 ## API sketch
 
     GET  /api/version.php
-      -> {"ok":true,"server":"<x.y.z>","api":"3.3","env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":"3.4","env":"live"}
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
     GET  /api/time.php
@@ -236,7 +239,7 @@ host-level. If this outgrows shared hosting, fix workers first.
     POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,
                           "friends":[...]?}
-      -> {"ok":true,"api":"3.3","now":ms,"debug":bool,"online":n,"playing":n,
+      -> {"ok":true,"api":"3.4","now":ms,"debug":bool,"online":n,"playing":n,
           "registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_online":{...}?, "friends_latency":{...}?,
@@ -264,8 +267,9 @@ host-level. If this outgrows shared hosting, fix workers first.
     GET  /api/scores.php?limit=10
       -> {"ok":true,"scores":[{"rank":1,"name":"...","score":...,...}]}
     POST /api/scores.php {"id","score","level","diff","name"?,"color"?,
-                          "shopItems"?,"seed"?,"inputs"?,"pts"?}
-      -> {"ok":true,"rank":n,"top":bool}   (no name -> ANONYMOUS)
+                          "shopItems"?,"seed"?,"inputs"?,"completed"?,"pts"?}
+      -> {"ok":true,"rank":n,"top":bool}   (no name -> ANONYMOUS;
+         completed = the run cleared the final level, not just reached it)
     POST /api/signal.php {"id","to","type":"invite|invite-relay|accept|accept-relay|decline|offer|answer|ice|bye|chat","payload"}
          (the -relay types set the no-P2P bit: honored when either side sends it)
       -> {"ok":true}   (chat payloads capped at 120 bytes; matchmaking
