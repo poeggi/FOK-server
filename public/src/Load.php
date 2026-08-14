@@ -71,7 +71,7 @@ final class Load
             // survives at a fraction of the lock traffic; these gauges are
             // explicitly approximate. Set load_sample to 1 for exact figures.
             $sample = max(1, Settings::int('load_sample'));
-            if ($pending !== [] && ($sample === 1 || random_int(1, $sample) === 1)) {
+            if ($sample === 1 || random_int(1, $sample) === 1) {
                 $rows = [];
                 $args = [];
                 foreach ($pending as $metric => $n) {

@@ -138,28 +138,35 @@ function closeModal(overlay) {
     overlay.remove();
 }
 
-// A minimal read-only popup (no refresh timer) for content that does not fit
-// inline, e.g. a full alert message. Closes on the button, click-outside or
-// Escape, just like the client popup.
-function infoModal(titleText, bodyNode) {
+// Shared modal shell: backdrop + panel + head (a title with a modal-name span)
+// + scrollable body, wired to close on the button, click-outside or Escape.
+// Callers fill the body, add any extra head controls before the close button,
+// then append the overlay to the document.
+function makeModal(nameText) {
     const overlay = el('div', 'modal-backdrop');
     const modal = el('div', 'modal');
     const head = el('div', 'modal-head');
     const title = el('div', 'modal-title');
-    title.append(el('span', 'modal-name', titleText));
+    const name = el('span', 'modal-name', nameText);
+    title.append(name);
+    const body = el('div', 'modal-body');
     const close = el('button', 'small', 'close');
     close.onclick = () => closeModal(overlay);
-    head.append(title, close);
-    // Wrapped so this popup gets the same head-stays-put, body-scrolls
-    // treatment as the client popup (see admin.css).
-    const body = el('div', 'modal-body');
-    body.append(bodyNode);
     modal.append(head, body);
     overlay.append(modal);
     overlay.onmousedown = (e) => { if (e.target === overlay) closeModal(overlay); };
     const onKey = (e) => { if (e.key === 'Escape') closeModal(overlay); };
     overlay._onKey = onKey;
     document.addEventListener('keydown', onKey);
+    return { overlay, modal, head, title, name, body, close };
+}
+
+// A minimal read-only popup (no refresh timer) for content that does not fit
+// inline, e.g. a full alert message.
+function infoModal(titleText, bodyNode) {
+    const { overlay, head, title, close, body } = makeModal(titleText);
+    head.append(title, close);
+    body.append(bodyNode);
     document.body.append(overlay);
 }
 
@@ -186,17 +193,10 @@ function localIntervalControl(get, set) {
 }
 
 async function showClient(id) {
-    const overlay = el('div', 'modal-backdrop');
-    const modal = el('div', 'modal');
-    overlay.append(modal);
-
     // The head is built once and stays put; only the body re-renders, so
     // the interval control keeps focus and the popup does not flicker.
-    const head = el('div', 'modal-head');
-    const title = el('div', 'modal-title');
-    const name = el('span', 'modal-name', id);
-    title.append(name, el('span', 'modal-id', id));
-    const body = el('div', 'modal-body');
+    const { overlay, head, title, name, body, close } = makeModal(id);
+    title.append(el('span', 'modal-id', id));
 
     const load = async () => {
         try {
@@ -219,15 +219,7 @@ async function showClient(id) {
     const ctl = localIntervalControl(() => clientRefreshSecs, (s) => { clientRefreshSecs = s; restart(); });
     const refresh = el('button', 'small refresh', 'refresh');
     refresh.onclick = load;
-    const close = el('button', 'small', 'close');
-    close.onclick = () => closeModal(overlay);
     head.append(title, ctl, refresh, close);
-    modal.append(head, body);
-
-    overlay.onmousedown = (e) => { if (e.target === overlay) closeModal(overlay); };
-    const onKey = (e) => { if (e.key === 'Escape') closeModal(overlay); };
-    overlay._onKey = onKey;
-    document.addEventListener('keydown', onKey);
 
     body.append(el('p', 'muted', 'Loading ' + id + ' ...'));
     document.body.append(overlay);

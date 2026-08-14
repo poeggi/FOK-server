@@ -36,14 +36,14 @@ final class Debug
         throw new RuntimeException('debug pin space full');
     }
 
-    /** @return array{payload:string,created:int}|null the dataset, or null if unknown/expired. */
+    /** @return array{payload:string}|null the dataset, or null if unknown/expired. */
     public static function get(string $pin): ?array
     {
-        $st = Db::get()->prepare('SELECT payload, created FROM debug WHERE pin = ? AND created > ?');
+        $st = Db::get()->prepare('SELECT payload FROM debug WHERE pin = ? AND created > ?');
         $st->execute([$pin, time() - FOK_DEBUG_TTL]);
         $row = $st->fetch();
         $st->closeCursor();
-        return $row === false ? null : ['payload' => $row['payload'], 'created' => (int)$row['created']];
+        return $row === false ? null : ['payload' => $row['payload']];
     }
 
     /**

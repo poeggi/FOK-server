@@ -32,10 +32,14 @@ final class AdminData
         foreach ($st->fetchAll() as $r) {
             $load[$r['bucket']][$r['metric']] = (int)$r['value'];
         }
-        $dbRows = 0;
-        foreach (self::TABLES as $table) {
-            $dbRows += (int)$db->query("SELECT COUNT(*) FROM $table")->fetchColumn();
-        }
+        // One statement sums every table's rows (TABLES is a fixed allowlist,
+        // never user input) instead of a COUNT query per table.
+        $dbRows = (int)$db->query(
+            'SELECT ' . implode(' + ', array_map(
+                static fn($t) => "(SELECT COUNT(*) FROM $t)",
+                self::TABLES
+            ))
+        )->fetchColumn();
         return [
             'counts' => Presence::counts(),
             'relaying' => ConnTrack::relayPairs(),

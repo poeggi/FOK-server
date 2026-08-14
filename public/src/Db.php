@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 20;
+    private const SCHEMA_VERSION = 21;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -306,6 +306,13 @@ final class Db
             // from the level number. Default 0 = not completed, for every
             // existing row and any submission that omits the flag.
             $pdo->exec('ALTER TABLE scores ADD COLUMN completed INTEGER NOT NULL DEFAULT 0');
+        }
+        if ($v < 21) {
+            // A score may optionally record the device category it was played
+            // on - pc, mobile, tv, console (see FOK_SCORE_PLATFORMS,
+            // api/scores.php). Nullable: NULL means the client reported none.
+            // The API contract stays 3.4 - the field is additive and optional.
+            $pdo->exec('ALTER TABLE scores ADD COLUMN platform TEXT');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

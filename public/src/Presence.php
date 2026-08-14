@@ -204,18 +204,22 @@ final class Presence
                 'registered' => (int)$row['registered'],
             ];
         }
-        $online = $db->prepare('SELECT COUNT(*) FROM players WHERE last_seen > ?');
-        $online->execute([$now - FOK_ONLINE_WINDOW]);
+        // Online and registered are the same table, so one pass yields both.
+        $players = $db->prepare(
+            'SELECT SUM(CASE WHEN last_seen > ? THEN 1 ELSE 0 END) AS online,
+                    COUNT(*) AS registered FROM players'
+        );
+        $players->execute([$now - FOK_ONLINE_WINDOW]);
+        $prow = $players->fetch();
+        $players->closeCursor();
         $duels = $db->prepare('SELECT COUNT(*) FROM duels WHERE last_seen > ?');
         $duels->execute([$now - FOK_DUEL_WINDOW]);
-        $onlineN = (int)$online->fetchColumn();
-        $online->closeCursor();
         $duelsN = (int)$duels->fetchColumn();
         $duels->closeCursor();
         $out = [
-            'online' => $onlineN,
+            'online' => (int)$prow['online'],
             'playing' => 2 * $duelsN,
-            'registered' => (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn(),
+            'registered' => (int)$prow['registered'],
         ];
         $db->prepare(
             'INSERT INTO stats (id, online, playing, registered, updated) VALUES (1, ?, ?, ?, ?)

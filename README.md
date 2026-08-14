@@ -3,9 +3,10 @@
 Central game server for FOK Snake (and future games). Runs as plain PHP on
 shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 
-Version 1.0.0 was the first stable release; 1.0.1 adds per-player stats over
-an additive contract (3.4). The admin, relay and matchmaking surfaces are
-considered production-stable.
+Version 1.0.0 was the first stable release. The 3.4 contract line adds, all
+additive: per-player stats (save/restore progress) and two optional score
+tags, "completed" and "platform". The admin, relay and matchmaking surfaces
+are considered production-stable.
 
 ## What it does
 
@@ -267,9 +268,10 @@ host-level. If this outgrows shared hosting, fix workers first.
     GET  /api/scores.php?limit=10
       -> {"ok":true,"scores":[{"rank":1,"name":"...","score":...,...}]}
     POST /api/scores.php {"id","score","level","diff","name"?,"color"?,
-                          "shopItems"?,"seed"?,"inputs"?,"completed"?,"pts"?}
-      -> {"ok":true,"rank":n,"top":bool}   (no name -> ANONYMOUS;
-         completed = the run cleared the final level, not just reached it)
+                          "shopItems"?,"seed"?,"inputs"?,"completed"?,
+                          "platform"?,"pts"?}
+      -> {"ok":true,"rank":n,"top":bool}   (no name -> ANONYMOUS; completed =
+         cleared the final level; platform = pc|mobile|tv|console, optional)
     POST /api/signal.php {"id","to","type":"invite|invite-relay|accept|accept-relay|decline|offer|answer|ice|bye|chat","payload"}
          (the -relay types set the no-P2P bit: honored when either side sends it)
       -> {"ok":true}   (chat payloads capped at 120 bytes; matchmaking

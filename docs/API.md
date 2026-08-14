@@ -431,6 +431,9 @@ Response:
           "shopItems": {"hat": 1},
           "completed": true,       bool (3.4): the run cleared the final level
                                    (finished the game), not merely reached it
+          "platform": "mobile",    string|null (3.4): device category the run
+                                   was played on - pc, mobile, tv or console;
+                                   null if the client did not report one
           "date": "16.07.26",      DD.MM.YY, same format as the local list
           "created": 1784182950    unix seconds, for exact ordering
         }
@@ -439,9 +442,9 @@ Response:
 
 Entries carry the same fields as a FOK-snake local top-10 entry
 (name, score, level, diff, color, shopItems, date) plus rank, player_id,
-completed and created. Sorted by score descending, ties broken by earlier
-submission - `completed` does not change the ordering, it distinguishes a
-finished game from a run that only reached the same level.
+completed, platform and created. Sorted by score descending, ties broken
+by earlier submission - `completed` does not change the ordering, it
+distinguishes a finished game from a run that only reached the same level.
 
 ## POST /api/scores.php - submit a score
 
@@ -462,6 +465,10 @@ Request:
       "completed": true,          optional bool (3.4), default false: the run
                                   CLEARED the final level (finished the game),
                                   not merely reached it; client-asserted
+      "platform": "mobile",       optional string (3.4): the device category
+                                  the run was played on - one of pc, mobile,
+                                  tv, console; an absent or unrecognized value
+                                  is stored as null (unknown)
       "pts": 1784190295123        optional, PTS of the game-over moment
                                   (never in the future, see PTS validation)
     }

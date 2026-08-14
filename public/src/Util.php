@@ -302,9 +302,12 @@ final class Util
                 Alerts::raise('expiry', "Expired $n player(s) not seen for "
                     . Settings::int('player_ttl_days') . ' days; friendships cancelled');
             }
+            // On the same hourly cadence: drop req_min buckets older than 2h.
+            // They are pure bloat once counted, so this keeps the DELETE (and
+            // its write lock) off the other ~24 in 25 watch() calls.
+            $db->prepare("DELETE FROM counters WHERE metric = 'req_min' AND bucket < ?")
+                ->execute([gmdate('YmdHi', time() - 7200)]);
         }
-        Db::get()->prepare("DELETE FROM counters WHERE metric = 'req_min' AND bucket < ?")
-            ->execute([gmdate('YmdHi', time() - 7200)]);
     }
 
     // Counts invalid (HTTP 400) requests per IP per minute and alerts on

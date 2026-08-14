@@ -8,9 +8,11 @@ require_once __DIR__ . '/../src/Scores.php';
 /**
  * GET (optional ?limit=1..100) -> {"ok": true, "scores": [top entries]}
  * POST {"id", "name", "score", "level", "diff", "color"?, "shopItems"?,
- *       "seed"?, "inputs"?, "completed"?, "pts"?}
+ *       "seed"?, "inputs"?, "completed"?, "platform"?, "pts"?}
  * completed marks a run that cleared the FINAL level (finished the game), as
  * opposed to merely reaching that level; the client asserts it.
+ * platform is the optional device category the run was played on, one of
+ * FOK_SCORE_PLATFORMS (pc/mobile/tv/console); an unlisted value stores null.
  * seed + inputs are the deterministic replay material; they are stored
  * verbatim for the future server-side sanity check (anti-spoofing).
  * Submissions are throttled per player (HTTP 429 above the cap).
@@ -81,6 +83,19 @@ $completed = $body['completed'] ?? false;
 if (!is_bool($completed)) {
     Util::fail('invalid completed');
 }
+$platform = $body['platform'] ?? null;
+if ($platform !== null) {
+    if (!is_string($platform)) {
+        Util::fail('invalid platform');
+    }
+    // A device category the server does not list is dropped to null rather
+    // than rejected, so a client on an unlisted platform still gets its score
+    // in - the tag is purely informational.
+    $platform = strtolower(trim($platform));
+    if (!in_array($platform, FOK_SCORE_PLATFORMS, true)) {
+        $platform = null;
+    }
+}
 Util::checkPts($body['pts'] ?? null, "player $id");
 
 Presence::touch($id, Util::clientIp());
@@ -92,7 +107,7 @@ if ($recentN >= Settings::int('score_rate_max')) {
     Alerts::raise('spam', "Client spam: score submissions throttled for player $id");
     Util::fail('too many submissions', 429);
 }
-$rank = Scores::submit($id, $name, $score, $level, $diff, $color, $shopItems, $seed, $inputs, $completed);
+$rank = Scores::submit($id, $name, $score, $level, $diff, $color, $shopItems, $seed, $inputs, $completed, $platform);
 Util::bump('score_submit');
 
 Util::jsonOut(['ok' => true, 'rank' => $rank, 'top' => $rank <= FOK_TOP_SCORES]);

@@ -34,7 +34,7 @@ R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application
 expect "oversized request body rejected with 413" '413' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"name\":\"SMOKE\",\"score\":4200,\"level\":7,\"diff\":2,\"color\":3,\"shopItems\":{\"hat\":1},\"seed\":42,\"inputs\":[[1,2]]}" \
+    -d "{\"id\":\"$ID1\",\"name\":\"SMOKE\",\"score\":4200,\"level\":7,\"diff\":2,\"color\":3,\"shopItems\":{\"hat\":1},\"seed\":42,\"inputs\":[[1,2]],\"platform\":\"mobile\"}" \
     "$BASE/api/scores.php")
 expect "score submit" '"rank":1' "$R"
 
@@ -44,9 +44,15 @@ expect "score listed" '"name":"SMOKE"' "$R"
 expect "score has color" '"color":3' "$R"
 expect "score has shopItems" '"shopItems":{"hat":1}' "$R"
 expect "score has date" '"date":"' "$R"
+expect "score carries platform" '"platform":"mobile"' "$R"
 
 R=$(curl -s "$BASE/api/scores.php?limit=1")
 expect "scores limit works" '"scores":[{' "$R"
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"name\":\"BADP\",\"score\":5,\"level\":1,\"diff\":1,\"platform\":5}" \
+    "$BASE/api/scores.php")
+expect "non-string platform rejected" '"error":"invalid platform"' "$R"
 
 # Trip the per-player submit throttle. With admin, lower the cap so a few
 # submits suffice; otherwise flood to the default cap (10).

@@ -119,18 +119,20 @@ ok($top[1]['name'] === 'TESTER', 'name is trimmed');
 ok($top[2]['name'] === 'SNAKE PLISSKEN', 'fresh db seeded with default entry');
 ok($top[2]['score'] === 82, 'seed entry has 82 points');
 ok($top[2]['date'] === '26.11.97', 'seed entry keeps the classic date');
-foreach (['rank', 'player_id', 'name', 'score', 'level', 'diff', 'color', 'shopItems', 'completed', 'date', 'created'] as $field) {
+foreach (['rank', 'player_id', 'name', 'score', 'level', 'diff', 'color', 'shopItems', 'completed', 'platform', 'date', 'created'] as $field) {
     ok(array_key_exists($field, $top[0]), "entry has $field");
 }
 ok($top[1]['color'] === 5, 'color preserved');
 ok(is_object($top[1]['shopItems']) && $top[1]['shopItems']->hat === 1, 'shopItems preserved as object');
 ok(preg_match('/^\d{2}\.\d{2}\.\d{2}$/', $top[0]['date']) === 1, 'date is DD.MM.YY');
 ok($top[0]['completed'] === false, 'a score defaults to not completed');
+ok($top[0]['platform'] === null, 'a score defaults to no platform');
 $rank = Scores::submit('cccccccc', 'FINISHER', 500, 10, 1, 0, '{}', null, null, true);
 ok(Scores::top()[0]['completed'] === true, 'a run that cleared the final level is marked completed');
 ok(Scores::top()[1]['completed'] === false, 'a same-level run that did not finish stays not completed');
-$long = Scores::submit('aaaaaaaa', str_repeat('X', 40), 1, 1, 1, 0, '{}', null, null);
+$long = Scores::submit('aaaaaaaa', str_repeat('X', 40), 1, 1, 1, 0, '{}', null, null, false, 'pc');
 ok(mb_strlen(Scores::top()[4]['name']) === FOK_MAX_NAME_LEN, 'name capped at max length');
+ok(Scores::top()[4]['platform'] === 'pc', 'a reported platform round-trips');
 
 // Presence: targeted online + latency info
 $info = Presence::infoOf(['aaaaaaaa', 'cccccccc']);

@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.0.1';
+const FOK_SERVER_VERSION = '1.0.2';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -38,8 +38,11 @@ const FOK_SERVER_VERSION = '1.0.1';
 // v3.4: additive per-player stats. New GET/POST /api/stats.php lets a client
 // save cumulative gameplay counters (games, levels cleared, furthest level,
 // deaths, duels, playtime) and read them back to restore progress on another
-// device (see docs/API.md). Self-reported, stored monotonically. Major stays
-// 3; a client that does not use it is unaffected.
+// device (see docs/API.md). Self-reported, stored monotonically. The same 3.4
+// line also adds two optional, additive score fields: "completed" (the run
+// cleared the final level) and "platform" (the device category it was played
+// on). Major stays 3; a client that uses none of these is unaffected, and one
+// that adopts 3.4 picks them all up.
 const FOK_API_VERSION = '3.4';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
@@ -150,6 +153,13 @@ const FOK_MAX_NAME_LEN = 15;
 // A quick-match seeker drops out of the queue after this many quiet seconds.
 const FOK_MATCH_WINDOW = 10;
 const FOK_MAX_FRIENDS = 64;
+
+// The device categories a score may optionally be tagged with (see
+// api/scores.php): canonical lowercase tokens - pc (desktop or laptop),
+// mobile (phone or tablet), tv (smart TV), console (game console). Stored
+// verbatim for display; an absent or unrecognized value becomes NULL
+// (unknown), so a score is never lost to a platform the server does not list.
+const FOK_SCORE_PLATFORMS = ['pc', 'mobile', 'tv', 'console'];
 
 // Per-player self-reported gameplay stats (see PStats, api/stats.php): one row
 // of cumulative counters per id, so a client can save its progress and restore

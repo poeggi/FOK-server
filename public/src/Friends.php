@@ -105,9 +105,21 @@ final class Friends
     /** @return array set of ids (from $ids) that are accepted friends of $me */
     public static function acceptedOf(string $me, array $ids): array
     {
+        if ($ids === []) {
+            return [];
+        }
+        // One read instead of a SELECT per id (this runs on the hello hot
+        // path): pull $me's accepted pairs and keep those that were asked
+        // about. Pairs are normalized (a < b), so the peer is the side != $me.
+        $want = array_flip($ids);
+        $st = Db::get()->prepare(
+            "SELECT a, b FROM friends WHERE state = 'accepted' AND (a = ? OR b = ?)"
+        );
+        $st->execute([$me, $me]);
         $out = [];
-        foreach ($ids as $peer) {
-            if (self::isFriend($me, $peer)) {
+        foreach ($st->fetchAll() as $row) {
+            $peer = $row['a'] === $me ? $row['b'] : $row['a'];
+            if (isset($want[$peer])) {
                 $out[$peer] = true;
             }
         }
