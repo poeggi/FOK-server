@@ -32,13 +32,14 @@ $counts = Presence::counts();
   <p class="muted">No scores submitted yet. Be the first!</p>
   <?php else: ?>
   <table>
-    <tr><th>#</th><th>Name</th><th>Score</th><th>Level</th><th>Date</th></tr>
+    <tr><th>#</th><th>Name</th><th>Score</th><th>Diff</th><th>Level</th><th>Date</th></tr>
     <?php foreach ($scores as $s): ?>
     <tr>
       <td><?= $s['rank'] ?></td>
       <td><?= htmlspecialchars($s['name']) ?></td>
       <td><?= $s['score'] ?></td>
-      <td><?= $s['level'] ?></td>
+      <td><?= ['E', 'N', 'H'][$s['diff']] ?? 'N' ?></td>
+      <td><?= $s['level'] ?><?php if ($s['completed']): ?> <span class="win" title="Completed the final level">&#9733;</span><?php endif; ?></td>
       <td><?= gmdate('d.m.y', $s['created']) ?></td>
     </tr>
     <?php endforeach; ?>
