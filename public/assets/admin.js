@@ -733,10 +733,18 @@ const MODULES = [
             box.replaceChildren();
             if (!d.scores.length) { box.append(el('p', 'muted', 'No scores yet.')); return; }
             const table = el('table');
-            table.append(row(['#', 'Name', 'Score', 'Lvl', 'Player', 'Valid', 'Date', ''], 'th'));
+            table.append(row(['#', 'Name', 'Score', 'Diff', 'Lvl', 'Player', 'Valid', 'Date', ''], 'th'));
             for (const s of d.scores) {
-                const r = row([s.rank, s.name, s.score, s.level, s.player_id,
+                const diff = ['E', 'N', 'H'][s.diff] || 'N';
+                const r = row([s.rank, s.name, s.score, diff, s.level, s.player_id,
                     s.validated ? 'yes' : '-', s.date]);
+                if (s.completed) {
+                    const lvl = r.children[4];
+                    lvl.append(' ');
+                    const star = el('span', 'win', '\u2605');
+                    star.title = 'Completed the final level';
+                    lvl.append(star);
+                }
                 const btn = el('button', 'small', 'delete');
                 btn.onclick = async () => {
                     if (!confirm('Delete score by ' + s.name + '?')) return;

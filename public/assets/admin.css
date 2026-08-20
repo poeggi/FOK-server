@@ -249,6 +249,7 @@ th.sort-desc::after { border-top: 5px solid currentColor; }
 tr.online td:first-child { color: var(--accent); }
 tr.gone td { opacity: 0.5; }
 tr.unseen td { color: var(--danger); }
+.win { color: #ffcb3d; }
 
 /* A client id is a link into its details popup; a truncated IPv6 shows the
    full address on hover. */
