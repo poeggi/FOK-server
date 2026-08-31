@@ -285,3 +285,18 @@ rejected (400) if a client sends them, but every client must HANDLE them:
 connection attempt expired before the peer collected it - the attempt is
 dead). Caps answer a distinct status: 429 (mailbox full, relay backlog
 full, or relay rate limit), 503 (relay busy), 413 (body over the cap).
+
+## License
+
+FOK-server is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. It is distributed WITHOUT ANY WARRANTY, without even the implied
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See LICENSE
+for the full text.
+
+Copyright (C) 2026 Kai Poggensee
+
+This is network server software, so AGPL section 13 applies directly: anyone
+who runs a modified version and lets others interact with it over a network
+must offer those users the source of that version.
