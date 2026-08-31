@@ -22,13 +22,15 @@ are considered production-stable.
   strangers (the match response carries the opponent's name). Players
   not seen for 180 days (configurable) are expired automatically:
   removed from the database, friendships cancelled, friends notified.
-- Relay fallback: when the P2P DataChannel cannot connect, duels relay
+- Relay fallback (DEPRECATED - see docs/DEPRECATED-relay.md): when the P2P
+  DataChannel cannot connect, duels relay
   their (input-level) messages through the server via relay.php long
   polls - degraded latency but works through any firewall; concurrent
   relayed duels are capped to protect the shared-hosting worker pool.
   This is NOT WebRTC relaying: there is no TURN server, and the server
   never carries an RTCPeerConnection. WebRTC is abandoned, and plain
-  opaque messages go over HTTP instead.
+  opaque messages go over HTTP instead. Still live; being phased out in
+  favour of a persistent async hub off this host.
 - Global highscores: top 100 list. Submissions carry the deterministic
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
   be sanity-checked by re-simulation to prevent spoofing (validated flag).

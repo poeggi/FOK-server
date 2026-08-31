@@ -7,6 +7,9 @@ require_once __DIR__ . '/Alerts.php';
 require_once __DIR__ . '/RelayStore.php';
 
 /**
+ * DEPRECATED - part of the server-side relay fallback. See
+ * docs/DEPRECATED-relay.md (delete manifest). Still live; no new callers.
+ *
  * Per-client relay send-rate guard, with two transports behind one interface -
  * the SAME choice the message store makes (RelayStore::usingApcu), so a relay
  * running on shared memory keeps its rate-limiting there too and never touches

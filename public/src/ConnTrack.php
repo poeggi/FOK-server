@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
-require_once __DIR__ . '/RelayRate.php';
+require_once __DIR__ . '/Relay.php';
 
 /**
  * Per-client state of the current 1:1 connection, one row per player.
@@ -93,87 +93,14 @@ final class ConnTrack
         )->execute([time(), $id, $peer]);
     }
 
-    /**
-     * Real traffic through the hub - also the only writer of relay_seen,
-     * so a relay slot always costs hub traffic and never a client's claim
-     * to be relaying (accept-relay is not friendship-gated, so claims are
-     * free and a few would otherwise deny the relay to everyone).
-     * Writes only the sender's row: one statement on a hot path.
-     */
-    public static function relaying(string $from, string $to): void
-    {
-        $now = time();
-        Db::get()->prepare(
-            'INSERT INTO conn (id, peer, state, mode, updated, relay_seen) VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT (id) DO UPDATE SET
-                 peer = excluded.peer,
-                 state = excluded.state,
-                 mode = excluded.mode,
-                 updated = excluded.updated,
-                 relay_seen = excluded.relay_seen'
-        )->execute([$from, $to, 'playing', 'relay', $now, $now]);
-    }
-
-    /**
-     * Does this pair already hold a relay admission slot? Asked before
-     * the relay-duel cap, so an admitted duel is never rejected mid-game.
-     */
-    public static function isRelaying(string $a, string $b): bool
-    {
-        $st = Db::get()->prepare(
-            'SELECT 1 FROM conn WHERE relay_seen > ?
-               AND ((id = ? AND peer = ?) OR (id = ? AND peer = ?)) LIMIT 1'
-        );
-        $st->execute([time() - FOK_RELAY_WINDOW, $a, $b, $b, $a]);
-        $relaying = $st->fetchColumn() !== false;
-        $st->closeCursor();
-        return $relaying;
-    }
-
-    /**
-     * Has the pairing $id had with $peer been explicitly torn down? A bye or
-     * decline marks both sides' conn rows 'ended'/'declined' (see end/note).
-     * A relayed peer holding a GET checks this so it learns the other side
-     * left AT ONCE, instead of waiting out its own liveness timeout - the
-     * relay's answer to a P2P DataChannel close. Only an explicit teardown
-     * counts; a silent drop (tab closed, no bye) is left to that timeout.
-     */
-    public static function peerLeft(string $id, string $peer): bool
-    {
-        // Live hub traffic from EITHER side means the pair is playing (again),
-        // so a stale 'ended' row from a previous match must not be read as a
-        // leave and kill the fresh one. A bye zeroes relay_seen (see end), so
-        // this is false exactly when the teardown is real.
-        if (self::isRelaying($id, $peer)) {
-            return false;
-        }
-        $st = Db::get()->prepare(
-            "SELECT 1 FROM conn WHERE id = ? AND peer = ? AND state IN ('ended', 'declined') LIMIT 1"
-        );
-        $st->execute([$id, $peer]);
-        $left = $st->fetchColumn() !== false;
-        $st->closeCursor();
-        return $left;
-    }
-
-    /**
-     * Pairs running through the hub. Counted from relay_seen, not from
-     * queued relay messages: those are deleted as the receiver drains
-     * them, so a healthy duel would count as zero and the cap would
-     * protect nothing.
-     */
-    public static function relayPairs(): int
-    {
-        $st = Db::get()->prepare(
-            "SELECT COUNT(DISTINCT CASE WHEN id < peer THEN id || ':' || peer
-                                        ELSE peer || ':' || id END)
-               FROM conn WHERE peer IS NOT NULL AND relay_seen > ?"
-        );
-        $st->execute([time() - FOK_RELAY_WINDOW]);
-        $pairs = (int)$st->fetchColumn();
-        $st->closeCursor();
-        return $pairs;
-    }
+    // The relay slot accounting that used to live here (markRelaying,
+    // isRelaying, activePairs, peerLeft - all reading/writing conn.relay_seen)
+    // moved to the Relay facade so the whole relay fallback deletes with that
+    // file. See docs/DEPRECATED-relay.md. What stays: markEnded zeroes
+    // relay_seen inside the bye UPDATE (freeing a byed duel's slot at once,
+    // marked above), stateOf reads the column for the admin popup, and set()/
+    // BY_TYPE understand the 'relay' connection mode. Those are the only relay
+    // references left in this class, and each is a one-token removal.
 
     /**
      * The raw tracked-connection row for one client (admin detail view), or
@@ -255,19 +182,13 @@ final class ConnTrack
         $db = Db::get();
         $now = time();
         $st = $db->prepare(
-            'SELECT p.id, p.name, p.latency, c.peer, c.state, c.mode, c.updated,
-                    rr.total AS msgs
+            'SELECT p.id, p.name, p.latency, c.peer, c.state, c.mode, c.updated
                FROM conn c
                JOIN players p ON p.id = c.id
-               LEFT JOIN relay_rate rr ON rr.id = c.id
               WHERE c.peer IS NOT NULL AND c.updated > ?
               ORDER BY c.updated DESC LIMIT ' . $limit
         );
         $st->execute([$now - FOK_CONN_TTL - FOK_DUEL_LINGER]);
-        // The per-client message count lives with the rate-limiter, which
-        // follows the relay's transport: on shared memory the rr.total column
-        // is never written, so read the live figure instead of the stale JOIN.
-        $rrApcu = RelayRate::usesApcu();
         $out = [];
         $seen = [];
         foreach ($st->fetchAll() as $r) {
@@ -292,7 +213,7 @@ final class ConnTrack
                 'state' => $state,
                 'mode' => $r['mode'],
                 'latency' => $r['latency'] === null ? null : (int)$r['latency'],
-                'msgs' => $rrApcu ? RelayRate::totalOf($r['id']) : (int)$r['msgs'],
+                'msgs' => Relay::msgsFor($r['id']),
                 'since' => (int)$r['updated'],
             ];
         }

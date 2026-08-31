@@ -22,6 +22,7 @@ require_once __DIR__ . '/../public/src/RelayRate.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
 require_once __DIR__ . '/../public/src/Caps.php';
 require_once __DIR__ . '/../public/src/RelayStore.php';
+require_once __DIR__ . '/../public/src/Relay.php';
 require_once __DIR__ . '/../public/src/Load.php';
 require_once __DIR__ . '/../public/src/Vault.php';
 require_once __DIR__ . '/../public/src/PStats.php';
@@ -462,7 +463,7 @@ ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'accept-relay declares relay from the
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
 ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'plain invite starts out p2p');
-ConnTrack::relaying('aaaaaaaa', 'bbbbbbbb');
+Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
 ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'relay traffic reports relay without a declaration');
 ok(duelOf('aaaaaaaa')['state'] === 'playing', 'relay traffic means the game runs');
 
@@ -495,50 +496,50 @@ Db::get()->prepare('UPDATE mm_queue SET last_poll = ? WHERE id = ?')
 ok(duelOf('aaaaaaaa') === [], 'a seeker that stopped polling drops off the Duels card');
 Db::get()->exec('DELETE FROM mm_queue');
 
-// ConnTrack: relay admission is counted from the hub traffic a pair
+// Relay: relay admission is counted from the hub traffic a pair
 // really caused, not from queued messages (gone the instant the receiver
 // drains them) and not from what a client claims.
 Db::get()->exec('DELETE FROM conn');
-ok(ConnTrack::relayPairs() === 0, 'no relayed pairs on a quiet server');
-ok(!ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'idle pair holds no relay slot');
-ConnTrack::relaying('aaaaaaaa', 'bbbbbbbb');
-ok(ConnTrack::relayPairs() === 1, 'relaying pair counted once');
-ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'relaying pair holds its slot');
-ok(ConnTrack::isRelaying('bbbbbbbb', 'aaaaaaaa'), 'slot is held from either side');
-ConnTrack::relaying('bbbbbbbb', 'aaaaaaaa');
-ok(ConnTrack::relayPairs() === 1, 'both directions are still one pair');
+ok(Relay::activePairs() === 0, 'no relayed pairs on a quiet server');
+ok(!Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'idle pair holds no relay slot');
+Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
+ok(Relay::activePairs() === 1, 'relaying pair counted once');
+ok(Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'relaying pair holds its slot');
+ok(Relay::isRelaying('bbbbbbbb', 'aaaaaaaa'), 'slot is held from either side');
+Relay::markRelaying('bbbbbbbb', 'aaaaaaaa');
+ok(Relay::activePairs() === 1, 'both directions are still one pair');
 Db::get()->prepare('UPDATE conn SET relay_seen = ? WHERE id IN (?, ?)')
     ->execute([time() - FOK_RELAY_WINDOW - 1, 'aaaaaaaa', 'bbbbbbbb']);
-ok(ConnTrack::relayPairs() === 0, 'a pair that stopped relaying frees its slot');
+ok(Relay::activePairs() === 0, 'a pair that stopped relaying frees its slot');
 
-// ConnTrack: a DECLARATION must never take a relay slot. accept-relay is
+// Relay: a DECLARATION must never take a relay slot. accept-relay is
 // not friendship-gated, so if a claim counted, a handful of invented
 // pairs would deny the relay to everyone.
 Db::get()->exec('DELETE FROM conn');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite-relay');
 ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'declaration is tracked as relay mode');
-ok(ConnTrack::relayPairs() === 0, 'a no-p2p declaration takes no relay slot');
-ok(!ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'declaring pair holds no slot yet');
-ConnTrack::relaying('aaaaaaaa', 'bbbbbbbb');
-ok(ConnTrack::relayPairs() === 1, 'real hub traffic takes the slot');
+ok(Relay::activePairs() === 0, 'a no-p2p declaration takes no relay slot');
+ok(!Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'declaring pair holds no slot yet');
+Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
+ok(Relay::activePairs() === 1, 'real hub traffic takes the slot');
 
-// ConnTrack: bye and decline are not friendship-gated either, so a
+// Relay vs teardown: bye and decline are not friendship-gated either, so a
 // stranger must not be able to end someone else's connection - let alone
 // drop the slot of a live relayed duel and get it turned away on resume.
-ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'duel is relaying before the stranger');
+ok(Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'duel is relaying before the stranger');
 ConnTrack::note('cccccccc', 'aaaaaaaa', 'bye');
 ok(duelOf('aaaaaaaa')['peer'] === 'bbbbbbbb', "a stranger's bye leaves the connection alone");
-ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), "a stranger's bye cannot drop the relay slot");
+ok(Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), "a stranger's bye cannot drop the relay slot");
 ConnTrack::playing('aaaaaaaa', 'bbbbbbbb');
-ok(ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'the duel heartbeat keeps the relay slot');
+ok(Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'the duel heartbeat keeps the relay slot');
 // peerLeft is the relay leave signal: a live duel is NOT gone; the real
 // peer's bye makes it gone at once (a relayed peer holding a GET reads this
 // instead of waiting out its liveness timeout).
-ok(!ConnTrack::peerLeft('aaaaaaaa', 'bbbbbbbb'), 'a live duel does not read as the peer having left');
+ok(!Relay::peerLeft('aaaaaaaa', 'bbbbbbbb'), 'a live duel does not read as the peer having left');
 ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'bye');
 ok(duelOf('aaaaaaaa')['state'] === 'ended', "the real peer's bye ends it (it lingers)");
-ok(!ConnTrack::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'and frees the relay slot at once');
-ok(ConnTrack::peerLeft('aaaaaaaa', 'bbbbbbbb'), "the real peer's bye reads as gone");
+ok(!Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'and frees the relay slot at once');
+ok(Relay::peerLeft('aaaaaaaa', 'bbbbbbbb'), "the real peer's bye reads as gone");
 Db::get()->exec('DELETE FROM conn');
 
 // An early fetch - fetchColumn(), fetch() - that leaves its statement open

@@ -22,6 +22,8 @@ final class Settings
         'chat_max_len' => [FOK_CHAT_MAX_LEN, 'Max chat message bytes'],
         'start_lead_min_ms' => [200, 'Min lead time for server-issued level starts (ms)'],
         'start_sync_max_age_ms' => [2000, 'Reject a start whose sync proof is older than (ms)'],
+        // DEPRECATED: relay fallback (see docs/DEPRECATED-relay.md). These
+        // seven relay_* settings are removed with the feature.
         'relay_max_duels' => [9, 'Max concurrent relayed duels (protects FPM workers)'],
         'relay_max_payload' => [2048, 'Max relayed message bytes'],
         'relay_pending_cap' => [128, 'Max undelivered relay messages per receiver'],

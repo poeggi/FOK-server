@@ -8,6 +8,9 @@ require_once __DIR__ . '/Alerts.php';
 require_once __DIR__ . '/Caps.php';
 
 /**
+ * DEPRECATED - part of the server-side relay fallback. See
+ * docs/DEPRECATED-relay.md (delete manifest). Still live; no new callers.
+ *
  * The relay hub's message store, with two transports behind one interface.
  *
  * A relayed message is ephemeral by definition - worthless once delivered,
@@ -71,7 +74,7 @@ final class RelayStore
     /**
      * Should the pair's conn liveness row be refreshed for THIS message?
      * On the APCu transport the relay never touches the database except that
-     * marker (ConnTrack::relaying), which the admin cards and the duel cap
+     * marker (Relay::markRelaying), which the admin cards and the duel cap
      * read over FOK_RELAY_WINDOW. Writing it per message would put the single
      * SQLite writer back on the hot path APCu exists to clear, so on APCu it
      * is throttled to once per pair per FOK_RELAY_TRACK_THROTTLE, held in the

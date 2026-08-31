@@ -2,14 +2,18 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
-require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Alerts.php';
 require_once __DIR__ . '/../src/Settings.php';
-require_once __DIR__ . '/../src/ConnTrack.php';
+require_once __DIR__ . '/../src/Relay.php';
 require_once __DIR__ . '/../src/RelayRate.php';
 require_once __DIR__ . '/../src/RelayStore.php';
 
 /**
+ * DEPRECATED - see docs/DEPRECATED-relay.md for the removal plan and the
+ * full delete manifest. Still live and functional; do not build new features
+ * on it. The blocking one-worker-per-long-poll model (see the TODO below) is
+ * the reason: the replacement is a persistent async hub off this host.
+ *
  * In-duel message relay - the FALLBACK when the peer-to-peer DataChannel
  * cannot be established. The server becomes the hub and forwards opaque
  * messages between the two peers of a duel.
@@ -91,7 +95,7 @@ if ($method === 'GET') {
         $t = microtime(true);
         if ($t >= $nextLeftCheck) {
             $nextLeftCheck = $t + 1.0;
-            if (ConnTrack::peerLeft($id, $peer)) {
+            if (Relay::peerLeft($id, $peer)) {
                 // The peer tore the pairing down (bye/decline): say so at once
                 // (v3.3), the relay's answer to a P2P DataChannel close. A
                 // client that does not read "gone" ignores it and falls back
@@ -142,11 +146,11 @@ if (RelayStore::pending($peer, $id) >= Settings::int('relay_pending_cap')) {
 // pair, a relay-window of silence, or an evicted marker - pays for the real
 // check (a conn read, plus a COUNT for a genuinely new pair).
 if (!RelayStore::admitted($id, $peer)) {
-    // No marker: consult the authoritative slot record FIRST, so an APCu
-    // eviction can never cut off a live duel - only a pair that holds no slot
-    // THERE either is genuinely new and subject to the cap.
-    if (!ConnTrack::isRelaying($id, $peer)
-        && ConnTrack::relayPairs() >= Settings::int('relay_max_duels')) {
+    // No marker: Relay::capReached consults the authoritative slot record
+    // FIRST (a conn read), so an APCu eviction can never cut off a live duel -
+    // only a pair that holds no slot THERE either is genuinely new and pays
+    // the COUNT and the cap.
+    if (Relay::capReached($id, $peer)) {
         $msg = 'Relay duel cap reached: new relayed duel rejected';
         if (Alerts::raise('relay', $msg)) {
             error_log('FOK relay: ' . $msg);
@@ -172,7 +176,7 @@ if (!RelayStore::push($id, $peer, $payload)) {
 // mere liveness marker and is throttled off the per-message hot path (see
 // RelayStore::shouldTrackRelay).
 if (RelayStore::shouldTrackRelay($id, $peer, $now)) {
-    ConnTrack::relaying($id, $peer);
+    Relay::markRelaying($id, $peer);
 }
 Util::bump('relay');
 // Deferred, like bump: count this message and check the sender's rate

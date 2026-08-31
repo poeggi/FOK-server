@@ -5,6 +5,7 @@ require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Presence.php';
 require_once __DIR__ . '/ConnTrack.php';
+require_once __DIR__ . '/Relay.php';
 require_once __DIR__ . '/Load.php';
 require_once __DIR__ . '/Vault.php';
 require_once __DIR__ . '/PStats.php';
@@ -42,7 +43,7 @@ final class AdminData
         )->fetchColumn();
         return [
             'counts' => Presence::counts(),
-            'relaying' => ConnTrack::relayPairs(),
+            'relaying' => Relay::activePairs(),
             'friendships' => (int)$db->query("SELECT COUNT(*) FROM friends WHERE state = 'accepted'")->fetchColumn(),
             'friendships_pending' => (int)$db->query("SELECT COUNT(*) FROM friends WHERE state = 'pending'")->fetchColumn(),
             'scores_total' => (int)$db->query('SELECT COUNT(*) FROM scores')->fetchColumn(),
@@ -80,7 +81,7 @@ final class AdminData
             $duel['age'] = $now - $duel['updated'];
             $duel['live'] = $duel['updated'] > $now - FOK_CONN_TTL;
         }
-        $rate = self::one($db, 'SELECT total, blocked_until FROM relay_rate WHERE id = ?', $id);
+        $rate = Relay::rateDetail($id);
         $queue = self::one($db, 'SELECT since, matched_with FROM mm_queue WHERE id = ?', $id);
         $fr = $db->prepare("SELECT state, COUNT(*) c FROM friends WHERE a = ? OR b = ? GROUP BY state");
         $fr->execute([$id, $id]);
@@ -113,8 +114,7 @@ final class AdminData
                 'accept_until' => (int)$p['accept_until'],
                 'friend_ban_until' => (int)$p['friend_ban_until'],
                 'duel' => $duel,
-                'relay_rate' => $rate === null ? null
-                    : ['total' => (int)$rate['total'], 'blocked_until' => (int)$rate['blocked_until']],
+                'relay_rate' => $rate,
                 'matchmaking' => $queue === null ? null
                     : ['since' => (int)$queue['since'], 'matched_with' => $queue['matched_with']],
                 'friends' => $friends,

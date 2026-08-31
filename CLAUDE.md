@@ -25,7 +25,9 @@ endpoint - it is the contract the FOK-snake client is built against.
   RTCPeerConnection (there is no TURN). Game traffic normally goes P2P
   and never touches the server; the ONE exception is the relay fallback
   (api/relay.php), where WebRTC is abandoned and opaque in-duel messages
-  go over HTTP instead - capped, because it costs workers.
+  go over HTTP instead - capped, because it costs workers. The relay
+  fallback is DEPRECATED (still live); do not extend it. Removal plan and
+  the full delete manifest: docs/DEPRECATED-relay.md.
 - There is no persistent state: PHP dies at the end of every request, so
   the database IS the state and "background" work piggybacks on the next
   request (TTL sweeps, expiry, monitoring). Cost per request must stay

@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.0.3';
+const FOK_SERVER_VERSION = '1.0.4';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -91,6 +91,8 @@ const FOK_CONN_TTL = 60;
 // long AFTER its liveness lapses (a duel went quiet, a client dropped), so
 // a just-ended entry does not blink out the instant it stops refreshing.
 const FOK_DUEL_LINGER = 10;
+// DEPRECATED: relay fallback (see docs/DEPRECATED-relay.md). FOK_RELAY_WINDOW,
+// FOK_RELAY_TRACK_THROTTLE and FOK_POLL_CHECK_USEC_APCU below go with it.
 // How long a pair holds its relay slot after its last message through the
 // hub. A relaying duel refreshes this many times a second, so the window
 // only has to outlast a pause (level transition, backgrounded tab) - keep

@@ -7,7 +7,7 @@ require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Friends.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Starts.php';
-require_once __DIR__ . '/../src/RelayStore.php';
+require_once __DIR__ . '/../src/Relay.php';
 
 /**
  * Matchmaking / WebRTC signaling relay.
@@ -57,13 +57,14 @@ if (($type === 'invite' || $type === 'invite-relay') && !Friends::isFriend($id, 
     Util::fail('not friends', 403);
 }
 
-// The no-P2P declaration (from EITHER side) means the game will run
-// through the server hub without a P2P attempt - so relay capacity is
-// checked right now, and a full relay answers 503 before any game
-// setup is wasted.
+// DEPRECATED: relay fallback surface (this block, the pairEnded call on
+// bye, and the isRelaying guard on accept below - all through the Relay
+// facade). See docs/DEPRECATED-relay.md. The no-P2P declaration (from
+// EITHER side) means the game will run through the server hub without a P2P
+// attempt - so relay capacity is checked right now, and a full relay answers
+// 503 before any game setup is wasted.
 if (($type === 'invite-relay' || $type === 'accept-relay')
-    && !ConnTrack::isRelaying($id, $to)
-    && ConnTrack::relayPairs() >= Settings::int('relay_max_duels')) {
+    && Relay::capReached($id, $to)) {
     Alerts::raise('relay', 'Relay duel cap reached: no-P2P game declaration rejected');
     Util::fail('relay busy', 503);
 }
@@ -71,7 +72,7 @@ if (($type === 'invite-relay' || $type === 'accept-relay')
 // 'bye' ends the pairing, so its relay backlog dies with it: an
 // undelivered input must never reach the pair's next duel.
 if ($type === 'bye') {
-    RelayStore::forgetPair($id, $to);
+    Relay::pairEnded($id, $to);
 }
 
 // The start epoch counts halts within ONE connection, so it resets with
@@ -100,7 +101,7 @@ ConnTrack::note($id, $to, $type);
 // hint now, before offer/answer, so a same-family pair can try direct
 // first. Skipped when relay was declared (accept-relay, or either side
 // already relaying) - those will not attempt a direct connection.
-if ($type === 'accept' && !ConnTrack::isRelaying($id, $to)) {
+if ($type === 'accept' && !Relay::isRelaying($id, $to)) {
     Presence::announceNet($id, $to);
 }
 Util::bump('signal');
