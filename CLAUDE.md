@@ -68,6 +68,18 @@ endpoint - it is the contract the FOK-snake client is built against.
   entry: name (max 15 = client MAX_NAME), score, level, diff, color,
   shopItems, date (DD.MM.YY). Submissions store seed + inputs verbatim
   for future replay validation; validated stays 0 until that exists.
+- Item ownership (src/Items.php) is answered from the items row and ONLY
+  from it: one row per instance, moved by compare-and-swap on its seq, so
+  a claim is idempotent. The hash-chained ledger is audit-only and gets
+  checkpointed and truncated, so it can never be read to decide who owns
+  what. MINTING stays client-trusted (the coin economy is on the client),
+  so the registry makes items conserved and auditable, not unforgeable -
+  do not describe or extend it as anti-forgery. The per-match attestation
+  secrets are minted inside the start transaction (Items::openMatch, from
+  Starts::request); each peer is told only its own, and they are never
+  logged nor returned by the admin API. Freezing an instance is terminal
+  until an operator clears it, and only the two provable-tampering paths
+  may reach it.
 - The admin dashboard is modular: one self-contained object per card in
   MODULES (public/assets/admin.js). Extend by appending a module, never
   by special-casing the framework code.

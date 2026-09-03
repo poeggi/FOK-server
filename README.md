@@ -131,6 +131,10 @@ the registry to play online, which is what makes it a major.
                       secret-leak guard, strict_types guard, unit tests
                       (test/unit.php), HTTP smoke test (test/smoke.sh)
     test/load.php     capacity probe, not a pass-fail test (see Capacity)
+    test/live-protocol.sh
+                      post-deploy wire check: two throwaway clients drive
+                      the real handshake against a DEPLOYED server (live by
+                      default, LIVE_BASE= for staging). Not part of CI.
     tools/deploy.sh   FTPS upload of public/ (used by the CI/CD pipeline)
     tools/deploy.ps1  manual FTPS upload (emergency fallback)
 
