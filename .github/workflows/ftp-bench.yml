@@ -23,6 +23,10 @@ on:
         description: 'Instead: time the remote smoke against staging, tunnel vs direct'
         type: boolean
         default: false
+      cleanup:
+        description: 'Instead: delete the fixed-id harness test data from LIVE'
+        type: boolean
+        default: false
 
 jobs:
   bench:
@@ -43,14 +47,14 @@ jobs:
       - name: Install lftp
         run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
       - name: Probe (where does the time go)
-        if: ${{ !inputs.deploy && !inputs.smoke }}
+        if: ${{ !inputs.deploy && !inputs.smoke && !inputs.cleanup }}
         env:
           SMOKE_BASE: https://fok-server.poggensee.it/staging
         run: |
           bash tools/ftp-probe.sh
           bash tools/http-probe.sh
       - name: Shootout (which strategy is fastest)
-        if: ${{ inputs.shootout && !inputs.deploy && !inputs.smoke }}
+        if: ${{ inputs.shootout && !inputs.deploy && !inputs.smoke && !inputs.cleanup }}
         run: bash tools/ftp-bench.sh
 
       # Times the real deploy against staging/ only - never the live webroot -
@@ -112,3 +116,13 @@ jobs:
           run bash test/smoke.sh
           echo "--- direct, one TLS handshake per request ---"
           run env SMOKE_NO_PROXY=1 bash test/smoke.sh
+
+      # The only step in this workflow that touches LIVE, and the only one
+      # anywhere that deletes anything: it removes the three fixed harness ids
+      # and the item instances they own. Manual dispatch only, like the rest.
+      - name: Clear the fixed-id harness data from live
+        if: ${{ inputs.cleanup }}
+        env:
+          FOK_ADMIN_USER: ${{ secrets.FOK_ADMIN_USER }}
+          FOK_ADMIN_PASS: ${{ secrets.FOK_ADMIN_PASS }}
+        run: bash tools/live-cleanup.sh
