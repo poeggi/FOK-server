@@ -2,6 +2,7 @@
 R=$(curl -s "$BASE/")
 expect "landing page" "FOK" "$R"
 expect "landing shows public stats" 'client ids' "$R"
+expect "landing header carries the server version" 'class="version' "$R"
 
 # The exact path a browser at the game origin takes: CORS must be open. One
 # fetch with -i carries the ACAO header AND the version body (same response).

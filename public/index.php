@@ -7,6 +7,13 @@ require_once __DIR__ . '/src/Presence.php';
 header('Cache-Control: no-store');
 $scores = Scores::top();
 $counts = Presence::counts();
+// Shown in both the header and the footer.
+$verline = 'FOK-server v' . FOK_SERVER_VERSION . ' (API v' . FOK_API_VERSION . ')'
+    . (FOK_ENV === 'staging' ? ' STAGING' : '');
+// The board holds up to FOK_TOP_SCORES; collapse it to the top few and let
+// the visitor expand the rest (a pure-CSS toggle, see style.css).
+$topN = 10;
+$collapsible = count($scores) > $topN;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -25,16 +32,20 @@ $counts = Presence::counts();
   <p class="stats"><span><?= $counts['online'] ?></span> online -
     <span><?= $counts['playing'] ?></span> playing 1:1 -
     <span><?= $counts['registered'] ?></span> client ids</p>
+  <p class="version muted"><?= htmlspecialchars($verline) ?></p>
 </header>
 <main>
   <h2>Global Top <?= FOK_TOP_SCORES ?></h2>
   <?php if ($scores === []): ?>
   <p class="muted">No scores submitted yet. Be the first!</p>
   <?php else: ?>
-  <table>
+  <?php if ($collapsible): ?>
+  <input type="checkbox" id="showall" class="scoretoggle">
+  <?php endif; ?>
+  <table class="scores">
     <tr><th>#</th><th>Name</th><th>Score</th><th>Diff</th><th>Level</th><th>Date</th></tr>
-    <?php foreach ($scores as $s): ?>
-    <tr>
+    <?php $n = 0; foreach ($scores as $s): $n++; ?>
+    <tr<?= $collapsible && $n > $topN ? ' class="extra"' : '' ?>>
       <td><?= $s['rank'] ?></td>
       <td><?= htmlspecialchars($s['name']) ?></td>
       <td><?= $s['score'] ?></td>
@@ -44,8 +55,14 @@ $counts = Presence::counts();
     </tr>
     <?php endforeach; ?>
   </table>
+  <?php if ($collapsible): ?>
+  <label for="showall" class="scoretoggle-btn">
+    <span class="more">Show all <?= count($scores) ?></span>
+    <span class="less">Show top <?= $topN ?></span>
+  </label>
   <?php endif; ?>
-  <footer class="muted">FOK-server v<?= FOK_SERVER_VERSION ?> (API v<?= FOK_API_VERSION ?>)<?= FOK_ENV === 'staging' ? ' STAGING' : '' ?></footer>
+  <?php endif; ?>
+  <footer class="muted"><?= htmlspecialchars($verline) ?></footer>
 </main>
 </body>
 </html>
