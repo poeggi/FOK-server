@@ -64,6 +64,10 @@ body {
 
 .error { color: var(--danger); }
 .muted { color: var(--muted); font-size: 13px; }
+/* A section label inside a card that stacks several tables (the registry). */
+.subhead { margin: 14px 0 4px; font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--muted); }
+.subhead:first-child { margin-top: 0; }
 
 
 /* ---------------------------------------------------------------- chrome */

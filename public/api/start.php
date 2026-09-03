@@ -10,7 +10,8 @@ require_once __DIR__ . '/../src/Starts.php';
  * Server-issued start of play.
  * POST {"id": "8-hex", "peer": "8-hex", "epoch": <n>, "reason": "level",
  *       "pts": <ms>}
- *   -> {"ok":true, "start_pts": <ms>, "epoch": <n>, "now": <ms>}
+ *   -> {"ok":true, "start_pts": <ms>, "epoch": <n>, "now": <ms>,
+ *       "mid": "32-hex", "secret": "32-hex"}   (mid/secret since API 4.0)
  *
  * BOTH peers call this every time the run halts or restarts - first
  * start, next level, respawn, resume from pause - and each receives the
@@ -79,9 +80,18 @@ if ($startPts === null) {
     Util::fail('stale epoch: the pair has already moved on', 409);
 }
 
+// Additive since API 4.0: the pair's match id and the CALLER'S OWN match
+// secret (never the peer's). A begin (first/rematch) minted a fresh match; an
+// in-run halt carries the open one forward. The client uses these to attest
+// item transfers to api/items.php. A client on an older API simply ignores
+// both fields. mid is '' only for the degenerate case of no open match.
+$match = Starts::matchInfo($id, $peer);
+
 Util::jsonOut([
     'ok' => true,
     'start_pts' => $startPts,
     'epoch' => $epoch,
     'now' => Util::nowMs(),
+    'mid' => $match['mid'],
+    'secret' => $match['secret'],
 ]);

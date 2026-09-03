@@ -27,6 +27,8 @@ require_once __DIR__ . '/../public/src/Load.php';
 require_once __DIR__ . '/../public/src/Vault.php';
 require_once __DIR__ . '/../public/src/PStats.php';
 require_once __DIR__ . '/../public/src/Debug.php';
+require_once __DIR__ . '/../public/src/Ledger.php';
+require_once __DIR__ . '/../public/src/Items.php';
 
 // Util installs a fault handler that answers 500 and exits 0 - right for a
 // request, fatal for a test run, where it would swallow a throwable (a
@@ -923,6 +925,100 @@ for ($i = 0; $i < 25; $i++) {
 $traffic = array_filter(Alerts::recent(), static fn(array $a) => $a['type'] === 'traffic');
 ok($traffic !== [], 'the returned req_min value still reaches the traffic alert');
 Settings::set('alert_req_per_min', 600);
+
+// ---- Item registry (API 4.0) ----------------------------------------
+// The HTTP smoke walks the whole claim ladder over the wire; what is left
+// for here is what a browserless request cannot see - the MAC construction,
+// the hash chain, checkpoint truncation, and conservation at the row level.
+
+// The attestation tag. The 32-hex secret keys the HMAC as 16 RAW bytes and
+// the tick is unpadded decimal: the two traps a client implementer hits
+// first, so they are pinned here against a literal recomputation.
+$sec = str_repeat('ab', 16);
+$peerSec = str_repeat('cd', 16);
+$mac = Ledger::mac($sec, 'm1', 12, 'ws');
+ok(strlen($mac) === 16 && ctype_xdigit($mac), 'an attestation tag is 16 hex characters');
+ok($mac === substr(hash_hmac('sha256', 'm1|12|ws', (string)hex2bin($sec)), 0, 16),
+    'the tag is the truncated HMAC over mid|tick|ws_digest');
+ok(Ledger::verifyTag($sec, 'm1', 12, 'ws', $mac), 'a correct tag verifies');
+ok(!Ledger::verifyTag($sec, 'm1', 13, 'ws', $mac), 'a tag does not carry to another tick');
+ok(!Ledger::verifyTag($sec, 'm1', 12, 'ws2', $mac), 'a tag does not carry to another ownership digest');
+ok(!Ledger::verifyTag($peerSec, 'm1', 12, 'ws', $mac), 'the peer secret does not verify our tag');
+ok(Ledger::mac('nothex', 'm1', 12, 'ws') === '', 'a malformed secret yields no tag at all');
+ok(!Ledger::verifyTag('nothex', 'm1', 12, 'ws', ''), 'and no tag never verifies as a match');
+
+// The chain. Its job is tamper-EVIDENCE: an edited row must be findable,
+// which is the only reason to hash rows together at all.
+$idb = Db::get();
+$idb->exec('DELETE FROM ledger');
+$idb->exec('DELETE FROM items');
+$idb->exec('DELETE FROM matches');
+$r1 = Ledger::append($idb, 'mint', 'u1', '', 'aa11aa11', '', 0, 1000);
+ok($r1['prev'] === str_repeat('0', 64), 'the first row chains to the genesis hash');
+$r2 = Ledger::append($idb, 'transfer', 'u1', 'aa11aa11', 'bb22bb22', 'm1', 7, 1001);
+ok($r2['prev'] === $r1['hash'], 'every later row chains to the one before it');
+ok(Ledger::verify($idb) === ['ok' => true, 'from' => 0, 'checked' => 2, 'break' => null],
+    'an untouched chain verifies end to end');
+$idb->prepare('UPDATE ledger SET tick = 99 WHERE n = ?')->execute([$r2['n']]);
+$v = Ledger::verify($idb);
+ok(!$v['ok'] && $v['break'] === $r2['n'], 'editing a row is caught, and named');
+$idb->prepare('UPDATE ledger SET tick = 7 WHERE n = ?')->execute([$r2['n']]);
+ok(Ledger::verify($idb)['ok'], 'and putting it back makes it verify again');
+
+// Checkpoint: fold the state digest in, drop everything older, keep verifying.
+$cp = Ledger::checkpoint($idb, 2000);
+ok($cp['deleted'] === 2, 'a checkpoint drops every row it folded in');
+ok(Ledger::rows($idb) === 1, 'leaving the checkpoint itself as the new anchor');
+ok(Ledger::verify($idb)['ok'], 'and the chain verifies from that checkpoint forward');
+
+// Conservation: a transfer MOVES the single row that IS the ownership.
+Presence::touch('aa11aa11', '1.2.3.4');
+Presence::touch('bb22bb22', '1.2.3.4');
+$m = Items::openMatch($idb, 'aa11aa11', 'bb22bb22', Util::nowMs());
+$uid = Items::mint('aa11aa11', 'crown', 'box')['uid'];
+ok(count(Items::owned('aa11aa11')) === 1, 'a mint puts one instance in the wardrobe');
+$res = Items::claim('aa11aa11', $m['mid'], $uid, 'aa11aa11', 'bb22bb22', 5, 0, 'ws',
+    Ledger::mac($m['sec_a'], $m['mid'], 5, 'ws'), null);
+ok($res['ok'] && $res['state'] === 'settled' && $res['seq'] === 1, 'losing an item settles at once');
+ok(Items::owned('aa11aa11') === [], 'the instance left the loser');
+ok(count(Items::owned('bb22bb22')) === 1, 'and arrived at the winner');
+ok((int)$idb->query('SELECT COUNT(*) FROM items')->fetchColumn() === 1,
+    'a transfer moves the row and can never mint one');
+$res = Items::claim('aa11aa11', $m['mid'], $uid, 'aa11aa11', 'bb22bb22', 6, 0, 'ws',
+    Ledger::mac($m['sec_a'], $m['mid'], 6, 'ws'), null);
+ok(!$res['ok'] && $res['error'] === 'counterfeit', 'claiming an item you no longer own is counterfeit');
+
+// A held gain settles only once the grace has passed with no contradiction.
+$m2 = Items::openMatch($idb, 'aa11aa11', 'bb22bb22', Util::nowMs());
+$u2 = Items::mint('aa11aa11', 'cape', 'shop')['uid'];
+$tagB = Ledger::mac($m2['sec_b'], $m2['mid'], 9, 'ws2');
+$res = Items::claim('bb22bb22', $m2['mid'], $u2, 'aa11aa11', 'bb22bb22', 9, 0, 'ws2', $tagB, null);
+ok($res['ok'] && $res['state'] === 'held', 'an unwitnessed gain is held, not granted');
+ok(Items::owned('aa11aa11')[0]['uid'] === $u2, 'and the item stays with the sender meanwhile');
+Settings::set('claim_grace_ms', 0);
+$res = Items::claim('bb22bb22', $m2['mid'], $u2, 'aa11aa11', 'bb22bb22', 9, 0, 'ws2', $tagB, null);
+ok($res['ok'] && $res['state'] === 'settled', 'the same claim settles once the grace has passed');
+Settings::set('claim_grace_ms', 60000);
+
+// The legacy amnesty: one-time, idempotent, and the server's own list wins.
+Presence::touch('cc33cc33', '1.2.3.4');
+ok(count(Items::seed('cc33cc33', ['cap', 'cap', 'NOT AN ID', 'scarf'], null)) === 2,
+    'the legacy seed dedupes repeats and drops malformed ids');
+ok(count(Items::seed('cc33cc33', ['jetpack'], null)) === 2,
+    'the amnesty is one-time: a second seed mints nothing');
+Presence::touch('dd44dd44', '1.2.3.4');
+$vaulted = Items::seed('dd44dd44', ['from_client'], ['from_vault']);
+ok(count($vaulted) === 1 && $vaulted[0]['item_id'] === 'from_vault',
+    'the list the server already holds wins over the one the client submits');
+
+// Minting is client-trusted, so it is capped per hour rather than proved.
+Settings::set('mint_max_per_hour', 1);
+ok(isset(Items::mint('cc33cc33', 'boots', 'box')['uid']), 'the first mint of the hour goes through');
+ok(isset(Items::mint('cc33cc33', 'boots', 'box')['throttled']), 'the next one is throttled');
+Settings::set('mint_max_per_hour', 60);
+// mint queues a deferred prune; run it here rather than let the shutdown
+// handler reopen the database after the cleanup below has closed it.
+Util::runDeferred();
 
 // Backup: create produces a valid snapshot, restore brings data back
 $name = Backup::create();

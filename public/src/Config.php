@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.0.7';
+const FOK_SERVER_VERSION = '1.1.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -50,7 +50,20 @@ const FOK_SERVER_VERSION = '1.0.7';
 // per-id request throttle (at most one per second, then a cooldown after a
 // burst), answering 429 with "retry_after". Major stays 3; a client that
 // ignores "exists" and never trips the throttle behaves exactly as on 3.4.
-const FOK_API_VERSION = '3.5';
+// v4.0: the item registry. The server now owns item-instance OWNERSHIP -
+// ownership is a row in the items table, moved only by a compare-and-swap
+// transfer through the new POST /api/items.php (list/mint/seed/claim), logged
+// to a hash-chained ledger, and start.php now also returns the pair's match id
+// and the caller's own match secret so a client can attest transfers (see
+// docs/API.md). The wire additions are backward-compatible - an older client
+// ignores the new start.php fields and never calls items.php - but this is a
+// MAJOR bump, not a minor one: for a client that DOES carry items, ownership
+// is no longer a private boolean it may assert freely, so a client that goes
+// online with items but does not speak the registry can find its claims
+// unconfirmed or its instances frozen. Clients gate online item play on the
+// major matching. Minting stays client-trusted (see the scope boundary in
+// docs/API.md): 4.0 makes items conserved and auditable, not unforgeable.
+const FOK_API_VERSION = '4.0';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');

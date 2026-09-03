@@ -5,6 +5,7 @@ require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Util.php';
+require_once __DIR__ . '/Items.php';
 
 /**
  * Server-issued starts. The server owns the PTS clock, so it owns every
@@ -54,7 +55,12 @@ final class Starts
     public static function forget(string $id, string $peer): void
     {
         [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
-        Db::get()->prepare('DELETE FROM starts WHERE a = ? AND b = ?')->execute([$a, $b]);
+        $db = Db::get();
+        // Best-effort: stamp the match closed for forensics. Claims are never
+        // gated on closed (the server does not reliably learn a match ended),
+        // so this only records the ends it does happen to see.
+        Items::closeMatch($db, $a, $b, Util::nowMs());
+        $db->prepare('DELETE FROM starts WHERE a = ? AND b = ?')->execute([$a, $b]);
     }
 
     /**
@@ -72,7 +78,7 @@ final class Starts
         try {
             $db->prepare('DELETE FROM starts WHERE start_pts < ?')->execute([$now - self::KEEP_MS]);
 
-            $st = $db->prepare('SELECT epoch, start_pts FROM starts WHERE a = ? AND b = ?');
+            $st = $db->prepare('SELECT epoch, start_pts, mid FROM starts WHERE a = ? AND b = ?');
             $st->execute([$a, $b]);
             $row = $st->fetch();
             $st->closeCursor();
@@ -109,13 +115,24 @@ final class Starts
             $lead = max(Settings::int('start_lead_min_ms'), 150 + 2 * $worstLatency);
             $startPts = $now + min($lead, 3000);
 
+            // Where play BEGINS (first/rematch), mint a fresh match here, in
+            // this same transaction, so it is atomic with the start row and
+            // both peers read one consistent mid (see Items::openMatch). An
+            // in-run halt carries the pair's open match forward untouched -
+            // one match spans every level of a duel.
+            if (in_array($reason, self::SYNC_GATED_REASONS, true)) {
+                $mid = Items::openMatch($db, $a, $b, $now)['mid'];
+            } else {
+                $mid = $row !== false ? (string)$row['mid'] : '';
+            }
+
             $db->prepare(
-                'INSERT INTO starts (a, b, start_pts, created, epoch, reason)
-                 VALUES (?, ?, ?, ?, ?, ?)
+                'INSERT INTO starts (a, b, start_pts, created, epoch, reason, mid)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (a, b) DO UPDATE SET start_pts = excluded.start_pts,
                      created = excluded.created, epoch = excluded.epoch,
-                     reason = excluded.reason'
-            )->execute([$a, $b, $startPts, $now, $epoch, $reason]);
+                     reason = excluded.reason, mid = excluded.mid'
+            )->execute([$a, $b, $startPts, $now, $epoch, $reason, $mid]);
             $db->exec('COMMIT');
             return $startPts;
         } catch (Throwable $e) {
@@ -126,5 +143,28 @@ final class Starts
             }
             throw $e;
         }
+    }
+
+    /**
+     * The pair's open match as this caller sees it: its mid and the caller's
+     * OWN secret only (never the peer's). start.php reads this after a start
+     * is issued and returns both to the caller (see docs/API.md). Empty when
+     * the pair has no open match - a lone in-run start with no begin behind
+     * it, which a real duel never reaches.
+     *
+     * @return array{mid:string, secret:string}
+     */
+    public static function matchInfo(string $id, string $peer): array
+    {
+        [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
+        $db = Db::get();
+        $st = $db->prepare('SELECT mid FROM starts WHERE a = ? AND b = ?');
+        $st->execute([$a, $b]);
+        $mid = (string)($st->fetchColumn() ?: '');
+        $st->closeCursor();
+        if ($mid === '') {
+            return ['mid' => '', 'secret' => ''];
+        }
+        return ['mid' => $mid, 'secret' => Items::matchSecret($db, $mid, $id === $a)];
     }
 }

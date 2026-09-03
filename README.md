@@ -3,10 +3,13 @@
 Central game server for FOK Snake (and future games). Runs as plain PHP on
 shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 
-Version 1.0.0 was the first stable release. The 3.4 contract line adds, all
-additive: per-player stats (save/restore progress) and two optional score
-tags, "completed" and "platform". The admin, relay and matchmaking surfaces
-are considered production-stable.
+Version 1.0.0 was the first stable release. The admin, relay and matchmaking
+surfaces are considered production-stable.
+
+Contract 4.0 is the current API line and the first MAJOR bump since 3.x: the
+server now owns item-instance ownership (see Item registry below). The wire
+additions are backward-compatible, but a client that carries items must speak
+the registry to play online, which is what makes it a major.
 
 ## What it does
 
@@ -48,6 +51,22 @@ are considered production-stable.
   runs peer-to-peer over a WebRTC DataChannel (server not involved); when
   P2P cannot connect it falls back to relaying through the server (see
   Relay fallback above).
+- Item registry (contract 4.0): the server owns item-instance OWNERSHIP.
+  An item a player carries is a row in the server's item table, not a
+  client-side flag, so a restored backup or an edited save cannot
+  resurrect an item that was traded away. A transfer MOVES the single
+  instance (compare-and-swap on its transfer counter) and is reported by
+  a claim carrying HMAC attestation tags: the caller's own proves it was
+  in the match, the peer's is evidence both sides observed the same
+  ownership state at the same tick. A gain nobody witnessed is held for a
+  grace period rather than granted; a tag that provably does not verify,
+  or two claims contradicting each other about the same moment, freeze the
+  instance and alert the operator. Mints and transfers are appended to a
+  hash-chained, checkpoint-truncatable ledger for audit; ownership itself
+  is always answered from the item row, never from the ledger. MINTING
+  stays client-trusted (the coin economy is client-side), so this makes
+  items conserved and auditable, not unforgeable - see the scope boundary
+  in docs/API.md.
 - Connection tracking: per-client state of the current 1:1 connection -
   idle, inviting, invited, connecting or playing, with the peer and
   whether the pair runs p2p or relayed. Inferred from traffic the server
@@ -57,7 +76,9 @@ are considered production-stable.
 - Admin interface at /admin/: a one-screen dashboard - statistics,
   connection state of every online client, server properties (PTS anchor,
   versions), alert feed, per-hour load, registered users, top-100
-  management - plus a settings view behind the gear with the runtime
+  management, item registry (frozen instances, players by disputed-claim
+  count, recent ledger entries and an on-demand chain verify) - plus a
+  settings view behind the gear with the runtime
   configuration (incl. JSON export/import) and database backup (SQLite
   online backup, download) and restore (upload). Cards refresh on a
   global interval (default 30 s, control in the top bar); Connections has
@@ -88,7 +109,10 @@ are considered production-stable.
         friend.php    friendship handshake: request/accept/remove/list
         match.php     quick-match queue (pair with anyone waiting)
         start.php     server-issued absolute start PTS per pair, for every
-                      halt of the run (first/level/respawn/resume/rematch)
+                      halt of the run (first/level/respawn/resume/rematch);
+                      also hands each peer the match id + its own secret
+        items.php     item registry: list/mint/seed/claim - server-owned
+                      item ownership, transfers attested by both peers
         relay.php     in-duel message relay (P2P fallback), long-polled
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
@@ -234,11 +258,18 @@ host-level. If this outgrows shared hosting, fix workers first.
 - Player IDs are public identities (as designed in FOK-snake); a secret
   session token for submission authenticity is future work, as is the
   replay-based score validation.
+- Item ownership is server-authoritative, but MINTING is not: a client
+  asserts its own box opens and purchases and is only rate-limited, so the
+  registry makes items conserved and auditable rather than unforgeable
+  (full scope boundary in docs/API.md). The per-duel attestation secrets
+  are minted server-side, each peer is told only its own, and they are
+  never logged nor exposed through the admin API - the dashboard counts
+  open matches but never reads a key.
 
 ## API sketch
 
     GET  /api/version.php
-      -> {"ok":true,"server":"<x.y.z>","api":"3.4","env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":"4.0","env":"live"}
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
     GET  /api/time.php
@@ -246,7 +277,7 @@ host-level. If this outgrows shared hosting, fix workers first.
     POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,
                           "friends":[...]?}
-      -> {"ok":true,"api":"3.4","now":ms,"debug":bool,"online":n,"playing":n,
+      -> {"ok":true,"api":"4.0","now":ms,"debug":bool,"online":n,"playing":n,
           "registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_online":{...}?, "friends_latency":{...}?,
@@ -266,11 +297,32 @@ host-level. If this outgrows shared hosting, fix workers first.
     POST /api/start.php  {"id":"cafe0001","peer":"deadbeef","epoch":n,
                           "reason":"first|level|respawn|resume|rematch",
                           "pts":ms}
-      -> {"ok":true,"start_pts":ms,"epoch":n,"now":ms}
+      -> {"ok":true,"start_pts":ms,"epoch":n,"now":ms,
+          "mid":"<32-hex>","secret":"<32-hex>"}
          identical for both peers; both name the same epoch, so the answer
          does not depend on when either asks. 409 if the caller is behind,
          400 if its pts is missing or in the future; a stale pts is
          refused only for a start that begins play (first/rematch).
+         mid + secret (4.0, additive) are the pair's match id and the
+         CALLER'S OWN attestation secret, for item claims below; one match
+         spans the whole duel and each side gets only its own secret.
+    POST /api/items.php  {"id":"cafe0001","action":"list|mint|seed|claim",...}
+      -> list  {"ok":true,"items":[{"uid":"<32-hex>","item_id":"crown",
+                                    "seq":n},...]}
+      -> mint  {"id","action":"mint","item_id":"crown","origin":"box|shop"}
+               -> {"ok":true,"uid":"<32-hex>","seq":0}   429 over the cap
+      -> seed  {"id","action":"seed","items":["crown",...]}   one-time
+               -> {"ok":true,"items":[{"uid":"...","item_id":"..."},...]}
+      -> claim {"id","action":"claim","mid","uid","from","to","tick","seq",
+                "ws_digest","my_tag","peer_tag"?}
+               -> {"ok":true,"seq":n,"state":"confirmed|settled|held"}
+         The claim is the ONLY path that moves ownership: it moves the one
+         instance by compare-and-swap on seq. A loss (from == caller) or a
+         valid peer_tag settles at once; an unwitnessed gain is "held" for
+         a grace period. A shape-valid tag that does not verify, or two
+         claims contradicting each other about the same (mid,uid,tick),
+         freeze the instance and alert the operator. Idempotent: replaying
+         a settled claim changes nothing. See docs/API.md.
     GET  /api/scores.php?limit=10
       -> {"ok":true,"scores":[{"rank":1,"name":"...","score":...,...}]}
     POST /api/scores.php {"id","score","level","diff","name"?,"color"?,

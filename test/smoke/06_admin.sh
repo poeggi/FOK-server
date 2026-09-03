@@ -81,6 +81,28 @@ else
     expect "admin stats carry the live load gauges" '"load_live":' "$R"
     expect "live load gauges include db writes" '"db_writes":' "$R"
 
+    # Item registry card, over the data 05_items.sh left behind. The matches
+    # table is only ever COUNTed here: a per-duel attestation secret must
+    # never reach the dashboard, let alone a browser.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=items")
+    expect "registry card totals the instances" '"items_total":' "$R"
+    expect "registry card counts the frozen ones" '"items_frozen":' "$R"
+    expect "registry card counts open matches" '"matches_open":' "$R"
+    expect "registry card sizes the ledger against its cap" '"ledger_max":' "$R"
+    expect "registry card shows recent ledger rows" '"kind":"transfer"' "$R"
+    expect "registry card names the frozen instances" '"frozen":[{' "$R"
+    expect "registry card tallies disputed claims per player" '"disputed":' "$R"
+    if echo "$R" | grep -q '"sec_'; then
+        echo "FAIL registry card exposed a match secret: $R"
+        fail=1
+    else
+        echo "ok   registry card never exposes a match secret"
+    fi
+    R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=items_verify")
+    expect "chain verification via GET rejected" '405' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=items_verify")
+    expect "the ledger hash chain verifies intact" '"verify":{"ok":true' "$R"
+
     # Connection tracker: the admin sees the state the signaling implies.
     # These types need no friendship, so they work after the unfriend above.
     curl -s -X POST -H 'Content-Type: application/json' \
@@ -221,6 +243,11 @@ else
     expect "failed login raised alert" '"type":"admin-fail"' "$R"
     expect "bogus client event logged" '"type":"bogus"' "$R"
     expect "friend spam logged" '"type":"friend-spam"' "$R"
+    # Suspected item fraud is logged for review, never answered with silence.
+    expect "a claim outside any match logged" '"type":"item_out_of_match"' "$R"
+    expect "a forged attestation logged" '"type":"item_tag_invalid"' "$R"
+    expect "a claim on an unminted item logged" '"type":"item_counterfeit"' "$R"
+    expect "contradictory claims logged" '"type":"item_contradiction"' "$R"
 
     R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_seen")
     expect "alerts mark seen" '"ok":true' "$R"

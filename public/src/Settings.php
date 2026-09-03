@@ -45,6 +45,18 @@ final class Settings
         'alert_cooldown' => [900, 'Alert de-duplication window (seconds)'],
         'load_sample' => [10, 'Load-gauge write sampling (1 = exact, every request)'],
         'relay_apcu' => [1, 'Relay via APCu shared memory when usable (the default; 0 = force the database)'],
+        // Item registry (see Items, Ledger). match_open_max_ms is generous on
+        // purpose: the server never learns a match ended, so a late but honest
+        // claim must still land. claim_grace_ms is how long an unconfirmed gain
+        // claim waits for the peer's tag before it settles. The ledger keeps
+        // itself bounded by checkpointing above ledger_max_rows, checked on a
+        // sampled one-in-ledger_sample fraction of requests. mint_max_per_hour
+        // caps client-driven minting (still client-trusted; see docs/API.md).
+        'match_open_max_ms' => [7200000, 'How long a match keeps accepting item claims (ms)'],
+        'claim_grace_ms' => [60000, 'Unconfirmed gain claim waits this long for the peer tag before settling (ms)'],
+        'ledger_max_rows' => [200000, 'Checkpoint and truncate the item ledger above this many rows'],
+        'ledger_sample' => [200, 'One request in N may run the item-ledger truncation check'],
+        'mint_max_per_hour' => [60, 'Max client-driven item mints per player per hour'],
         'admin_refresh_secs' => [30, 'Admin dashboard refresh interval (seconds, 0 = off)'],
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)'],
         'admin_duels_refresh_secs' => [1, 'Duels card refresh interval (seconds, 0 = off)'],

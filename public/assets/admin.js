@@ -899,6 +899,115 @@ const MODULES = [
             box.append(restore);
         },
     },
+    {
+        id: 'items',
+        title: 'Item registry',
+        // No own interval: ownership changes slowly and chain-verify is a
+        // manual, deliberate action. Refreshes on load and its own button.
+        async refresh(box) {
+            const d = await api('items');
+            box.replaceChildren();
+
+            const grid = el('div', 'statgrid');
+            const stat = (label, value) => {
+                const s = el('div', 'stat');
+                s.append(el('div', 'stat-value', String(value)), el('div', 'stat-label', label));
+                grid.append(s);
+            };
+            stat('Items', d.items_total);
+            stat('Frozen', d.items_frozen);
+            stat('Open matches', d.matches_open);
+            stat('Ledger rows', d.ledger_rows + ' / ' + d.ledger_max);
+            box.append(grid);
+
+            // Chain-verify: walks the hash chain from the newest checkpoint
+            // forward and reports whether it is intact. A deliberate click.
+            const line = el('span', 'muted', 'Not verified this session.');
+            const vbtn = el('button', 'small', 'Verify chain');
+            vbtn.onclick = async () => {
+                vbtn.disabled = true;
+                line.replaceChildren(el('span', 'muted', 'verifying...'));
+                try {
+                    const v = (await api('items_verify', { method: 'POST' })).verify;
+                    line.replaceChildren();
+                    if (v.ok) {
+                        line.append(el('span', 'badge perf-good', 'intact'),
+                            el('span', 'muted', ' ' + v.checked + ' row(s) from n=' + v.from + '.'));
+                    } else {
+                        line.append(el('span', 'badge perf-bad', 'BROKEN'),
+                            el('span', 'error', ' at n=' + v.break + ' (from n=' + v.from + ').'));
+                    }
+                } catch (e) {
+                    line.replaceChildren(el('span', 'error', 'Verify failed: ' + e.message));
+                }
+                vbtn.disabled = false;
+            };
+            const bar = el('p');
+            bar.append(vbtn, ' ', line);
+            box.append(bar);
+
+            // A trunc cell for a long hex value (uid, state digest): first
+            // group shown, the whole thing on hover.
+            const hexCell = (v, cls) => {
+                const td = el('td', cls || '');
+                const s = el('span', 'trunc', v.length > 12 ? v.slice(0, 8) + '..' : v);
+                s.title = v;
+                td.append(s);
+                return td;
+            };
+            // A ledger party is an 8-hex id (clickable) or empty/a digest.
+            const partyCell = (v) => (typeof v === 'string' && v.length === 8)
+                ? idCell(v) : (v ? hexCell(v, 'muted') : el('td', 'muted', '-'));
+
+            if (d.frozen.length) {
+                box.append(el('h3', 'subhead', 'Frozen items (' + d.frozen.length + ')'));
+                const t = el('table');
+                t.append(row(['UID', 'Item', 'Owner', 'Seq'], 'th'));
+                for (const f of d.frozen) {
+                    const r = el('tr');
+                    r.classList.add('gone');
+                    r.append(hexCell(f.uid, 'muted'), el('td', '', f.item_id),
+                        idCell(f.owner), el('td', 'muted', f.seq));
+                    t.append(r);
+                }
+                box.append(t);
+            }
+
+            if (d.disputed.length) {
+                box.append(el('h3', 'subhead', 'Disputed claims by player'));
+                const t = el('table');
+                t.append(row(['ID', 'Name', 'OK', 'Untagged', 'Disputed'], 'th'));
+                for (const p of d.disputed) {
+                    const r = el('tr');
+                    r.append(idCell(p.id), el('td', '', p.name === null ? '-' : p.name),
+                        el('td', 'muted', p.ok), el('td', 'muted', p.untagged),
+                        el('td', 'error', p.disputed));
+                    t.append(r);
+                }
+                box.append(t);
+                sortable(t, 'items_disputed');
+            }
+
+            box.append(el('h3', 'subhead', 'Recent ledger'));
+            if (!d.recent.length) {
+                box.append(el('p', 'muted', 'No item activity yet.'));
+            } else {
+                const t = el('table');
+                t.append(row(['n', 'Kind', 'UID', 'From', 'To', 'Tick', 'When'], 'th'));
+                for (const e of d.recent) {
+                    const r = el('tr');
+                    r.append(el('td', 'muted', e.n), el('td', '', e.kind), hexCell(e.uid, 'muted'),
+                        partyCell(e.from), partyCell(e.to), el('td', 'muted', e.tick),
+                        el('td', 'muted', fmtTime(Math.floor(e.at / 1000))));
+                    t.append(r);
+                }
+                box.append(t);
+            }
+
+            box.append(el('p', 'muted', 'Ownership is the items table; the ledger is audit only. '
+                + 'A frozen item is a claim the ladder judged as tampering. Match secrets are never shown.'));
+        },
+    },
 ];
 
 function row(cells, tag) {

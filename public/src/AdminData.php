@@ -9,6 +9,8 @@ require_once __DIR__ . '/Relay.php';
 require_once __DIR__ . '/Load.php';
 require_once __DIR__ . '/Vault.php';
 require_once __DIR__ . '/PStats.php';
+require_once __DIR__ . '/Settings.php';
+require_once __DIR__ . '/Ledger.php';
 
 /**
  * Read-only aggregation for the admin dashboard's two heaviest views - the
@@ -21,7 +23,7 @@ final class AdminData
     // Every table the "DB entries" tile sums (see the Statistics card).
     private const TABLES = ['players', 'scores', 'signals', 'duels', 'mm_queue',
         'counters', 'alerts', 'settings', 'admin_fails', 'ipcount', 'friends',
-        'relay', 'starts', 'conn', 'stats', 'pstats'];
+        'relay', 'starts', 'conn', 'stats', 'pstats', 'items', 'matches', 'ledger'];
 
     /** The Statistics card: live counts, stored totals and the load gauges. */
     public static function stats(): array
@@ -55,6 +57,52 @@ final class AdminData
             'server_version' => FOK_SERVER_VERSION,
             'env' => FOK_ENV,
             'now' => time(),
+        ];
+    }
+
+    /**
+     * The Registry card: item-ownership subsystem health (see Items, Ledger).
+     * Read-only. Match SECRETS are never selected - a match row's sec_a/sec_b
+     * are what authenticate a claim, so the dashboard counts open matches but
+     * never returns a key. The ledger itself holds no secret. Lists are capped;
+     * the frozen and disputed lists are the operator's forensic review queue.
+     */
+    public static function items(): array
+    {
+        $db = Db::get();
+        $recent = [];
+        foreach ($db->query(
+            'SELECT n, kind, uid, from_id, to_id, mid, tick, at FROM ledger ORDER BY n DESC LIMIT 30'
+        ) as $r) {
+            $recent[] = ['n' => (int)$r['n'], 'kind' => $r['kind'], 'uid' => $r['uid'],
+                'from' => $r['from_id'], 'to' => $r['to_id'], 'mid' => $r['mid'],
+                'tick' => (int)$r['tick'], 'at' => (int)$r['at']];
+        }
+        $frozen = [];
+        foreach ($db->query(
+            'SELECT uid, item_id, owner, seq FROM items WHERE frozen = 1 ORDER BY minted DESC LIMIT 30'
+        ) as $r) {
+            $frozen[] = ['uid' => $r['uid'], 'item_id' => $r['item_id'],
+                'owner' => $r['owner'], 'seq' => (int)$r['seq']];
+        }
+        $disputed = [];
+        foreach ($db->query(
+            'SELECT id, name, claims_ok, claims_untagged, claims_disputed FROM players
+             WHERE claims_disputed > 0 ORDER BY claims_disputed DESC LIMIT 20'
+        ) as $r) {
+            $disputed[] = ['id' => $r['id'], 'name' => $r['name'], 'ok' => (int)$r['claims_ok'],
+                'untagged' => (int)$r['claims_untagged'], 'disputed' => (int)$r['claims_disputed']];
+        }
+        return [
+            'now' => time(),
+            'items_total' => (int)$db->query('SELECT COUNT(*) FROM items')->fetchColumn(),
+            'items_frozen' => (int)$db->query('SELECT COUNT(*) FROM items WHERE frozen = 1')->fetchColumn(),
+            'matches_open' => (int)$db->query('SELECT COUNT(*) FROM matches WHERE closed = 0')->fetchColumn(),
+            'ledger_rows' => Ledger::rows($db),
+            'ledger_max' => Settings::int('ledger_max_rows'),
+            'recent' => $recent,
+            'frozen' => $frozen,
+            'disputed' => $disputed,
         ];
     }
 

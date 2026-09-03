@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"3.5", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.0", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -203,7 +203,8 @@ keeps the last value).
     POST {"id": "c0ffee42", "peer": "deadbeef", "epoch": 3,
           "reason": "respawn", "pts": 1784190295120}
       -> {"ok":true, "start_pts": 1784190295323, "epoch": 3,
-          "now": 1784190295123}
+          "now": 1784190295123,
+          "mid": "<32-hex>", "secret": "<32-hex>"}
 
 The server owns the clock, so it owns EVERY moment play begins or
 resumes. A start is requested for each of these, not only the first:
@@ -246,6 +247,17 @@ asked only for its timing.
 - `start_pts`: absolute, on the shared clock. Trigger everything
   (music, READY/GO, first tick) exactly then, via the local offset.
 - `now`: a free clock re-check.
+- `mid`, `secret` (contract 4.0, ADDITIVE): the pair's match id and the
+  CALLER'S OWN per-match secret - never the peer's, each side gets only
+  its own. They exist so a client can attest item transfers to
+  /api/items.php; see the Item registry below. A start that BEGINS play
+  (`first`, `rematch`) mints a fresh match, and the in-run halts (`level`,
+  `respawn`, `resume`) carry that same one forward, so ONE match spans a
+  whole duel and both peers read the same `mid`. A client on an older
+  contract simply ignores both fields. `mid` is `""` only in the
+  degenerate case of an in-run start with no begin behind it, which a
+  real duel never reaches; treat an empty `mid` as "no item claims
+  possible for now" rather than an error.
 
 The lead time is chosen by the server: at least 200 ms
 (`start_lead_min_ms`), scaled by the pair's latencies
@@ -333,7 +345,7 @@ Response:
 
     {
       "ok": true,
-      "api": "3.5",               contract version, see Versioning
+      "api": "4.0",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "debug": false,             the server's instruction: the client MUST
@@ -1045,6 +1057,245 @@ each field's high-water mark:
 - Writes are throttled per id: a submission within a few seconds of the last
   stored one is accepted and echoed but persists on the next submission (your
   totals are cumulative, so nothing is lost), keeping the single writer clear.
+
+## Item registry
+
+Added in contract 4.0, and the reason 4.0 is a MAJOR bump. The server now
+owns item-instance OWNERSHIP: a cosmetic a player carries between games is
+a ROW in the server's item table, not a flag in the client's own config.
+That is what stops a restored backup or an edited local save from
+resurrecting an item that was traded away - the server decides who owns
+what, and a transfer MOVES the one instance instead of copying it.
+
+### Scope boundary - read this first
+
+Only OWNERSHIP is authoritative. MINTING is still CLIENT-TRUSTED: the coin
+economy lives on the client, so opening a box or buying in the shop is
+asserted by the client and merely rate-limited. So 4.0 makes items
+CONSERVED and AUDITABLE, not unforgeable. Concretely, a client can still
+create an item it did not earn; it can NOT end up holding an instance that
+another player also holds, take one without a transfer both sides can be
+shown to have observed, or roll ownership back by restoring an old backup.
+Every mint and every move lands on a tamper-evident ledger for
+after-the-fact review. Unforgeable minting needs the coin economy to move
+server-side, which is future work and a later contract.
+
+### Identifiers
+
+- a PLAYER id is the usual 8-hex public identity (`c0ffee42`).
+- an `item_id` is a CATALOG id (`crown`, `neon_1`): the KIND of item.
+  Lowercase `^[a-z0-9_]{1,32}$`. Many instances share one.
+- a `uid` is a server-minted INSTANCE id: 32 lowercase hex. THE item.
+  Knowing a uid entitles nobody to anything on its own (see claim).
+- a `mid` (32 hex) is a MATCH id and a `secret` (32 hex) a per-match key,
+  both issued by start.php.
+- a `seq` is an instance's transfer counter. It starts at 0 and increments
+  by exactly one per settled transfer; a client echoes the value it last
+  read, which is how the server detects a stale or racing claim.
+
+All four actions are POST to the same endpoint, always
+`{"id": "<8-hex>", "action": "list|mint|seed|claim", ...}`.
+
+### list - what a player owns
+
+    POST /api/items.php {"id":"c0ffee42", "action":"list"}
+      -> {"ok":true, "items":[{"uid":"<32-hex>","item_id":"crown","seq":3},
+                              ...]}
+
+A pure read, and the client's source of truth for its wardrobe: read it at
+startup and after any claim that answered `stale seq`. It needs no secret,
+because a uid grants nothing without a match and its secrets.
+
+### mint - a box open or a purchase
+
+    POST /api/items.php {"id":"c0ffee42", "action":"mint",
+                         "item_id":"crown", "origin":"box"}
+      -> {"ok":true, "uid":"<32-hex>", "seq":0}
+      -> 429 {"ok":false,"error":"mint rate limit: too many this hour"}
+
+Creates one fresh instance owned by `id`, at seq 0. `origin` is `box` or
+`shop` - the only two a client may assert. Client-trusted per the scope
+boundary, so capped per player per hour (`mint_max_per_hour`, default 60,
+admin-configurable); over the cap answers 429. Normal play never reaches
+it; on 429 stop and retry later rather than hammering.
+
+### seed - the one-time legacy grandfather
+
+    POST /api/items.php {"id":"c0ffee42", "action":"seed",
+                         "items":["crown","hat","neon_1"]}
+      -> {"ok":true, "items":[{"uid":"<32-hex>","item_id":"crown"}, ...]}
+
+Mints instances for what a player already owned BEFORE 4.0, so an existing
+wardrobe survives ownership moving server-side. Call it ONCE, the first
+time a 4.0-capable client starts against a 4.0 server, then use list from
+then on.
+
+It is ONE-TIME and IDEMPOTENT per player: the first call mints, every
+later call simply returns the current wardrobe unchanged. A retry after a
+timeout therefore never double-mints - the guard is a server-side flag on
+the player, not a client promise. Invalid and duplicate `item_id`s are
+dropped silently and at most 128 instances are seeded.
+
+Where the server already holds the player's config backup (see Stats
+backup / restore), it PREFERS the item ids in that backup over the list in
+the request - it is the stronger source, having been written earlier under
+a secret token. It looks only at the top level of the backup JSON, for
+either of two optional shapes:
+
+    {"items":  ["crown", "hat"]}         an array of catalog ids, OR
+    {"owned":  {"crown": 1, "hat": 1}}   an object whose truthy keys are ids
+
+Neither shape present, an unparseable payload, or no enrolled backup falls
+back to the submitted `items` list. Send the real owned list either way;
+the amnesty is one-shot and the fallback is what covers a client that
+never enrolled.
+
+### claim - report a transfer
+
+An item changes hands DURING a duel (a wager, a steal). The server does
+not watch the game and never simulates it, so a transfer is REPORTED after
+the fact by a claim. The attestation model below is what makes that report
+trustworthy.
+
+    POST /api/items.php {"id":"c0ffee42", "action":"claim",
+                         "mid":"<32-hex>", "uid":"<32-hex>",
+                         "from":"c0ffee42", "to":"deadbeef",
+                         "tick": 4096, "seq": 3,
+                         "ws_digest":"<opaque string>",
+                         "my_tag":"<16-hex>", "peer_tag":"<16-hex>"}
+      -> {"ok":true, "seq":4, "state":"confirmed"}
+      -> {"ok":false, "error":"<reason>"}   with a 4xx status, see Outcomes
+
+- `mid`: the match, from start.php. Both peers hold the same one.
+- `uid`: the instance changing hands.
+- `from`, `to`: the LOSING and the GAINING player. Both must be the two
+  parties of `mid`, and the caller must be one of them.
+- `tick`: the lockstep tick the transfer happened at, int 0..100000000.
+  It NAMES the moment, the same way a start's epoch names a start.
+- `seq`: the instance's transfer counter as the client last read it.
+- `ws_digest`: an OPAQUE client hash of the shared ownership state at that
+  tick, max 256 bytes. The server never interprets it - it only checks
+  that both sides attested to the SAME one.
+- `my_tag`: the caller's own attestation tag (required).
+- `peer_tag`: the other side's tag (optional; absent, null or empty all
+  mean "no peer evidence yet").
+
+#### The attestation model
+
+start.php issues, per duel, a match id `mid` and a per-match `secret` to
+each peer - its OWN secret, never the other's. A tag is a truncated HMAC
+over the moment and the state, keyed by a peer's secret:
+
+    tag = first 16 hex chars of
+          HMAC-SHA256(key = <secret as 16 raw bytes>,
+                      msg = mid + "|" + tick + "|" + ws_digest)
+
+Two encoding details, because getting either wrong yields a well-formed
+tag that never verifies:
+
+- the `secret` arrives as 32 hex chars, but the HMAC KEY is its 16 RAW
+  BYTES - hex-decode it, do not key on the hex text;
+- `tick` joins the message as its plain DECIMAL digits, unpadded (4096,
+  not 0x1000 and not 00004096), and the separator is a single `|`.
+
+The tag is the first 16 characters of the LOWERCASE hex digest. Because it
+is bound to `mid`, `tick` AND `ws_digest`, it cannot be lifted onto a
+different moment or a different outcome.
+
+In a claim the two tags play different roles:
+
+- `my_tag` AUTHENTICATES the caller as a genuine participant of that
+  match - only the two peers hold the secrets.
+- `peer_tag` is EVIDENCE OF JOINT OBSERVATION: the other side's tag over
+  the same (mid, tick, ws_digest), i.e. proof both peers saw the same
+  ownership state at the same tick.
+
+A client computes its own tag from the `secret` start.php gave it and
+obtains the peer's tag over the DataChannel (or the relay) as part of
+agreeing the transfer in-game. Exchange it in-band: a packet that ARRIVED
+cannot have been corrupted into a well-formed but WRONG tag, so the server
+treats a shape-valid tag that does not verify as provable tampering rather
+than as noise.
+
+#### Outcomes
+
+On success the reply carries the instance's new `seq` and a `state`:
+
+- `settled` - the caller reported LOSING the item (`from` == caller).
+  Nobody lies to give an item away, so it moves immediately.
+- `confirmed` - a valid `peer_tag` came with the claim: jointly witnessed,
+  so it moves immediately whichever side reported it. This is the normal,
+  healthy path and the one clients should aim for.
+- `held` - a GAIN claim (`to` == caller) with no valid `peer_tag` yet. The
+  item does NOT move and `seq` is unchanged. The claim is parked and
+  becomes settleable after `claim_grace_ms` (default 60 s,
+  admin-configurable) provided nothing contradicts it. Send the SAME claim
+  again once you have the peer's tag (it then answers `confirmed`), or
+  again after the grace has passed (it then answers `settled`). This delay
+  is deliberate: a one-sided "I gained it" must wait for either the peer's
+  witness or the grace period.
+
+Failures are `{"ok":false,"error":"..."}` with a 4xx status:
+
+| status | error | meaning |
+|--------|-------|---------|
+| 400 | `invalid claim` | malformed body (bad mid, uid, tag, tick or seq shape) |
+| 400 | `invalid peer_tag` | `peer_tag` was present but is not 16 hex. Omit it entirely when you have none |
+| 400 | `item_out_of_match` | no open match names both parties, or it aged out (`match_open_max_ms`, default 2 h). Alerts the operator |
+| 403 | `bad self tag` | `my_tag` does not verify: not a proven participant. Nothing changes |
+| 409 | `stale seq, re-read` | your `seq` is behind the server's. Re-`list` and retry |
+| 409 | `lost race, re-read` | another claim moved the item first. Re-`list` and retry |
+| 409 | `counterfeit` | the claim names a non-owner as `from`. Alerts the operator |
+| 409 | `no such item` | a uid the server never minted. Alerts the operator |
+| 409 | `tag invalid` | a well-formed `peer_tag` that does NOT verify: provable tampering. The instance is FROZEN and the operator alerted |
+| 409 | `contradiction` | another claim for the same (mid, uid, tick) asserts a DIFFERENT direction. Impossible honestly - one moment has one outcome - so the instance is FROZEN and the operator alerted |
+| 409 | `item frozen` | the instance was frozen by an earlier dispute and can no longer transfer at all |
+
+A claim is IDEMPOTENT: re-sending one that already settled answers
+`{"ok":true, "seq":<current>, "state":"confirmed"}` and moves nothing, so
+retrying after a lost response is always safe. Retry the identical body -
+same mid, uid, tick, from, to - rather than rebuilding it.
+
+A FROZEN instance is out of play until an operator resolves it from the
+admin dashboard. Freezing is deliberately blunt: it is reached only from
+the two provable-tampering paths, where the alternative is letting a
+contested item keep moving.
+
+#### Client rules
+
+- Treat every non-`ok` answer as a soft failure: log it, do not crash
+  gameplay, and never retry in a tight loop. `stale seq` and `lost race`
+  are the only ones worth an immediate retry, and only after a fresh
+  `list`.
+- Gate item play on the contract MAJOR, as for every other feature: a
+  client built against 3.x must not carry items into an online duel
+  against a 4.x server, since its transfers would go unreported.
+- Do not surface any of the tampering outcomes to the user as an
+  accusation. They are operator signals (below), and a single one can be
+  an ordinary lost packet.
+
+### Suspected-fraud logging
+
+The provable-tampering outcomes (`tag invalid`, `contradiction`,
+`counterfeit`, `no such item`, `item_out_of_match`) each raise a
+DE-DUPLICATED alert in the admin dashboard naming the instance and the
+claiming player. Alongside them the server keeps three per-player tallies
+- claims that were jointly witnessed, claims that settled without a peer
+tag, and claims that were disputed - so an operator reviews a PATTERN
+rather than an incident: one dispute can be a dropped packet, a climbing
+disputed count is not.
+
+Every mint and every settled transfer is also appended to a hash-chained
+ledger, each row chained to the one before it, so a row cannot be altered
+or reordered after the fact without detection. The dashboard can verify
+the chain on demand. The ledger is never consulted to answer "who owns
+this" - that is the item row - it exists purely as the audit trail. It is
+truncated by CHECKPOINTS that fold in a digest of the whole ownership
+table, so old history can be dropped while the remaining chain still
+verifies.
+
+None of this is exposed to clients: suspected fraud is recorded for the
+operator, never announced to the accused.
 
 ## Debug reports
 

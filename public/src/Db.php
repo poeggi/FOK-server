@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 23;
+    private const SCHEMA_VERSION = 24;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -330,6 +330,66 @@ final class Db
             // long one. It outlives friend_req_streak, which resets after one
             // idle cooldown, so the window can straddle the first cooldown.
             $pdo->exec('ALTER TABLE players ADD COLUMN friend_req_last_trip INTEGER NOT NULL DEFAULT 0');
+        }
+        if ($v < 24) {
+            // Server-authoritative item ownership (see Items, Ledger,
+            // api/items.php). An item instance is ONE row here, so a
+            // restored config backup can no longer grant it - ownership is
+            // this row, not a client boolean. PK lookup, never a scan.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS items (
+                uid TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                seq INTEGER NOT NULL DEFAULT 0,
+                origin TEXT NOT NULL,
+                minted INTEGER NOT NULL,
+                frozen INTEGER NOT NULL DEFAULT 0
+            )');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS items_owner ON items (owner)');
+            // One match per duel connection, minted where play BEGINS (see
+            // Starts). Per-client MAC secrets are stored in the clear - the
+            // server recomputes tags with them - and NEVER exposed. A claim
+            // binds to a match by its mid.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS matches (
+                mid TEXT PRIMARY KEY,
+                a TEXT NOT NULL,
+                b TEXT NOT NULL,
+                opened INTEGER NOT NULL,
+                closed INTEGER NOT NULL DEFAULT 0,
+                sec_a TEXT NOT NULL,
+                sec_b TEXT NOT NULL
+            )');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS matches_pair ON matches (a, b, opened)');
+            // Append-only, hash-chained transfer ledger (see Ledger). Never
+            // read to decide ownership - that is items - only for audit and
+            // tamper-evidence. Truncatable via checkpoints, so it does not
+            // grow without bound.
+            $pdo->exec("CREATE TABLE IF NOT EXISTS ledger (
+                n INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                uid TEXT NOT NULL,
+                from_id TEXT NOT NULL DEFAULT '',
+                to_id TEXT NOT NULL DEFAULT '',
+                mid TEXT NOT NULL DEFAULT '',
+                tick INTEGER NOT NULL DEFAULT 0,
+                at INTEGER NOT NULL,
+                prev_hash TEXT NOT NULL,
+                hash TEXT NOT NULL
+            )");
+            $pdo->exec('CREATE INDEX IF NOT EXISTS ledger_uid ON ledger (uid)');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS ledger_match ON ledger (mid, uid, tick)');
+            // Per-player claim tallies for statistical review (see the admin
+            // items card). Bounded - three counters and a one-shot flag, no
+            // growth. items_seeded guards the one-time legacy grandfathering.
+            $pdo->exec('ALTER TABLE players ADD COLUMN claims_ok INTEGER NOT NULL DEFAULT 0');
+            $pdo->exec('ALTER TABLE players ADD COLUMN claims_untagged INTEGER NOT NULL DEFAULT 0');
+            $pdo->exec('ALTER TABLE players ADD COLUMN claims_disputed INTEGER NOT NULL DEFAULT 0');
+            $pdo->exec('ALTER TABLE players ADD COLUMN items_seeded INTEGER NOT NULL DEFAULT 0');
+            // The pair's current open match hangs off the start row, so match
+            // minting inherits the same epoch idempotence the start does: the
+            // first peer of a begin mints and stamps it here, the second reads
+            // it back, and an in-run halt carries it forward (see Starts).
+            $pdo->exec("ALTER TABLE starts ADD COLUMN mid TEXT NOT NULL DEFAULT ''");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

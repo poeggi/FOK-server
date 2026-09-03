@@ -13,7 +13,8 @@ source test/smoke/01_core.sh                # landing, version, CORS, hello, sco
 source test/smoke/02_signals_friends.sh     # signals, friends, poll, debug reports, time
 source test/smoke/03_start_duel.sh          # start/epoch, directional isolation, relay duel flow, rematch
 source test/smoke/04_matchmaking.sh         # friend-spam ban, quick match
-source test/smoke/05_admin.sh               # admin dashboard, relay caps/transport, config, remote cleanup
+source test/smoke/05_items.sh               # item registry: seed, mint, the claim ladder, freezes
+source test/smoke/06_admin.sh               # admin dashboard, relay caps/transport, config, remote cleanup
 
 if [ "$fail" -ne 0 ]; then
     echo "SMOKE FAILED"

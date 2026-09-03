@@ -14,6 +14,7 @@ require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Vault.php';
 require_once __DIR__ . '/../src/Debug.php';
 require_once __DIR__ . '/../src/AdminData.php';
+require_once __DIR__ . '/../src/Ledger.php';
 
 Auth::requireLogin();
 
@@ -121,6 +122,11 @@ switch ($action) {
         // rather than deleting - that empty-id path is the guard here.
         $id = requireId('POST');
         $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
+        // Its item instances go with it - ownership is a row naming a player,
+        // so leaving them behind strands them with an owner that no longer
+        // exists. The ledger is append-only audit and deliberately stays: it
+        // records that the instances existed and where they went.
+        $db->prepare('DELETE FROM items WHERE owner = ?')->execute([$id]);
         ConnTrack::forget($id);
         // registered/online are derived from the players table and cached
         // (see Presence::counts); drop the cache so the dashboard reflects the
@@ -195,6 +201,17 @@ switch ($action) {
         requirePost();
         Alerts::markSeen();
         Util::jsonOut(['ok' => true]);
+
+    // ---- item registry (see Items, Ledger) ----
+    case 'items':
+        Util::jsonOut(['ok' => true] + AdminData::items());
+
+    case 'items_verify':
+        // Walk the hash chain from the newest checkpoint forward and report
+        // whether it is intact (and where it breaks if not). A read, but
+        // POST-only so it is never triggered by a cross-site navigation.
+        requirePost();
+        Util::jsonOut(['ok' => true, 'verify' => Ledger::verify($db)]);
 
     // ---- host capabilities ----
     case 'caps':

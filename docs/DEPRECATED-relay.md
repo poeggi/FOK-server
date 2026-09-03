@@ -133,7 +133,7 @@ is not literally achievable.
 - `README.md` - the `Relay fallback` feature bullet and relay mentions.
 - `CLAUDE.md` - the relay-fallback invariant note.
 - Tests carrying relay coverage (remove alongside): `test/unit.php`,
-  `test/smoke.sh`, `test/smoke/lib.sh`, `test/smoke/05_admin.sh`,
+  `test/smoke.sh`, `test/smoke/lib.sh`, `test/smoke/06_admin.sh`,
   `test/smoke/03_start_duel.sh`, `test/smoke/02_signals_friends.sh`,
   `test/load.php`.
 
