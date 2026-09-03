@@ -93,14 +93,12 @@ final class ConnTrack
         )->execute([time(), $id, $peer]);
     }
 
-    // The relay slot accounting that used to live here (markRelaying,
-    // isRelaying, activePairs, peerLeft - all reading/writing conn.relay_seen)
-    // moved to the Relay facade so the whole relay fallback deletes with that
-    // file. See docs/DEPRECATED-relay.md. What stays: markEnded zeroes
-    // relay_seen inside the bye UPDATE (freeing a byed duel's slot at once,
-    // marked above), stateOf reads the column for the admin popup, and set()/
-    // BY_TYPE understand the 'relay' connection mode. Those are the only relay
-    // references left in this class, and each is a one-token removal.
+    // The relay slot accounting lives on the Relay facade, not here, so the
+    // whole relay fallback deletes with that file (docs/DEPRECATED-relay.md).
+    // The only relay references left in this class, each a one-token removal:
+    // markEnded zeroes relay_seen inside the bye UPDATE (freeing a byed duel's
+    // slot at once, marked above), stateOf reads the column for the admin
+    // popup, and set()/BY_TYPE understand the 'relay' connection mode.
 
     /**
      * The raw tracked-connection row for one client (admin detail view), or

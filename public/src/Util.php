@@ -233,8 +233,7 @@ final class Util
      *
      * Deferred, because none of it is the caller's: two writes on the
      * single SQLite writer for every request, every 25th request a
-     * threshold sweep, and once an hour the whole player expiry - which
-     * one unlucky client used to wait for.
+     * threshold sweep, and once an hour the whole player expiry.
      */
     public static function bump(string $metric): void
     {

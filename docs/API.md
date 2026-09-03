@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"3.4", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"3.5", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -333,7 +333,7 @@ Response:
 
     {
       "ok": true,
-      "api": "3.4",               contract version, see Versioning
+      "api": "3.5",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "debug": false,             the server's instruction: the client MUST
