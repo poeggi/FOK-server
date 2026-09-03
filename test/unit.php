@@ -544,6 +544,21 @@ Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
 ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'relay traffic reports relay without a declaration');
 ok(duelOf('aaaaaaaa')['state'] === 'playing', 'relay traffic means the game runs');
 
+// ConnTrack: the ICE-burst write skip (see ConnTrack::set) elides a redundant
+// same-state 'connecting' refresh, but it must never swallow a mode change.
+// Build a fresh connecting/p2p pair, prove a same-state ice leaves the mode
+// alone, then let a relay declaration arrive inside the throttle window: the
+// p2p -> relay upgrade still has to land on both sides.
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
+ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'accept');
+ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'a fresh accept negotiates p2p');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'ice');
+ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'a skipped ice refresh leaves the mode untouched');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'accept-relay');
+ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'a relay upgrade lands even inside the connecting burst window');
+ok(duelOf('bbbbbbbb')['mode'] === 'relay', 'the peer side sees the in-window upgrade too');
+
 // ConnTrack: a duel that goes quiet (no bye reached us) is shown as ended
 // for the linger window, then drops off.
 Db::get()->prepare('UPDATE conn SET updated = ? WHERE id = ?')

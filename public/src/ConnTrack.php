@@ -256,7 +256,30 @@ final class ConnTrack
      */
     private static function set(string $id, string $peer, string $state, ?string $mode): void
     {
-        Db::get()->prepare(
+        $db = Db::get();
+        // ICE trickle: a connecting pair sends a burst of same-state signals,
+        // each of which would only re-stamp `updated`. Skip the write while
+        // the row is fresh and nothing but that stamp would change - a
+        // lock-free read in place of a writer round-trip (see
+        // FOK_CONN_TRACK_THROTTLE). Only 'connecting' bursts; every other
+        // state is a rare transition that must always land. For a
+        // connecting->connecting write the UPSERT's mode CASE reduces exactly
+        // to the expression below (peer and state are equal, state is not
+        // ended/declined), so a skip can never drop a relay declaration.
+        if ($state === 'connecting') {
+            $st = $db->prepare('SELECT peer, state, mode, updated FROM conn WHERE id = ?');
+            $st->execute([$id]);
+            $cur = $st->fetch();
+            $st->closeCursor();
+            if ($cur !== false && $cur['peer'] === $peer && $cur['state'] === 'connecting'
+                && (int)$cur['updated'] > time() - FOK_CONN_TRACK_THROTTLE) {
+                $modeAfter = ($mode === null || $cur['mode'] === 'relay') ? $cur['mode'] : $mode;
+                if ($modeAfter === $cur['mode']) {
+                    return;
+                }
+            }
+        }
+        $db->prepare(
             'INSERT INTO conn (id, peer, state, mode, updated) VALUES (?, ?, ?, ?, ?)
              ON CONFLICT (id) DO UPDATE SET
                  peer = excluded.peer,

@@ -94,6 +94,17 @@ const FOK_DUEL_WINDOW = 60;
 // A tracked connection state (see ConnTrack) goes stale after this long
 // without a signaling or duel event: the client reads as idle again.
 const FOK_CONN_TTL = 60;
+// While a pair is negotiating, ICE trickles many same-state 'connecting'
+// signals (a candidate each, plus offer/answer) in a burst. Each one would
+// rewrite both conn rows only to refresh their `updated` stamp - the state
+// and mode do not change - dragging the single SQLite writer onto the
+// signaling hot path. So a redundant 'connecting' refresh (same peer, same
+// state, no mode change) is skipped while the row is fresher than this,
+// trading a write for a lock-free read. Kept well under FOK_CONN_TTL so an
+// actively negotiating duel still refreshes long before it reads as idle.
+// The relay path throttles its own conn writes the same way; see
+// FOK_RELAY_TRACK_THROTTLE.
+const FOK_CONN_TRACK_THROTTLE = 10;
 // The admin dashboard keeps a client on its Duels / Connections cards this
 // long AFTER its liveness lapses (a duel went quiet, a client dropped), so
 // a just-ended entry does not blink out the instant it stops refreshing.
