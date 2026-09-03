@@ -49,6 +49,12 @@ final class AdminData
             'friendships' => (int)$db->query("SELECT COUNT(*) FROM friends WHERE state = 'accepted'")->fetchColumn(),
             'friendships_pending' => (int)$db->query("SELECT COUNT(*) FROM friends WHERE state = 'pending'")->fetchColumn(),
             'scores_total' => (int)$db->query('SELECT COUNT(*) FROM scores')->fetchColumn(),
+            'items_total' => (int)$db->query('SELECT COUNT(*) FROM items')->fetchColumn(),
+            // Every transfer bumps the instance seq, so summing seq counts the
+            // handovers the current population has been through. Read from
+            // items rather than the ledger because the ledger is checkpointed
+            // and trimmed, which would make a ledger count drop over time.
+            'item_transfers' => (int)$db->query('SELECT COALESCE(SUM(seq), 0) FROM items')->fetchColumn(),
             'db_rows' => $dbRows,
             'load' => $load,
             'load_live' => Load::lastMinute(),   // totals over the last complete minute

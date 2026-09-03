@@ -470,6 +470,8 @@ const MODULES = [
             stat('Users registered', d.counts.registered);
             stat('FS act. | pend.', d.friendships + ' | ' + d.friendships_pending);
             stat('Scores stored', d.scores_total);
+            stat('Items owned', d.items_total);
+            stat('Item transfers', d.item_transfers);
             stat('DB entries', d.db_rows);
             stat('DB size', fmtBytes(d.db_size));
             // Live gauges: totals over the last complete minute.

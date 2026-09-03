@@ -76,6 +76,11 @@ else
     expect "admin stats" '"ok":true' "$R"
     expect "admin stats registered" "$(strict '"registered":2')" "$R"
     expect "admin stats db rows" '"db_rows":' "$R"
+    # The items module ran before this one, so on a fresh local DB both tiles
+    # have exact known values; against a persistent remote DB only the field
+    # itself can be asserted.
+    expect "admin stats count the owned items" "$(strict '"items_total":7')" "$R"
+    expect "admin stats count the item transfers" "$(strict '"item_transfers":2')" "$R"
     expect "admin stats friendships" '"friendships":' "$R"
     expect "admin stats pending friendships" '"friendships_pending":' "$R"
     expect "admin stats carry the live load gauges" '"load_live":' "$R"
