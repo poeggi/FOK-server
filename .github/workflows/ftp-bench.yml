@@ -19,6 +19,10 @@ on:
         description: 'Instead: time tools/deploy.sh against staging (cold, then delta)'
         type: boolean
         default: false
+      smoke:
+        description: 'Instead: time the remote smoke against staging, tunnel vs direct'
+        type: boolean
+        default: false
 
 jobs:
   bench:
@@ -35,10 +39,10 @@ jobs:
       - name: Install lftp
         run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
       - name: Probe (where does the time go)
-        if: ${{ !inputs.deploy }}
+        if: ${{ !inputs.deploy && !inputs.smoke }}
         run: bash tools/ftp-probe.sh
       - name: Shootout (which strategy is fastest)
-        if: ${{ inputs.shootout && !inputs.deploy }}
+        if: ${{ inputs.shootout && !inputs.deploy && !inputs.smoke }}
         run: bash tools/ftp-bench.sh
 
       # Times the real deploy against staging/ only - never the live webroot -
@@ -59,3 +63,26 @@ jobs:
           git checkout -- public
           echo "--- 4. delta: those two reverted ---"
           run bash tools/deploy.sh staging
+
+      # Same suite, same host, only the transport differs - so the number the
+      # tunnel is worth is measured rather than predicted. The tunnel runs
+      # first: anything the host caches across the two runs then favours the
+      # DIRECT half, which makes the comparison conservative.
+      - name: Time the remote smoke against staging
+        if: ${{ inputs.smoke }}
+        env:
+          SMOKE_BASE: https://fok-server.poggensee.it/staging
+          FOK_ADMIN_USER: ${{ secrets.FOK_ADMIN_USER }}
+          FOK_ADMIN_PASS: ${{ secrets.FOK_ADMIN_PASS }}
+        run: |
+          run() {
+            local t rc; t=$(date +%s%3N)
+            "$@" > /tmp/smoke.out 2>&1 && rc=0 || rc=$?
+            grep -E 'tunnel|FAIL' /tmp/smoke.out || true
+            tail -2 /tmp/smoke.out
+            echo "  ^^ $(( $(date +%s%3N) - t )) ms  (exit $rc)"
+          }
+          echo "--- through the keep-alive tunnel ---"
+          run bash test/smoke.sh
+          echo "--- direct, one TLS handshake per request ---"
+          run env SMOKE_NO_PROXY=1 bash test/smoke.sh
