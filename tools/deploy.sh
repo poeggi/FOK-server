@@ -173,8 +173,11 @@ if [ "${1:-}" = '--plan' ]; then
     p+='wait all'$'\n'
     # Marks the upload as complete from inside the session, so a failure can be
     # reported as "nothing was renamed" or "the swap is partway" rather than
-    # guessed at. fail-exit stops before this if any upload failed.
-    p+="!touch $mark"$'\n'
+    # guessed at. fail-exit stops before this if any upload failed. It writes
+    # the clock rather than an empty file, which costs nothing and splits the
+    # run into its two phases without a single extra round trip - so a deploy
+    # that got slower says which half got slower.
+    p+="!date +%s%3N > $mark"$'\n'
 
     mapfile -t HAVE < <(changed_in src)
     prev=''
@@ -229,6 +232,7 @@ trap 'rm -f "$mf_local" "$mf_remote" "$plan" "$plan.part" "$status" "$mark"' EXI
 # The plan and the mark must be absent for their existence to mean anything.
 rm -f "$mf_remote" "$plan" "$mark"
 
+t0=$(date +%s%3N)
 script=''
 if [ "${DEPLOY_FULL:-0}" = 1 ]; then
     echo "DEPLOY_FULL set, treating the whole tree as changed"
@@ -258,5 +262,10 @@ read -r nchanged total nswap < "$status"
 if [ "$nchanged" -eq 0 ]; then
     echo "Deployed public/ to [${prefix:-live}] (all $total files identical, no change)"
 else
-    echo "Deployed public/ to [${prefix:-live}] ($nchanged of $total files, $nswap swapped)"
+    read -r tmark < "$mark"
+    end=$(date +%s%3N)
+    secs() { printf '%d.%d' "$(( $1 / 1000 ))" "$(( $1 % 1000 / 100 ))"; }
+    printf 'Deployed public/ to [%s] (%s of %s files, %s swapped; %ss up, %ss swap)\n' \
+        "${prefix:-live}" "$nchanged" "$total" "$nswap" \
+        "$(secs $(( tmark - t0 )))" "$(secs $(( end - tmark )))"
 fi

@@ -66,8 +66,11 @@ jobs:
       - name: Time the deploy against staging
         if: ${{ inputs.deploy }}
         run: |
-          git show origin/main:tools/deploy.sh > /tmp/deploy-main.sh
-          git show bff65ab:tools/deploy.sh    > /tmp/deploy-prev.sh   # the commit before the rewrite
+          # Into tools/, not /tmp: every version of the script starts with
+          # `cd "$(dirname "$0")/.."`, so from anywhere else it deploys the
+          # wrong tree - or, as it did, no tree at all.
+          git show origin/main:tools/deploy.sh > tools/zz-deploy-main.sh
+          git show bff65ab:tools/deploy.sh     > tools/zz-deploy-prev.sh  # before the rewrite
           run() { local t; t=$(date +%s%3N); "$@"; echo "  ^^ $(( $(date +%s%3N) - t )) ms"; }
           pair() {
             echo "--- $1: cold, the whole tree ---"
@@ -76,8 +79,8 @@ jobs:
             run bash "$2" staging
           }
           pair "NEW  one login, queued swap" tools/deploy.sh
-          pair "MAIN what production runs"   /tmp/deploy-main.sh
-          pair "PREV three logins, serial"   /tmp/deploy-prev.sh
+          pair "MAIN what production runs"   tools/zz-deploy-main.sh
+          pair "PREV three logins, serial"   tools/zz-deploy-prev.sh
           pair "NEW  again, to show drift"   tools/deploy.sh
           echo "--- NEW: delta, one src file and one asset changed ---"
           printf '\n' >> public/src/Settings.php
