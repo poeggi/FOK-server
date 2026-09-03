@@ -56,12 +56,14 @@ report "A  fresh process, fresh TLS, direct" $(( $(now_ms) - t ))
 t=$(now_ms); for _ in $(seq $N); do curl -s -o /dev/null "$TUN$EP"; done
 report "B  fresh process, through the tunnel" $(( $(now_ms) - t ))
 
-urls=''; for _ in $(seq $N); do urls+=" $BASE$EP"; done
-t=$(now_ms); curl -s -o /dev/null $urls
+# One -o per url: with several urls curl applies a single -o to the FIRST
+# only and writes the rest to stdout.
+urls=''; for _ in $(seq $N); do urls+=" -o /dev/null $BASE$EP"; done
+t=$(now_ms); curl -s $urls
 report "C  one process reusing its connection" $(( $(now_ms) - t ))
 
-urls=''; for _ in $(seq $N); do urls+=" $TUN$EP"; done
-t=$(now_ms); curl -s -o /dev/null $urls
+urls=''; for _ in $(seq $N); do urls+=" -o /dev/null $TUN$EP"; done
+t=$(now_ms); curl -s $urls
 report "D  one process, tunnelled" $(( $(now_ms) - t ))
 
 t=$(now_ms); for _ in $(seq $N); do curl -s --version >/dev/null; done

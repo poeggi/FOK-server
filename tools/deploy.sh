@@ -33,10 +33,15 @@
 #   commands it generates. `--plan` below is that planner.
 #
 # WHY QUEUED RENAMES. A serial rename is ~337 ms of wire time; the same rename
-#   through the queue at 24 ways is ~80 ms. 52 of them serial is ~17 s - more
-#   than the upload they follow. They go through the queue in dependency
+#   through the queue is ~100 ms. 52 of them serial is ~17 s - more than the
+#   upload they follow. They go through the queue in dependency
 #   TIERS with a `wait all` barrier between tiers, which keeps the ordering
-#   guarantee the phase exists for while making the burst ~4x shorter. A
+#   guarantee the phase exists for while making the burst ~4x shorter. The
+#   queue does NOT keep scaling: 52 renames took 4284/6349/6108/4144 ms at
+#   16/24/48/64 ways, which is no trend at all, just ~50% run-to-run noise
+#   around ~5 s. 16 ways is already everything there is, so raising the
+#   parallelism is not the lever it looks like. The barriers cost ~1.5-3 s on
+#   top of that, and that is the price of the ordering guarantee. A
 #   shorter burst is the point: ordering only ever mitigated the window, and
 #   the include graph has a cycle (Db<->Load) so no total order exists anyway.
 #
@@ -50,6 +55,20 @@
 #   over an existing directory. And a failure BEFORE `set cmd:fail-exit on`
 #   does not poison the exit code, which is what lets the manifest `get` be
 #   allowed to fail on the very first deploy.
+#
+# WHAT IS LEFT, AND WHAT DOES NOT WORK. A full deploy is ~13 s (~9 s up, ~4 s
+#   swap) and a real one - two or three changed files - is ~7 s, against ~58 s
+#   for the version this replaced, which had no delta at all and re-uploaded
+#   the tree every time. The remaining cost is ~800 ms per FILE, and it is not
+#   made of commands that can be dropped: with SIZE, MDTM and ALLO off and the
+#   data-channel TLS keys reused it measured 794 ms against 820 ms, which is
+#   noise - and two of those were lftp's defaults already. That ~800 ms is the
+#   per-transfer data connection itself (EPSV, TCP, its own TLS handshake),
+#   which FTPS cannot avoid without sending the bytes in the clear. Parallelism
+#   hides it for many files and cannot hide it for two. The only thing that
+#   would actually remove it is uploading ONE archive and unpacking it
+#   server-side, which means an unpack endpoint on a production webroot - a
+#   real trade, not an obvious win, and not made here.
 #
 # WHAT THE SESSION DOES, in order:
 #   get the manifest the last successful deploy left in the webroot (allowed
