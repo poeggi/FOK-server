@@ -1,11 +1,20 @@
 name: ftp-bench
 
-# Times the deploy's upload phase against the real host from a runner, so the
-# upload strategy is chosen on measurements instead of on an assumption. Run
-# by hand only (Actions -> ftp-bench -> Run workflow): it talks to the real
+# Measures the deploy's upload phase against the real host from a runner, so
+# the upload strategy is chosen on measurements instead of on an assumption.
+# Run by hand only (Actions -> ftp-bench -> Run workflow): it talks to the real
 # FTP host, so it must never ride along on an ordinary push.
+#
+# The probe always runs - it is the one that explains where the time goes. The
+# strategy shootout is opt-in because its numbers are already known and it is
+# by far the slower half (its deliberately-serial variant alone takes ~2 min).
 on:
   workflow_dispatch:
+    inputs:
+      shootout:
+        description: 'Also run the strategy shootout (tools/ftp-bench.sh)'
+        type: boolean
+        default: false
 
 jobs:
   bench:
@@ -21,5 +30,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install lftp
         run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
-      - name: Benchmark
+      - name: Probe (where does the time go)
+        run: bash tools/ftp-probe.sh
+      - name: Shootout (which strategy is fastest)
+        if: inputs.shootout
         run: bash tools/ftp-bench.sh
