@@ -77,9 +77,11 @@ class Tunnel(BaseHTTPRequestHandler):
                 continue
             if k.lower() == 'set-cookie':
                 # The app marks its admin cookie Secure because the host is
-                # HTTPS. curl would then refuse to send it back over this
-                # plain-HTTP loopback hop, so drop the attribute the tunnel
-                # makes moot. The request to the host is still HTTPS.
+                # HTTPS, and this hop is plain HTTP. Current curl happens to
+                # send it anyway - it treats loopback as a secure context -
+                # but the admin half of the suite should not rest on that, so
+                # drop the attribute the tunnel makes moot. The request to
+                # the host is still HTTPS.
                 v = '; '.join(p for p in v.split('; ') if p.strip().lower() != 'secure')
             self.send_header(k, v)
         self.send_header('Content-Length', str(len(data)))

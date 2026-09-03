@@ -27,8 +27,18 @@
 #   connections - the same 52 files cost it ~24 logins, not 52 - so it runs
 #   clean at 24 and uploads the whole tree in ~11 s, verified 52/52 landed.
 #
-#   A login is ~1.3 s of that, so the phases below are packed into as few FTP
-#   sessions as the ordering allows (4), not one per file or per directory.
+#   A login is ~2.2 s of that, so the phases below are packed into as few FTP
+#   sessions as the ordering allows (3), not one per file or per directory.
+#
+#   Two more things measured rather than assumed. A rename costs ~300 ms and
+#   naming a path is NOT why: one `cd` and bare basenames measured 297 ms
+#   against 324 ms, so the swap keeps full paths and stays simple. And the
+#   phases verify by exit status, not by listing what landed, because a
+#   recursive listing of this tree costs 13 s against a 2.2 s bare login -
+#   more than the upload it was checking. `cmd:fail-exit` earns that trust:
+#   it returns non-zero for a bad rename AND for a failure inside a queued
+#   transfer (the case that cannot be assumed), while `mkdir -f -p` over an
+#   existing directory still returns zero.
 #
 # PHASE 0  DIFF: fetch the manifest the last successful deploy left in the
 #   webroot and act only on the files whose sha256 differs. A release usually
@@ -39,13 +49,14 @@
 #   ignores it and pushes everything.
 # PHASE 1  UPLOAD every changed file to a <name>.tmp sibling over lftp's
 #   parallel queue (DEPLOY_PARALLEL, default 24). Nothing the server serves
-#   changes yet: a request sees the whole OLD site throughout the upload. The
-#   same session then lists the tree, so a short upload is caught and cannot
-#   reach the swap.
+#   changes yet: a request sees the whole OLD site throughout the upload. It
+#   is its own session, so a failed upload ends the script here and cannot
+#   reach the swap at all.
 # PHASE 2  SWAP: rename the .tmp files into place over ONE session, in
 #   dependency order - src/ (the shared classes) before the api/admin/root
 #   pages that require them, assets/ before any HTML naming their new ?v=
-#   URL - then list again to confirm every .tmp was consumed.
+#   URL. The manifest is the last command of that same session, so
+#   fail-exit means it can only be written once every rename has succeeded.
 #
 # Renaming (never overwriting) keeps each file's swap atomic: a request reads
 # the whole old or the whole new file, never a half-written upload. What
@@ -74,21 +85,18 @@ par="${DEPLOY_PARALLEL:-24}"
 # only public/ paths and their hashes - files the repo already publishes - so
 # it is housekeeping, not a secret.
 MANIFEST='.htdeploy-manifest'
-MARK='===LIST==='
 
-# stdout is captured by callers; lftp's progress and errors stay on stderr and
-# flow straight into the CI log.
+# fail-exit stops a session at its first failed command and returns non-zero,
+# which is what lets both phases below be gated on the exit status instead of
+# on a listing they cannot afford.
 lftp_run() {   # $1 = commands
     lftp -u "$FTP_USER,$FTP_PASS" "$FTP_HOST" -e "
         set ssl:verify-certificate no; set ftp:ssl-force true;
         set ftp:ssl-protect-data true; set net:timeout 20;
-        set cmd:queue-parallel $par;
+        set cmd:fail-exit on; set cmd:queue-parallel $par;
         $1
         bye"
 }
-# Everything after the marker is the listing, so upload chatter cannot be
-# miscounted as a landed file.
-count_tmp() { printf '%s\n' "$1" | sed -n "/^$MARK\$/,\$p" | grep -c '\.tmp$' || true; }
 
 # ---- PHASE 0: what actually changed ----------------------------------------
 # No path in this tree has a space, which is what lets the manifest be
@@ -104,6 +112,10 @@ trap 'rm -f "$mf_local" "$mf_remote"' EXIT
 if [ "${DEPLOY_FULL:-0}" = 1 ]; then
     echo "PHASE 0  DEPLOY_FULL set, treating the whole tree as changed"
 else
+    # lftp's xfer:clobber defaults to off, so `get -o` onto the file mktemp
+    # just created fails with "File exists" and the delta silently never
+    # engages. Take the file out of the way rather than turn clobber on.
+    rm -f "$mf_remote"
     lftp_run "get $prefix$MANIFEST -o $mf_remote;" >/dev/null 2>&1 || true
     if [ -s "$mf_remote" ]; then
         echo "PHASE 0  manifest found, comparing"
@@ -134,15 +146,14 @@ script=''
 while read -r d; do script+="mkdir -f -p $prefix$d"$'\n'; done \
     < <(printf '%s\n' "${CHANGED[@]}" | xargs -r -n1 dirname | grep -vx '\.' | sort -u)
 for rel in "${CHANGED[@]}"; do script+="queue put public/$rel -o $prefix$rel.tmp"$'\n'; done
-script+="wait all"$'\n'"echo $MARK"$'\n'"find $prefix"$'\n'
-out=$(lftp_run "$script") || true
-before=$(count_tmp "$out")
-if [ "$before" -lt "${#CHANGED[@]}" ]; then
-    echo "PHASE 1  FAILED: ${#CHANGED[@]} files sent, only $before .tmp on the server;" >&2
-    echo "         nothing renamed, the live tree is untouched" >&2
+script+="wait all"$'\n'
+if ! lftp_run "$script" >/dev/null; then
+    echo "PHASE 1  FAILED: an upload did not complete. Nothing was renamed, so" >&2
+    echo "         the live tree is untouched and the manifest still describes" >&2
+    echo "         it; re-running the deploy redoes the difference." >&2
     exit 1
 fi
-echo "PHASE 1  uploaded ${#CHANGED[@]} files (parallel $par), $before .tmp present"
+echo "PHASE 1  uploaded ${#CHANGED[@]} files to .tmp siblings (parallel $par)"
 
 # ---- PHASE 2: swap the uploaded files into place, in dependency order ------
 # Basenames of the CHANGED files directly in public/<dir> ('' = webroot). The
@@ -201,19 +212,16 @@ for d in $(find public -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | grep -vx
 done
 mapfile -t B < <(changed_in ''); add_swap '' "${B[@]}"
 
-swap+="echo $MARK"$'\n'"find $prefix"$'\n'
-out=$(lftp_run "$swap") || true
-after=$(count_tmp "$out")
-if [ "$after" -gt $((before - nswap)) ]; then
-    echo "PHASE 2  FAILED: $nswap renames sent but $after .tmp remain (expected" >&2
-    echo "         $((before - nswap))); the tree may be mixed, re-run the deploy" >&2
+# Last command of the same session: fail-exit stops at the first failed
+# rename, so the manifest can only be written once every one of them worked.
+# Anything short leaves the previous manifest standing and the next deploy
+# redoes the difference.
+swap+="put $mf_local -o $prefix$MANIFEST"$'\n'
+if ! lftp_run "$swap" >/dev/null; then
+    echo "PHASE 2  FAILED partway through $nswap renames. The tree may be mixed" >&2
+    echo "         and the manifest was NOT updated; re-run the deploy." >&2
     exit 1
 fi
 echo "PHASE 2  swapped $nswap files into place in dependency order"
-
-# The manifest goes up only now, so it always describes a tree that fully
-# landed AND fully swapped; anything short leaves the previous one standing
-# and the next deploy redoes the difference.
-lftp_run "put $mf_local -o $prefix$MANIFEST;" >/dev/null
 
 echo "Deployed public/ to [${prefix:-live}] (${#CHANGED[@]} of $total files, parallel $par)"
