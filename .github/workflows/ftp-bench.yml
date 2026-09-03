@@ -35,7 +35,11 @@ jobs:
       FTP_USER: ${{ secrets.FTP_USER }}
       FTP_PASS: ${{ secrets.FTP_PASS }}
     steps:
+      # Full history: the deploy timing checks out earlier versions of
+      # tools/deploy.sh out of git so every variant is measured in one run.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install lftp
         run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
       - name: Probe (where does the time go)
@@ -52,20 +56,35 @@ jobs:
       # Times the real deploy against staging/ only - never the live webroot -
       # so a deploy change can be measured and proven end to end on a branch,
       # before it reaches main and becomes a production deploy.
+      # This host's run-to-run spread is ~30%, which is wider than the
+      # difference being looked for, so a number from one dispatch cannot be
+      # compared against a number from another. Every variant is therefore
+      # measured in ONE run, and the current one is measured twice - once
+      # before the older variants and once after - so drift across the run
+      # shows up as the gap between those two instead of being credited to the
+      # change.
       - name: Time the deploy against staging
         if: ${{ inputs.deploy }}
         run: |
+          git show origin/main:tools/deploy.sh > /tmp/deploy-main.sh
+          git show bff65ab:tools/deploy.sh    > /tmp/deploy-prev.sh   # the commit before the rewrite
           run() { local t; t=$(date +%s%3N); "$@"; echo "  ^^ $(( $(date +%s%3N) - t )) ms"; }
-          echo "--- 1. cold: force the whole tree ---"
-          run env DEPLOY_FULL=1 bash tools/deploy.sh staging
-          echo "--- 2. delta: nothing changed since ---"
-          run bash tools/deploy.sh staging
-          echo "--- 3. delta: one src file and one asset changed ---"
+          pair() {
+            echo "--- $1: cold, the whole tree ---"
+            run env DEPLOY_FULL=1 bash "$2" staging
+            echo "--- $1: delta, nothing changed ---"
+            run bash "$2" staging
+          }
+          pair "NEW  one login, queued swap" tools/deploy.sh
+          pair "MAIN what production runs"   /tmp/deploy-main.sh
+          pair "PREV three logins, serial"   /tmp/deploy-prev.sh
+          pair "NEW  again, to show drift"   tools/deploy.sh
+          echo "--- NEW: delta, one src file and one asset changed ---"
           printf '\n' >> public/src/Settings.php
           printf '\n' >> public/assets/style.css
           run bash tools/deploy.sh staging
           git checkout -- public
-          echo "--- 4. delta: those two reverted ---"
+          echo "--- NEW: delta, those two reverted ---"
           run bash tools/deploy.sh staging
 
       # Same suite, same host, only the transport differs - so the number the
