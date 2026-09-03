@@ -42,7 +42,6 @@ ordered() { # ordered <name> <first> <second> <actual>
         fail=1
     fi
 }
-rid() { od -An -N4 -tx1 /dev/urandom | tr -d ' \n'; }
 
 hello() { # hello <id> <name>
     curl -s -X POST -H 'Content-Type: application/json' \
@@ -63,7 +62,11 @@ rly() { # rly <from> <peer> <payload>
 }
 rlyget() { curl -s "$BASE/api/relay.php?id=$1&peer=$2&wait=${3:-0}"; }
 
-A=$(rid); B=$(rid); C=$(rid); D=$(rid)
+# Fixed throwaway ids (8-hex, the server's id format) so repeat runs reuse the
+# same four rows instead of littering the live player list with a fresh set
+# every run. The shared 7e57 ("test") suffix marks them as this smoke's own,
+# so they are easy to spot and remove on the admin dashboard.
+A=11117e57; B=22227e57; C=33337e57; D=44447e57
 echo "== live-protocol smoke against $BASE"
 echo "   ids A=$A B=$B C=$C D=$D"
 
