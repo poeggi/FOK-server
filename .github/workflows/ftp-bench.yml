@@ -40,7 +40,11 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
       - name: Probe (where does the time go)
         if: ${{ !inputs.deploy && !inputs.smoke }}
-        run: bash tools/ftp-probe.sh
+        env:
+          SMOKE_BASE: https://fok-server.poggensee.it/staging
+        run: |
+          bash tools/ftp-probe.sh
+          bash tools/http-probe.sh
       - name: Shootout (which strategy is fastest)
         if: ${{ inputs.shootout && !inputs.deploy && !inputs.smoke }}
         run: bash tools/ftp-bench.sh
