@@ -1,0 +1,25 @@
+name: ftp-bench
+
+# Times the deploy's upload phase against the real host from a runner, so the
+# upload strategy is chosen on measurements instead of on an assumption. Run
+# by hand only (Actions -> ftp-bench -> Run workflow): it talks to the real
+# FTP host, so it must never ride along on an ordinary push.
+on:
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    env:
+      FTP_HOST: ${{ secrets.FTP_HOST }}
+      FTP_USER: ${{ secrets.FTP_USER }}
+      FTP_PASS: ${{ secrets.FTP_PASS }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lftp
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+      - name: Benchmark
+        run: bash tools/ftp-bench.sh
