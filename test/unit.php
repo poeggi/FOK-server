@@ -190,6 +190,48 @@ ok(!Presence::isAutoAccepting('bbbbbbbb'), 'hello without the flag clears auto-a
 Presence::touch('bbbbbbbb', '5.6.7.8');
 ok(!Presence::isAutoAccepting('bbbbbbbb'), 'null leaves the cleared flag untouched');
 
+// Existence feedback (see Friends::exists, friend.php): true once a player
+// row exists, false for an id never seen. Backs the exists:false reply that
+// catches a mistyped peer id instead of recording a dead pending row.
+ok(Friends::exists('aaaaaaaa'), 'exists() true for a registered id');
+ok(!Friends::exists('deadface'), 'exists() false for an id never seen');
+
+// Per-id request throttle (see Friends::rateHit): the anti-probe guard.
+// Integer-second granularity, so a unit run inside one second exercises the
+// interval and burst branches directly. The prober needs a players row (the
+// live endpoint touches it before calling rateHit).
+Presence::touch('f1f10001', '7.7.7.7');
+Settings::set('friend_rate_interval', 1);
+Settings::set('friend_rate_burst', 1000);
+Settings::set('friend_rate_cooldown', 60);
+ok(Friends::rateHit('f1f10001')['blocked'] === false, 'first request passes the throttle');
+$g = Friends::rateHit('f1f10001');
+ok($g['blocked'] === true && $g['why'] === 'interval' && $g['retry'] === 1,
+    'a second request in the same second is too fast');
+// Burst -> cooldown: a fresh prober, interval off so only the streak counts.
+Presence::touch('f1f10002', '7.7.7.8');
+Settings::set('friend_rate_interval', 0);
+Settings::set('friend_rate_burst', 3);
+$tripped = false;
+for ($i = 0; $i < 4; $i++) {
+    $g = Friends::rateHit('f1f10002');
+    $tripped = $tripped || $g['tripped'];
+}
+ok($g['blocked'] === true && $g['why'] === 'cooldown' && $g['retry'] === 60,
+    'a burst of requests trips the cooldown');
+ok($tripped === true, 'the tripping request is flagged (drives the server-log warning)');
+$g = Friends::rateHit('f1f10002');
+ok($g['blocked'] === true && $g['tripped'] === false && $g['why'] === 'cooldown',
+    'requests during the cooldown stay blocked and do not re-trip');
+// A real pause (idle a whole cooldown) clears the streak: rewind last far
+// enough, drop the cooldown, and the next request is allowed again.
+Db::get()->prepare('UPDATE players SET friend_req_cooldown_until = 0, friend_req_last = ? WHERE id = ?')
+    ->execute([time() - 120, 'f1f10002']);
+ok(Friends::rateHit('f1f10002')['blocked'] === false, 'an idle gap of a cooldown clears the streak');
+Settings::set('friend_rate_interval', 1);
+Settings::set('friend_rate_burst', 10);
+Settings::set('friend_rate_cooldown', 60);
+
 // Player expiry: stale players removed, friendships cancelled + notified
 Settings::set('player_ttl_days', 1);
 Presence::touch('dddd0001', '9.9.9.1');

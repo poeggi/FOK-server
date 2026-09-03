@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 21;
+    private const SCHEMA_VERSION = 22;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -313,6 +313,15 @@ final class Db
             // api/scores.php). Nullable: NULL means the client reported none.
             // The API contract stays 3.4 - the field is additive and optional.
             $pdo->exec('ALTER TABLE scores ADD COLUMN platform TEXT');
+        }
+        if ($v < 22) {
+            // Per-id friend-request throttle state (see Friends::rateHit):
+            // the last request time, the consecutive-request streak, and the
+            // end of a burst cooldown. Kept on the player row next to
+            // friend_ban_until, the heavier spam guard it complements.
+            $pdo->exec('ALTER TABLE players ADD COLUMN friend_req_last INTEGER NOT NULL DEFAULT 0');
+            $pdo->exec('ALTER TABLE players ADD COLUMN friend_req_streak INTEGER NOT NULL DEFAULT 0');
+            $pdo->exec('ALTER TABLE players ADD COLUMN friend_req_cooldown_until INTEGER NOT NULL DEFAULT 0');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

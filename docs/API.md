@@ -665,16 +665,21 @@ list is authoritative. Scores remain as history.
           acceptance.
 
 Request rate (API 3.5): the "request" action is throttled per id on two
-scales, independent of the spam ban below. A request sent less than 1
-second (admin-configurable) after the same id's previous one answers 429
-`{"ok":false,"error":"friend requests too fast","retry_after":1}`. And
-after 10 requests in a row (admin-configurable) with no real pause, the id
-enters a 60-second (admin-configurable) cooldown: every request until it
-ends answers 429 `{"ok":false,"error":"friend request cooldown",
-"retry_after":<seconds left>}`. The streak clears after an idle gap of one
-cooldown length. Honor `retry_after` (or just the HTTP 429) and back off;
-do not spin. Normal use - one tap per friend - never trips either. Only
-"request" is limited; accept, remove and list are not.
+scales, independent of the spam ban below. Its job is to stop the "exists"
+oracle above from being used to enumerate ids: the throttle is checked
+BEFORE existence, so a rapid prober is turned away with 429 (learning
+nothing about the peer) rather than handed an "exists" answer. A request
+sent less than 1 second (admin-configurable) after the same id's previous
+one answers 429 `{"ok":false,"error":"friend requests too fast",
+"retry_after":1}`. And after 10 requests in a row (admin-configurable)
+with no real pause, the id enters a 60-second (admin-configurable)
+cooldown: every request until it ends answers 429 `{"ok":false,
+"error":"friend request cooldown","retry_after":<seconds left>}`, and the
+server records a visible warning in its log for the operator. The streak
+clears after an idle gap of one cooldown length. Honor `retry_after` (or
+just the HTTP 429) and back off; do not spin. Normal use - one tap per
+friend - never trips either. Only "request" is limited; accept, remove and
+list are not.
 
 Spam ban: a client whose UNANSWERED requests exceed a threshold
 (default 15 per hour, admin-configurable) is banned from making friend

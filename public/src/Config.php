@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.0.4';
+const FOK_SERVER_VERSION = '1.0.5';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -43,7 +43,14 @@ const FOK_SERVER_VERSION = '1.0.4';
 // cleared the final level) and "platform" (the device category it was played
 // on). Major stays 3; a client that uses none of these is unaffected, and one
 // that adopts 3.4 picks them all up.
-const FOK_API_VERSION = '3.4';
+// v3.5: additive friend-request feedback. POST /api/friend.php action
+// "request" now returns an "exists" boolean; an unknown peer id answers
+// {"ok":true,"exists":false} without recording anything, so a mistyped id is
+// caught rather than left as a dead pending row. The same action gains a
+// per-id request throttle (at most one per second, then a cooldown after a
+// burst), answering 429 with "retry_after". Major stays 3; a client that
+// ignores "exists" and never trips the throttle behaves exactly as on 3.4.
+const FOK_API_VERSION = '3.5';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');

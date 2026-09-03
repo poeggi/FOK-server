@@ -375,7 +375,10 @@ else
     # the sender is told. (The sweep runs on the next mailbox read, so
     # the inviter's own heartbeat both raises and delivers the receipt.)
     # Uses the fresh pair: ID1/ID2 unfriended above, and ID1 is still
-    # friend-request banned by the spam test.
+    # friend-request banned by the spam test. ID4 has only ever hit backup.php
+    # (no player row), so register it first - a request to an unregistered id
+    # now records nothing and reports exists:false (API 3.5).
+    hello "$ID4" > /dev/null
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID3\",\"action\":\"request\",\"peer\":\"$ID4\"}" "$BASE/api/friend.php" > /dev/null
     curl -s -X POST -H 'Content-Type: application/json' \

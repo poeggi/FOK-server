@@ -12,8 +12,14 @@ require_once __DIR__ . '/../src/Signals.php';
  * invites.
  *
  * POST {"id": "8-hex", "action": "request|accept|remove", "peer": "8-hex"}
- *   request -> {"ok":true,"state":"pending"}  (or "accepted" when the
- *              peer had already asked - requests auto-match)
+ *   request -> {"ok":true,"state":"pending","exists":true} (or "accepted"
+ *              when the peer had already asked - requests auto-match), OR
+ *              {"ok":true,"exists":false} for an id no player has ever
+ *              registered (nothing recorded, peer not notified). Throttled
+ *              per id (429 with retry_after): at most one per second, then a
+ *              cooldown after a burst (see Friends::rateHit). The "exists"
+ *              feedback is an existence oracle, acceptable while ids are
+ *              public (see docs/API.md).
  *   accept  -> {"ok":true,"state":"accepted"} (404 without a pending
  *              request from that peer)
  *   remove  -> {"ok":true}                    (declines or unfriends)
@@ -63,12 +69,33 @@ if (!Util::isValidId($peer) || $peer === $id) {
 
 switch ($action) {
     case 'request':
+        // Throttle first (see Friends::rateHit): the cheapest guard, and it
+        // counts every attempt so a hammer trips the cooldown and backs off.
+        $gate = Friends::rateHit($id);
+        if ($gate['blocked']) {
+            if ($gate['tripped']) {
+                // Crossing the burst threshold into the cooldown is the
+                // anti-probe guard firing: make it a visible operator warning
+                // in the server log (a trip is rare - at most one per cooldown
+                // per id, so it never floods) and record a de-duplicated
+                // dashboard alert alongside it.
+                error_log("FOK friend: $id hit the friend-request cooldown ({$gate['retry']}s)");
+                Alerts::raise('friend-cooldown', "Friend-request cooldown: $id blocked for {$gate['retry']}s");
+            }
+            $msg = $gate['why'] === 'cooldown' ? 'friend request cooldown' : 'friend requests too fast';
+            Util::jsonOut(['ok' => false, 'error' => $msg, 'retry_after' => $gate['retry']], 429);
+        }
         $st = Db::get()->prepare('SELECT friend_ban_until FROM players WHERE id = ?');
         $st->execute([$id]);
         $bannedUntil = (int)$st->fetchColumn();
         $st->closeCursor();
         if ($bannedUntil > time()) {
             Util::fail('friend requests banned', 429);
+        }
+        // An id no player has ever registered: report it back instead of
+        // recording a dead pending row and notifying nobody.
+        if (!Friends::exists($peer)) {
+            Util::jsonOut(['ok' => true, 'exists' => false]);
         }
         $r = Friends::request($id, $peer);
         if ($r['changed'] && $r['state'] === 'pending' && Presence::isAutoAccepting($peer)) {
@@ -102,7 +129,7 @@ switch ($action) {
             $event = $r['state'] === 'accepted' ? 'accepted' : 'request';
             Signals::send($id, $peer, 'friend', json_encode(['event' => $event, 'from' => $id]));
         }
-        Util::jsonOut(['ok' => true, 'state' => $r['state']]);
+        Util::jsonOut(['ok' => true, 'state' => $r['state'], 'exists' => true]);
     case 'accept':
         if (!Friends::accept($id, $peer)) {
             Util::fail('no pending request from that peer', 404);

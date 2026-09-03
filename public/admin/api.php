@@ -122,6 +122,10 @@ switch ($action) {
         $id = requireId('POST');
         $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
         ConnTrack::forget($id);
+        // registered/online are derived from the players table and cached
+        // (see Presence::counts); drop the cache so the dashboard reflects the
+        // removal at once instead of lingering until the counts TTL lapses.
+        Presence::flushCounts();
         Util::jsonOut(['ok' => true]);
 
     // ---- config vault (per-client backup) ----

@@ -109,3 +109,14 @@ if [ -n "$ADMIN_USER" ]; then
         "$BASE/admin/index.php"
     ADMIN=1
 fi
+
+# The per-id friend-request throttle (API 3.5) is an anti-probe guard that
+# 429s a second "request" from the same id within a second. Several tests
+# below legitimately fire two requests from one id back to back (quicker than
+# the 1 s default), so disable it suite-wide here; 04_matchmaking.sh re-enables
+# it at tight caps for its own focused throttle test. Needs admin (no creds =
+# a bare remote diagnostic, which skips the throttle-dependent tests anyway).
+if [ "$ADMIN" -eq 1 ]; then
+    setting friend_rate_interval 0
+    setting friend_rate_burst 1000000
+fi
