@@ -610,8 +610,10 @@ status (hello's friends_* maps, friend.php list) and to send game
 invites; quick match remains open to strangers by design.
 
     POST {"id":"c0ffee42", "action":"request", "peer":"deadbeef"}
-      -> {"ok":true,"state":"pending"}      recorded; peer sees it in list
-      -> {"ok":true,"state":"accepted"}     when the peer had already
+      -> {"ok":true,"state":"pending","exists":true}
+                                            recorded; peer sees it in list
+      -> {"ok":true,"state":"accepted","exists":true}
+                                            when the peer had already
                                             requested me (auto-match), OR
                                             when the peer is currently on
                                             the QR/add-friend screen
@@ -620,6 +622,23 @@ invites; quick match remains open to strangers by design.
                                             handshake completes instantly
                                             and both sides get an
                                             'accepted' notification
+      -> {"ok":true,"exists":false}         (API 3.5) NO player has ever
+                                            registered that id: nothing is
+                                            recorded and the peer is not
+                                            notified, so "state" is absent.
+                                            Show the user "no such id" - a
+                                            mistyped or stale code, since a
+                                            real id is shared by QR or link.
+
+    The "exists" field is added in API 3.5. It reports only whether a
+    players row exists for the peer (it has contacted the server at least
+    once), never whether it is online. On a pre-3.5 server the field is
+    absent AND a request to an unknown id records a normal "pending" row as
+    before; a client that reads "exists" MUST treat its ABSENCE as unknown
+    and fall back to the "state" it got. Because an id is a public
+    identity, this is a deliberate existence oracle, acceptable only while
+    ids are not secret (see the session-token caveat below).
+
     POST {"id":..., "action":"accept", "peer":...}
       -> {"ok":true,"state":"accepted"}     404 without a pending request
     POST {"id":..., "action":"remove", "peer":...}
@@ -645,7 +664,19 @@ list is authoritative. Scores remain as history.
           pending entry with "outgoing":false is a request awaiting MY
           acceptance.
 
-Rate limit: a client whose UNANSWERED requests exceed a threshold
+Request rate (API 3.5): the "request" action is throttled per id on two
+scales, independent of the spam ban below. A request sent less than 1
+second (admin-configurable) after the same id's previous one answers 429
+`{"ok":false,"error":"friend requests too fast","retry_after":1}`. And
+after 10 requests in a row (admin-configurable) with no real pause, the id
+enters a 60-second (admin-configurable) cooldown: every request until it
+ends answers 429 `{"ok":false,"error":"friend request cooldown",
+"retry_after":<seconds left>}`. The streak clears after an idle gap of one
+cooldown length. Honor `retry_after` (or just the HTTP 429) and back off;
+do not spin. Normal use - one tap per friend - never trips either. Only
+"request" is limited; accept, remove and list are not.
+
+Spam ban: a client whose UNANSWERED requests exceed a threshold
 (default 15 per hour, admin-configurable) is banned from making friend
 requests for a while (default 1 h), ALL of its pending requests are
 deleted, and the incident is logged as an alert. The request that trips

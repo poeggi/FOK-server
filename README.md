@@ -17,11 +17,15 @@ are considered production-stable.
 - Friendships: established THROUGH the server (request/accept handshake,
   removable); only an accepted, server-recorded friendship entitles a
   client to query a friend's status (online, latency, name) or send a
-  game invite. New requests and acceptances notify the peer via a
-  reserved 'friend' signal in its mailbox. Quick match stays open to
-  strangers (the match response carries the opponent's name). Players
-  not seen for 180 days (configurable) are expired automatically:
-  removed from the database, friendships cancelled, friends notified.
+  game invite. A request to an unknown id is reported back ("exists":false)
+  instead of recorded, so a mistyped code is caught early. Requests are
+  throttled per id (at most one per second, and a short cooldown after a
+  burst) on top of the unanswered-request spam ban. New requests and
+  acceptances notify the peer via a reserved 'friend' signal in its
+  mailbox. Quick match stays open to strangers (the match response carries
+  the opponent's name). Players not seen for 180 days (configurable) are
+  expired automatically: removed from the database, friendships cancelled,
+  friends notified.
 - Relay fallback (DEPRECATED - see docs/DEPRECATED-relay.md): when the P2P
   DataChannel cannot connect, duels relay
   their (input-level) messages through the server via relay.php long
