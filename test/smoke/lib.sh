@@ -14,13 +14,45 @@ COOKIES="$DATA/cookies.txt"
 if [ -n "${SMOKE_BASE:-}" ]; then
     REMOTE=1
     BASE="${SMOKE_BASE%/}"
+    # Every one of the suite's ~390 requests is its own curl process, so
+    # every one pays a fresh TLS handshake to the host - ~500 ms each against
+    # ~25 ms of real work. keepalive-proxy.py holds the connections open and
+    # the requests go over the loopback instead; see its header. It is an
+    # accelerator only: if there is no python3, or it does not come up, the
+    # suite runs exactly as before, straight at the host. SMOKE_NO_PROXY=1
+    # forces that (a run against a host this tunnel cannot reach, or when
+    # bisecting the tunnel itself).
+    PROXY_PID=''
+    if [ -z "${SMOKE_NO_PROXY:-}" ] && command -v python3 >/dev/null; then
+        _up="${BASE#*://}"; _origin="${BASE%%://*}://${_up%%/*}"
+        _path=''; [ "${_up#*/}" != "$_up" ] && _path="/${_up#*/}"
+        python3 "$(dirname "${BASH_SOURCE[0]}")/keepalive-proxy.py" "$_origin" \
+            > "$DATA/proxy.port" 2>"$DATA/proxy.log" &
+        PROXY_PID=$!
+        for _ in $(seq 50); do
+            _port=$(head -1 "$DATA/proxy.port" 2>/dev/null)
+            [ -n "$_port" ] && break
+            sleep 0.1
+        done
+        if [ -n "${_port:-}" ]; then
+            BASE="http://127.0.0.1:$_port$_path"
+            echo "     (keep-alive tunnel on 127.0.0.1:$_port -> $_origin)"
+        else
+            kill "$PROXY_PID" 2>/dev/null || true
+            PROXY_PID=''
+            echo "     (keep-alive tunnel did not start, going direct)" >&2
+        fi
+    fi
     ID1=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
     ID2=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
     ID3=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
     ID4=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
     ADMIN_USER="${FOK_ADMIN_USER:-}"
     ADMIN_PASS="${FOK_ADMIN_PASS:-}"
-    cleanup() { rm -rf "$DATA"; }
+    cleanup() {
+        [ -n "$PROXY_PID" ] && kill "$PROXY_PID" 2>/dev/null
+        rm -rf "$DATA"
+    }
 else
     REMOTE=0
     # Random port: a stale server from an aborted run must never be able

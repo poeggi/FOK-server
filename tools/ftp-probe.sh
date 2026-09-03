@@ -1,54 +1,40 @@
 #!/usr/bin/env bash
-# Round 2. Round 1 answered why the upload is slow and what the ceiling is:
+# Round 3. Rounds 1 and 2 settled the upload: one FTPS upload is ~19
+# serialized ~95 ms round trips (the bytes are irrelevant), curl cannot reuse
+# an FTP connection so it needs one login per file, this host rate-limits
+# logins and 530s curl at 24 ways, and lftp - which does reuse its pooled
+# connections - uploads the whole tree at 24 ways in ~11 s, 52/52 verified.
+# Its parallel queue writes <name>.tmp siblings, so the deploy's swap phase
+# survives unchanged. That is now in tools/deploy.sh.
 #
-#   One upload is ~19 SERIALIZED round trips of ~95 ms - TCP, a 304 ms
-#   greeting, AUTH SSL, control TLS, USER, PASS, PBSZ, PROT, PWD, CWD, EPSV,
-#   data connect, TYPE, STOR, 226 - so ~2.0 s per file of which the bytes are
-#   nothing. None of the usual suspects was to blame: --disable-epsv, --ipv4,
-#   --ftp-skip-pasv-ip, --tcp-nodelay, TLS 1.2 and a clear data channel all
-#   measured within noise of the baseline (2071-2162 ms/file).
+# Timing the result against staging exposed two things the local stub could
+# not, and this round measures each rather than guessing:
 #
-#   Two things the deploy's own comments asserted turned out to be false. The
-#   data channel does NOT renegotiate TLS - the trace says "SSL reusing
-#   session ID". And curl cannot reuse an FTP connection at all: asked for
-#   three files in one invocation it opened connections #0, #1 and #2, each
-#   with its own USER/PASS, so batching never saved a login.
-#
-#   That is what caps curl. It needs one login per file, the host rate-limits
-#   logins, and at 24-way curl trips it (rc=123, 530 Access denied) while
-#   lftp - which really does reuse its pooled connections, so 52 files cost
-#   ~12-24 logins instead of 52 - runs clean at the same width and is the
-#   fastest measured: 8.4 s against curl's 14.1 s at 12-way.
-#
-# So the upload should be lftp's. What is NOT yet measured is how to keep the
-# deploy's atomicity while it is: the swap depends on uploading beside the
-# live file and renaming over it, and lftp's mirror writes real names. Two
-# mechanisms could preserve it, and this measures both rather than picking the
-# one that reads better:
-#
-#   H  lftp's parallel queue running explicit puts to <name>.tmp - keeps the
-#      current layout and the whole swap phase byte for byte, but relies on
-#      queue semantics this repo has never exercised.
-#   I  mirror into a scratch directory (the shape already measured at 8.4 s)
-#      and rename ACROSS directories into place - keeps mirror, but needs the
-#      host to accept a pathname in RNFR/RNTO rather than a bare basename.
-#
-# Both are verified by listing what actually landed, not by trusting rc.
+#   J  The sha256 manifest never survives - every run reports "no manifest on
+#      the server", so the delta never engages. Suspect: mktemp pre-creates
+#      the local file and lftp's xfer:clobber defaults to off, so `get -o`
+#      refuses to overwrite it. Tests the suspicion and the two candidate
+#      fixes.
+#   K  The swap costs ~440 ms per rename, far more than the 2 round trips a
+#      RNFR/RNTO pair should be. Suspect: a `mv` naming a path makes lftp
+#      change directory each time. Compares paths against one `cd` and bare
+#      basenames.
+#   L  Both phases currently verify by listing the tree, which costs ~7 s a
+#      run - most of a small deploy. If `cmd:fail-exit` reliably turns a bad
+#      command into a non-zero exit, the swap needs no listing at all. Tested
+#      for a plain command AND for a queued transfer, which is the case that
+#      cannot be assumed.
+#   M  What that listing actually costs: a recursive find over the tree
+#      against a single directory.
 #
 # Run from CI only (.github/workflows/ftp-bench.yml, manual dispatch), against
-# staging/. Everything it writes is either a .tmp sibling (what a real deploy
-# leaves between its phases, never served, renamed away by the next staging
-# deploy) or a scratch directory it removes itself.
+# staging/. Everything it writes is a .tmp sibling - what a real deploy leaves
+# between its phases, never served, renamed away by the next staging deploy.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 : "${FTP_HOST:?}" "${FTP_USER:?}" "${FTP_PASS:?}"
 prefix='staging/'
-export FTP_HOST FTP_USER FTP_PASS prefix
-
-mapfile -t FILES < <(find public -type f | sort)
-NFILES=${#FILES[@]}
-echo "payload: $NFILES files, $(find public -type f -printf '%s\n' | awk '{s+=$1} END {print s}') bytes"
 
 now_ms() { date +%s%3N; }
 log() { printf '\n===== %s =====\n' "$*"; }
@@ -58,50 +44,77 @@ lftp_run() { lftp -u "$FTP_USER,$FTP_PASS" "$FTP_HOST" -e "
     $1
     bye"; }
 
-# Counts what actually arrived, so a mechanism cannot pass on rc alone.
-count_remote() { # $1 = path under the webroot, $2 = suffix to match
-    lftp_run "find $1;" 2>/dev/null | grep -c "$2\$"
+# --- J: why the manifest never comes back -----------------------------------
+log "J. manifest round trip"
+src=$(mktemp); echo "manifest-probe-$(date +%s)" > "$src"
+lftp_run "put $src -o ${prefix}.htprobe-manifest;" >/dev/null 2>&1
+echo "  uploaded, rc=$?"
+
+a=$(mktemp)                      # mktemp pre-creates it: the suspected case
+out=$(lftp_run "get ${prefix}.htprobe-manifest -o $a;" 2>&1); rc=$?
+printf '  get onto an existing file   rc=%s size=%s  %s\n' \
+    "$rc" "$(wc -c < "$a")" "$(echo "$out" | tr '\n' ' ' | cut -c1-60)"
+
+b=$(mktemp); rm -f "$b"          # candidate fix 1: no local file in the way
+out=$(lftp_run "get ${prefix}.htprobe-manifest -o $b;" 2>&1); rc=$?
+printf '  get with no file in the way rc=%s size=%s  %s\n' \
+    "$rc" "$( [ -f "$b" ] && wc -c < "$b" || echo -)" "$(echo "$out" | tr '\n' ' ' | cut -c1-60)"
+
+c=$(mktemp)                      # candidate fix 2: allow the overwrite
+out=$(lftp_run "set xfer:clobber on; get ${prefix}.htprobe-manifest -o $c;" 2>&1); rc=$?
+printf '  get with xfer:clobber on    rc=%s size=%s  %s\n' \
+    "$rc" "$(wc -c < "$c")" "$(echo "$out" | tr '\n' ' ' | cut -c1-60)"
+rm -f "$src" "$a" "$b" "$c"
+
+# --- K/L/M need .tmp files to rename ----------------------------------------
+mapfile -t API < <(find public/api -maxdepth 1 -type f | sort | head -20)
+mapfile -t SRC < <(find public/src -maxdepth 1 -type f | sort | head -20)
+put_tmp() {   # $@ = local files -> <name>.tmp beside their remote twin
+    local s='set cmd:queue-parallel 24;'$'\n' f
+    for f in "$@"; do s+="queue put $f -o $prefix${f#public/}.tmp"$'\n'; done
+    lftp_run "$s"'wait all'$'\n' >/dev/null 2>&1
 }
 
-# --- H: lftp's parallel queue, explicit puts to .tmp -------------------------
-log "H. lftp queue, explicit puts to <name>.tmp"
-for n in 12 24; do
-    script="set cmd:queue-parallel $n;"$'\n'
-    while read -r d; do script+="mkdir -f -p $prefix$d"$'\n'; done \
-        < <(find public -mindepth 1 -type d -printf '%P\n')
-    for f in "${FILES[@]}"; do script+="queue put $f -o $prefix${f#public/}.tmp"$'\n'; done
-    script+="wait all"$'\n'
-    t=$(now_ms); lftp_run "$script" >/dev/null 2>&1; rc=$?
-    printf 'lftp-queue-p%-3s %6d ms  rc=%s  landed=%s/%s\n' \
-        "$n" $(( $(now_ms) - t )) "$rc" "$(count_remote "$prefix" '\.tmp')" "$NFILES"
-done
+# --- K: does a path in mv cost a directory change? --------------------------
+log "K. rename cost: a path per mv vs one cd and bare basenames"
+put_tmp "${API[@]}" "${SRC[@]}"
 
-# --- I: mirror to a scratch dir, then rename across directories -------------
-log "I. mirror to a scratch dir + cross-directory rename"
-# The carrier URL makes curl CWD into the deploy prefix, so every path the
-# rename names is relative to THAT, not to the FTP root.
-scratch_rel='_probe_new'
-scratch="$prefix$scratch_rel"
-t=$(now_ms)
-lftp_run "mirror -R --no-perms --parallel=24 public $scratch;" >/dev/null 2>&1; rc=$?
-printf 'mirror-p24  %6d ms  rc=%s  landed=%s/%s\n' \
-    $(( $(now_ms) - t )) "$rc" "$(count_remote "$scratch" '')" "$NFILES"
+s=''; for f in "${API[@]}"; do r="${f#public/}"; s+="mv $prefix$r.tmp $prefix$r"$'\n'; done
+t=$(now_ms); lftp_run "$s" >/dev/null 2>&1; rc=$?
+n=${#API[@]}; e=$(( $(now_ms) - t ))
+printf '  mv with a full path   %6d ms  rc=%s  %d renames  %d ms each\n' "$e" "$rc" "$n" "$((e / n))"
 
-# The swap needs RNFR/RNTO to accept a pathname, not just a basename in the
-# current directory. Tried on one file per directory shape the tree has.
-echo "cross-directory rename (RNFR/RNTO with a pathname):"
-probed=()
-for rel in src/Config.php assets/admin.js api/hello.php; do
-    out=$(curl -sS --ssl-reqd --user "$FTP_USER:$FTP_PASS" -o /dev/null \
-        "ftp://$FTP_HOST/$prefix" \
-        -Q "-RNFR $scratch_rel/$rel" -Q "-RNTO $rel.probed" 2>&1)
-    printf '  %-20s %s\n' "$rel" "${out:-OK}"
-    probed+=("$prefix$rel.probed")
-done
-echo "left in the scratch dir: $(count_remote "$scratch" '') of $NFILES"
+s="cd ${prefix}src"$'\n'; for f in "${SRC[@]}"; do b="${f##*/}"; s+="mv $b.tmp $b"$'\n'; done
+t=$(now_ms); lftp_run "$s" >/dev/null 2>&1; rc=$?
+n=${#SRC[@]}; e=$(( $(now_ms) - t ))
+printf '  cd once, bare names   %6d ms  rc=%s  %d renames  %d ms each\n' "$e" "$rc" "$n" "$((e / n))"
 
-lftp_run "$(printf 'rm -f %s\n' "${probed[@]}") rm -rf $scratch;" >/dev/null 2>&1 || true
-echo "scratch and probed files removed"
+# --- L: can a listing-free gate rely on the exit status? --------------------
+log "L. does cmd:fail-exit turn a failure into a non-zero exit?"
+lftp_run "set cmd:fail-exit on; mv ${prefix}definitely-not-here.tmp ${prefix}x;" >/dev/null 2>&1
+echo "  bad mv, fail-exit on            rc=$?  (want non-zero)"
+lftp_run "mv ${prefix}definitely-not-here.tmp ${prefix}x;" >/dev/null 2>&1
+echo "  bad mv, fail-exit off           rc=$?"
+lftp_run "set cmd:fail-exit on; cd ${prefix}src; mv also-not-here.tmp x;" >/dev/null 2>&1
+echo "  bad mv after cd, fail-exit on   rc=$?  (want non-zero)"
+# The one that cannot be assumed: a failure inside a QUEUED transfer.
+lftp_run "set cmd:fail-exit on; set cmd:queue-parallel 4;
+    queue put /nonexistent/nope.txt -o ${prefix}nope.tmp
+    wait all" >/dev/null 2>&1
+echo "  bad queued put, fail-exit on    rc=$?  (want non-zero)"
+# And a mkdir of a directory that already exists, which the deploy issues on
+# every run - it must NOT abort the session under fail-exit.
+lftp_run "set cmd:fail-exit on; mkdir -f -p ${prefix}src; cd ${prefix}src;" >/dev/null 2>&1
+echo "  mkdir -f -p on an existing dir  rc=$?  (want zero)"
 
+# --- M: what the verification listing costs ---------------------------------
+log "M. cost of the verification listing"
+t=$(now_ms); lftp_run "find $prefix;" >/dev/null 2>&1; echo "  recursive find over the tree  $(( $(now_ms) - t )) ms"
+t=$(now_ms); lftp_run "cls -1 ${prefix}src;" >/dev/null 2>&1; echo "  cls -1 of one directory       $(( $(now_ms) - t )) ms"
+t=$(now_ms); lftp_run "cls -1 ${prefix}src; cls -1 ${prefix}assets;" >/dev/null 2>&1
+echo "  cls -1 of two, one session    $(( $(now_ms) - t )) ms"
+t=$(now_ms); lftp_run "quote noop;" >/dev/null 2>&1; echo "  a bare login and nothing else $(( $(now_ms) - t )) ms"
+
+lftp_run "rm -f ${prefix}.htprobe-manifest;" >/dev/null 2>&1
 echo
 echo "probe done"
