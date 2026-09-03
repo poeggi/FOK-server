@@ -114,6 +114,32 @@ final class Presence
     }
 
     /**
+     * Which of $ids are in a duel right now - the "is playing" half of the
+     * friends list, so a tournament host can see who is actually free to
+     * join. Read off the duels table (a duel refreshes it every hello), and
+     * bounded by idx_duels_seen first, so the friend test only ever runs
+     * over the handful of duels currently live rather than over every duel
+     * ever played.
+     *
+     * @param list<string> $ids
+     * @return list<string> the subset of $ids that is playing
+     */
+    public static function playingOf(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        $st = Db::get()->prepare('SELECT a, b FROM duels WHERE last_seen > ?');
+        $st->execute([time() - FOK_DUEL_WINDOW]);
+        $busy = [];
+        foreach ($st->fetchAll() as $row) {
+            $busy[(string)$row['a']] = true;
+            $busy[(string)$row['b']] = true;
+        }
+        return array_values(array_filter($ids, static fn(string $i): bool => isset($busy[$i])));
+    }
+
+    /**
      * Peer-net hint: at the moment a 1:1 pairing is confirmed (an accepted
      * invite, a fresh quick match) and BEFORE the P2P handshake, tell each
      * side the other's server-observed IP plus its own, so that two peers on

@@ -6,6 +6,7 @@ require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Friends.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
+require_once __DIR__ . '/../src/Tournament.php';
 
 /**
  * Heartbeat and poll endpoint, the client's single periodic request.
@@ -21,11 +22,13 @@ require_once __DIR__ . '/../src/ConnTrack.php';
  *   "debug": bool,              optional, whether the client IS in debug
  *                               mode (absent means it is not)
  *   "friends": ["8-hex", ...]   optional, ids to check
+ *   "tourneys": bool            optional, ask for open tournament lobbies
+ *                               hosted on the caller's own address
  * }
  * Returns presence counters, the server's debug wish for this client,
  * pending signaling messages for the caller (drained on read) and, for
- * requested friends, online/latency/name - filled ONLY for ids with an
- * ACCEPTED friendship to the caller.
+ * requested friends, online/latency/name plus friends_playing - all filled
+ * ONLY for ids with an ACCEPTED friendship to the caller.
  * Clients send this every ~30s; fast polling belongs to poll.php.
  */
 Util::cors();
@@ -92,6 +95,10 @@ if (isset($body['friends'])) {
         }
     }
 }
+$tourneys = $body['tourneys'] ?? false;
+if (!is_bool($tourneys)) {
+    Util::fail('invalid tourneys');
+}
 
 $signals = Signals::take($id);
 Load::tick('msg_out', count($signals));
@@ -119,6 +126,24 @@ if ($friends !== null) {
         $out['friends_latency']->$f = $info[$f]['latency'] ?? null;
         $out['friends_name']->$f = $info[$f]['name'] ?? null;
     }
+    // Online is not the same as available: a friend already in a duel cannot
+    // take an invite or join a lobby, and saying so up front is the
+    // difference between a considered invite and a wasted one.
+    $out['friends_playing'] = Presence::playingOf(array_keys($accepted));
+}
+
+// Lobbies are announced by ADDRESS, not by friendship: a tournament is a
+// room full of people who are in the same room. The code stays the way in
+// from anywhere else, and it is the capability - so nothing here reveals a
+// lobby to someone who could not already see the host.
+//
+// Lazy maintenance rides along, the same shape as the item ledger's
+// truncation: no cron exists, so a lobby whose host walked away is reaped by
+// whichever hello asks about lobbies next. Deferred - it is the server's
+// bookkeeping, not this caller's, and it must not sit in a heartbeat.
+if ($tourneys) {
+    $out['tourneys'] = Tournament::announce(Util::clientIp());
+    Util::defer(static fn() => Tournament::reapLobbies());
 }
 
 Util::jsonOut($out);

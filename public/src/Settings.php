@@ -57,6 +57,18 @@ final class Settings
         'ledger_max_rows' => [200000, 'Checkpoint and truncate the item ledger above this many rows'],
         'ledger_sample' => [200, 'One request in N may run the item-ledger truncation check'],
         'mint_max_per_hour' => [60, 'Max client-driven item mints per player per hour'],
+        // Tournament mode (see Tournament, api/tournament.php). The two _ms
+        // deadlines are the whole of the "what if nobody answers" story, and
+        // both are evaluated lazily on the next touch - there is no timer.
+        // result_ms is short: it only has to outlast the losing client's own
+        // report of a match that just ended. walkover_ms is long, and only
+        // ever fires against a player who is also OFFLINE, so a slow match
+        // between two present players is never taken away from them.
+        'tournament_max_players' => [10, 'Max players in one tournament'],
+        'tournament_join_ttl' => [900, 'Abandon a lobby nobody started after (seconds)'],
+        'tournament_result_ms' => [15000, 'A one-sided result settles after this long unanswered (ms)'],
+        'tournament_walkover_ms' => [180000, 'An offline player forfeits the match in flight after (ms)'],
+        'tournament_create_cooldown' => [300, 'Min seconds between one host creating tournaments'],
         'admin_refresh_secs' => [30, 'Admin dashboard refresh interval (seconds, 0 = off)'],
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)'],
         'admin_duels_refresh_secs' => [1, 'Duels card refresh interval (seconds, 0 = off)'],

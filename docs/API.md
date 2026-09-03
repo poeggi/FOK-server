@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.0", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.1", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -30,7 +30,8 @@ the dot): disable online features with a friendly notice when the
 server's MAJOR is newer than what they were built against, rather than
 misbehave against an incompatible server. A newer MINOR on the same MAJOR
 is safe to talk to; a client may read the MINOR to tell whether an
-optional feature (e.g. the peer-net hint, added in 3.1) is available.
+optional feature (e.g. the peer-net hint, added in 3.1, or tournament
+mode, added in 4.1) is available.
 
 ## Conventions
 
@@ -336,16 +337,20 @@ Request:
                                   immediately (see Friendships). Expires
                                   ~60 s after the last flagged hello; a
                                   hello without the flag clears it.
-      "debug": true               optional bool: whether the client IS in
+      "debug": true,              optional bool: whether the client IS in
                                   debug mode right now (absent means it is
                                   not). See Debug mode below.
+      "tourneys": true            optional bool: ask for the open tournament
+                                  lobbies hosted on the caller's own address
+                                  (see Tournament mode). Send it only while a
+                                  screen that shows them is open.
     }
 
 Response:
 
     {
       "ok": true,
-      "api": "4.0",               contract version, see Versioning
+      "api": "4.1",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "debug": false,             the server's instruction: the client MUST
@@ -358,13 +363,28 @@ Response:
       ],
       "friends_online": {"deadbeef": true},  only when "friends" was sent
       "friends_latency": {"deadbeef": 31},   ms while online, else null
-      "friends_name": {"deadbeef": "KAI"}    last reported display name
+      "friends_name": {"deadbeef": "KAI"},   last reported display name
+      "friends_playing": ["deadbeef"],       accepted friends in a duel NOW
+      "tourneys": [                          only when "tourneys" was true
+        {"tid": "<32-hex>", "code": "K7QMX2", "host": "c0ffee42",
+         "host_name": "KAI", "players": 3, "max": 10, "stakes": false}
+      ]
     }
 
-The friends_* maps are AUTHORIZATION-GATED: real values are served only
+The friends_* fields are AUTHORIZATION-GATED: real values are served only
 for ids with an ACCEPTED friendship to the caller (see Friendships);
-any other id reads as offline/null, so possessing an id alone reveals
-nothing.
+any other id reads as offline/null and never appears in friends_playing,
+so possessing an id alone reveals nothing.
+
+`friends_playing` lists the accepted friends who are in a duel right now.
+Online is not the same as available - a friend mid-duel cannot take an
+invite or join a lobby - so show them as busy rather than inviting them.
+
+`tourneys` is served only when the request set `"tourneys": true`, and
+lists the OPEN lobbies whose host is currently reaching the server from
+the same address as the caller. It is an address-local convenience, not a
+directory: everything else is joined by `code`, and the code is the
+capability (see Tournament mode).
 
 Rules:
 
@@ -537,6 +557,8 @@ Types (fixed set, anything else is rejected):
     ice       ICE candidate                       payload: JSON-encoded RTCIceCandidate
     bye       leave / abort the session           payload: ""
     chat      text message (max 120 bytes total)  payload: plain text
+    watch     ask a peer to feed you a match      payload: JSON {"nid": <node id>,
+              (spectating, see Tournament mode)                  "tid": <32-hex>}
     friend    RESERVED - server-generated only    payload: JSON {"event":
               (clients cannot send it: 400)         "request"|"accepted"
                                                      |"expired",
@@ -552,6 +574,9 @@ Types (fixed set, anything else is rejected):
                                                      "family": 4|6|0,
                                                      "self_ip": <your ip>,
                                                      "self_family": 4|6|0}
+    tourney   RESERVED - server-generated only     payload: JSON, see the
+              (clients cannot send it: 400)          event list under
+                                                     Tournament mode
 
 The 'friend' signal is the friendship NOTIFICATION: the server delivers
 it into the peer's mailbox when a friend request is created for them or
@@ -1296,6 +1321,324 @@ verifies.
 
 None of this is exposed to clients: suspected fraud is recorded for the
 operator, never announced to the accused.
+
+## Spectating
+
+A spectator watches a live duel it is not playing. The feed is PEER-TO-PEER
+like the duel itself: the server never sees a frame, a tick or an input of
+it. What the server provides is the introduction.
+
+    watch   sent by a would-be spectator to the player it wants the feed
+            from (in a tournament: the feeder, or an assigned primary)
+            payload: JSON {"tid": "<32-hex>", "nid": "<node id>"}
+
+The recipient answers with the ordinary WebRTC sequence (`offer` /
+`answer` / `ice`) on a second connection, and then streams its own game
+state over that data channel. A `bye` ends it.
+
+The feed is a TREE, not a broadcast: the player being watched feeds at
+most two spectators directly, and each of those may feed further ones. A
+duel is latency-critical for the two people playing it, and fanning eight
+data channels out of a phone mid-match is the one thing that would cost
+them the match. Who feeds whom is assigned per match (see the `roles`
+event below); outside a tournament, a `watch` is simply a request the
+recipient may honour or ignore.
+
+`watch` is NOT in the receipt set: a spectator whose request expires
+undelivered gets no 'undelivered' signal. Failing to get a feed is not a
+failed connection - the scoreboard keeps updating either way.
+
+## Tournament mode
+
+`POST /api/tournament.php` runs a tournament for 2 to 10 players: a lobby,
+a first round, a knockout and the standings between them.
+
+THE SERVER ORCHESTRATES, THE PLAYERS PLAY. Every match in a tournament is
+an ordinary P2P duel between the two players the server names, established
+exactly like any other duel (`offer`/`answer`/`ice`, then `start.php` for
+the shared start, the match id and the match secret). Spectator feeds are
+P2P as well. No match traffic and no spectator traffic passes through the
+server at any point, and tournament mode has nothing to do with the
+deprecated relay fallback. What the server owns is the schedule, the roles,
+the results and the bracket - and what a client renders is what the server
+says, never a bracket of its own devising.
+
+The server also does not WATCH a match. A result is what the two players
+who played it report, and the server's whole job there is to decide when
+two reports agree, when one is enough, and when they contradict each other
+(see The result ladder).
+
+### Lifecycle
+
+    open -----> running -----> done
+      |            |
+      +--> abandoned <--+     (lobby reaped, or the host left the lobby)
+
+- `open`: the lobby. Players join by code, the host starts it.
+- `running`: matches are played ONE AT A TIME, in the order the server
+  deals them. Everyone not playing is watching.
+- `done`: the final has been settled.
+- `abandoned`: the host left the lobby, or nobody started it within
+  `tournament_join_ttl` (15 min).
+
+### Requests
+
+Always POST, always `{"id": "<8-hex>", "action": "..."}` plus the action's
+fields:
+
+    create    {id, stakes?}          -> {ok, tid, code, stakes, max}
+    join      {id, tid}  or  {id, code}
+                                     -> {ok, ...lobby fields}
+    leave     {id, tid}              -> {ok}
+    start     {id, tid}              -> {ok}                     host only
+    state     {id, tid}              -> {ok, ...the whole tournament}
+    result    {id, tid, nid, outcome, score, mid?}
+                                     -> {ok, nid, state}
+    standdown {id, tid, nid}         -> {ok}
+    orphan    {id, tid, nid}         -> {ok}
+
+`tid` is 32 hex characters. `code` is the 6-character join code, from an
+alphabet with no 0/O/1/I/L in it because it is read off someone's screen
+and typed back in. Codes are unique among OPEN tournaments only, so they
+recycle. `stakes` (default false) declares that the matches are played for
+items; it is passed through to the clients and the server does not act on
+it - item transfers go through the item registry exactly as in any duel.
+
+A host may hold one open-or-running tournament at a time (409), and may
+create one every `tournament_create_cooldown` (429 with `retry_after`).
+
+`join` is idempotent: joining a lobby you are already in returns the lobby
+rather than an error, so a client that lost the first response just asks
+again.
+
+`leave` depends on the state. In the lobby it is a plain departure - and
+the HOST leaving abandons the lobby, because the lobby is the one thing
+the host owns. While running it is a FORFEIT: the tournament belongs to
+everyone by then and continues without the leaver, whose remaining matches
+become walkovers.
+
+### The first round
+
+Deliberately SPARSE. A full round-robin at 10 players is 45 matches played
+one at a time, which is an evening nobody finishes. Instead:
+
+- N <= 4: every pair (that is at most 3 matches each already).
+- N >= 5: the two circulant edges on the seat circle, offsets 1 and 2, so
+  every player has exactly 4 matches and the round is 2N of them.
+
+Match counts, N = 2..10: 1, 3, 6, 10, 12, 14, 16, 18, 20.
+
+Matches are ordered for REST: repeatedly the first remaining pair that
+shares no player with the one just played, falling back to the first
+remaining pair when none qualifies. On the sparse schedule (N >= 5) that
+fallback never triggers and nobody plays twice in a row; at N = 3 or 4 the
+dense round-robin runs out of disjoint pairs and it sometimes does.
+
+All of it is derived from the tournament's `seed` (minted at CREATE, before
+anyone knows who will join, so nobody can steer the draw by choosing when
+to join) and the join order, both fixed at `start`:
+
+    x' = (1664525 * x + 1013904223) mod 2^32     x0 = first 8 hex of seed,
+                                                 or 0x9e3779b9 if that is 0
+    draw(k) = next x, then x mod k
+
+Seats are a Fisher-Yates shuffle of the join order, i from N-1 down to 1,
+j = draw(i+1). A client may reproduce all of it to verify a bracket, but
+it MUST render what the server sent.
+
+Round-1 matches are played at 2 hearts.
+
+### Standings and who advances
+
+    win 1, draw 0.5, loss 0
+    diff = the sum of (own score - opponent score) over settled matches
+
+Ties are broken in this order:
+
+1. points
+2. head-to-head, but ONLY between exactly two tied players whose round-1
+   meeting exists and was decisive. The schedule is sparse: most pairs
+   never meet, and a three-way tie has no complete sub-tournament to read,
+   so anything more elaborate would be arbitrary rather than fair.
+3. score difference
+4. `sha256(seed + "|" + id)`, ascending. A coin toss fixed by a seed that
+   existed before any result did, so it can never be tuned to the standing
+   it decides.
+
+The best `max(2, ceil(N/2))` advance. A walkover and a void contribute no
+score difference (they have no score).
+
+### The knockout
+
+The advancers are folded into a bracket of the next power of two, by the
+standard recursive seeding: P(1) = [1], and P(2k) interleaves each seed s
+of P(k) with (2k+1-s). For 8 that is [1,8,4,5,2,7,3,6]. Seeds above the
+advancer count are phantoms, so their opponent gets a bye and the node
+settles immediately.
+
+Nodes are named `ko1.1`, `ko1.2`, ... `ko2.1`, ... and the last one is
+`final`. Every knockout match is 2 hearts except `final`, which is a
+normal 3-heart duel. A drawn knockout node is simply REPLAYED: same node
+id, fresh match, fresh roles.
+
+### Roles - who plays and who watches
+
+When a match comes up, every participant gets a `roles` event. It names
+the two players, the feeder, and the spectator tree.
+
+    players     the two ids, in seat order
+    feeder      players[0] - the side that opens the P2P connection and
+                feeds the primaries
+    primaries   at most 2 spectators, fed by the feeder
+    secondaries the rest, fed by a primary
+    you         "play" | "spectate" | "idle"
+
+Spectators are the participants who are online and have not forfeited, in
+seat order. `idle` means offline-at-deal or forfeited: keep showing the
+standings.
+
+The two players then set the duel up THEMSELVES, the ordinary way, calling
+`start.php` for the mid and the secret. The tournament does not pre-mint
+anything: `start.php` remains the sole authority for match ids and match
+secrets, and the tournament node merely records the `mid` its players
+report.
+
+Two roles-only repairs exist, and neither can touch a result:
+
+    standdown   a primary is about to background and hands its feed on
+    orphan      a secondary lost the primaries it was fed by
+
+Both answer `{"ok": true}` and re-deal the tree for the CURRENT node; the
+new tree reaches every participant as a `roles-patch` event, not in the
+response. `orphan` is rate-limited per player (one every 3 s); a stale one
+for a node that has moved on is a harmless no-op.
+
+### The result ladder
+
+Both players report when their match ends:
+
+    {id, tid, nid, "outcome": "win"|"loss"|"draw",
+     "score": [mine, theirs], "mid": "<the match id>"}
+
+`score` is the reporter's own score first; the server stores it in seat
+order. `mid` is optional and recorded for audit only.
+
+    outcome        alone                     with the opponent's report
+    -------------  ------------------------  --------------------------
+    loss           settles at once           confirmed
+    win            held, then settles after   confirmed
+                   tournament_result_ms
+    draw           held, then settles after   confirmed
+                   tournament_result_ms
+
+Response `state` is `settled`, `confirmed`, `held` or `frozen`.
+
+Nobody lies to lose, so a reported LOSS is taken at once. A lone win or
+draw waits ~15 s for the other side and then stands - the opponent's
+client may have been closed the moment the match ended.
+
+Two reports that disagree about the winner FREEZE the node. The server
+raises an admin alert, sends a `freeze` event, and stops: it cannot know
+which player is right, and guessing would be worse than waiting. A frozen
+round-1 node blocks only the advancer cut, so that round plays on; a frozen
+knockout node has no winner to send forward and stops the bracket where it
+stands. NOTE: the admin surface for clearing one is not built yet, so today
+a frozen knockout node ends that tournament in place.
+
+Only the two players of a node may report it (403 otherwise) - a spectator
+report is the one input that could rewrite a result nobody disputes.
+Reporting a node that is not the current one is a 409, except for a node
+that is already closed (which is a harmless late duplicate).
+
+### When nobody answers
+
+Nothing here runs on a timer - the host has no cron - so every deadline is
+evaluated lazily, on whatever request touches the tournament next:
+
+- a held one-sided result settles after `tournament_result_ms` (15 s)
+- the match in flight is forfeited after `tournament_walkover_ms` (3 min)
+  by a player who is ALSO offline. A slow match between two players who
+  are both present is never taken away from them.
+- an unstarted lobby is abandoned after `tournament_join_ttl` (15 min)
+
+A player who forfeits (by leaving, or by being offline past the walkover)
+loses their remaining matches as walkovers. A node where BOTH sides are
+gone is voided: no points, no difference, no winner.
+
+### state - the full read-back
+
+`state` returns everything a client needs to draw the tournament from
+nothing, for a reload or a rejoin. Events elsewhere are deltas; this is
+the whole picture.
+
+    {
+      "ok": true,
+      "tid": "<32-hex>", "state": "running", "code": "K7QMX2",
+      "host": "c0ffee42", "stakes": false, "max": 10,
+      "players": [{"id": "c0ffee42", "name": "KAI"}, ...],
+      "round": 1,                 1 = the first round, 2+ = knockout stages
+      "cursor": "r1.4",           the node being played, or null
+      "schedule": [ <node>, ... ],
+      "bracket":  [ <node>, ... ],   empty until round 1 is over
+      "standings": [ {"seat": 0, "id": "c0ffee42", "pts": 2.5,
+                      "diff": 34, "rank": 1}, ... ],
+      "roles": <the caller's own roles sheet, or null>
+    }
+
+A node is:
+
+    {"nid": "r1.4", "round": 1, "hm": 2,
+     "players": ["c0ffee42", "deadbeef"],    either may be null in a
+                                             knockout node not yet fed
+     "state": "pending"|"held"|"settled"|"confirmed"|"frozen"|"void",
+     "winner": "c0ffee42" | null,
+     "draw": false,
+     "score": [12, 9] | null}                null for a walkover or a bye
+
+### Events
+
+Every transition is announced to each participant as a server-generated
+`tourney` signal (see signal.php), delivered through the ordinary mailbox.
+A client that was offline picks its events up on its next hello. Every
+payload carries `tid`.
+
+    lobby        {event, tid, state, code, host, stakes, max,
+                  players:[{id,name}], reason?}
+                 someone joined or left; `reason` explains an abandon
+    roles        {event, tid, round, match, of, nid, hm, stakes,
+                  players, feeder, primaries, secondaries, names, you}
+                 a match is up. `match`/`of` are its 1-based position in
+                 the stage. `you` differs per recipient.
+    roles-patch  {event, tid, nid, primaries, secondaries}
+                 the spectator tree changed; the match is unaffected
+    standings    {event, tid, rows:[{seat,id,pts,diff,rank,adv}],
+                  advancers:[id, ...]}
+                 the first round is over and the bracket is drawn
+    result       {event, tid, nid, winner, draw, score}
+                 a node settled (winner is null for a draw or a void)
+    freeze       {event, tid, nid}
+                 the two reports contradicted each other. Round 1 plays
+                 on and only the advancer cut waits; in the knockout the
+                 bracket stops here (see The result ladder)
+    over         {event, tid, podium:[winner, runner_up, third?]}
+                 done. Third place is the better first-round rank of the
+                 two players knocked out in the round before the final;
+                 there is no third-place match. The podium is empty when
+                 the final itself was voided - both finalists gone.
+
+A client MUST NOT act on a `tourney` signal it did not expect to the
+extent of playing a match it cannot see in `state` - when in doubt, call
+`state` and render that.
+
+### Errors
+
+    400  invalid id / action / tid / code / nid / outcome / score / mid
+    403  host only (start); not a participant; not your match (result)
+    404  no such tournament; no such node
+    409  already hosting; already started; full; need 2; not running;
+         not current (a result for a node that is not the one in flight)
+    429  create cooldown (with retry_after, seconds)
+    503  no join code available
 
 ## Debug reports
 

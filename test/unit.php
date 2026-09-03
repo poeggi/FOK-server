@@ -29,6 +29,8 @@ require_once __DIR__ . '/../public/src/PStats.php';
 require_once __DIR__ . '/../public/src/Debug.php';
 require_once __DIR__ . '/../public/src/Ledger.php';
 require_once __DIR__ . '/../public/src/Items.php';
+require_once __DIR__ . '/../public/src/Bracket.php';
+require_once __DIR__ . '/../public/src/Tournament.php';
 
 // Util installs a fault handler that answers 500 and exits 0 - right for a
 // request, fatal for a test run, where it would swallow a throwable (a
@@ -1049,6 +1051,256 @@ $live->exec('DELETE FROM scores');
 Backup::restore(FOK_BACKUP_DIR . '/' . $name);
 ok(count(Scores::top()) === 5, 'restore works with a live handle held open (as admin/api.php does)');
 unset($live);
+
+// ---- Tournaments (API 4.1) -------------------------------------------
+// Bracket is pure math with a normative spec (docs/API.md "Tournament
+// mode"), and a client renders what it computes - so the rules are pinned
+// here against the document rather than against the implementation.
+
+// The seating shuffle is a permutation, and it is the SEED that decides it:
+// same seed, same order out, which is what lets a client verify a draw.
+$tids = ['aa11aa11', 'bb22bb22', 'cc33cc33', 'dd44dd44', 'ee55ee55'];
+$s1 = Bracket::seats($tids, 'deadbeef00000000');
+$s2 = Bracket::seats($tids, 'deadbeef00000000');
+ok($s1 === $s2, 'seating is deterministic in the seed');
+$sorted = $s1;
+sort($sorted);
+ok($sorted === $tids, 'seating is a permutation - nobody is lost or duplicated');
+ok(Bracket::seats($tids, '0000000000000000') === Bracket::seats($tids, 'zzzz'),
+    'a zero or unparseable seed falls back to one fixed state, not to no shuffle');
+
+// The match-count table from the spec, in full. This is the number that
+// decides whether an evening finishes, so it is pinned exactly.
+$counts = [];
+for ($n = 2; $n <= 10; $n++) {
+    $counts[] = count(Bracket::schedule($n));
+}
+ok($counts === [1, 3, 6, 10, 12, 14, 16, 18, 20], 'the round-1 match counts match the spec');
+
+for ($n = 5; $n <= 10; $n++) {
+    $deg = array_fill(0, $n, 0);
+    $seen = [];
+    foreach (Bracket::schedule($n) as [$a, $b]) {
+        $deg[$a]++;
+        $deg[$b]++;
+        $seen["$a:$b"] = true;
+    }
+    ok($deg === array_fill(0, $n, 4), "N=$n gives every player exactly 4 matches");
+    ok(count($seen) === 2 * $n, "N=$n pairs nobody twice");
+}
+// The rest spread: matches run one at a time and everyone else is watching,
+// so back-to-back play is the thing to avoid. It is only ACHIEVABLE on the
+// sparse schedule - a dense 3 or 4 player round-robin runs out of disjoint
+// pairs and the ordering falls back, which is why they start at 5 here.
+for ($n = 5; $n <= 10; $n++) {
+    $back = 0;
+    $prev = null;
+    foreach (Bracket::schedule($n) as $e) {
+        if ($prev !== null && array_intersect($prev, $e) !== []) {
+            $back++;
+        }
+        $prev = $e;
+    }
+    ok($back === 0, "N=$n never makes anyone play two matches in a row");
+}
+
+ok(Bracket::advancers(2) === 2 && Bracket::advancers(3) === 2 && Bracket::advancers(4) === 2,
+    'a small field still advances two, so a knockout always exists');
+ok(Bracket::advancers(9) === 5 && Bracket::advancers(10) === 5, 'otherwise the best half advance');
+
+// The tie-break ladder, one step at a time. Rows are seat/id/pts/diff.
+$row = static fn(int $seat, string $id, float $pts, int $diff): array
+    => ['seat' => $seat, 'id' => $id, 'pts' => $pts, 'diff' => $diff];
+$byPts = Bracket::rank([$row(0, 'aa11aa11', 1.0, 0), $row(1, 'bb22bb22', 3.0, 0)], [], 'seed');
+ok(array_column($byPts, 'id') === ['bb22bb22', 'aa11aa11'], 'points rank first');
+ok(array_column($byPts, 'rank') === [1, 2], 'and the rank is stamped 1-based');
+$tied = [$row(0, 'aa11aa11', 2.0, -5), $row(1, 'bb22bb22', 2.0, 40)];
+ok(array_column(Bracket::rank($tied, ['0:1' => 0], 'seed'), 'id') === ['aa11aa11', 'bb22bb22'],
+    'a tied PAIR is decided by their own decisive meeting, not by score difference');
+ok(array_column(Bracket::rank($tied, [], 'seed'), 'id') === ['bb22bb22', 'aa11aa11'],
+    'without a meeting the tie falls through to score difference');
+// Three tied players have no complete sub-tournament between them in a
+// sparse schedule, so head-to-head must NOT apply - difference decides.
+$three = [$row(0, 'aa11aa11', 2.0, 1), $row(1, 'bb22bb22', 2.0, 9), $row(2, 'cc33cc33', 2.0, 5)];
+ok(array_column(Bracket::rank($three, ['0:1' => 0], 'seed'), 'id')
+    === ['bb22bb22', 'cc33cc33', 'aa11aa11'], 'head-to-head does not apply to a group of three');
+$dead = [$row(0, 'aa11aa11', 2.0, 7), $row(1, 'bb22bb22', 2.0, 7)];
+$coin = Bracket::rank($dead, [], 'seed');
+ok($coin === Bracket::rank($dead, [], 'seed'), 'the final coin toss is reproducible');
+ok(Bracket::coin('seed', 'aa11aa11') < Bracket::coin('seed', 'bb22bb22')
+    ? $coin[0]['id'] === 'aa11aa11' : $coin[0]['id'] === 'bb22bb22',
+    'and it is the seeded hash, lowest first');
+
+// The knockout fold. [1,8,4,5,2,7,3,6] is the spec's worked example, and it
+// is what keeps the top two seeds apart until the final.
+ok(Bracket::size(5) === 8 && Bracket::size(4) === 4 && Bracket::size(2) === 2, 'bracket size rounds up');
+ok(Bracket::positions(8) === [1, 8, 4, 5, 2, 7, 3, 6], 'the seed fold matches the spec');
+ok(Bracket::positions(1) === [1], 'and a one-slot fold is the base case');
+
+$b8 = Bracket::build([10, 11, 12, 13, 14]);          // 5 advancers -> 8 slots
+ok(count($b8) === 7, 'an 8-slot bracket is 7 nodes');
+ok($b8[count($b8) - 1]['nid'] === 'final', 'the last node is the final');
+ok(Bracket::hearts('final') === 3 && Bracket::hearts('ko1.1') === 2,
+    'only the final is played at 3 hearts');
+$byNid = [];
+foreach ($b8 as $node) {
+    $byNid[$node['nid']] = $node;
+}
+ok($byNid['ko1.1']['a'] === 10 && $byNid['ko1.1']['b'] === null,
+    'the top seed draws a phantom, which is what a bye is');
+ok($byNid['ko1.2']['a'] === 13 && $byNid['ko1.2']['b'] === 14,
+    'and the only real first-round match is seed 4 against seed 5');
+ok($byNid['ko1.1']['to'] === 'ko2.1' && $byNid['ko1.1']['slot'] === 0
+    && $byNid['ko1.2']['to'] === 'ko2.1' && $byNid['ko1.2']['slot'] === 1,
+    'adjacent nodes feed the two slots of the same next node');
+ok($byNid['ko2.1']['to'] === 'final' && $byNid['final']['to'] === null, 'and the final feeds nothing');
+ok($byNid['ko1.1']['round'] === 2 && $byNid['final']['round'] === 4,
+    'round 1 is the sparse round, so the knockout stages start at 2');
+
+// ---- The tournament itself, end to end -------------------------------
+// Four players, every match reported by both sides, run to a podium. The
+// point is the MACHINE: that the cursor advances, that the bracket is built
+// from the standings, and that a settled final ends it.
+$tp = ['70000001', '70000002', '70000003', '70000004'];
+foreach ($tp as $p) {
+    Presence::touch($p, '127.0.0.1', null, 'P' . substr($p, -1));
+}
+$made = Tournament::create($tp[0], false);
+ok($made['ok'] === true && strlen($made['tid']) === 32, 'creating a tournament yields a tid');
+ok(strlen($made['code']) === Tournament::CODE_LEN
+    && strpbrk($made['code'], '01OIL') === false, 'the join code avoids the ambiguous glyphs');
+$tid = $made['tid'];
+ok(Tournament::create($tp[0], false)['http'] === 409, 'one open tournament per host');
+foreach ([1, 2, 3] as $i) {
+    ok(Tournament::join($tp[$i], $tid)['ok'] === true, "player $i joins");
+}
+ok(count(Tournament::join($tp[1], $tid)['players']) === 4, 'joining twice is a no-op, not an error');
+ok(Tournament::start($tp[1], $tid)['http'] === 403, 'only the host may start it');
+ok(Tournament::start($tp[0], $tid)['ok'] === true, 'the host starts it');
+
+$view = Tournament::view($tp[0], $tid);
+ok(count($view['schedule']) === 6, '4 players play all 6 pairs in round 1');
+ok($view['cursor'] === 'r1.1' && $view['roles'] !== null, 'the first match is dealt at once');
+ok(count($view['roles']['players']) === 2
+    && $view['roles']['feeder'] === $view['roles']['players'][0],
+    'the roles sheet names two players and makes the first the feeder');
+ok(in_array($view['roles']['you'], ['play', 'spectate'], true), 'and tells the caller its own part');
+ok($view['roles']['hm'] === 2, 'round-1 matches are played at 2 hearts');
+
+// A spectator of the current match may never report it.
+$spectator = null;
+foreach ($tp as $p) {
+    if (!in_array($p, $view['roles']['players'], true)) {
+        $spectator = $p;
+        break;
+    }
+}
+ok(Tournament::report($spectator, $tid, 'r1.1', 'win', [9, 0], null)['http'] === 403,
+    'a spectator cannot report a match it did not play');
+
+// A lone win is HELD; the loser's matching report confirms it.
+$pair = $view['roles']['players'];
+ok(Tournament::report($pair[0], $tid, 'r1.1', 'win', [12, 7], null)['state'] === 'held',
+    'a lone win waits for the opponent');
+ok(Tournament::report($pair[1], $tid, 'r1.1', 'loss', [7, 12], null)['state'] === 'confirmed',
+    'and the opponent agreeing confirms it');
+$view = Tournament::view($tp[0], $tid);
+ok($view['schedule'][0]['winner'] === $pair[0], 'the winner is recorded');
+ok($view['schedule'][0]['score'] === [12, 7] || $view['schedule'][0]['score'] === [7, 12],
+    'the score is stored in seat order, whichever side reported it');
+ok($view['cursor'] === 'r1.2', 'and the cursor moves on by itself');
+
+// The rest of it: whoever is listed first wins, reported by both sides.
+for ($step = 0; $step < 40; $step++) {
+    $view = Tournament::view($tp[0], $tid);
+    if ($view['state'] !== 'running' || $view['cursor'] === null) {
+        break;
+    }
+    [$x, $y] = $view['roles']['players'];
+    Tournament::report($x, $tid, $view['cursor'], 'win', [10, 3], null);
+    Tournament::report($y, $tid, $view['cursor'], 'loss', [3, 10], null);
+}
+$view = Tournament::view($tp[0], $tid);
+ok($view['state'] === 'done', 'reporting every match runs the tournament to the end');
+ok(count($view['bracket']) === 1 && $view['bracket'][0]['nid'] === 'final',
+    '4 players advance 2, so the knockout is the final alone');
+ok($view['bracket'][0]['hm'] === 3, 'and the final is a normal 3-heart duel');
+ok(count($view['standings']) === 4 && $view['standings'][0]['rank'] === 1, 'the standings are ranked');
+// A point per match, and JSON gives whole values back as ints, so the
+// total is compared numerically rather than by type.
+$pts = (float)array_sum(array_column($view['standings'], 'pts'));
+ok($pts === 6.0, 'every one of the 6 round-1 matches awarded exactly one point');
+ok($view['standings'][0]['id'] === $view['bracket'][0]['winner']
+    || $view['standings'][1]['id'] === $view['bracket'][0]['winner'],
+    'and the final was played by two of the advancers');
+
+// ---- A loss settles alone, and a contradiction freezes ----------------
+$q = ['71000001', '71000002'];
+foreach ($q as $p) {
+    Presence::touch($p, '127.0.0.1');
+}
+$two = Tournament::create($q[0], true);
+$tid2 = $two['tid'];
+ok($two['stakes'] === true, 'the stakes flag is carried through');
+Tournament::join($q[1], $tid2);
+ok(Tournament::start($q[1], $tid2)['http'] === 403, 'still host only with two players');
+Tournament::start($q[0], $tid2);
+$v2 = Tournament::view($q[0], $tid2);
+ok(count($v2['schedule']) === 1 && $v2['cursor'] === 'r1.1', 'two players play one round-1 match');
+
+// Nobody lies to lose, so one report is enough.
+$p2 = $v2['roles']['players'];
+ok(Tournament::report($p2[1], $tid2, 'r1.1', 'loss', [2, 8], null)['state'] === 'settled',
+    'a reported loss settles at once');
+$v2 = Tournament::view($q[0], $tid2);
+ok($v2['cursor'] === 'final', 'and both of them advance to the final');
+
+// Two winners cannot both be right: the node freezes rather than guessing.
+ok(Tournament::report($p2[0], $tid2, 'final', 'win', [5, 1], null)['state'] === 'held',
+    'the first report of the final is held');
+ok(Tournament::report($p2[1], $tid2, 'final', 'win', [5, 1], null)['state'] === 'frozen',
+    'two claimed wins freeze the node');
+$v2 = Tournament::view($q[0], $tid2);
+ok($v2['state'] === 'running' && $v2['bracket'][0]['state'] === 'frozen',
+    'a frozen final blocks the tournament instead of crowning a guess');
+ok($v2['bracket'][0]['winner'] === null, 'and it has no winner at all');
+
+// ---- Forfeits and lobbies --------------------------------------------
+$f = ['72000001', '72000002', '72000003'];
+foreach ($f as $p) {
+    Presence::touch($p, '127.0.0.1');
+}
+$tid3 = Tournament::create($f[0], false)['tid'];
+Tournament::join($f[1], $tid3);
+Tournament::join($f[2], $tid3);
+ok(count(Tournament::announce('127.0.0.1')) >= 1, 'an open lobby is announced on the host address');
+ok(Tournament::announce('10.9.9.9') === [], 'but never to another address');
+Tournament::start($f[0], $tid3);
+$v3 = Tournament::view($f[0], $tid3);
+ok(count($v3['schedule']) === 3, '3 players play all 3 pairs');
+Tournament::leave($f[2], $tid3);
+$v3 = Tournament::view($f[0], $tid3);
+$gone = 0;
+foreach ($v3['schedule'] as $node) {
+    if (in_array($f[2], $node['players'], true) && $node['state'] === 'settled') {
+        $gone++;
+    }
+}
+ok($gone === 2, 'leaving a running tournament forfeits both of that player\'s matches');
+foreach ($v3['schedule'] as $node) {
+    if (in_array($f[2], $node['players'], true)) {
+        ok($node['score'] === null, 'a walkover has no score, so it moves no tie-break difference');
+        break;
+    }
+}
+ok(Tournament::leave($f[2], $tid3)['ok'] === true, 'and leaving twice is harmless');
+
+// The host owns the lobby, and only the lobby.
+$tid4 = Tournament::create('73000001', false)['tid'];
+Tournament::leave('73000001', $tid4);
+ok(Tournament::load($tid4)['state'] === 'abandoned', 'the host leaving an unstarted lobby ends it');
+ok(Tournament::join('73000002', $tid4)['http'] === 404, 'which cannot then be joined');
+
 
 // Cleanup
 Db::close();

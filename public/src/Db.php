@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 24;
+    private const SCHEMA_VERSION = 25;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -390,6 +390,49 @@ final class Db
             // first peer of a begin mints and stamps it here, the second reads
             // it back, and an in-run halt carries it forward (see Starts).
             $pdo->exec("ALTER TABLE starts ADD COLUMN mid TEXT NOT NULL DEFAULT ''");
+        }
+        if ($v < 25) {
+            // Tournament mode (see Tournament, Bracket, api/tournament.php).
+            // ONE row per tournament, and everything that changes during it -
+            // seats, schedule, results, standings, bracket, cursor - lives in
+            // the `data` JSON blob rather than in rows of its own. It is read
+            // and written whole, only ever by the tournament's own
+            // transitions (a few per minute), and it is never queried BY its
+            // contents; splitting it into tables would buy indexes nothing
+            // reads and cost a multi-statement write where one suffices.
+            $pdo->exec("CREATE TABLE IF NOT EXISTS tournaments (
+                tid TEXT PRIMARY KEY,
+                host TEXT NOT NULL,
+                code TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'open',
+                round INTEGER NOT NULL DEFAULT 0,
+                seed TEXT NOT NULL,
+                stakes INTEGER NOT NULL DEFAULT 0,
+                data TEXT NOT NULL DEFAULT '{}',
+                created INTEGER NOT NULL,
+                updated INTEGER NOT NULL
+            )");
+            // The lazy lobby reaping sweeps by (state, updated), and the
+            // one-per-host and cooldown guards look up by (host, created).
+            // Both run on the hot lobby path, so neither may be a scan.
+            $pdo->exec('CREATE INDEX IF NOT EXISTS tournaments_state ON tournaments (state, updated)');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS tournaments_host ON tournaments (host, created)');
+            // Participation is a real row rather than another JSON list: it
+            // is the one part a request writes WITHOUT a full transition (a
+            // join or a leave in the lobby touches nothing else), and the one
+            // part that has to be countable without reading the blob.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS tournament_players (
+                tid TEXT NOT NULL,
+                id TEXT NOT NULL,
+                seat INTEGER NOT NULL DEFAULT -1,
+                forfeited INTEGER NOT NULL DEFAULT 0,
+                joined INTEGER NOT NULL,
+                PRIMARY KEY (tid, id)
+            )');
+            // hello announces open lobbies hosted on the CALLER's address, so
+            // that lookup is by (ip, last_seen) - a scan of every player row
+            // on every hello otherwise.
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_players_ip_seen ON players (ip, last_seen)');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

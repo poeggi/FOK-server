@@ -13,10 +13,17 @@ require_once __DIR__ . '/Settings.php';
 final class Signals
 {
     // Client-sendable types. 'friend' (friendship notifications),
-    // 'undelivered' (see expire()) and 'peer-net' (see
-    // Presence::announceNet) are server-generated and deliberately NOT in
-    // this list, so a client cannot forge them.
-    public const TYPES = ['invite', 'invite-relay', 'accept', 'accept-relay', 'decline', 'offer', 'answer', 'ice', 'bye', 'chat'];
+    // 'undelivered' (see expire()), 'peer-net' (see
+    // Presence::announceNet) and 'tourney' (see Tournament::flush) are
+    // server-generated and deliberately NOT in this list, so a client cannot
+    // forge them - a forged 'tourney' would let anyone rewrite a bracket on
+    // someone else's screen.
+    //
+    // 'watch' is a spectator's request to be fed a match: peer-to-peer, like
+    // every other signaling type here, and NOT in NEEDS_RECEIPT - a spectator
+    // that gets no feed simply keeps watching the scoreboard, which is not
+    // the failed-connection case a receipt exists for.
+    public const TYPES = ['invite', 'invite-relay', 'accept', 'accept-relay', 'decline', 'offer', 'answer', 'ice', 'bye', 'chat', 'watch'];
 
     // Types that establish a connection: the sender is waiting for an
     // answer, so it MUST be told when one of these expires undelivered.

@@ -14,7 +14,10 @@ source test/smoke/02_signals_friends.sh     # signals, friends, poll, debug repo
 source test/smoke/03_start_duel.sh          # start/epoch, directional isolation, relay duel flow, rematch
 source test/smoke/04_matchmaking.sh         # friend-spam ban, quick match
 source test/smoke/05_items.sh               # item registry: seed, mint, the claim ladder, freezes
+source test/smoke/07_tournament.sh          # tournaments: lobby, schedule, roles, the result ladder
 source test/smoke/06_admin.sh               # admin dashboard, relay caps/transport, config, remote cleanup
+# 06_admin.sh runs LAST whatever its number: it asserts exact counts and, on a
+# remote run, deletes this run's test data at the end.
 
 if [ "$fail" -ne 0 ]; then
     echo "SMOKE FAILED"

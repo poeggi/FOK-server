@@ -10,6 +10,13 @@ lives in FOK-snake/docs/TOURNAMENT-PLAN.md. The split of duties:
 - The server NEVER carries game traffic. All match and spectator bytes are
   P2P (relay.php stays deprecated and untouched; see
   docs/DEPRECATED-relay.md).
+- P2P-ONLY has to be enforced on the client too, not merely assumed here: a
+  tournament match and every spectator link MUST refuse the relay rather
+  than fall back to it. The server-side consequence: a pair that cannot make
+  a direct link produces NO result at all, so the walkover path below
+  (result timeout) is a live case rather than a corner one, and a match must
+  never be assumed to be in progress just because its role sheet was
+  delivered.
 
 The change is purely additive: API 4.0 -> 4.1, old clients unaffected.
 Everything below follows existing house idioms by name so it drops into

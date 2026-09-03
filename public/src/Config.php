@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.1.1';
+const FOK_SERVER_VERSION = '1.2.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -63,7 +63,19 @@ const FOK_SERVER_VERSION = '1.1.1';
 // unconfirmed or its instances frozen. Clients gate online item play on the
 // major matching. Minting stays client-trusted (see the scope boundary in
 // docs/API.md): 4.0 makes items conserved and auditable, not unforgeable.
-const FOK_API_VERSION = '4.0';
+// v4.1: additive tournament mode. New POST /api/tournament.php runs a lobby,
+// a sparse first round, a seeded knockout and the standings for 2-10 players
+// (see docs/API.md), announcing every transition as a server-generated
+// 'tourney' signal; hello.php gains an optional "tourneys" request flag that
+// returns the open lobbies hosted on the caller's own address, plus an
+// additive "friends_playing" list. The client-sendable signal type 'watch'
+// is added for spectator feed requests. The server orchestrates only: a
+// tournament match is an ordinary P2P duel between the two players its roles
+// sheet names, start.php is still the sole mid/secret authority, and no match
+// or spectator traffic passes through the server. Major stays 4 - a 4.0
+// client never calls tournament.php, never sets "tourneys" and simply does
+// not offer tournaments.
+const FOK_API_VERSION = '4.1';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
