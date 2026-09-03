@@ -286,6 +286,18 @@ Matchmaking::cancel('11111111');
 ok((Matchmaking::seek('33333333')['waiting'] ?? false) === true, 'cancelled seeker not matched');
 Matchmaking::cancel('33333333');
 
+// Matchmaking: a stale seeker (stopped polling) is never handed out as a
+// match. Correctness rides on the peer-select's liveness predicate, not on
+// the prune - which now runs on only a sampled fraction of seeks - so a live
+// seeker keeps waiting whether or not this poll happened to prune the ghost.
+Db::get()->exec('DELETE FROM mm_queue');
+Db::get()->prepare('INSERT INTO mm_queue (id, since, last_poll) VALUES (?, ?, ?)')
+    ->execute(['44444444', time() - 20, time() - 20]);
+ok((Matchmaking::seek('55555555')['waiting'] ?? false) === true,
+    'a stale seeker is never offered as a match');
+Matchmaking::cancel('55555555');
+Db::get()->exec('DELETE FROM mm_queue');
+
 // Server-issued starts: both peers NAME the epoch, so the answer never
 // depends on when either of them asks
 $s1 = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'first');

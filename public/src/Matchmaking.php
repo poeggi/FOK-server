@@ -19,9 +19,14 @@ final class Matchmaking
         $now = time();
         $db->exec('BEGIN IMMEDIATE');
         try {
-            // Drop seekers that stopped polling and stale delivered matches.
-            $db->prepare('DELETE FROM mm_queue WHERE (matched_with IS NULL AND last_poll < ?) OR since < ?')
-                ->execute([$now - FOK_MATCH_WINDOW, $now - 300]);
+            // GC dead rows - seekers that stopped polling, stale delivered
+            // matches - on a sampled fraction of seeks (see
+            // FOK_MATCH_PRUNE_SAMPLE). Pairing correctness does not depend on
+            // it: the peer-select below refuses a stale seeker outright.
+            if (random_int(1, FOK_MATCH_PRUNE_SAMPLE) === 1) {
+                $db->prepare('DELETE FROM mm_queue WHERE (matched_with IS NULL AND last_poll < ?) OR since < ?')
+                    ->execute([$now - FOK_MATCH_WINDOW, $now - 300]);
+            }
 
             $st = $db->prepare('SELECT matched_with, role FROM mm_queue WHERE id = ?');
             $st->execute([$id]);
@@ -38,10 +43,15 @@ final class Matchmaking
                  ON CONFLICT (id) DO UPDATE SET last_poll = excluded.last_poll'
             )->execute([$id, $now, $now]);
 
+            // A stale seeker (stopped polling) is never handed out as a
+            // match, whether or not this seek pruned it: the liveness
+            // predicate is what keeps a live seeker from pairing with a ghost.
             $st = $db->prepare(
-                'SELECT id FROM mm_queue WHERE id != ? AND matched_with IS NULL ORDER BY since LIMIT 1'
+                'SELECT id FROM mm_queue
+                     WHERE id != ? AND matched_with IS NULL AND last_poll > ?
+                     ORDER BY since LIMIT 1'
             );
-            $st->execute([$id]);
+            $st->execute([$id, $now - FOK_MATCH_WINDOW]);
             $peer = $st->fetchColumn();
             $st->closeCursor();
             if ($peer === false) {

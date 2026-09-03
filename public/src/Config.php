@@ -161,6 +161,14 @@ const FOK_TOP_SCORES = 100;
 const FOK_MAX_NAME_LEN = 15;
 // A quick-match seeker drops out of the queue after this many quiet seconds.
 const FOK_MATCH_WINDOW = 10;
+// A stale seeker (one that stopped polling) is made unselectable by the
+// liveness predicate on the peer-select, so deleting its row is no longer
+// needed to pair correctly - it is pure GC of a tiny, self-limiting table.
+// So the prune runs on only a sampled 1-in-N fraction of seeks (a seek must
+// take the write lock to record its own poll either way; this keeps the
+// DELETE off most of them). Sampling is load-adaptive: a busier queue prunes
+// proportionally more often, which is exactly when the row churn warrants it.
+const FOK_MATCH_PRUNE_SAMPLE = 20;
 const FOK_MAX_FRIENDS = 64;
 
 // The device categories a score may optionally be tagged with (see
