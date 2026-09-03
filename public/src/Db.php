@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 22;
+    private const SCHEMA_VERSION = 23;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -322,6 +322,14 @@ final class Db
             $pdo->exec('ALTER TABLE players ADD COLUMN friend_req_last INTEGER NOT NULL DEFAULT 0');
             $pdo->exec('ALTER TABLE players ADD COLUMN friend_req_streak INTEGER NOT NULL DEFAULT 0');
             $pdo->exec('ALTER TABLE players ADD COLUMN friend_req_cooldown_until INTEGER NOT NULL DEFAULT 0');
+        }
+        if ($v < 23) {
+            // When the last burst cooldown was tripped (see Friends::rateHit).
+            // A second burst within friend_rate_repeat_window of this marks a
+            // persistent abuser and escalates from the short cooldown to the
+            // long one. It outlives friend_req_streak, which resets after one
+            // idle cooldown, so the window can straddle the first cooldown.
+            $pdo->exec('ALTER TABLE players ADD COLUMN friend_req_last_trip INTEGER NOT NULL DEFAULT 0');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

@@ -35,6 +35,8 @@ final class Settings
         'friend_rate_interval' => [1, 'Min seconds between friend requests per id'],
         'friend_rate_burst' => [10, 'Friend requests in a row before a cooldown'],
         'friend_rate_cooldown' => [60, 'Friend-request cooldown after a burst (seconds)'],
+        'friend_rate_repeat_window' => [600, 'Re-offense window: a second burst within this escalates the cooldown (seconds)'],
+        'friend_rate_cooldown_hard' => [3600, 'Escalated friend-request cooldown after a repeat burst (seconds)'],
         'player_ttl_days' => [180, 'Remove players not seen for N days (0 = never)'],
         'alert_req_per_min' => [600, 'Alert: total requests per minute above'],
         'alert_load1' => [8, 'Alert: 1-minute system load above'],

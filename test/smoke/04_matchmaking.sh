@@ -71,12 +71,41 @@ else
             echo "FAIL cooldown trip not written to the server log"; fail=1
         fi
     fi
+
+    # Escalation (see Friends::rateHit): a repeat burst within the window earns
+    # the long cooldown, not the short one. Keep the burst to two requests
+    # (burst=1) so the pair always lands inside one cooldown even over a slow
+    # remote link; the cooldown is short enough to lift with a brief sleep, and
+    # a distinctive hard cooldown makes the escalated retry_after unmistakable.
+    setting friend_rate_cooldown 4
+    setting friend_rate_cooldown_hard 7200
+    setting friend_rate_burst 1
+    for p in aa000010 aa000011; do
+        R=$(curl -s -X POST -H 'Content-Type: application/json' \
+            -d "{\"id\":\"c2c2c2c2\",\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
+    done
+    expect "a first burst trips the short cooldown" '"retry_after":4' "$R"
+    sleep 5
+    for p in aa000010 aa000011; do
+        R=$(curl -s -X POST -H 'Content-Type: application/json' \
+            -d "{\"id\":\"c2c2c2c2\",\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
+    done
+    expect "a repeat burst within the window escalates to the long cooldown" '"retry_after":7200' "$R"
+    if [ "$REMOTE" -eq 0 ]; then
+        if grep -q 'escalated friend-request cooldown' "$DATA/php-error.log" 2>/dev/null; then
+            echo "ok   escalation logged a distinct server warning"
+        else
+            echo "FAIL escalation not written to the server log"; fail=1
+        fi
+    fi
+    setting friend_rate_cooldown 60
+    setting friend_rate_cooldown_hard 3600
     setting friend_rate_interval 0
     setting friend_rate_burst 1000000
 
     # Drop the temporary players so the registered count stays exact for the
     # admin stats test (delete_player clears the counts cache).
-    for p in aa000010 aa000011 aa000012 aa000013 aa000014 c0c0c0c0 c1c1c1c1; do
+    for p in aa000010 aa000011 aa000012 aa000013 aa000014 c0c0c0c0 c1c1c1c1 c2c2c2c2; do
         curl -s -b "$COOKIES" -X POST -d "id=$p" "$BASE/admin/api.php?action=delete_player" > /dev/null
     done
 fi

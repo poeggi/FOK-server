@@ -664,7 +664,7 @@ list is authoritative. Scores remain as history.
           pending entry with "outgoing":false is a request awaiting MY
           acceptance.
 
-Request rate (API 3.5): the "request" action is throttled per id on two
+Request rate (API 3.5): the "request" action is throttled per id on three
 scales, independent of the spam ban below. Its job is to stop the "exists"
 oracle above from being used to enumerate ids: the throttle is checked
 BEFORE existence, so a rapid prober is turned away with 429 (learning
@@ -676,10 +676,14 @@ with no real pause, the id enters a 60-second (admin-configurable)
 cooldown: every request until it ends answers 429 `{"ok":false,
 "error":"friend request cooldown","retry_after":<seconds left>}`, and the
 server records a visible warning in its log for the operator. The streak
-clears after an idle gap of one cooldown length. Honor `retry_after` (or
-just the HTTP 429) and back off; do not spin. Normal use - one tap per
-friend - never trips either. Only "request" is limited; accept, remove and
-list are not.
+clears after an idle gap of one cooldown length. A prober that waits out
+the cooldown and immediately bursts AGAIN - a second cooldown trip within
+10 minutes (admin-configurable) of the last - is treated as persistent and
+escalated to a 1-hour cooldown (admin-configurable); the reply shape is
+unchanged, only `retry_after` is larger. Honor `retry_after` (or just the
+HTTP 429) and back off; do not spin. Normal use - one tap per friend -
+never trips any of it. Only "request" is limited; accept, remove and list
+are not.
 
 Spam ban: a client whose UNANSWERED requests exceed a threshold
 (default 15 per hour, admin-configurable) is banned from making friend

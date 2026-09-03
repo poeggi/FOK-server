@@ -78,9 +78,16 @@ switch ($action) {
                 // anti-probe guard firing: make it a visible operator warning
                 // in the server log (a trip is rare - at most one per cooldown
                 // per id, so it never floods) and record a de-duplicated
-                // dashboard alert alongside it.
-                error_log("FOK friend: $id hit the friend-request cooldown ({$gate['retry']}s)");
-                Alerts::raise('friend-cooldown', "Friend-request cooldown: $id blocked for {$gate['retry']}s");
+                // dashboard alert alongside it. A repeat burst that escalated
+                // to the long cooldown gets its own log line and alert type so
+                // it surfaces past the per-type de-duplication.
+                if ($gate['escalated']) {
+                    error_log("FOK friend: $id burst again - escalated friend-request cooldown ({$gate['retry']}s)");
+                    Alerts::raise('friend-cooldown-hard', "Friend-request cooldown escalated: $id blocked for {$gate['retry']}s");
+                } else {
+                    error_log("FOK friend: $id hit the friend-request cooldown ({$gate['retry']}s)");
+                    Alerts::raise('friend-cooldown', "Friend-request cooldown: $id blocked for {$gate['retry']}s");
+                }
             }
             $msg = $gate['why'] === 'cooldown' ? 'friend request cooldown' : 'friend requests too fast';
             Util::jsonOut(['ok' => false, 'error' => $msg, 'retry_after' => $gate['retry']], 429);

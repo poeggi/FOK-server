@@ -228,6 +228,29 @@ ok($g['blocked'] === true && $g['tripped'] === false && $g['why'] === 'cooldown'
 Db::get()->prepare('UPDATE players SET friend_req_cooldown_until = 0, friend_req_last = ? WHERE id = ?')
     ->execute([time() - 120, 'f1f10002']);
 ok(Friends::rateHit('f1f10002')['blocked'] === false, 'an idle gap of a cooldown clears the streak');
+// Escalation: a second burst trip within the repeat window earns the long
+// cooldown, not the short one (see Friends::rateHit). Burst once to set the
+// last-trip marker, then rewind so the streak clears and the cooldown lifts
+// but the marker stays recent, and burst again - now it escalates.
+Presence::touch('f1f10003', '7.7.7.9');
+Settings::set('friend_rate_interval', 0);
+Settings::set('friend_rate_burst', 3);
+Settings::set('friend_rate_cooldown', 60);
+Settings::set('friend_rate_repeat_window', 600);
+Settings::set('friend_rate_cooldown_hard', 3600);
+for ($i = 0; $i < 4; $i++) {
+    $g = Friends::rateHit('f1f10003');
+}
+ok($g['tripped'] === true && $g['escalated'] === false && $g['retry'] === 60,
+    'the first burst trips the short cooldown, not escalated');
+// Clear the streak and lift the cooldown, but keep the last-trip marker.
+Db::get()->prepare('UPDATE players SET friend_req_cooldown_until = 0, friend_req_last = ? WHERE id = ?')
+    ->execute([time() - 120, 'f1f10003']);
+for ($i = 0; $i < 4; $i++) {
+    $g = Friends::rateHit('f1f10003');
+}
+ok($g['tripped'] === true && $g['escalated'] === true && $g['retry'] === 3600,
+    'a second burst within the repeat window escalates to the long cooldown');
 Settings::set('friend_rate_interval', 1);
 Settings::set('friend_rate_burst', 10);
 Settings::set('friend_rate_cooldown', 60);
