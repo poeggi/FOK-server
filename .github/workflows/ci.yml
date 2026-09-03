@@ -47,6 +47,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # curl cannot reuse an FTP connection and the host rate-limits logins,
+      # so the deploy needs lftp's pooled connections (tools/deploy.sh).
+      - name: Install lftp
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+
       - name: Deploy to staging
         run: bash tools/deploy.sh staging
 

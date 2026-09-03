@@ -15,6 +15,10 @@ on:
         description: 'Also run the strategy shootout (tools/ftp-bench.sh)'
         type: boolean
         default: false
+      deploy:
+        description: 'Instead: time tools/deploy.sh against staging (cold, then delta)'
+        type: boolean
+        default: false
 
 jobs:
   bench:
@@ -31,7 +35,27 @@ jobs:
       - name: Install lftp
         run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
       - name: Probe (where does the time go)
+        if: ${{ !inputs.deploy }}
         run: bash tools/ftp-probe.sh
       - name: Shootout (which strategy is fastest)
-        if: inputs.shootout
+        if: ${{ inputs.shootout && !inputs.deploy }}
         run: bash tools/ftp-bench.sh
+
+      # Times the real deploy against staging/ only - never the live webroot -
+      # so a deploy change can be measured and proven end to end on a branch,
+      # before it reaches main and becomes a production deploy.
+      - name: Time the deploy against staging
+        if: ${{ inputs.deploy }}
+        run: |
+          run() { local t; t=$(date +%s%3N); "$@"; echo "  ^^ $(( $(date +%s%3N) - t )) ms"; }
+          echo "--- 1. cold: force the whole tree ---"
+          run env DEPLOY_FULL=1 bash tools/deploy.sh staging
+          echo "--- 2. delta: nothing changed since ---"
+          run bash tools/deploy.sh staging
+          echo "--- 3. delta: one src file and one asset changed ---"
+          printf '\n' >> public/src/Settings.php
+          printf '\n' >> public/assets/style.css
+          run bash tools/deploy.sh staging
+          git checkout -- public
+          echo "--- 4. delta: those two reverted ---"
+          run bash tools/deploy.sh staging
