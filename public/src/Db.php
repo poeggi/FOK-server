@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 25;
+    private const SCHEMA_VERSION = 26;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -433,6 +433,14 @@ final class Db
             // that lookup is by (ip, last_seen) - a scan of every player row
             // on every hello otherwise.
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_players_ip_seen ON players (ip, last_seen)');
+        }
+        if ($v < 26) {
+            // alert_load1 (an absolute load) became alert_load_per_core. A
+            // stored row for the old key is read by nothing, and left behind
+            // it would still be a saved value on a dashboard that no longer
+            // shows it. Dropping it also means the new key starts with no row
+            // at all, so every deployment picks up the new default.
+            $pdo->exec("DELETE FROM settings WHERE key = 'alert_load1'");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

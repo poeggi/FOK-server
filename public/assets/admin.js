@@ -853,6 +853,7 @@ const MODULES = [
             prop('Clock delta', (t0 - d.pts_now) + ' ms approx.');
             prop('Server', 'v' + d.server_version + ' (API v' + d.api_version + ', ' + d.env + ')');
             prop('PHP', d.php + ' (' + d.sapi + ')');
+            prop('CPU cores', d.cores === 1 ? '1 (or the host will not say)' : d.cores);
             const yn = (v) => (v ? 'yes' : 'no');
             prop('opcache', yn(d.opcache));
             prop('APCu', yn(d.apcu) + (d.apcu ? '' : ' - counters stay on the DB writer'));

@@ -66,6 +66,8 @@ switch ($action) {
             'env' => FOK_ENV,
             'php' => PHP_VERSION,
             'sapi' => PHP_SAPI,
+            // What the load-average alert is divided by (see Util::watch).
+            'cores' => Util::cores(),
             // What the host actually gives the hot path. Shared hosting has
             // no shell and no phpinfo, so asking the running server is the
             // only way to find out - and each of these decides whether an

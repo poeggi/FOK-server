@@ -67,6 +67,7 @@ else
     # The host capabilities each decide whether an optimisation is even
     # available; shared hosting has no other way to ask.
     expect "props reports the php sapi" '"sapi":' "$R"
+    expect "props reports the core count the load alert divides by" '"cores":' "$R"
     expect "props reports opcache availability" '"opcache":' "$R"
     expect "props reports apcu availability" '"apcu":' "$R"
     expect "props reports deferred-flush availability" '"deferred_flush":' "$R"

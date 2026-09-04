@@ -267,6 +267,29 @@ final class Util
         }
     }
 
+    /**
+     * How many CPUs the host reports, and 1 when it will not say. There is no
+     * shell and no phpinfo on shared hosting, so /proc/cpuinfo is the only
+     * place to ask and open_basedir may still refuse it - hence the guarded
+     * read. The fallback is deliberately 1: an unknown core count then makes
+     * a per-core threshold stricter, never laxer.
+     */
+    public static function cores(): int
+    {
+        static $n = 0;
+        if ($n === 0) {
+            $n = 1;
+            $txt = @file_get_contents('/proc/cpuinfo');
+            if (is_string($txt)) {
+                $hits = preg_match_all('/^processor\s*:/mi', $txt);
+                if ($hits > 0) {
+                    $n = $hits;
+                }
+            }
+        }
+        return $n;
+    }
+
     // Inline monitoring - shared hosting has no daemons, so thresholds
     // are checked while serving regular requests.
     private static function watch(int $reqPerMin): void
@@ -275,9 +298,25 @@ final class Util
             Alerts::raise('traffic', "Excessive traffic: $reqPerMin requests in the current minute");
         }
         if (function_exists('sys_getloadavg')) {
+            // A load average only means something per CPU: 8 is a saturated
+            // 8-core box and a quiet morning on a 48-core one. Both numbers
+            // here describe the WHOLE machine - this is shared hosting, so
+            // the load includes every neighbour's traffic and nothing we do
+            // clears it. That is why the threshold is per core and loose: it
+            // is a "the host is thrashing" signal, not a capacity gauge.
+            // TODO: alert on OUR OWN saturation instead. Requests queueing
+            // behind the worker pool (measured at ~20 concurrent, see the
+            // README) is a condition we cause, can see and can act on, where
+            // a shared host's load average is none of the three.
             $load = sys_getloadavg()[0] ?? 0.0;
-            if ($load > Settings::int('alert_load1')) {
-                Alerts::raise('overload', sprintf('System overload: 1-minute load average %.1f', $load));
+            $cores = self::cores();
+            if ($load / $cores > Settings::int('alert_load_per_core')) {
+                Alerts::raise('overload', sprintf(
+                    'System overload: 1-minute load average %.1f over %d core(s), %.1f per core',
+                    $load,
+                    $cores,
+                    $load / $cores
+                ));
             }
         }
         require_once __DIR__ . '/Presence.php';

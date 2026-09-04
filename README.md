@@ -211,11 +211,13 @@ and an index behind every WHERE on a request path.
 What limits this server, in order:
 
 1. **PHP-FPM workers.** Every long poll (poll.php, relay.php with
-   wait=N) holds one worker for the whole hold, and shared hosting gives
-   a few dozen. No PHP setting changes that. Thousands of IDLE clients on
-   the 30 s heartbeat are cheap (~170 short req/s at 5000 clients);
-   thousands matchmaking at once are not - that is ~1 held worker each,
-   and the reason FOK_POLL_WAIT_MAX and relay_max_duels exist.
+   wait=N) holds one worker for the whole hold, and this host serves
+   about 20 at once (measured against live: 20 parallel 6 s holds are
+   absorbed with no queueing at all, 22 queue exactly one). No PHP
+   setting changes that. Thousands of IDLE clients on the 30 s heartbeat
+   are cheap (~170 short req/s at 5000 clients); thousands matchmaking at
+   once are not - that is ~1 held worker each, and the reason
+   FOK_POLL_WAIT_MAX and relay_max_duels exist.
 2. **SQLite has one writer.** Every hello writes. Sustained contention
    shows up as latency, then 500s (busy_timeout is 5 s), so the long
    polls peek lock-free and take the write lock only to drain.

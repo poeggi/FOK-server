@@ -39,7 +39,7 @@ final class Settings
         'friend_rate_cooldown_hard' => [3600, 'Escalated friend-request cooldown after a repeat burst (seconds)'],
         'player_ttl_days' => [180, 'Remove players not seen for N days (0 = never)'],
         'alert_req_per_min' => [600, 'Alert: total requests per minute above'],
-        'alert_load1' => [8, 'Alert: 1-minute system load above'],
+        'alert_load_per_core' => [2, 'Alert: 1-minute load per CPU core above'],
         'alert_online' => [200, 'Alert: concurrent online players above'],
         'alert_invalid_per_min' => [30, 'Alert: invalid requests per IP per minute above'],
         'alert_cooldown' => [900, 'Alert de-duplication window (seconds)'],
