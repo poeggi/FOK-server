@@ -127,15 +127,6 @@ final class TourneyStore
         apcu_delete(self::OPEN . $tid);
     }
 
-    /** Drops a tournament and everything indexing it. */
-    public static function forget(array $t): void
-    {
-        apcu_delete(self::T . $t['tid']);
-        apcu_delete(self::CODE . $t['code']);
-        apcu_delete(self::OPEN . $t['tid']);
-        apcu_delete(self::HOST . $t['host']);
-    }
-
     public static function byCode(string $code): ?array
     {
         $tid = apcu_fetch(self::CODE . strtoupper($code));
@@ -171,11 +162,6 @@ final class TourneyStore
     public static function claimCode(string $code, string $tid): bool
     {
         return apcu_add(self::CODE . $code, $tid, Settings::int('tournament_join_ttl'));
-    }
-
-    public static function releaseCode(string $code): void
-    {
-        apcu_delete(self::CODE . $code);
     }
 
     /** Seconds the host must still wait before creating again, 0 if none. */

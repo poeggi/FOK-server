@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Presence.php';
-require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/Tournament.php';
 
 /**

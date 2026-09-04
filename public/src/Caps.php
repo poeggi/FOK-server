@@ -87,8 +87,9 @@ final class Caps
             $flush ? 'good' : 'bad',
             $flush ? '' : 'bookkeeping runs before the client is answered');
 
-        // APCu. Shared memory between workers is the one thing that can take
-        // relay traffic off the single SQLite writer entirely.
+        // APCu. Shared memory between workers is load-bearing, not an
+        // optimization: the signal mailbox and the relay hub live there and
+        // have no database transport (see Signals, RelayStore).
         $enabled = function_exists('apcu_enabled') && apcu_enabled();
         $iterator = class_exists('APCUIterator');
         $roundTrip = false;
@@ -102,7 +103,7 @@ final class Caps
             'APCu shared memory',
             $usable ? 'enabled' : ($enabled ? 'enabled, unusable' : 'unavailable'),
             $usable ? 'good' : 'bad',
-            $usable ? '' : 'the relay cannot leave the database'
+            $usable ? '' : 'signaling and relayed duels are down (503) until this works'
         );
 
         $db = Db::get();

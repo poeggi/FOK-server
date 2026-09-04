@@ -250,8 +250,9 @@ What limits this server, in order:
    so the workers the budget holds back stay available to the requests
    that are actually doing work.
 2. **SQLite has one writer.** Every hello writes. Sustained contention
-   shows up as latency, then 500s (busy_timeout is 5 s), so the long
-   polls peek lock-free and take the write lock only to drain.
+   shows up as latency, then 500s (busy_timeout is 5 s), so a long poll
+   does not touch the database at all while it waits - the mailbox and
+   the relay hub it is watching are both in shared memory (see below).
 3. **Relayed duels**, the most expensive client: a long poll each plus
    ~30 messages/s. relay_max_duels (default 4, i.e. 8 held workers) is
    the honest "busy". It is deliberately a small share of the pool: the
@@ -268,9 +269,10 @@ only - the worker is held either way, so the ceiling above is unmoved.
 
 For the writer itself, what counts is how often a request takes the lock,
 not how long it waits, so nothing that dies within seconds is kept in the
-database any more. The signal mailbox, the presence-counter cache and the
-request counters all live in APCu shared memory: the mailbox because a
-long poll asked it "anything for me?" every 20 ms, the counters because
+database any more. The signal mailbox, the relay hub, the presence-counter
+cache and the request counters all live in APCu shared memory: the mailbox
+and the hub because a long poll asks them "anything for me?" every 20 ms -
+every 2 ms for the hub, which no query could carry - the counters because
 they took the lock once per request to add one to a number (they are now
 accumulated in memory and folded into the counters table once a minute,
 see Counters). What is left on a hello is the heartbeat write itself,

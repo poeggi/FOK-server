@@ -4,7 +4,6 @@ declare(strict_types=1);
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Settings.php';
-require_once __DIR__ . '/Alerts.php';
 require_once __DIR__ . '/RelayStore.php';
 require_once __DIR__ . '/RelayRate.php';
 

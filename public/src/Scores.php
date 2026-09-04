@@ -2,7 +2,6 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/Db.php';
-require_once __DIR__ . '/Util.php';
 
 final class Scores
 {
