@@ -40,10 +40,6 @@ function fmtDate(unix) {
     return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.';
 }
 
-// How many leading words of an alert message the card shows; the full text
-// is one click away in a detail popup.
-const ALERT_PREVIEW_WORDS = 4;
-
 function fmtBytes(n) {
     if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
     if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
@@ -404,16 +400,15 @@ function renderAlerts(box, d) {
     if (!d.alerts.length) { box.append(el('p', 'muted', 'No alerts.')); return; }
     box.append(el('p', d.unseen ? 'error' : 'muted',
         d.unseen ? d.unseen + ' unseen alert(s)' : 'All alerts seen.'));
-    const table = el('table', 'wrap');
+    // One line per alert (see admin.css): the message is written out whole
+    // and the message column cuts it off, so the list stays scannable by time
+    // and type. The click opens the row's full text.
+    const table = el('table', 'alerts');
     table.append(row(['Time', 'Type', 'Message'], 'th'));
     for (const a of d.alerts) {
-        const words = a.message.split(' ');
-        const preview = words.length > ALERT_PREVIEW_WORDS
-            ? words.slice(0, ALERT_PREVIEW_WORDS).join(' ') + ' ...'
-            : a.message;
-        const link = el('span', 'msg-link', preview);
+        const link = el('span', 'msg-link', a.message);
         link.title = a.message;
-        const msg = el('td');
+        const msg = el('td', 'msg');
         msg.append(link);
         const r = el('tr', 'alert-row');
         r.append(el('td', '', fmtTime(a.created)), el('td', '', a.type), msg);
@@ -614,8 +609,8 @@ function renderItemStatus(box, d) {
     if (!d.frozen.length && !d.disputed.length) {
         view.append(el('p', 'muted', 'Nothing frozen, no disputed claims.'));
     }
-    view.append(el('p', 'muted', 'Ownership is the items table. A frozen item is a claim the '
-        + 'ladder judged as tampering. Match secrets are never shown.'));
+    view.append(el('p', 'muted', 'A frozen item is a claim the ladder judged as '
+        + 'tampering. Match secrets not shown.'));
     box.append(view);
 }
 
@@ -929,75 +924,23 @@ const MODULES = [
         },
     },
     {
-        id: 'debug',
-        title: 'Debug reports',
-        async refresh(box) {
-            const d = await api('debug_list');
-            box.replaceChildren();
-            if (!d.datasets.length) { box.append(el('p', 'muted', 'No debug reports.')); return; }
-
-            const cbs = [];
-            const master = el('input');
-            master.type = 'checkbox';
-            master.title = 'Select all';
-            const dlSel = iconBtn(ICON.download, 'Download selected');
-            const delSel = iconBtn(ICON.trash, 'Delete selected');
-            const selected = () => cbs.filter((c) => c.checked).map((c) => c.value);
-            const updateBar = () => {
-                const n = selected().length;
-                dlSel.disabled = delSel.disabled = n === 0;
-                master.checked = n === cbs.length;
-                master.indeterminate = n > 0 && n < cbs.length;
-            };
-
-            const table = el('table', 'seltable');
-            const head = el('tr');
-            const mth = el('th');
-            mth.append(master);
-            head.append(mth);
-            for (const h of ['PIN', 'Sent', 'Expires', 'Size', '']) head.append(el('th', '', h));
-            table.append(head);
-
-            for (const ds of d.datasets) {
-                const r = el('tr');
-                const cb = el('input');
-                cb.type = 'checkbox';
-                cb.value = ds.pin;
-                cb.onchange = updateBar;
-                cbs.push(cb);
-                const cbtd = el('td');
-                cbtd.append(cb);
-                const dl = iconBtn(ICON.download, 'Download');
-                dl.onclick = () => downloadPin(ds.pin);
-                const actd = el('td');
-                actd.append(dl);
-                r.append(cbtd, el('td', '', ds.pin), el('td', '', fmtTime(ds.created)),
-                    el('td', 'muted', fmtDate(ds.created + d.ttl)), el('td', 'muted', fmtBytes(ds.bytes)), actd);
-                table.append(r);
-            }
-
-            master.onchange = () => { for (const c of cbs) c.checked = master.checked; updateBar(); };
-            // Toggling all must not also sort the (empty) checkbox column.
-            master.addEventListener('mousedown', (e) => e.stopPropagation());
-            dlSel.onclick = () => selected().forEach((pin, i) => setTimeout(() => downloadPin(pin), i * 200));
-            delSel.onclick = async () => {
-                const pins = selected();
-                if (!pins.length || !confirm('Delete ' + pins.length + ' debug report(s)?')) return;
-                await api('debug_delete', { method: 'POST', body: form({ pins: pins.join(',') }) });
-                refreshModule('debug');
-            };
-
-            const bar = el('div', 'bulk-bar');
-            bar.append(dlSel, delSel);
-            // Bulk actions stay put above the scrolling list (see admin.css).
-            const view = el('div', 'pane');
-            view.append(table);
-            box.append(bar, view);
-            updateBar();
-            sortable(table, 'debug');
-            mth.classList.remove('sortable');
-            box.append(el('p', 'muted', 'A client submits logs + up to two snapshots and reads out '
-                + 'the PIN; datasets self-purge after ' + Math.round(d.ttl / 3600) + ' h.'));
+        id: 'items',
+        title: 'Item registry',
+        // No own interval: ownership changes slowly and chain-verify is a
+        // manual, deliberate action. Refreshes on load and its own button.
+        refresh(box) {
+            return tabs(box, 'items', [
+                {
+                    key: 'status',
+                    label: 'Status',
+                    render: async (p) => renderItemStatus(p, await api('items')),
+                },
+                {
+                    key: 'ledger',
+                    label: 'Ledger',
+                    render: async (p) => renderItemLedger(p, await api('items')),
+                },
+            ]);
         },
     },
     {
@@ -1070,23 +1013,75 @@ const MODULES = [
         },
     },
     {
-        id: 'items',
-        title: 'Item registry',
-        // No own interval: ownership changes slowly and chain-verify is a
-        // manual, deliberate action. Refreshes on load and its own button.
-        refresh(box) {
-            return tabs(box, 'items', [
-                {
-                    key: 'status',
-                    label: 'Status',
-                    render: async (p) => renderItemStatus(p, await api('items')),
-                },
-                {
-                    key: 'ledger',
-                    label: 'Ledger',
-                    render: async (p) => renderItemLedger(p, await api('items')),
-                },
-            ]);
+        id: 'debug',
+        title: 'Debug reports',
+        async refresh(box) {
+            const d = await api('debug_list');
+            box.replaceChildren();
+            if (!d.datasets.length) { box.append(el('p', 'muted', 'No debug reports.')); return; }
+
+            const cbs = [];
+            const master = el('input');
+            master.type = 'checkbox';
+            master.title = 'Select all';
+            const dlSel = iconBtn(ICON.download, 'Download selected');
+            const delSel = iconBtn(ICON.trash, 'Delete selected');
+            const selected = () => cbs.filter((c) => c.checked).map((c) => c.value);
+            const updateBar = () => {
+                const n = selected().length;
+                dlSel.disabled = delSel.disabled = n === 0;
+                master.checked = n === cbs.length;
+                master.indeterminate = n > 0 && n < cbs.length;
+            };
+
+            const table = el('table', 'seltable');
+            const head = el('tr');
+            const mth = el('th');
+            mth.append(master);
+            head.append(mth);
+            for (const h of ['PIN', 'Sent', 'Expires', 'Size', '']) head.append(el('th', '', h));
+            table.append(head);
+
+            for (const ds of d.datasets) {
+                const r = el('tr');
+                const cb = el('input');
+                cb.type = 'checkbox';
+                cb.value = ds.pin;
+                cb.onchange = updateBar;
+                cbs.push(cb);
+                const cbtd = el('td');
+                cbtd.append(cb);
+                const dl = iconBtn(ICON.download, 'Download');
+                dl.onclick = () => downloadPin(ds.pin);
+                const actd = el('td');
+                actd.append(dl);
+                r.append(cbtd, el('td', '', ds.pin), el('td', '', fmtTime(ds.created)),
+                    el('td', 'muted', fmtDate(ds.created + d.ttl)), el('td', 'muted', fmtBytes(ds.bytes)), actd);
+                table.append(r);
+            }
+
+            master.onchange = () => { for (const c of cbs) c.checked = master.checked; updateBar(); };
+            // Toggling all must not also sort the (empty) checkbox column.
+            master.addEventListener('mousedown', (e) => e.stopPropagation());
+            dlSel.onclick = () => selected().forEach((pin, i) => setTimeout(() => downloadPin(pin), i * 200));
+            delSel.onclick = async () => {
+                const pins = selected();
+                if (!pins.length || !confirm('Delete ' + pins.length + ' debug report(s)?')) return;
+                await api('debug_delete', { method: 'POST', body: form({ pins: pins.join(',') }) });
+                refreshModule('debug');
+            };
+
+            const bar = el('div', 'bulk-bar');
+            bar.append(dlSel, delSel);
+            // Bulk actions stay put above the scrolling list (see admin.css).
+            const view = el('div', 'pane');
+            view.append(table);
+            box.append(bar, view);
+            updateBar();
+            sortable(table, 'debug');
+            mth.classList.remove('sortable');
+            box.append(el('p', 'muted', 'A client submits logs + up to two snapshots and reads out '
+                + 'the PIN; datasets self-purge after ' + Math.round(d.ttl / 3600) + ' h.'));
         },
     },
 ];

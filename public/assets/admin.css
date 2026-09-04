@@ -354,9 +354,15 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 }
 .chip.active { border-color: var(--accent); color: var(--accent); }
 
-/* An alert row shows the first few words; the click opens the full message.
-   Keeps the row's colour (muted, or danger while unseen) via currentColor. */
+/* An alert is exactly one row: time and type keep their natural (nowrap)
+   width, and the message column takes the rest and is cut with an ellipsis -
+   the click opens the full text. width:100% with max-width:0 is what makes a
+   table cell yield its content width to the other columns and then ellipsis;
+   without the max-width the message would widen the table instead. */
 .msg-link { text-decoration: underline dotted; }
+table.alerts th:last-child, table.alerts td.msg {
+    width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
 .alert-row { cursor: pointer; }
 .alert-row:hover td { background: rgba(255, 255, 255, 0.03); }
 .alert-row:hover .msg-link { text-decoration: underline; }
