@@ -8,7 +8,7 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -33,6 +33,14 @@ jobs:
             echo "- HTTP smoke test against php -S (test/smoke.sh)"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # A red check SKIPS the deploy job below, and api/version.php keeps
+      # answering the old version - so nothing about live LOOKS wrong, and a
+      # release can sit undeployed unnoticed. Say it where the run is red.
+      - name: Say that live was not deployed
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "> **LIVE WAS NOT DEPLOYED.** The checks failed, so the deploy job is skipped and live still runs the previous version." >> "$GITHUB_STEP_SUMMARY"
+
   deploy:
     needs: checks
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -45,7 +53,7 @@ jobs:
       FTP_USER: ${{ secrets.FTP_USER }}
       FTP_PASS: ${{ secrets.FTP_PASS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # curl cannot reuse an FTP connection and the host rate-limits logins,
       # so the deploy needs lftp's pooled connections (tools/deploy.sh).

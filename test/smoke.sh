@@ -20,6 +20,19 @@ source test/smoke/06_admin.sh               # admin dashboard, relay caps/transp
 # remote run, deletes this run's test data at the end.
 
 if [ "$fail" -ne 0 ]; then
+    # A CI log is all anyone gets to look at when this goes red, and the run
+    # that failed is gone (throwaway data dir, random port). Hand over what
+    # the server itself said rather than leaving a local re-run - which may
+    # not reproduce it - as the only way to find out.
+    if [ "$REMOTE" -eq 0 ]; then
+        for log in server.log php-error.log; do
+            if [ -s "$DATA/$log" ]; then
+                echo
+                echo "== $log (last 40 lines) =="
+                tail -n 40 "$DATA/$log"
+            fi
+        done
+    fi
     echo "SMOKE FAILED"
     exit 1
 fi

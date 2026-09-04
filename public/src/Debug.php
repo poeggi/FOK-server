@@ -13,10 +13,14 @@ require_once __DIR__ . '/Db.php';
  */
 final class Debug
 {
+    /** The driver code for a constraint violation - here, a PIN already in use. */
+    private const SQLITE_CONSTRAINT = 19;
+
     /**
      * Stores a bundle under a fresh PIN and returns it. Prunes expired
      * datasets first so their PINs come free.
      * @throws RuntimeException if a free PIN cannot be found (space full).
+     * @throws PDOException if the write itself fails - that is not a full space.
      */
     public static function submit(string $payload): string
     {
@@ -27,10 +31,19 @@ final class Debug
         for ($try = 0; $try < 30; $try++) {
             $pin = str_pad((string)random_int(0, 9999), 4, '0', STR_PAD_LEFT);
             try {
-                $ins->execute([$pin, $payload, strlen($payload), $now]);
+                Db::retry(static fn(): bool => $ins->execute([$pin, $payload, strlen($payload), $now]));
                 return $pin;
             } catch (PDOException $e) {
-                // PIN already taken (PRIMARY KEY): draw another.
+                // A PIN already taken (PRIMARY KEY, SQLITE_CONSTRAINT) is the
+                // only reason to draw again. Everything else - a database
+                // locked by a writer that never let go, a full disk - has
+                // nothing to do with the PIN space, and swallowing it 30
+                // times to report "space full" over a table holding two rows
+                // sends whoever reads that message somewhere there is nothing
+                // to find. Say what actually happened instead.
+                if ((int)($e->errorInfo[1] ?? 0) !== self::SQLITE_CONSTRAINT) {
+                    throw $e;
+                }
             }
         }
         throw new RuntimeException('debug pin space full');

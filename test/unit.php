@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Unit tests for the src/ classes, run against a throwaway data dir.
-// No framework: assert() with zend.assertions, exit 1 on any failure.
+// No framework: ok() below, exit 1 on the first failure.
 
 $tmp = sys_get_temp_dir() . '/fok-test-' . getmypid();
 putenv('FOK_DATA_DIR=' . $tmp);
@@ -14,8 +14,6 @@ foreach (glob($tmp . '/*') ?: [] as $f) {
         unlink($f);
     }
 }
-ini_set('zend.assertions', '1');
-ini_set('assert.exception', '1');
 
 require_once __DIR__ . '/../public/src/Util.php';
 require_once __DIR__ . '/../public/src/Presence.php';
@@ -58,6 +56,27 @@ function ok(bool $cond, string $what): void
         fwrite(STDERR, "FAIL: $what\n");
         exit(1);
     }
+}
+
+/**
+ * Runs $body inside ONE utc minute. Counters bucket by gmdate('YmdHi'), so a
+ * test that writes in one call and reads back in another is asserting about
+ * the clock as much as about the code: let the minute turn in between and the
+ * read looks in a bucket the write never touched. The body runs again when
+ * that happened - it is written to be repeatable - and the last pass's value
+ * is what comes back.
+ */
+function inOneMinute(callable $body)
+{
+    $out = null;
+    for ($try = 0; $try < 5; $try++) {
+        $minute = gmdate('YmdHi');
+        $out = $body();
+        if (gmdate('YmdHi') === $minute) {
+            break;
+        }
+    }
+    return $out;
 }
 
 // Util: player ID validation
@@ -692,10 +711,15 @@ $other = null;   // no live handle may outlive this (see the restore test)
 // Load: per-minute gauges accumulate in memory and flush in one write.
 // (Keep no statement handle alive across the run - a live PDOStatement
 // pins its connection open and breaks the later restore test on Windows.)
+// Summed over the buckets rather than read out of the current one: every
+// assertion below starts from an empty table, so the total IS the value, and
+// a minute turning mid-test can no longer hide half of it in the next bucket.
 $loadVal = static function (string $metric): int {
-    $st = Db::get()->prepare('SELECT value FROM loadmin WHERE bucket = ? AND metric = ?');
-    $st->execute([gmdate('YmdHi'), $metric]);
-    return (int)$st->fetchColumn();
+    $st = Db::get()->prepare('SELECT COALESCE(SUM(value), 0) FROM loadmin WHERE metric = ?');
+    $st->execute([$metric]);
+    $n = (int)$st->fetchColumn();
+    $st->closeCursor();
+    return $n;
 };
 // Exact gauges for the assertions below: in production one request in
 // load_sample flushes and stands in for the rest (see Load::flush).
@@ -715,11 +739,13 @@ Load::flush();
 ok($loadVal('db_w') === 1, 'the wrapper counts one write and no reads');
 
 // lastMinute reports the previous COMPLETE minute's totals.
-Db::get()->exec('DELETE FROM loadmin');
-$prevMin = gmdate('YmdHi', time() - 60);
-Db::get()->prepare('INSERT INTO loadmin (bucket, metric, value) VALUES (?, ?, ?), (?, ?, ?)')
-    ->execute([$prevMin, 'msg_out', 7, $prevMin, 'db_w', 4]);
-$lm = Load::lastMinute();
+$lm = inOneMinute(static function (): array {
+    Db::get()->exec('DELETE FROM loadmin');
+    $prevMin = gmdate('YmdHi', time() - 60);
+    Db::get()->prepare('INSERT INTO loadmin (bucket, metric, value) VALUES (?, ?, ?), (?, ?, ?)')
+        ->execute([$prevMin, 'msg_out', 7, $prevMin, 'db_w', 4]);
+    return Load::lastMinute();
+});
 ok($lm['out'] === 7, 'lastMinute reports the previous minute messages out');
 ok($lm['db_writes'] === 4, 'lastMinute reports the previous minute db writes');
 ok(array_key_exists('in', $lm), 'lastMinute carries messages-in from the req_min counter');
@@ -795,7 +821,9 @@ Db::get()->exec('DELETE FROM pstats');
 $dbgCount = static function (string $pin): int {
     $s = Db::get()->prepare('SELECT COUNT(*) FROM debug WHERE pin = ?');
     $s->execute([$pin]);
-    return (int)$s->fetchColumn();
+    $n = (int)$s->fetchColumn();
+    $s->closeCursor();
+    return $n;
 };
 Db::get()->exec('DELETE FROM debug');
 $dpin = Debug::submit('{"logs":[1,2]}');
@@ -911,7 +939,9 @@ ok($ran === ['a', 'b', 'c'], 'a failing deferred job does not stop the rest');
 $countOf = function (string $metric): int {
     $st = Db::get()->prepare('SELECT COALESCE(SUM(value), 0) FROM counters WHERE metric = ?');
     $st->execute([$metric]);
-    return (int)$st->fetchColumn();
+    $n = (int)$st->fetchColumn();
+    $st->closeCursor();
+    return $n;
 };
 $before = $countOf('unittest');
 Util::bump('unittest');
@@ -922,9 +952,10 @@ ok($countOf('unittest') === $before + 1, 'bump lands once the answer is out');
 // Both counters ride in ONE statement now (one write lock instead of two),
 // so prove the second row is still really written.
 $reqMinOf = function (): int {
-    $st = Db::get()->prepare("SELECT COALESCE(value, 0) FROM counters WHERE bucket = ? AND metric = 'req_min'");
-    $st->execute([gmdate('YmdHi')]);
-    return (int)$st->fetchColumn();
+    $st = Db::get()->query("SELECT COALESCE(SUM(value), 0) FROM counters WHERE metric = 'req_min'");
+    $n = (int)$st->fetchColumn();
+    $st->closeCursor();
+    return $n;
 };
 $rm = $reqMinOf();
 Util::bump('unittest');
@@ -936,13 +967,15 @@ ok($reqMinOf() === $rm + 1, 'the per-minute request counter rides along');
 // traffic alert dies silently - monitoring that fails quietly is worse
 // than none.
 Settings::set('alert_req_per_min', 1);
-Db::get()->exec("DELETE FROM counters WHERE metric = 'req_min'");
-Db::get()->exec("DELETE FROM alerts WHERE type = 'traffic'");
-for ($i = 0; $i < 25; $i++) {
-    Util::bump('unittest');
-    Util::runDeferred();
-}
-$traffic = array_filter(Alerts::recent(), static fn(array $a) => $a['type'] === 'traffic');
+$traffic = inOneMinute(static function (): array {
+    Db::get()->exec("DELETE FROM counters WHERE metric = 'req_min'");
+    Db::get()->exec("DELETE FROM alerts WHERE type = 'traffic'");
+    for ($i = 0; $i < 25; $i++) {
+        Util::bump('unittest');
+        Util::runDeferred();
+    }
+    return array_filter(Alerts::recent(), static fn(array $a) => $a['type'] === 'traffic');
+});
 ok($traffic !== [], 'the returned req_min value still reaches the traffic alert');
 Settings::set('alert_req_per_min', 600);
 

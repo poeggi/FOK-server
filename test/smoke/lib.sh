@@ -55,10 +55,6 @@ if [ -n "${SMOKE_BASE:-}" ]; then
     }
 else
     REMOTE=0
-    # Random port: a stale server from an aborted run must never be able
-    # to answer this run's requests.
-    PORT=$((8300 + RANDOM % 500))
-    BASE="http://127.0.0.1:$PORT"
     ID1=deadbeef
     ID2=cafe0001
     ID3=f00df00d
@@ -67,13 +63,44 @@ else
     ADMIN_PASS=test
     export FOK_DATA_DIR="$DATA"
     php -r 'file_put_contents(getenv("FOK_DATA_DIR")."/admin.hash", password_hash("smoke:test", PASSWORD_DEFAULT));'
-    php -S "127.0.0.1:$PORT" -t public > "$DATA/server.log" 2>&1 &
-    SERVER_PID=$!
     cleanup() {
-        kill "$SERVER_PID" 2>/dev/null || true
+        [ -n "${SERVER_PID:-}" ] && kill "$SERVER_PID" 2>/dev/null || true
         rm -rf "$DATA"
     }
-    sleep 1
+    # Random port: a stale server from an aborted run must never be able to
+    # answer this run's requests. Drawn fresh per attempt, because the one
+    # thing a random port can do is collide with something already listening.
+    #
+    # Then WAIT FOR THE PORT TO ANSWER rather than sleeping a guessed second:
+    # on a loaded CI runner php -S can still be binding when the first request
+    # goes out, and from there every later assertion fails on a connection
+    # that was never made. version.php is the probe because it is the one
+    # endpoint that records nothing (no counters, no player rows), so however
+    # many probes a slow boot takes, the counts the suite asserts are the same.
+    up=0
+    for attempt in 1 2 3; do
+        PORT=$((8300 + RANDOM % 500))
+        BASE="http://127.0.0.1:$PORT"
+        php -S "127.0.0.1:$PORT" -t public > "$DATA/server.log" 2>&1 &
+        SERVER_PID=$!
+        for _ in $(seq 100); do
+            if curl -sf -o /dev/null "$BASE/api/version.php"; then
+                up=1
+                break
+            fi
+            kill -0 "$SERVER_PID" 2>/dev/null || break
+            sleep 0.1
+        done
+        [ "$up" -eq 1 ] && break
+        kill "$SERVER_PID" 2>/dev/null || true
+        SERVER_PID=''
+    done
+    if [ "$up" -ne 1 ]; then
+        echo "FAIL: php -S never answered on 127.0.0.1:$PORT"
+        cat "$DATA/server.log" >&2
+        rm -rf "$DATA"
+        exit 1
+    fi
 fi
 trap cleanup EXIT
 
