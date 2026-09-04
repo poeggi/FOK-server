@@ -1,4 +1,4 @@
-# Tournament mode (API 4.1): the server runs the tournament, the players run
+# Tournament mode (API 4.3): the server runs the tournament, the players run
 # the games. Nothing here goes near a match - a tournament match is an ordinary
 # P2P duel between the two players the server names, and no match or spectator
 # traffic ever passes through the server - so what this walks is the
@@ -94,6 +94,8 @@ expect "the tournament is running" '"state":"running"' "$R"
 expect "on its first round" '"round":1' "$R"
 expect "with the first match dealt" '"cursor":"r1.1"' "$R"
 expect "a round-1 match is played at 2 hearts" '"hm":2' "$R"
+expect "and at level 1, which is where the ladder starts" '"lvl":1' "$R"
+expect "the group stage being what round 1 is called" '"stage":"group"' "$R"
 expect "the bracket stays empty until round 1 is over" '"bracket":[]' "$R"
 expect "the caller gets its own roles sheet" '"you":"play"' "$R"
 expect "which places the match within its stage" '"match":1' "$R"
@@ -125,13 +127,39 @@ expect "a lone win is held, waiting for the other side" '"state":"held"' "$R"
 R=$(result "$ID1" "$T1" r1.1 loss 9 12)
 expect "the loser's report completes the pair" '"state":"confirmed"' "$R"
 
+# --- The break between rounds. A finished round does not roll straight into
+# the next one: the server stops on a scoreboard everybody gets to read and
+# waits for the host to press on. This is asserted FIRST, one hop after the
+# round ended, because the refusal below is a deadline in milliseconds.
+R=$(act "$ID1" continue "$T1")
+expect "a continue that beats the minimum wait is refused" '"error":"too early"' "$R"
+expect "and is told how long is left" '"retry_ms":' "$R"
+R=$(act "$ID2" continue "$T1")
+expect "only the host may press on" '"error":"host only"' "$R"
+
 R=$(act "$ID1" state "$T1")
 expect "round 1 is over and the knockout is drawn" '"nid":"final"' "$R"
 expect "the standings are published with it" '"rank":1' "$R"
 expect "the winner of the only match leads them" "\"id\":\"$ID2\",\"pts\":1" "$R"
+expect "but nothing is dealt while the board is up" '"cursor":null' "$R"
+expect "the board naming the stage about to start" '"stage":"final"' "$R"
+expect "who is through to it" '"advancers":[' "$R"
+expect "and how long it must stay up before continue" '"wait":' "$R"
+expect "and the tournament is on its second round" '"round":2' "$R"
+
+sleep 1.1
+R=$(act "$ID1" continue "$T1")
+expect "the host presses on once the board has been up long enough" '"ok":true' "$R"
+R=$(act "$ID1" continue "$T1")
+expect "and pressing again is a no-op, not an error" '"ok":true' "$R"
+R=$(hellot "$ID2")
+expect "every participant was sent the board" 'advancers' "$R"
+
+R=$(act "$ID1" state "$T1")
 expect "the cursor has moved to the final" '"cursor":"final"' "$R"
 expect "which is a normal 3-heart duel" '"hm":3' "$R"
-expect "and the tournament is on its second round" '"round":2' "$R"
+expect "played one level deeper than round 1" '"lvl":2' "$R"
+expect "and no board is up any more" '"break":null' "$R"
 
 # Nobody lies to lose, so a reported loss settles on the spot.
 R=$(result "$ID1" "$T1" final loss 4 6)

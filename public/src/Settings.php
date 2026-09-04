@@ -70,6 +70,15 @@ final class Settings
         'tournament_walkover_ms' => [180000, 'An offline player forfeits the match in flight after (ms)'],
         'tournament_create_cooldown' => [10, 'Min seconds between one host creating tournaments'],
         'tournament_announce_window' => [180, 'Announce a lobby while its host was seen within (seconds)'],
+        // The round ladder. The level a round is played at is its round
+        // number, so a wider field reaches a deeper final; the cap is the
+        // game's own last level. The break between two rounds is where the
+        // scoreboard is read, so it has a floor (a continue that arrives
+        // before anyone could have read it is a stray tap) and a ceiling (a
+        // host that closed its browser must not wedge the tournament).
+        'tournament_max_level' => [FOK_TOURNAMENT_MAX_LEVEL, 'Deepest level a tournament round is played at'],
+        'tournament_break_ms' => [1000, 'Min time a round-break scoreboard stays up before continue (ms)'],
+        'tournament_break_ttl_ms' => [120000, 'A round break continues by itself after (ms)'],
         'admin_refresh_secs' => [30, 'Admin dashboard refresh interval (seconds, 0 = off)'],
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)'],
         'admin_duels_refresh_secs' => [1, 'Duels card refresh interval (seconds, 0 = off)'],

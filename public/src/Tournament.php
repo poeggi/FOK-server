@@ -12,8 +12,14 @@ require_once __DIR__ . '/Bracket.php';
 
 /**
  * Tournament orchestration: lobbies, the schedule, per-match role sheets,
- * results, standings and the bracket. The server is the ONLY authority on all
- * of them and clients render what it says (see docs/API.md "Tournament mode").
+ * results, standings, the round breaks and the bracket. The server is the ONLY
+ * authority on all of them and clients render what it says (see docs/API.md
+ * "Tournament mode").
+ *
+ * The tournament also gets HARDER as it narrows: a round is played at the
+ * level of its own number (see Bracket::level), so the size of the lobby is
+ * what decides how deep the final gets. Between two rounds it stops on a
+ * scoreboard and waits for the host to press on (see gated/proceed).
  *
  * IT CARRIES NO GAME TRAFFIC. Every match in a tournament is an ordinary P2P
  * duel between the two players the roles sheet names, and every spectator feed
@@ -118,6 +124,12 @@ final class Tournament
             'bracket' => [],
             'cursor' => null,
             'orphan' => [],
+            // The round break: null, or {next, at} while the tournament is
+            // waiting for the host to press on. `cleared` is the highest
+            // round whose break has been passed, so a cleared break can
+            // never re-open behind the tournament's back.
+            'gate' => null,
+            'cleared' => 1,
         ];
     }
 
@@ -798,10 +810,13 @@ final class Tournament
             if ($next === null) {
                 return;
             }
-            $t['data']['cursor'] = $next;
             // The row's `round` is the stage being PLAYED, which is what the
             // admin card and the lobby projection read.
             $node = self::node($t, $next);
+            if (self::gated($t, $node === null ? $t['round'] : (int)$node['round'])) {
+                return;                         // the round break, see gated()
+            }
+            $t['data']['cursor'] = $next;
             if ($node !== null) {
                 $t['round'] = (int)$node['round'];
             }
@@ -868,6 +883,200 @@ final class Tournament
             $rows[] = $row;
         }
         self::event($t, ['event' => 'standings', 'rows' => $rows, 'advancers' => $advancers]);
+    }
+
+    // ---- the round break --------------------------------------------------
+
+    /**
+     * The pause between two rounds. Everyone has just watched the round end
+     * one match at a time; the point of stopping here is that they get to
+     * read where it left them before the next one starts - who was in the
+     * top half, who is through, and how deep the next round is played.
+     *
+     * Returns true while the tournament is WAITING. The host presses on
+     * (see proceed), and the wait has its own lazy deadline like every other
+     * one here, because a host whose browser closed must not be able to hold
+     * a tournament everyone else is still in.
+     *
+     * Round 1 is never gated - there is nothing to show before a ball has
+     * been kicked - and `cleared` makes a break that has been passed
+     * unrepeatable, so a cascade of walkovers cannot re-open one behind the
+     * tournament's back.
+     */
+    private static function gated(array &$t, int $round): bool
+    {
+        if ($round <= 1 || (int)($t['data']['cleared'] ?? 1) >= $round) {
+            return false;
+        }
+        $gate = $t['data']['gate'] ?? null;
+        if ($gate !== null && (int)$gate['next'] === $round) {
+            if (Util::nowMs() - (int)$gate['at'] < Settings::int('tournament_break_ttl_ms')) {
+                return true;
+            }
+            self::clearGate($t, $round);
+            return false;
+        }
+        // Nothing is being played during a break, and the cursor is the node
+        // being played - so it is null, exactly as it is when the tournament
+        // is over. The board is NOT stored with the gate: it is derived on
+        // every read, so a forfeit during the break shows up on the next
+        // read-back instead of freezing into the copy the event carried.
+        $t['data']['cursor'] = null;
+        // The row's `round` runs ahead into the break, so both boundaries
+        // read the same: during a break it is already the round ABOUT to be
+        // played, and the board's own `done` names the one that ended.
+        $t['round'] = $round;
+        $t['data']['gate'] = ['next' => $round, 'at' => Util::nowMs()];
+        self::event($t, self::board($t, $round, Util::nowMs()));
+        return true;
+    }
+
+    private static function clearGate(array &$t, int $round): void
+    {
+        $t['data']['cleared'] = $round;
+        $t['data']['gate'] = null;
+    }
+
+    /**
+     * The host presses on. Idempotent by design: no break open is a plain
+     * {"ok": true}, because the press that cleared it may simply have been
+     * this client's own, or the break may have run out its deadline while
+     * the tap was in flight.
+     */
+    public static function proceed(string $id, string $tid): ?array
+    {
+        return self::mutate($tid, static function (array &$t) use ($id): array {
+            self::touch($t);
+            if (!self::isMember($t, $id)) {
+                return ['ok' => false, 'error' => 'not a participant', 'http' => 403];
+            }
+            // Read AFTER touch: the deadline may just have cleared it.
+            $gate = $t['data']['gate'] ?? null;
+            if ($gate === null) {
+                return ['ok' => true];
+            }
+            if ($id !== $t['host']) {
+                return ['ok' => false, 'error' => 'host only', 'http' => 403];
+            }
+            $left = Settings::int('tournament_break_ms') - (Util::nowMs() - (int)$gate['at']);
+            if ($left > 0) {
+                // The scoreboard is the whole point of the break, and a press
+                // that lands before anyone could have read it is a stray tap
+                // carried over from the match that just ended.
+                return ['ok' => false, 'error' => 'too early', 'http' => 409, 'retry_ms' => $left];
+            }
+            self::clearGate($t, (int)$gate['next']);
+            self::advance($t);
+            return ['ok' => true];
+        });
+    }
+
+    /** The nodes of one round, from whichever list holds that round. */
+    private static function roundNodes(array $t, int $round): array
+    {
+        $out = [];
+        foreach ($t['data'][$round <= 1 ? 'schedule' : 'bracket'] as $n) {
+            if ((int)$n['round'] === $round) {
+                $out[] = $n;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * The between-rounds scoreboard: where everyone stands, who is through,
+     * and what the next round is. One row per participant, ranked by the
+     * same ladder the advancer cut uses, and ordered so the board reads as
+     * an elimination ladder - still in at the top, then whoever went out
+     * most recently, then the rank.
+     *
+     * `pts` and `diff` are the ROUND-1 standings and do not move again: the
+     * knockout is decided by winning, not by points. What moves each round
+     * is `w`/`l`/`d`, which count the round that has just ended and nothing
+     * else.
+     *
+     * Every name here is a token, never a caption: the client owns the
+     * wording, and an unknown `stage` renders as a plain round number.
+     */
+    private static function board(array $t, int $next, int $at): array
+    {
+        $done = $next - 1;
+        $nodes = self::roundNodes($t, $next);
+        $through = [];
+        foreach ($nodes as $n) {
+            foreach ([$n['a'], $n['b']] as $seat) {
+                if ($seat !== null) {
+                    $through[(int)$seat] = true;
+                }
+            }
+        }
+        $tally = [];
+        $until = [];
+        foreach (['schedule', 'bracket'] as $list) {
+            foreach ($t['data'][$list] as $n) {
+                $r = $t['data']['results'][$n['nid']] ?? null;
+                foreach ([$n['a'], $n['b']] as $seat) {
+                    if ($seat === null) {
+                        continue;
+                    }
+                    $seat = (int)$seat;
+                    $until[$seat] = max($until[$seat] ?? 1, (int)$n['round']);
+                    if ((int)$n['round'] !== $done || $r === null
+                        || !self::isDone($t, $n['nid']) || $r['state'] === 'void') {
+                        continue;
+                    }
+                    $tally[$seat] = $tally[$seat] ?? ['w' => 0, 'l' => 0, 'd' => 0];
+                    if ($r['draw']) {
+                        $tally[$seat]['d']++;
+                    } elseif ($r['winner'] === $seat) {
+                        $tally[$seat]['w']++;
+                    } elseif ($r['winner'] !== null) {
+                        $tally[$seat]['l']++;
+                    }
+                }
+            }
+        }
+        $info = Presence::infoOf(array_column($t['players'], 'id'));
+        $rows = [];
+        foreach (self::ranked($t) as $row) {
+            $seat = (int)$row['seat'];
+            $gone = self::forfeited($t, $seat);
+            $adv = isset($through[$seat]) && !$gone;
+            $rows[] = $row + [
+                'name' => $info[$row['id']]['name'] ?? null,
+                'adv' => $adv,
+                'until' => $adv ? $next : ($until[$seat] ?? 1),
+                'gone' => $gone,
+                'w' => $tally[$seat]['w'] ?? 0,
+                'l' => $tally[$seat]['l'] ?? 0,
+                'd' => $tally[$seat]['d'] ?? 0,
+            ];
+        }
+        usort($rows, static fn(array $x, array $y): int => (($y['adv'] ? 1 : 0) <=> ($x['adv'] ? 1 : 0))
+            ?: ($y['until'] <=> $x['until'])
+            ?: ($x['rank'] <=> $y['rank']));
+        $advancers = [];
+        foreach ($rows as $row) {
+            if ($row['adv']) {
+                $advancers[] = $row['id'];
+            }
+        }
+        return [
+            'event' => 'round',
+            'done' => $done,
+            'next' => $next,
+            'stage' => Bracket::stage($next, count($nodes)),
+            'lvl' => Bracket::level($next, Settings::int('tournament_max_level')),
+            'hm' => Bracket::hearts($nodes === [] ? '' : (string)$nodes[0]['nid']),
+            'matches' => count($nodes),
+            'of' => count($advancers),
+            'host' => $t['host'],
+            'at' => $at,
+            'wait' => Settings::int('tournament_break_ms'),
+            'auto' => Settings::int('tournament_break_ttl_ms'),
+            'rows' => $rows,
+            'advancers' => $advancers,
+        ];
     }
 
     private static function finish(array &$t): void
@@ -1033,10 +1242,15 @@ final class Tournament
         return [
             'event' => 'roles',
             'round' => (int)$node['round'],
+            'stage' => Bracket::stage((int)$node['round'], $of),
             'match' => $pos,
             'of' => $of,
             'nid' => $nid,
             'hm' => Bracket::hearts($nid),
+            // The level the match STARTS at: round 1 is level 1 and every
+            // round after it is one deeper (see Bracket::level), so the two
+            // players preset it exactly as they preset the hearts.
+            'lvl' => Bracket::level((int)$node['round'], Settings::int('tournament_max_level')),
             'stakes' => $t['stakes'],
             'players' => [$a, $b],
             'feeder' => $a,
@@ -1192,6 +1406,11 @@ final class Tournament
         $out['schedule'] = self::projectNodes($t, 'schedule');
         $out['bracket'] = self::projectNodes($t, 'bracket');
         $out['standings'] = $t['data']['standings'] === [] ? [] : self::ranked($t);
+        // The board is derived here rather than stored, so a read-back
+        // during a break always reflects what has happened since it opened.
+        $gate = $t['data']['gate'] ?? null;
+        $out['break'] = $gate === null ? null
+            : self::board($t, (int)$gate['next'], (int)$gate['at']) + ['tid' => $t['tid']];
         $out['roles'] = null;
         $cur = $t['data']['cursor'] ?? null;
         if ($t['state'] === 'running' && $cur !== null && !self::isClosed($t, $cur)) {
@@ -1208,6 +1427,7 @@ final class Tournament
 
     private static function projectNodes(array $t, string $list): array
     {
+        $cap = Settings::int('tournament_max_level');
         $out = [];
         foreach ($t['data'][$list] as $n) {
             $r = $t['data']['results'][$n['nid']] ?? null;
@@ -1215,6 +1435,7 @@ final class Tournament
                 'nid' => $n['nid'],
                 'round' => (int)$n['round'],
                 'hm' => Bracket::hearts($n['nid']),
+                'lvl' => Bracket::level((int)$n['round'], $cap),
                 'players' => [self::idOfSeat($t, $n['a']), self::idOfSeat($t, $n['b'])],
                 'state' => $r === null ? 'pending' : $r['state'],
                 'winner' => $r === null || $r['winner'] === null ? null : self::idOfSeat($t, (int)$r['winner']),

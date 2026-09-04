@@ -1193,6 +1193,18 @@ ok(count($b8) === 7, 'an 8-slot bracket is 7 nodes');
 ok($b8[count($b8) - 1]['nid'] === 'final', 'the last node is the final');
 ok(Bracket::hearts('final') === 3 && Bracket::hearts('ko1.1') === 2,
     'only the final is played at 3 hearts');
+
+// The round ladder: a round is played at the level of its own number, so the
+// size of the lobby is what decides how deep the final gets - and it stops at
+// the last level the game actually has.
+ok(Bracket::level(1, 10) === 1 && Bracket::level(2, 10) === 2 && Bracket::level(4, 10) === 4,
+    'each round is played one level deeper than the one before it');
+ok(Bracket::level(0, 10) === 1, 'and nothing is ever played below level 1');
+ok(Bracket::level(12, 10) === 10, 'the ladder stops at the last level the game has');
+ok(Bracket::stage(1, 6) === 'group' && Bracket::stage(4, 1) === 'final'
+    && Bracket::stage(3, 2) === 'semi' && Bracket::stage(2, 4) === 'quarter',
+    'a stage is named after the number of matches in it');
+ok(Bracket::stage(2, 8) === 'ko', 'and a wider round has no common name of its own');
 $byNid = [];
 foreach ($b8 as $node) {
     $byNid[$node['nid']] = $node;
@@ -1236,7 +1248,8 @@ ok(count($view['roles']['players']) === 2
     && $view['roles']['feeder'] === $view['roles']['players'][0],
     'the roles sheet names two players and makes the first the feeder');
 ok(in_array($view['roles']['you'], ['play', 'spectate'], true), 'and tells the caller its own part');
-ok($view['roles']['hm'] === 2, 'round-1 matches are played at 2 hearts');
+ok($view['roles']['hm'] === 2 && $view['roles']['lvl'] === 1 && $view['roles']['stage'] === 'group',
+    'round-1 matches are the group stage, played at 2 hearts and at level 1');
 
 // A spectator of the current match may never report it.
 $spectator = null;
@@ -1261,7 +1274,53 @@ ok($view['schedule'][0]['score'] === [12, 7] || $view['schedule'][0]['score'] ==
     'the score is stored in seat order, whichever side reported it');
 ok($view['cursor'] === 'r1.2', 'and the cursor moves on by itself');
 
-// The rest of it: whoever is listed first wins, reported by both sides.
+// The rest of round 1: whoever is listed first wins, reported by both sides.
+for ($step = 0; $step < 40; $step++) {
+    $view = Tournament::view($tp[0], $tid);
+    if ($view['state'] !== 'running' || $view['cursor'] === null) {
+        break;
+    }
+    [$x, $y] = $view['roles']['players'];
+    Tournament::report($x, $tid, $view['cursor'], 'win', [10, 3], null);
+    Tournament::report($y, $tid, $view['cursor'], 'loss', [3, 10], null);
+}
+
+// ---- The break between two rounds ------------------------------------
+// A finished round does NOT roll straight into the next one: it stops on a
+// scoreboard everybody gets to read, and waits for the host to press on.
+$view = Tournament::view($tp[0], $tid);
+ok($view['state'] === 'running' && $view['cursor'] === null && $view['break'] !== null,
+    'a finished round stops on a break instead of dealing the next one');
+$brk = $view['break'];
+ok($brk['done'] === 1 && $brk['next'] === 2 && $brk['stage'] === 'final',
+    'the board names the round that ended and the stage about to start');
+ok($view['round'] === 2, 'and the round runs ahead into the break, as it does at every boundary');
+ok($brk['lvl'] === 2 && $view['bracket'][0]['lvl'] === 2,
+    'the next round is played one level deeper than round 1');
+ok(count($brk['rows']) === 4 && count($brk['advancers']) === 2,
+    'every player is on the board, and half of them are through');
+ok($brk['rows'][0]['adv'] === true && $brk['rows'][3]['adv'] === false,
+    'ordered so that whoever is through comes first');
+ok($brk['rows'][0]['name'] !== null, 'and a row carries the name a scoreboard has to print');
+$played = 0;
+foreach ($brk['rows'] as $r) {
+    $played += $r['w'] + $r['l'] + $r['d'];
+}
+ok($played === 12, 'w/l/d count the round that just ended - 6 matches, two sides each');
+$early = Tournament::proceed($tp[0], $tid);
+ok($early['http'] === 409 && $early['retry_ms'] > 0,
+    'a continue that beats the minimum wait is refused, with how long is left');
+Settings::set('tournament_break_ms', 0);
+ok(Tournament::proceed('79999999', $tid)['http'] === 403, 'a stranger cannot press on');
+ok(Tournament::proceed($tp[1], $tid)['http'] === 403, 'and neither can a player who is not the host');
+ok(Tournament::proceed($tp[0], $tid)['ok'] === true, 'the host presses on');
+$view = Tournament::view($tp[0], $tid);
+ok($view['break'] === null && $view['cursor'] === 'final', 'and the knockout is dealt at last');
+ok($view['roles']['lvl'] === 2 && $view['roles']['stage'] === 'final',
+    'the roles sheet hands the two finalists the level and the stage they are in');
+ok(Tournament::proceed($tp[0], $tid)['ok'] === true, 'pressing on again is a no-op, not an error');
+
+// The final, played the same way, and the podium.
 for ($step = 0; $step < 40; $step++) {
     $view = Tournament::view($tp[0], $tid);
     if ($view['state'] !== 'running' || $view['cursor'] === null) {
@@ -1273,6 +1332,7 @@ for ($step = 0; $step < 40; $step++) {
 }
 $view = Tournament::view($tp[0], $tid);
 ok($view['state'] === 'done', 'reporting every match runs the tournament to the end');
+ok($view['break'] === null, 'and a tournament that is over is not waiting on anything');
 ok(count($view['bracket']) === 1 && $view['bracket'][0]['nid'] === 'final',
     '4 players advance 2, so the knockout is the final alone');
 ok($view['bracket'][0]['hm'] === 3, 'and the final is a normal 3-heart duel');
@@ -1303,6 +1363,12 @@ ok(count($v2['schedule']) === 1 && $v2['cursor'] === 'r1.1', 'two players play o
 $p2 = $v2['roles']['players'];
 ok(Tournament::report($p2[1], $tid2, 'r1.1', 'loss', [2, 8], null)['state'] === 'settled',
     'a reported loss settles at once');
+$v2 = Tournament::view($q[0], $tid2);
+ok($v2['cursor'] === null && $v2['break']['next'] === 2,
+    'a two-player round 1 stops on the break as well');
+ok($v2['break']['rows'][0]['adv'] === true && $v2['break']['rows'][1]['adv'] === true,
+    'where both of them are through, because a knockout needs two');
+ok(Tournament::proceed($q[0], $tid2)['ok'] === true, 'the host presses on');
 $v2 = Tournament::view($q[0], $tid2);
 ok($v2['cursor'] === 'final', 'and both of them advance to the final');
 
@@ -1507,6 +1573,7 @@ Tournament::start($v[0], $tid5);
 $v5 = Tournament::view($v[0], $tid5);
 $p5 = $v5['roles']['players'];
 Tournament::report($p5[1], $tid5, 'r1.1', 'loss', [0, 9], null);
+Tournament::proceed($v[0], $tid5);
 $v5 = Tournament::view($v[0], $tid5);
 ok($v5['cursor'] === 'final', 'both of two players reach the final');
 // Both of them go dark, and the match has been in flight long enough.
@@ -1524,6 +1591,31 @@ Settings::set('tournament_walkover_ms', 180000);
 foreach ($v as $p) {
     Presence::touch($p, '127.0.0.1');
 }
+
+// ---- A break the host never presses through clears itself -------------
+// The host is one browser tab among several, and it can close. The break
+// has its own lazy deadline for exactly that: the tournament goes on by
+// itself rather than staying wedged on a scoreboard nobody can dismiss.
+$g = ['76000001', '76000002'];
+foreach ($g as $p) {
+    Presence::touch($p, '127.0.0.1');
+}
+$tid7 = Tournament::create($g[0], false)['tid'];
+Tournament::join($g[1], $tid7);
+Tournament::start($g[0], $tid7);
+$v7 = Tournament::view($g[0], $tid7);
+Tournament::report($v7['roles']['players'][1], $tid7, 'r1.1', 'loss', [1, 9], null);
+Settings::set('tournament_break_ms', 60000);        // nobody could press in time
+$v7 = Tournament::view($g[0], $tid7);
+ok($v7['break'] !== null && $v7['cursor'] === null, 'the tournament waits on the board');
+ok($v7['break']['wait'] === 60000 && $v7['break']['auto'] === 120000,
+    'which tells the client both how long it must stay up and when it goes by itself');
+Settings::set('tournament_break_ttl_ms', 0);
+$v7 = Tournament::view($g[0], $tid7);
+ok($v7['break'] === null && $v7['cursor'] === 'final',
+    'and past the deadline it continues on its own, without anyone pressing');
+Settings::set('tournament_break_ttl_ms', 120000);
+Settings::set('tournament_break_ms', 0);
 
 // ---- A decided node cannot be reopened by a late report --------------
 $w = ['75000001', '75000002'];

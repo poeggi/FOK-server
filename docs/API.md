@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.2", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.3", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -31,7 +31,8 @@ server's MAJOR is newer than what they were built against, rather than
 misbehave against an incompatible server. A newer MINOR on the same MAJOR
 is safe to talk to; a client may read the MINOR to tell whether an
 optional feature (e.g. the peer-net hint, added in 3.1, tournament mode,
-added in 4.1, or self-reported networks, added in 4.2) is available.
+added in 4.1, self-reported networks, added in 4.2, or the tournament round
+ladder and its round breaks, added in 4.3) is available.
 
 ## Conventions
 
@@ -357,7 +358,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.2",               contract version, see Versioning
+      "api": "4.3",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "debug": false,             the server's instruction: the client MUST
@@ -1428,7 +1429,14 @@ failed connection - the scoreboard keeps updating either way.
 ## Tournament mode
 
 `POST /api/tournament.php` runs a tournament for 2 to 8 players: a lobby,
-a first round, a knockout and the standings between them.
+a first round, a knockout, the standings between them and a scoreboard
+break at every round boundary.
+
+It also gets HARDER as it narrows. A round is played at the LEVEL of its
+own round number, so the size of the lobby decides how deep the final
+gets: two players play a level-1 round and a level-2 final, eight play a
+group stage, quarter-finals, semi-finals and a level-4 final (see The
+round ladder).
 
 THE SERVER ORCHESTRATES, THE PLAYERS PLAY. Every match in a tournament is
 an ordinary P2P duel between the two players the server names, established
@@ -1453,7 +1461,10 @@ two reports agree, when one is enough, and when they contradict each other
 
 - `open`: the lobby. Players join by code, the host starts it.
 - `running`: matches are played ONE AT A TIME, in the order the server
-  deals them. Everyone not playing is watching.
+  deals them. Everyone not playing is watching. BETWEEN two rounds the
+  tournament pauses on a scoreboard until the host presses on (see The
+  break between rounds): still `running`, but with `cursor` null and
+  `break` set.
 - `done`: the final has been settled.
 - `abandoned`: the host left the lobby, or nobody started it within
   `tournament_join_ttl` (15 min).
@@ -1468,6 +1479,7 @@ fields:
                                      -> {ok, ...lobby fields}
     leave     {id, tid}              -> {ok}
     start     {id, tid}              -> {ok}                     host only
+    continue  {id, tid}              -> {ok}                     host only
     state     {id, tid}              -> {ok, ...the whole tournament}
     result    {id, tid, nid, outcome, score, mid?}
                                      -> {ok, nid, state}
@@ -1486,7 +1498,8 @@ create one every `tournament_create_cooldown` (429 with `retry_after`).
 
 `join` is idempotent: joining a lobby you are already in returns the lobby
 rather than an error, so a client that lost the first response just asks
-again.
+again. So is `continue`: with no break open it answers `{"ok": true}`,
+because the press that closed it may well have been this client's own.
 
 `leave` depends on the state. In the lobby it is a plain departure - and
 the HOST leaving abandons the lobby, because the lobby is the one thing
@@ -1523,7 +1536,7 @@ Seats are a Fisher-Yates shuffle of the join order, i from N-1 down to 1,
 j = draw(i+1). A client may reproduce all of it to verify a bracket, but
 it MUST render what the server sent.
 
-Round-1 matches are played at 2 hearts.
+Round-1 matches are played at 2 hearts and at level 1.
 
 ### Standings and who advances
 
@@ -1545,6 +1558,69 @@ Ties are broken in this order:
 The best `max(2, ceil(N/2))` advance. A walkover and a void contribute no
 score difference (they have no score).
 
+### The round ladder
+
+Round 1 is played at level 1, and every round after it one level deeper:
+
+    level = min(round, tournament_max_level)
+
+`tournament_max_level` is 10, the game's last level - above it there is no
+harder board to reach, only one the client does not have, so a tournament
+deep enough to run off the end stays at the cap.
+
+Because `round` is the stage number, the FIELD decides how far the game
+gets. Three players play a level-1 round and a level-2 final; eight play a
+level-1 group stage, level-2 quarter-finals, a level-3 semi-final and a
+level-4 final.
+
+The level arrives twice, and both are the same number:
+
+- on the `roles` sheet as `lvl`, which is what the two players preset the
+  match to, exactly as they already preset `hm` hearts
+- on every node in `schedule` and `bracket` as `lvl`, so a bracket can be
+  drawn with the level of each stage on it before it is played
+
+Each stage also carries a `stage` TOKEN, never a caption - the client owns
+the wording and its translations:
+
+    group     round 1, whatever its size
+    quarter   4 matches      semi   2 matches      final   1 match
+    ko        anything wider (a round of 16 and up), no common name
+
+An unknown token MUST render as a plain round number rather than as
+nothing.
+
+### The break between rounds
+
+A finished round does not roll straight into the next one. The server
+stops, publishes a scoreboard, and waits for the HOST to `continue`.
+
+    ... last match of round 1 settles
+    -> cursor becomes null, `break` is set, everyone gets a `round` event
+    -> the host presses continue (not before `wait` ms have passed)
+    -> the first match of round 2 is dealt, `roles` as usual
+
+While a break is open the tournament is still `running`, `cursor` is
+null, and `round` has ALREADY moved to the round about to be played -
+`break.done` is the one that ended.
+
+    continue  {id, tid} -> {ok: true}
+              403 not a participant / host only
+              409 too early, with retry_ms
+
+`continue` is host only and refused before `tournament_break_ms` (1 s)
+has passed, because the scoreboard is the whole point of stopping and a
+press that beats it is the tap that ended the last match arriving late.
+The refusal carries `retry_ms`; a client may simply disable the button
+for that long. Once the break has been passed it can never re-open, so a
+forfeit cascade during the next round cannot put the board back up.
+
+The break also clears ITSELF after `tournament_break_ttl_ms` (2 min),
+evaluated lazily like every other deadline here: a host that closed its
+browser must not be able to wedge a tournament everybody else is still
+in. A client that never implements `continue` at all therefore still
+works - it just waits out the deadline.
+
 ### The knockout
 
 The advancers are folded into a bracket of the next power of two, by the
@@ -1555,7 +1631,8 @@ settles immediately.
 
 Nodes are named `ko1.1`, `ko1.2`, ... `ko2.1`, ... and the last one is
 `final`. Every knockout match is 2 hearts except `final`, which is a
-normal 3-heart duel. A drawn knockout node is simply REPLAYED: same node
+normal 3-heart duel. Each knockout stage is one level deeper than the one
+before it (see The round ladder). A drawn knockout node is simply REPLAYED: same node
 id, fresh match, fresh roles.
 
 A VOIDED one is not - there is nobody left to replay it. It advances an
@@ -1570,6 +1647,9 @@ When a match comes up, every participant gets a `roles` event. It names
 the two players, the feeder, and the spectator tree.
 
     players     the two ids, in seat order
+    hm          hearts: 2, or 3 for the final
+    lvl         the level the match is played at (see The round ladder)
+    stage       "group" | "quarter" | "semi" | "final" | "ko"
     feeder      players[0] - the side that opens the P2P connection and
                 feeds the primaries
     primaries   at most 2 spectators, fed by the feeder
@@ -1650,6 +1730,8 @@ evaluated lazily, on whatever request touches the tournament next:
   by a player who is ALSO offline. A slow match between two players who
   are both present is never taken away from them.
 - an unstarted lobby is abandoned after `tournament_join_ttl` (15 min)
+- a round break continues by itself after `tournament_break_ttl_ms`
+  (2 min), so a host that walked away cannot wedge the tournament
 
 A player who forfeits (by leaving, or by being offline past the walkover)
 loses their remaining matches as walkovers. A node where BOTH sides are
@@ -1668,18 +1750,24 @@ the whole picture.
       "tid": "<32-hex>", "state": "running", "code": "K7QMX2",
       "host": "c0ffee42", "stakes": false, "max": 8,
       "players": [{"id": "c0ffee42", "name": "KAI"}, ...],
-      "round": 1,                 1 = the first round, 2+ = knockout stages
+      "round": 1,                 1 = the first round, 2+ = knockout stages.
+                                  During a break this is ALREADY the round
+                                  about to be played.
       "cursor": "r1.4",           the node being played, or null
       "schedule": [ <node>, ... ],
       "bracket":  [ <node>, ... ],   empty until round 1 is over
       "standings": [ {"seat": 0, "id": "c0ffee42", "pts": 2.5,
                       "diff": 34, "rank": 1}, ... ],
+      "break": <the round board, or null>,   see The break between rounds;
+                                  identical to the `round` event plus
+                                  `tid`, and DERIVED on every read, so a
+                                  forfeit during the break shows up in it
       "roles": <the caller's own roles sheet, or null>
     }
 
 A node is:
 
-    {"nid": "r1.4", "round": 1, "hm": 2,
+    {"nid": "r1.4", "round": 1, "hm": 2, "lvl": 1,
      "players": ["c0ffee42", "deadbeef"],    either may be null in a
                                              knockout node not yet fed
      "state": "pending"|"held"|"settled"|"confirmed"|"frozen"|"void",
@@ -1698,8 +1786,9 @@ payload carries `tid`.
     lobby        {event, tid, state, code, host, stakes, max,
                   players:[{id,name}], reason?}
                  someone joined or left; `reason` explains an abandon
-    roles        {event, tid, round, match, of, nid, hm, stakes,
-                  players, feeder, primaries, secondaries, names, you}
+    roles        {event, tid, round, stage, match, of, nid, hm, lvl,
+                  stakes, players, feeder, primaries, secondaries,
+                  names, you}
                  a match is up. `match`/`of` are its 1-based position in
                  the stage. `you` differs per recipient.
     roles-patch  {event, tid, nid, primaries, secondaries}
@@ -1707,6 +1796,35 @@ payload carries `tid`.
     standings    {event, tid, rows:[{seat,id,pts,diff,rank,adv}],
                   advancers:[id, ...]}
                  the first round is over and the bracket is drawn
+    round        {event, tid, done, next, stage, lvl, hm, matches, of,
+                  host, at, wait, auto,
+                  rows:[{seat,id,name,pts,diff,rank,adv,until,gone,
+                         w,l,d}],
+                  advancers:[id, ...]}
+                 a round ended and the next one is waiting on the host.
+                 This is the scoreboard the client shows between rounds:
+
+                   done      the round that just ended
+                   next      the round about to be played
+                   stage     what to call it (see The round ladder)
+                   lvl       the level it is played at
+                   hm        hearts in it: 2, or 3 for the final
+                   matches   how many matches it holds
+                   of        how many players are through
+                   host      whose CONTINUE everyone is waiting for
+                   at        server ms when the break opened
+                   wait      ms before `continue` is accepted (>= this
+                             long the board must stay up)
+                   auto      ms after `at` when the break clears itself
+
+                 One row per PARTICIPANT, ordered as an elimination
+                 ladder: still in, then whoever went out most recently,
+                 then by rank. `pts`/`diff`/`rank` are the round-1
+                 standings and do not move again - the knockout is
+                 decided by winning, not by points - while `w`/`l`/`d`
+                 count the round that just ended and nothing else.
+                 `adv` is "through to `next`", `until` is the deepest
+                 round that player reaches, and `gone` marks a forfeit.
     result       {event, tid, nid, winner, draw, score}
                  a node settled (winner is null for a draw or a void)
     freeze       {event, tid, nid}
@@ -1727,10 +1845,13 @@ extent of playing a match it cannot see in `state` - when in doubt, call
 
     400  invalid id / action / tid / outcome / score / mid, and
          invalid tid/code when a join names neither
-    403  host only (start); not a participant; not your match (result)
+    403  host only (start, continue); not a participant; not your match
+         (result)
     404  no such tournament; no such node
     409  already hosting; already started; full; need 2; not running;
-         not current (a result for a node that is not the one in flight)
+         not current (a result for a node that is not the one in flight);
+         too early (continue before the board has been up `wait` ms,
+         with retry_ms)
     429  create cooldown (with retry_after, seconds)
     503  no join code available
 

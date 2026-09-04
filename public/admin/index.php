@@ -19,6 +19,8 @@ if (($_GET['do'] ?? '') === 'logout') {
 }
 
 $loggedIn = Auth::isLoggedIn();
+// Shown in both the header and the footer; the h1 already names the server.
+$verline = 'v' . FOK_SERVER_VERSION . ' (API v' . FOK_API_VERSION . ')';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -32,7 +34,7 @@ $loggedIn = Auth::isLoggedIn();
 </head>
 <body>
 <header>
-  <h1><img class="logo" src="../assets/logo.svg" alt="" width="22" height="22"> FOK-server <span>admin<?= FOK_ENV === 'staging' ? ' (STAGING)' : '' ?></span></h1>
+  <h1><img class="logo" src="../assets/logo.svg" alt="" width="22" height="22"> FOK-server <span>admin<?= FOK_ENV === 'staging' ? ' (STAGING)' : '' ?></span><small class="version muted"><?= $verline ?></small></h1>
   <?php if ($loggedIn): ?>
   <nav>
     <button id="viewtoggle" type="button" title="Settings">&#9881;</button>
@@ -55,6 +57,6 @@ $loggedIn = Auth::isLoggedIn();
 <main id="settings" class="dashboard hidden"></main>
 <script src="../assets/admin.js?v=<?= FOK_SERVER_VERSION ?>"></script>
 <?php endif; ?>
-<footer class="muted">FOK-server v<?= FOK_SERVER_VERSION ?> (API v<?= FOK_API_VERSION ?>)<?= FOK_ENV === 'staging' ? ' STAGING' : '' ?><span id="srvtime"></span></footer>
+<footer class="muted">FOK-server <?= $verline ?><?= FOK_ENV === 'staging' ? ' STAGING' : '' ?><span id="srvtime"></span></footer>
 </body>
 </html>

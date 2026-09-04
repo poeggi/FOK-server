@@ -18,6 +18,7 @@ else
     R=$(curl -s -i -b "$COOKIES" "$BASE/admin/index.php")
     H=$(echo "$R" | grep -i '^cache-control' || true)
     expect "admin page is no-store" 'no-store' "$H"
+    expect "admin header carries the version and the contract" "v$VER (API v" "$R"
     expect "admin has gear button" 'id="viewtoggle"' "$R"
     expect "admin has settings view" 'id="settings"' "$R"
     expect "admin assets cache-busted" "admin.js?v=$VER" "$R"

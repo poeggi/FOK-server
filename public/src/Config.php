@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.2.7';
+const FOK_SERVER_VERSION = '1.2.8';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -85,7 +85,20 @@ const FOK_SERVER_VERSION = '1.2.7';
 // it never displaces a network the server saw for itself (see
 // Presence::seenOn). Major stays 4 - a client that sends nothing is matched
 // exactly as before, on the families we happen to see it on.
-const FOK_API_VERSION = '4.2';
+// v4.3: additive tournament rounds. A tournament now advances the LEVEL the
+// game is played at as the field narrows - round 1 at level 1, each round
+// after it one deeper, capped at the game's last level - so the size of the
+// lobby decides how far the final gets. The level rides on the roles sheet
+// and on every node as "lvl", beside the hearts a client already reads. The
+// server also stops BETWEEN rounds now: it sends a 'round' event with the
+// scoreboard, who is through and what the next stage is, and waits for the
+// host to POST the new "continue" action (the projection carries the same
+// board as "break"). A break clears itself after tournament_break_ttl_ms, so
+// a host that closed its browser cannot wedge the tournament. Major stays 4:
+// a 4.2 client ignores "lvl" and plays every round at level 1 as before, and
+// its ordinary state() polling carries it through a break without ever
+// pressing continue - it simply sees the next roles sheet a little later.
+const FOK_API_VERSION = '4.3';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
@@ -204,6 +217,11 @@ const FOK_POLL_CHECK_USEC_APCU = 2000;
 // half the pool, so several tournaments can overlap. Raise it only against a
 // pool that has the workers to absorb the boundary.
 const FOK_TOURNAMENT_MAX_PLAYERS = 8;
+
+// The deepest level a tournament round may be played at. Must not exceed
+// MAX_LEVELS in FOK-snake js/assets.js: above the game's last level there is
+// no harder board to reach, only one the client does not have.
+const FOK_TOURNAMENT_MAX_LEVEL = 10;
 
 // Abuse caps (HTTP 429): pending signals per recipient, score submissions
 // per player within the rate window.

@@ -9,19 +9,26 @@ require_once __DIR__ . '/../src/Tournament.php';
 /**
  * Tournament mode: the server runs the tournament, the players run the games.
  *
- * One POST endpoint, eight actions, always {"id": "8-hex", "action": "..."}
+ * One POST endpoint, nine actions, always {"id": "8-hex", "action": "..."}
  * plus the action's fields (see docs/API.md "Tournament mode"):
  *
  *   create    {id, stakes?}          -> {ok, tid, code, stakes, max}
  *   join      {id, tid|code}         -> {ok, ...lobby}
  *   leave     {id, tid}              -> {ok}
  *   start     {id, tid}              -> {ok}                    host only
+ *   continue  {id, tid}              -> {ok}                    host only
  *   state     {id, tid}              -> {ok, ...the whole tournament}
  *   result    {id, tid, nid, outcome, score, mid?}
  *                                    -> {ok, nid, state:"settled"|"confirmed"
  *                                        |"held"|"frozen"}
  *   standdown {id, tid, nid}         -> {ok}
  *   orphan    {id, tid, nid}         -> {ok}
+ *
+ * Rounds get HARDER as the field narrows: round 1 is played at level 1 and
+ * every round after it one level deeper, which the roles sheet carries as
+ * `lvl` beside the hearts. Between two rounds the server stops on a
+ * scoreboard - who is through, who is out - and waits for the host to
+ * `continue`; that break clears itself if nobody ever does.
  *
  * Transitions are announced as 'tourney' signals through the ordinary
  * mailbox, so a participant learns about them on its next hello/poll like
@@ -47,7 +54,8 @@ if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
 $action = $body['action'] ?? null;
-if (!in_array($action, ['create', 'join', 'leave', 'start', 'state', 'result', 'standdown', 'orphan'], true)) {
+if (!in_array($action, ['create', 'join', 'leave', 'start', 'continue', 'state',
+        'result', 'standdown', 'orphan'], true)) {
     Util::fail('invalid action');
 }
 Util::bump('tournament');
@@ -142,6 +150,12 @@ switch ($action) {
 
     case 'start':
         tourney_out(Tournament::start($id, tourney_tid($body, 'start')));
+
+    // The round break. Host only, and not before tournament_break_ms has
+    // passed - the scoreboard is the point of stopping, and a press that
+    // beats it is the tap that ended the last match arriving late.
+    case 'continue':
+        tourney_out(Tournament::proceed($id, tourney_tid($body, 'continue')));
 
     case 'state':
         tourney_out(Tournament::view($id, tourney_tid($body, 'state')));

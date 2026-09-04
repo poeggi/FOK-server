@@ -294,4 +294,47 @@ final class Bracket
     {
         return $nid === 'final' ? 3 : 2;
     }
+
+    /**
+     * The level a round is played at: round 1 is level 1, and every round
+     * after it is one level harder. So the FIELD decides how far the game
+     * gets - a lobby of three plays a level-1 round and a level-2 final,
+     * where a full one reaches the final two levels deeper.
+     *
+     * Capped, because the game runs out of levels. Above its last one a
+     * level is not a harder board, it is a board the client does not have,
+     * so the top round is played at the cap and stays there.
+     */
+    public static function level(int $round, int $cap): int
+    {
+        $lvl = $round < 1 ? 1 : $round;
+        return $cap >= 1 && $lvl > $cap ? $cap : $lvl;
+    }
+
+    /**
+     * What to call a stage, from the number of matches in it. A TOKEN, not
+     * a caption: the client owns the wording and its translations, and an
+     * unknown token is rendered as a plain round number.
+     *
+     * Round 1 is 'group' whatever its size. After it the name follows the
+     * match count the way it does everywhere else - 1 is the final, 2 the
+     * semi-finals, 4 the quarter-finals - and anything wider is 'ko', a
+     * round of 2N that has no common name of its own.
+     */
+    public static function stage(int $round, int $matches): string
+    {
+        if ($round <= 1) {
+            return 'group';
+        }
+        if ($matches === 1) {
+            return 'final';
+        }
+        if ($matches === 2) {
+            return 'semi';
+        }
+        if ($matches === 4) {
+            return 'quarter';
+        }
+        return 'ko';
+    }
 }
