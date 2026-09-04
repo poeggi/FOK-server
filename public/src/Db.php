@@ -456,6 +456,14 @@ final class Db
             $pdo->exec("ALTER TABLE players ADD COLUMN ipnet TEXT NOT NULL DEFAULT ''");
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_players_net_seen ON players (ipnet, last_seen)');
             $pdo->exec('DROP INDEX IF EXISTS idx_players_ip_seen');
+            // tournament_create_cooldown drops from 300s to 10s, and the
+            // cooldown is charged off the host's last create whatever became
+            // of it - so backing out of a lobby and opening another one, the
+            // ordinary thing to do, cost five minutes. A stored row would
+            // shadow the new default in silence (settings_save writes every
+            // key the card shows), so the row goes and every deployment
+            // picks the default up.
+            $pdo->exec("DELETE FROM settings WHERE key = 'tournament_create_cooldown'");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

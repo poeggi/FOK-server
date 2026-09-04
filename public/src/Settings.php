@@ -68,7 +68,7 @@ final class Settings
         'tournament_join_ttl' => [900, 'Abandon a lobby nobody started after (seconds)'],
         'tournament_result_ms' => [15000, 'A one-sided result settles after this long unanswered (ms)'],
         'tournament_walkover_ms' => [180000, 'An offline player forfeits the match in flight after (ms)'],
-        'tournament_create_cooldown' => [300, 'Min seconds between one host creating tournaments'],
+        'tournament_create_cooldown' => [10, 'Min seconds between one host creating tournaments'],
         'admin_refresh_secs' => [30, 'Admin dashboard refresh interval (seconds, 0 = off)'],
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)'],
         'admin_duels_refresh_secs' => [1, 'Duels card refresh interval (seconds, 0 = off)'],

@@ -159,7 +159,7 @@ poll "$D" > /dev/null
 # production: the cap this deployment actually hands out, and the rule that a
 # settled node cannot be reopened.
 #
-# A host may only create once per tournament_create_cooldown (300s), so a
+# A host may only create once per tournament_create_cooldown (10s), so a
 # re-run inside that window SKIPS this section instead of failing it: nothing
 # is wrong with the server, the run is simply too soon after the last one.
 # The walk ends in 'done'. A terminal tournament is never read again, which is
