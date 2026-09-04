@@ -1346,7 +1346,10 @@ Tournament::report($p5[1], $tid5, 'r1.1', 'loss', [0, 9], null);
 $v5 = Tournament::view($v[0], $tid5);
 ok($v5['cursor'] === 'final', 'both of two players reach the final');
 // Both of them go dark, and the match has been in flight long enough.
-Settings::set('tournament_walkover_ms', 1);
+// Zero, not one: the deadline is measured from the millisecond the final
+// was dealt, which is the millisecond the report above dealt it, so any
+// positive threshold is a race with the clock rather than a test.
+Settings::set('tournament_walkover_ms', 0);
 Db::get()->prepare('UPDATE players SET last_seen = 1 WHERE id = ? OR id = ?')->execute($v);
 $v5 = Tournament::view($v[0], $tid5);
 ok($v5['bracket'][0]['state'] === 'void' && $v5['bracket'][0]['winner'] === null,
