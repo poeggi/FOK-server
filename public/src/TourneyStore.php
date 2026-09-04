@@ -46,13 +46,6 @@ final class TourneyStore
     private const LOCK = 'fok:tlock:';
 
     /**
-     * A running tournament re-stores itself on every transition, so this only
-     * has to outlast the longest gap between two of them - an idle bracket
-     * waiting out a walkover deadline, not a whole tournament.
-     */
-    private const RUN_TTL = 7200;
-
-    /**
      * Long enough to cover a transition, short enough that a worker dying
      * mid-transition frees the tournament again rather than wedging it.
      */
@@ -65,13 +58,31 @@ final class TourneyStore
     }
 
     /**
-     * How long a tournament in this state survives untouched. An open lobby
-     * expires on the join TTL, which is what retires a lobby nobody ever
-     * started - with no sweep to run and no 'abandoned' row left behind.
+     * How long a tournament in this state survives UNTOUCHED - every
+     * transition re-stores it and starts the clock again, so this is a gap
+     * between two of them, never a total lifetime. An open lobby expires on
+     * the join TTL, which is what retires a lobby nobody ever started, with
+     * no sweep to run and no 'abandoned' row left behind. A running one has
+     * to outlast the longest deadline it can be waiting on. A terminal one
+     * is a receipt: the podium is read off it once, by players who are
+     * looking at it already, and nobody comes back to a tournament that is
+     * over.
      */
     private static function ttl(array $t): int
     {
-        return $t['state'] === 'open' ? Settings::int('tournament_join_ttl') : self::RUN_TTL;
+        if ($t['state'] === 'open') {
+            return Settings::int('tournament_join_ttl');
+        }
+        if ($t['state'] === 'running') {
+            return Settings::int('tournament_run_ttl');
+        }
+        return Settings::int('tournament_done_ttl');
+    }
+
+    /** A host's claim is held for as long as the tournament holding it. */
+    private static function hostTtl(): int
+    {
+        return Settings::int('tournament_run_ttl');
     }
 
     public static function get(string $tid): ?array
@@ -96,7 +107,7 @@ final class TourneyStore
         // expiring on a clock of its own, so a long evening cannot free it
         // under a host who is still running one.
         if ($state === 'open' || $state === 'running') {
-            apcu_store(self::HOST . $t['host'], $tid, self::RUN_TTL);
+            apcu_store(self::HOST . $t['host'], $tid, self::hostTtl());
         } else {
             apcu_delete(self::HOST . $t['host']);
         }
@@ -133,12 +144,12 @@ final class TourneyStore
 
     /**
      * Claims the caller as a host, atomically. False means they already have
-     * a live tournament. Held for RUN_TTL and refreshed with the tournament,
+     * a live tournament. Held for the running TTL and refreshed with it,
      * so a host is never locked out by a lobby that quietly expired.
      */
     public static function claimHost(string $host, string $tid): bool
     {
-        if (apcu_add(self::HOST . $host, $tid, self::RUN_TTL)) {
+        if (apcu_add(self::HOST . $host, $tid, self::hostTtl())) {
             return true;
         }
         // A claim whose tournament is gone is stale, not busy: the tournament
@@ -147,7 +158,7 @@ final class TourneyStore
         if (!is_string($held) || self::get($held) !== null) {
             return false;
         }
-        apcu_store(self::HOST . $host, $tid, self::RUN_TTL);
+        apcu_store(self::HOST . $host, $tid, self::hostTtl());
         return true;
     }
 

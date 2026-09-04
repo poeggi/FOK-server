@@ -66,6 +66,8 @@ final class Settings
         // between two present players is never taken away from them.
         'tournament_max_players' => [FOK_TOURNAMENT_MAX_PLAYERS, 'Max players in one tournament'],
         'tournament_join_ttl' => [900, 'Abandon a lobby nobody started after (seconds)'],
+        'tournament_run_ttl' => [3600, 'Forget a running tournament untouched for (seconds)'],
+        'tournament_done_ttl' => [300, 'Forget a finished or abandoned tournament after (seconds)'],
         'tournament_result_ms' => [15000, 'A one-sided result settles after this long unanswered (ms)'],
         'tournament_walkover_ms' => [180000, 'An offline player forfeits the match in flight after (ms)'],
         'tournament_create_cooldown' => [10, 'Min seconds between one host creating tournaments'],

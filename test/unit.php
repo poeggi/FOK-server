@@ -1674,6 +1674,17 @@ ok(TourneyStore::byCode($c1['code'])['tid'] === $c1['tid'], 'the join code finds
 Tournament::leave('77000001', $c1['tid']);
 ok(TourneyStore::byCode($c1['code']) === null, 'and is released the moment it stops being open');
 ok(Tournament::create('77000001', false)['ok'] === true, 'as is the host, who can create again');
+// The TTL is the gap a tournament may go untouched, not a lifetime: every
+// transition re-stores it. The three states do not share one clock, because a
+// lobby, a bracket in play and a podium are worth keeping for different
+// lengths of time.
+$c2 = Tournament::create('77000002', false);
+$k2 = 'fok:t:' . $c2['tid'];
+ok(apcu_key_info($k2)['ttl'] === Settings::int('tournament_join_ttl'),
+    'an open lobby is held for the join TTL');
+Tournament::leave('77000002', $c2['tid']);
+ok(apcu_key_info($k2)['ttl'] === Settings::int('tournament_done_ttl'),
+    'and a tournament nobody can still play only as long as its result is worth reading');
 Settings::set('tournament_create_cooldown', 10);
 
 // Cleanup

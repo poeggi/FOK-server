@@ -1920,9 +1920,13 @@ database: it is worthless the moment the tournament ends, and nothing else
 on the server ever reads it. A client needs to know only two consequences.
 A server without usable shared memory refuses `create` with 503 and offers
 no tournament mode at all, so treat that 503 as a capability answer rather
-than a retry. And a lobby nobody ever starts expires by itself after
-`tournament_join_ttl`, exactly as it did before; a running tournament is
-refreshed by every transition and never expires under the players.
+than a retry. And nothing is kept longer than it is worth: an unstarted
+lobby expires after `tournament_join_ttl`, a running tournament after
+`tournament_run_ttl` UNTOUCHED - every transition starts that clock again,
+so it never expires under players who are still playing - and a finished or
+abandoned one after `tournament_done_ttl`, which is the window in which its
+podium can still be read back. After that the tid is simply unknown, and
+`state` answers 404.
 
 ## Debug reports
 
