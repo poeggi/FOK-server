@@ -1435,8 +1435,7 @@ break at every round boundary.
 It also gets HARDER as it narrows. A round is played at the LEVEL of its
 own round number, so the size of the lobby decides how deep the final
 gets: two players play a level-1 round and a level-2 final, eight play a
-group stage, quarter-finals, semi-finals and a level-4 final (see The
-round ladder).
+group stage, semi-finals and a level-3 final (see The round ladder).
 
 THE SERVER ORCHESTRATES, THE PLAYERS PLAY. Every match in a tournament is
 an ordinary P2P duel between the two players the server names, established
@@ -1570,8 +1569,10 @@ deep enough to run off the end stays at the cap.
 
 Because `round` is the stage number, the FIELD decides how far the game
 gets. Three players play a level-1 round and a level-2 final; eight play a
-level-1 group stage, level-2 quarter-finals, a level-3 semi-final and a
-level-4 final.
+level-1 group stage, level-2 semi-finals and a level-3 final. Half the
+field advances (see Standings and who advances), so a quarter-final needs
+eight advancers - a field of 16, above the default
+`tournament_max_players`.
 
 The level arrives twice, and both are the same number:
 
@@ -1841,6 +1842,63 @@ A client MUST NOT act on a `tourney` signal it did not expect to the
 extent of playing a match it cannot see in `state` - when in doubt, call
 `state` and render that.
 
+### What it costs on the wire
+
+Tournament mode adds NO polling of its own. Every transition is PUSHED
+through the mailbox a client already drains - hello, or poll.php during a
+signaling window - so the traffic is a function of how many matches are
+played, not of how long the tournament lasts.
+
+The figures below are measured on a full 8-player run at the worst case
+the server allows: eight participants online for every deal, 15-character
+names throughout, both sides reporting every match, and one spectator-tree
+repair per match. That is 19 matches - 16 in the sparse first round, then
+two semi-finals and the final.
+
+Sizes are bytes of ONE DELIVERED SIGNAL as it appears in the `signals`
+array: the event plus its envelope, with the payload escaped as a JSON
+string. Copies is per RECIPIENT - a `roles` event reaches eight people, so
+it counts eight times.
+
+    event          copies    max B   total B   sent when
+    -----------  --------  -------  --------  --------------------------
+    roles             152      717    108568  a match comes up
+    roles-patch       152      272     39712  the spectator tree changed
+    result            152      211     32000  a node settled
+    round              16     1645     26136  a round boundary
+    lobby              35      645     18648  a join, a leave, an abandon
+    standings           8      853      6824  round 1 is over
+    over                8      187      1496  the podium
+    -----------  --------  -------  --------
+    TOTAL             523              233384
+
+233 KB for the entire tournament across all eight clients - about 29 KB
+each for 19 matches. The largest single push is the round-break scoreboard
+at ~1.6 KB; the steady one is the roles sheet at ~0.7 KB per match per
+participant.
+
+The request side is smaller. Response bodies, same run:
+
+    create       90 B     join        495 B     start       11 B
+    result       45 B     continue     11 B     standdown   11 B
+    orphan       11 B     state      4997 B
+
+`state` is the exception, and the one thing to get right: a full read-back
+is ~5 KB, seven times a `roles` event. It exists for a reload, a
+reconnect, or a client that believes it missed an event - NOT as a poll.
+Eight clients polling `state` once a second would cost more server egress
+every second than the whole tournament costs in pushed events.
+
+So the RATE has no tournament term in it at all. The only periodic
+requests are the ones a client already makes: hello every ~30 s (a
+108-byte response, 122 with `tourneys`), and back-to-back poll.php long
+polls during a signaling window, which answer 204 in about 196 bytes of
+headers when nothing is pending. `orphan` is separately capped at one
+every 3 s per player.
+
+None of this includes the match itself or the spectator feeds: those are
+peer-to-peer and never reach the server (see Spectating).
+
 ### Errors
 
     400  invalid id / action / tid / outcome / score / mid, and
@@ -1853,7 +1911,18 @@ extent of playing a match it cannot see in `state` - when in doubt, call
          too early (continue before the board has been up `wait` ms,
          with retry_ms)
     429  create cooldown (with retry_after, seconds)
-    503  no join code available
+    503  no join code available; tournaments unavailable (the server has
+         no shared memory to hold a tournament in - see below); busy (a
+         transition is already in flight; simply ask again)
+
+Tournament state is held in the server's shared memory, not in its
+database: it is worthless the moment the tournament ends, and nothing else
+on the server ever reads it. A client needs to know only two consequences.
+A server without usable shared memory refuses `create` with 503 and offers
+no tournament mode at all, so treat that 503 as a capability answer rather
+than a retry. And a lobby nobody ever starts expires by itself after
+`tournament_join_ttl`, exactly as it did before; a running tournament is
+refreshed by every transition and never expires under the players.
 
 ## Debug reports
 

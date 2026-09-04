@@ -15,6 +15,8 @@ require_once __DIR__ . '/../src/Vault.php';
 require_once __DIR__ . '/../src/Debug.php';
 require_once __DIR__ . '/../src/AdminData.php';
 require_once __DIR__ . '/../src/Ledger.php';
+require_once __DIR__ . '/../src/Tournament.php';
+require_once __DIR__ . '/../src/Stats.php';
 
 Auth::requireLogin();
 
@@ -136,7 +138,8 @@ switch ($action) {
             'online_window' => FOK_ONLINE_WINDOW, 'conns' => ConnTrack::listPresence()]);
 
     case 'duels':
-        Util::jsonOut(['ok' => true, 'now' => time(), 'duels' => ConnTrack::listDuels()]);
+        Util::jsonOut(['ok' => true, 'now' => time(), 'duels' => ConnTrack::listDuels(),
+            'tourneys' => Tournament::listLive(), 'totals' => Stats::all()]);
 
     // ---- clients ----
     case 'client':

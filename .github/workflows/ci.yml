@@ -14,7 +14,10 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: sqlite3, pdo_sqlite, mbstring
+          extensions: sqlite3, pdo_sqlite, mbstring, apcu
+          # Tournament state lives in APCu shared memory, so the unit tests and
+          # the php -S smoke run both need it enabled off the web SAPI too.
+          ini-values: apc.enable_cli=1
           coverage: none
 
       - name: Checks (syntax, ASCII, secrets, consistency, unit, smoke)

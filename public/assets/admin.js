@@ -94,6 +94,25 @@ function downloadPin(pin) {
 }
 
 // Connection states as tracked by src/ConnTrack.php.
+// Tournament states reuse the duel badge colours: nothing about them is
+// different enough to be worth a palette of its own.
+const TSTATE = { open: 'matchmaking', running: 'playing', done: 'ended', abandoned: 'declined' };
+
+/**
+ * Lifetime totals (Stats). Tournament state itself is disposable and lives in
+ * shared memory, so these counters are the only record that any of it
+ * happened - which is exactly why they are shown under the live tables.
+ */
+function totals(t) {
+    const n = (k) => (t[k] || 0).toLocaleString();
+    const p = el('p', 'muted');
+    p.append('Since this server was first deployed: ' + n('duel_started') + ' duels started, '
+        + n('tourney_created') + ' tournaments created, ' + n('tourney_finished')
+        + ' played out (' + n('tourney_matches') + ' tournament matches, '
+        + n('tourney_seats') + ' seats filled).');
+    return p;
+}
+
 const STATE_LABEL = {
     idle: 'idle',
     matchmaking: 'matchmaking',
@@ -699,32 +718,65 @@ const MODULES = [
     },
     {
         id: 'duels',
-        title: '1:1 Duels',
+        title: 'Matches',
         every: 'admin_duels_refresh_secs',
         async refresh(box) {
             const d = await api('duels');
             box.replaceChildren();
-            if (!d.duels.length) { box.append(el('p', 'muted', 'No 1:1 activity.')); return; }
-            const table = el('table');
-            table.append(row(['Client', 'Name', 'Peer', 'State', 'Mode', 'Lat', 'Msgs', 'Age'], 'th'));
-            for (const c of d.duels) {
-                const r = el('tr');
-                r.classList.add(c.state === 'ended' ? 'gone' : 'online');
-                const state = el('td');
-                state.append(el('span', 'badge ' + c.state, STATE_LABEL[c.state] || c.state));
-                r.append(idCell(c.id), el('td', '', c.name === null ? '-' : c.name),
-                    c.peer === null ? el('td', '', '-') : idCell(c.peer));
-                r.append(state);
-                r.append(el('td', c.mode === 'relay' ? 'error' : '', c.mode === null ? '-' : c.mode));
-                r.append(el('td', '', c.latency === null ? '-' : c.latency + ' ms'));
-                r.append(el('td', 'muted', c.msgs));
-                r.append(el('td', 'muted', (d.now - c.since) + ' s'));
-                table.append(r);
+            box.append(el('h3', 'subhead', '1:1 duels'));
+            if (!d.duels.length) box.append(el('p', 'muted', 'No 1:1 activity.'));
+            else {
+                const table = el('table');
+                table.append(row(['Client', 'Name', 'Peer', 'State', 'Mode', 'Lat', 'Msgs', 'Age'], 'th'));
+                for (const c of d.duels) {
+                    const r = el('tr');
+                    r.classList.add(c.state === 'ended' ? 'gone' : 'online');
+                    const state = el('td');
+                    state.append(el('span', 'badge ' + c.state, STATE_LABEL[c.state] || c.state));
+                    r.append(idCell(c.id), el('td', '', c.name === null ? '-' : c.name),
+                        c.peer === null ? el('td', '', '-') : idCell(c.peer));
+                    r.append(state);
+                    r.append(el('td', c.mode === 'relay' ? 'error' : '', c.mode === null ? '-' : c.mode));
+                    r.append(el('td', '', c.latency === null ? '-' : c.latency + ' ms'));
+                    r.append(el('td', 'muted', c.msgs));
+                    r.append(el('td', 'muted', (d.now - c.since) + ' s'));
+                    table.append(r);
+                }
+                box.append(table);
+                sortable(table, 'duels');
+                box.append(el('p', 'muted', 'Every phase of a 1:1 - matchmaking, invite, connect, play - '
+                    + 'and 10 s after it ends. Msgs: relay messages sent. Click a header to sort.'));
             }
-            box.append(table);
-            sortable(table, 'duels');
-            box.append(el('p', 'muted', 'Every phase of a 1:1 - matchmaking, invite, connect, play - '
-                + 'and 10 s after it ends. Msgs: relay messages sent. Click a header to sort.'));
+            box.append(el('h3', 'subhead', 'Tournaments'));
+            const ts = d.tourneys || [];
+            if (!ts.length) box.append(el('p', 'muted', 'No tournaments running.'));
+            else {
+                const table = el('table');
+                table.append(row(['Host', 'Name', 'Code', 'State', 'Round', 'Players',
+                    'Matches', 'Stakes', 'Age'], 'th'));
+                for (const t of ts) {
+                    const r = el('tr');
+                    r.classList.add(t.state === 'running' || t.state === 'open' ? 'online' : 'gone');
+                    const state = el('td');
+                    state.append(el('span', 'badge ' + (TSTATE[t.state] || t.state),
+                        t.gated ? 'break' : t.state));
+                    r.append(idCell(t.host), el('td', '', t.host_name === null ? '-' : t.host_name),
+                        el('td', '', t.code));
+                    r.append(state);
+                    r.append(el('td', '', t.round || '-'));
+                    r.append(el('td', '', t.players));
+                    r.append(el('td', 'muted', t.nodes ? t.done + '/' + t.nodes : '-'));
+                    r.append(el('td', 'muted', t.stakes ? 'yes' : 'no'));
+                    r.append(el('td', 'muted', (d.now - t.since) + ' s'));
+                    table.append(r);
+                }
+                box.append(table);
+                sortable(table, 'tourneys');
+                box.append(el('p', 'muted', 'Lobbies and running brackets. Matches: closed of '
+                    + 'scheduled. A tournament carries no game traffic - every match in it is an '
+                    + 'ordinary P2P duel and appears above as one.'));
+            }
+            box.append(totals(d.totals || {}));
         },
     },
     {
@@ -885,8 +937,9 @@ const MODULES = [
             };
             search.oninput = applyFilter;
             applyFilter();
-            box.append(el('p', 'muted', 'Debug: pending = set, applies on the client\'s '
-                + 'next connect; self = the client turned it on.'));
+            const legend = el('p', 'muted', 'Debug: pending = set, applies on client connect;');
+            legend.append(el('br'), ' self = the client turned it on.');
+            box.append(legend);
         },
     },
     {

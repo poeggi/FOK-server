@@ -37,6 +37,9 @@ require_once __DIR__ . '/../public/src/Ledger.php';
 require_once __DIR__ . '/../public/src/Items.php';
 require_once __DIR__ . '/../public/src/Bracket.php';
 require_once __DIR__ . '/../public/src/Tournament.php';
+require_once __DIR__ . '/../public/src/TourneyStore.php';
+require_once __DIR__ . '/../public/src/Stats.php';
+require_once __DIR__ . '/../public/src/AdminData.php';
 
 // Util installs a fault handler that answers 500 and exits 0 - right for a
 // request, fatal for a test run, where it would swallow a throwable (a
@@ -1643,6 +1646,35 @@ $v6 = Tournament::view($w[0], $tid6);
 ok($v6['schedule'][0]['state'] === 'settled' && $v6['schedule'][0]['winner'] === $p6[0],
     'and cannot re-decide, freeze or replay what is already closed');
 
+
+// ---- What outlives a tournament --------------------------------------
+// Tournament state is disposable and lives in shared memory, so these
+// counters are the only record that any of it ever happened.
+$totals = Stats::all();
+ok(($totals['tourney_created'] ?? 0) > 0, 'every created tournament is counted');
+ok(($totals['tourney_finished'] ?? 0) > 0, 'and so is every one that played out');
+ok(($totals['tourney_matches'] ?? 0) > 0, 'with the matches it actually played');
+ok(($totals['duel_started'] ?? 0) > 0, 'a 1:1 is counted where play begins');
+// The lifetime bucket shares the counters table with the hourly traffic
+// buckets, and that lookup is a STRING comparison - so a bucket that is not
+// a YmdH stamp must never be drawn as an hour on the load graph.
+$load = AdminData::stats()['load'];
+$odd = array_filter(array_keys($load), static fn($b): bool => !ctype_digit((string)$b));
+ok($odd === [], 'the load graph sees only real hour buckets, never the lifetime totals');
+
+// ---- The store's claims ----------------------------------------------
+// A host may run one tournament at a time, and a join code is unique among
+// the OPEN ones. Both are apcu_add(), which is the whole reason a create
+// needs no transaction any more.
+Settings::set('tournament_create_cooldown', 0);
+$c1 = Tournament::create('77000001', false);
+ok($c1['ok'] === true, 'a host with nothing running can create');
+ok(Tournament::create('77000001', false)['http'] === 409, 'but not a second one at the same time');
+ok(TourneyStore::byCode($c1['code'])['tid'] === $c1['tid'], 'the join code finds the lobby');
+Tournament::leave('77000001', $c1['tid']);
+ok(TourneyStore::byCode($c1['code']) === null, 'and is released the moment it stops being open');
+ok(Tournament::create('77000001', false)['ok'] === true, 'as is the host, who can create again');
+Settings::set('tournament_create_cooldown', 10);
 
 // Cleanup
 Db::close();

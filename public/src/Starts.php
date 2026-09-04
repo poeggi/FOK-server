@@ -6,6 +6,7 @@ require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Util.php';
 require_once __DIR__ . '/Items.php';
+require_once __DIR__ . '/Stats.php';
 
 /**
  * Server-issued starts. The server owns the PTS clock, so it owns every
@@ -74,6 +75,7 @@ final class Starts
         [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
         $db = Db::get();
         $now = Util::nowMs();
+        $begun = false;
         $db->exec('BEGIN IMMEDIATE');
         try {
             $db->prepare('DELETE FROM starts WHERE start_pts < ?')->execute([$now - self::KEEP_MS]);
@@ -122,6 +124,7 @@ final class Starts
             // one match spans every level of a duel.
             if (in_array($reason, self::SYNC_GATED_REASONS, true)) {
                 $mid = Items::openMatch($db, $a, $b, $now)['mid'];
+                $begun = true;
             } else {
                 $mid = $row !== false ? (string)$row['mid'] : '';
             }
@@ -134,6 +137,14 @@ final class Starts
                      reason = excluded.reason, mid = excluded.mid'
             )->execute([$a, $b, $startPts, $now, $epoch, $reason, $mid]);
             $db->exec('COMMIT');
+            if ($begun) {
+                // One duel, counted in the same branch that mints its match -
+                // reached exactly once per duel, because a repeat request for
+                // the same epoch is answered from the stored row above. Only
+                // the START is countable: the server does not reliably learn
+                // that a match ended (see forget).
+                Stats::bump(['duel_started' => 1]);
+            }
             return $startPts;
         } catch (Throwable $e) {
             // SQLite auto-rolls back on some faults; a bare ROLLBACK would

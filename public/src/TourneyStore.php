@@ -1,0 +1,251 @@
+<?php
+declare(strict_types=1);
+
+require_once __DIR__ . '/Config.php';
+require_once __DIR__ . '/Settings.php';
+require_once __DIR__ . '/Caps.php';
+
+/**
+ * Tournament state, in APCu shared memory.
+ *
+ * A tournament is worthless the moment it ends: nothing outside Tournament
+ * ever reads it, no score, item or ledger row is derived from it, and a
+ * finished one is never looked at again. It is also small - a whole played-out
+ * eight-player run, bracket and every result included, is about 6.6 KB - and
+ * short-lived. A durable, transactional, single-writer B-tree is the wrong
+ * medium for that, and it was costing roughly 76 write-lock acquisitions per
+ * tournament on a database every duel and heartbeat in the server shares.
+ *
+ * So the whole thing lives in one APCu entry per tournament, holding exactly
+ * what the old load() returned: row, players and the data blob together. The
+ * lifetime totals worth keeping outlive it in the database (see Stats).
+ *
+ * There is NO database fallback. APCu is a hard requirement for tournament
+ * mode; a host without it refuses to create one rather than carrying a second
+ * implementation of a locked read-modify-write (see Tournament::create).
+ *
+ * The indexes are separate entries rather than a scan, because each is
+ * checked on a hot path:
+ *   - CODE:  the join code, unique among OPEN tournaments only (they recycle)
+ *   - HOST:  the one-live-tournament-per-host guard
+ *   - CD:    the per-host create cooldown, expiring on its own TTL
+ *   - OPEN:  a small card per open lobby, so answering a lobby announce never
+ *            deserialises a running tournament's full state
+ *
+ * apcu_add() is the primitive that replaces BEGIN IMMEDIATE for all of them:
+ * it writes only if the key is absent, so a claim is atomic against every
+ * other worker without a global lock anywhere.
+ */
+final class TourneyStore
+{
+    private const T    = 'fok:t:';
+    private const CODE = 'fok:tcode:';
+    private const HOST = 'fok:thost:';
+    private const CD   = 'fok:tcd:';
+    private const OPEN = 'fok:topen:';
+    private const LOCK = 'fok:tlock:';
+
+    /**
+     * A running tournament re-stores itself on every transition, so this only
+     * has to outlast the longest gap between two of them - an idle bracket
+     * waiting out a walkover deadline, not a whole tournament.
+     */
+    private const RUN_TTL = 7200;
+
+    /**
+     * Long enough to cover a transition, short enough that a worker dying
+     * mid-transition frees the tournament again rather than wedging it.
+     */
+    private const LOCK_TTL = 5;
+
+    /** Tournament mode is unavailable without shared memory. */
+    public static function usable(): bool
+    {
+        return Caps::apcu();
+    }
+
+    /**
+     * How long a tournament in this state survives untouched. An open lobby
+     * expires on the join TTL, which is what retires a lobby nobody ever
+     * started - with no sweep to run and no 'abandoned' row left behind.
+     */
+    private static function ttl(array $t): int
+    {
+        return $t['state'] === 'open' ? Settings::int('tournament_join_ttl') : self::RUN_TTL;
+    }
+
+    public static function get(string $tid): ?array
+    {
+        $t = apcu_fetch(self::T . $tid);
+        return is_array($t) ? $t : null;
+    }
+
+    /**
+     * Writes the tournament back and brings its indexes with it. A code is
+     * freed the moment a tournament stops being open, and the host's claim
+     * the moment it stops being live, so both recycle exactly as they did
+     * when a SELECT over the table decided it.
+     */
+    public static function put(array $t): void
+    {
+        unset($t['events']);
+        $tid = (string)$t['tid'];
+        $state = (string)$t['state'];
+        apcu_store(self::T . $tid, $t, self::ttl($t));
+        // The host's claim rides along with the tournament rather than
+        // expiring on a clock of its own, so a long evening cannot free it
+        // under a host who is still running one.
+        if ($state === 'open' || $state === 'running') {
+            apcu_store(self::HOST . $t['host'], $tid, self::RUN_TTL);
+        } else {
+            apcu_delete(self::HOST . $t['host']);
+        }
+        if ($state === 'open') {
+            apcu_store(self::CODE . $t['code'], $tid, self::ttl($t));
+            apcu_store(self::OPEN . $tid, [
+                'tid' => $tid,
+                'code' => (string)$t['code'],
+                'host' => (string)$t['host'],
+                'stakes' => (bool)$t['stakes'],
+                'players' => count($t['players']),
+                'updated' => time(),
+            ], self::ttl($t));
+            return;
+        }
+        apcu_delete(self::CODE . $t['code']);
+        apcu_delete(self::OPEN . $tid);
+    }
+
+    /** Drops a tournament and everything indexing it. */
+    public static function forget(array $t): void
+    {
+        apcu_delete(self::T . $t['tid']);
+        apcu_delete(self::CODE . $t['code']);
+        apcu_delete(self::OPEN . $t['tid']);
+        apcu_delete(self::HOST . $t['host']);
+    }
+
+    public static function byCode(string $code): ?array
+    {
+        $tid = apcu_fetch(self::CODE . strtoupper($code));
+        return is_string($tid) ? self::get($tid) : null;
+    }
+
+    /**
+     * Claims the caller as a host, atomically. False means they already have
+     * a live tournament. Held for RUN_TTL and refreshed with the tournament,
+     * so a host is never locked out by a lobby that quietly expired.
+     */
+    public static function claimHost(string $host, string $tid): bool
+    {
+        if (apcu_add(self::HOST . $host, $tid, self::RUN_TTL)) {
+            return true;
+        }
+        // A claim whose tournament is gone is stale, not busy: the tournament
+        // expired without a transition to clear it. Take it over.
+        $held = apcu_fetch(self::HOST . $host);
+        if (!is_string($held) || self::get($held) !== null) {
+            return false;
+        }
+        apcu_store(self::HOST . $host, $tid, self::RUN_TTL);
+        return true;
+    }
+
+    public static function releaseHost(string $host): void
+    {
+        apcu_delete(self::HOST . $host);
+    }
+
+    /** Claims a join code, atomically. False means it is taken. */
+    public static function claimCode(string $code, string $tid): bool
+    {
+        return apcu_add(self::CODE . $code, $tid, Settings::int('tournament_join_ttl'));
+    }
+
+    public static function releaseCode(string $code): void
+    {
+        apcu_delete(self::CODE . $code);
+    }
+
+    /** Seconds the host must still wait before creating again, 0 if none. */
+    public static function createWait(string $host): int
+    {
+        $last = apcu_fetch(self::CD . $host);
+        if (!is_int($last)) {
+            return 0;
+        }
+        return max(0, $last + Settings::int('tournament_create_cooldown') - time());
+    }
+
+    /** The entry expires on the cooldown itself, so nothing has to sweep it. */
+    public static function markCreate(string $host): void
+    {
+        $cd = Settings::int('tournament_create_cooldown');
+        if ($cd > 0) {
+            apcu_store(self::CD . $host, time(), $cd);
+        }
+    }
+
+    /**
+     * Takes the tournament's lock, or returns false. Jittered and growing on
+     * the same reasoning as Db::retry: two workers that just collided must
+     * not line up again on the retry.
+     */
+    public static function lock(string $tid, int $tries = 40): bool
+    {
+        for ($attempt = 1; $attempt <= $tries; $attempt++) {
+            if (apcu_add(self::LOCK . $tid, 1, self::LOCK_TTL)) {
+                return true;
+            }
+            usleep(random_int(2000, 8000));
+        }
+        return false;
+    }
+
+    public static function unlock(string $tid): void
+    {
+        apcu_delete(self::LOCK . $tid);
+    }
+
+    /**
+     * The open lobbies, as small cards. Deliberately a scan of the OPEN
+     * index and not of the tournaments themselves: hello asks for this, and
+     * deserialising every running bracket to answer it would be worse than
+     * the join it replaced.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public static function openLobbies(): array
+    {
+        $out = [];
+        foreach (new APCUIterator(self::rx(self::OPEN)) as $e) {
+            if (is_array($e['value'])) {
+                $out[] = $e['value'];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Every live tournament, for the admin view only - this one does pay the
+     * full deserialise, and nothing on a client path calls it.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public static function all(): array
+    {
+        $out = [];
+        foreach (new APCUIterator(self::rx(self::T)) as $e) {
+            if (is_array($e['value'])) {
+                $out[] = $e['value'];
+            }
+        }
+        return $out;
+    }
+
+    /** Anchored prefix match for APCUIterator, with the prefix quoted. */
+    private static function rx(string $prefix): string
+    {
+        return '/^' . preg_quote($prefix, '/') . '/';
+    }
+}

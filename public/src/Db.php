@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 29;
+    private const SCHEMA_VERSION = 30;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -494,6 +494,19 @@ final class Db
             // family is a CLAIM and not evidence - it has to be marked as
             // such, because a claim may not displace what we saw ourselves.
             $pdo->exec("ALTER TABLE player_nets ADD COLUMN src TEXT NOT NULL DEFAULT 'o'");
+        }
+        if ($v < 30) {
+            // Tournament state moved to APCu shared memory (see TourneyStore).
+            // Nothing outside Tournament ever read these tables, no score,
+            // item or ledger row is derived from them, and a finished
+            // tournament was never looked at again - so there is nothing to
+            // migrate, only a durable structure to stop paying for. The few
+            // totals worth keeping are counted from here on (see Stats).
+            $pdo->exec('DROP TABLE IF EXISTS tournament_players');
+            $pdo->exec('DROP TABLE IF EXISTS tournaments');
+            // The reap that ran off this marker is gone with them: an open
+            // lobby now expires on its own TTL.
+            $pdo->exec("DELETE FROM counters WHERE bucket = 'meta' AND metric = 'tourney_sweep'");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

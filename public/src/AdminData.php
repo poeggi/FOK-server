@@ -29,7 +29,12 @@ final class AdminData
     public static function stats(): array
     {
         $db = Db::get();
-        $st = $db->prepare('SELECT bucket, metric, value FROM counters WHERE bucket >= ? ORDER BY bucket');
+        // The bucket of a traffic counter is a YmdH stamp, and this is a
+        // STRING comparison - so a non-numeric bucket sharing the table
+        // (Stats keeps the lifetime totals in one) sorts above every stamp
+        // and would be drawn as an hour that never existed.
+        $st = $db->prepare("SELECT bucket, metric, value FROM counters
+                            WHERE bucket >= ? AND bucket GLOB '[0-9]*' ORDER BY bucket");
         $st->execute([gmdate('YmdH', time() - 24 * 3600)]);
         $load = [];
         foreach ($st->fetchAll() as $r) {

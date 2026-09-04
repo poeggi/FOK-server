@@ -162,13 +162,11 @@ if ($friends !== null) {
 // from anywhere else, and it is the capability - so nothing here reveals a
 // lobby to someone who could not already see the host.
 //
-// Lazy maintenance rides along, the same shape as the item ledger's
-// truncation: no cron exists, so a lobby whose host walked away is reaped by
-// whichever hello asks about lobbies next. Deferred - it is the server's
-// bookkeeping, not this caller's, and it must not sit in a heartbeat.
+// A lobby whose host walked away needs no reaping: tournament state is held
+// in shared memory with the join TTL on it, so an unstarted lobby simply
+// stops existing (see TourneyStore).
 if ($tourneys) {
     $out['tourneys'] = Tournament::announce($id, Util::clientIp());
-    Util::defer(static fn() => Tournament::reapLobbies());
 }
 
 Util::jsonOut($out);
