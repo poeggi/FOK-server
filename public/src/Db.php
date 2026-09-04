@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 26;
+    private const SCHEMA_VERSION = 27;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -441,6 +441,21 @@ final class Db
             // shows it. Dropping it also means the new key starts with no row
             // at all, so every deployment picks up the new default.
             $pdo->exec("DELETE FROM settings WHERE key = 'alert_load1'");
+        }
+        if ($v < 27) {
+            // Lobbies are announced to the caller's NETWORK rather than to
+            // its exact address (see Util::ipNet): on IPv6 the host and the
+            // joiner sitting on one LAN never share an address, so the old
+            // lookup could not match them. Stored beside the ip because it
+            // is what the lookup compares, and indexed for the same reason
+            // idx_players_ip_seen was - which nothing reads any more.
+            //
+            // No backfill: announce only ever considers hosts seen within
+            // the last FOK_ONLINE_WINDOW seconds, and every one of those has
+            // been through touch(), which fills the column.
+            $pdo->exec("ALTER TABLE players ADD COLUMN ipnet TEXT NOT NULL DEFAULT ''");
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_players_net_seen ON players (ipnet, last_seen)');
+            $pdo->exec('DROP INDEX IF EXISTS idx_players_ip_seen');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

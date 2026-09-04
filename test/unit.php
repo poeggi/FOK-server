@@ -83,6 +83,16 @@ ok(Util::ipInfo('1.2.3.4') === ['ip' => '1.2.3.4', 'family' => 4], 'ipv4 classif
 ok(Util::ipInfo('2a01:db8::5') === ['ip' => '2a01:db8::5', 'family' => 6], 'ipv6 classified as family 6');
 ok(Util::ipInfo('::ffff:1.2.3.4') === ['ip' => '1.2.3.4', 'family' => 4], 'ipv4-mapped ipv6 unwrapped to family 4');
 ok(Util::ipInfo('?')['family'] === 0, 'an unknown address is family 0');
+// A network key, not an address: NAT makes one v4 address a whole household,
+// while on v6 the household is the /64 and every device in it differs.
+ok(Util::ipNet('1.2.3.4') === '1.2.3.4', 'a NATed ipv4 address is its own network');
+ok(Util::ipNet('::ffff:1.2.3.4') === '1.2.3.4', 'and so is the mapped form of it');
+ok(Util::ipNet('2a01:db8:1:2:3:4:5:6') === Util::ipNet('2a01:db8:1:2:ffff::9'),
+    'two ipv6 devices on one lan share a network');
+ok(Util::ipNet('2a01:db8:1:2::1') !== Util::ipNet('2a01:db8:1:3::1'),
+    'a neighbouring /64 is a different network');
+ok(Util::ipNet('2a01:db8:1:2::1') !== Util::ipNet('1.2.3.4'),
+    'and a v6 network is never a v4 address');
 
 // Presence: registration and counting
 Presence::touch('aaaaaaaa', '1.2.3.4');
@@ -1283,6 +1293,14 @@ Tournament::join($f[1], $tid3);
 Tournament::join($f[2], $tid3);
 ok(count(Tournament::announce('127.0.0.1')) >= 1, 'an open lobby is announced on the host address');
 ok(Tournament::announce('10.9.9.9') === [], 'but never to another address');
+// The case the announce exists for and could not serve: two devices in one
+// room, on ipv6, where nothing is NATed and the addresses never match.
+Presence::touch('72000004', '2a01:db8:7:7::1');
+$tid4 = Tournament::create('72000004', false)['tid'];
+ok(count(Tournament::announce('2a01:db8:7:7:aaaa::9')) >= 1,
+    'an ipv6 lobby is announced to the rest of the host /64');
+ok(Tournament::announce('2a01:db8:7:8::9') === [], 'but not to the next /64 along');
+Tournament::leave('72000004', $tid4);
 Tournament::start($f[0], $tid3);
 $v3 = Tournament::view($f[0], $tid3);
 ok(count($v3['schedule']) === 3, '3 players play all 3 pairs');

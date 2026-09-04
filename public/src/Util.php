@@ -75,6 +75,38 @@ final class Util
         return ['ip' => $ip, 'family' => 0];
     }
 
+    /**
+     * The NETWORK an address belongs to, as a comparison key - what "two
+     * devices in the same room" has to mean when the two addresses are not
+     * the same string.
+     *
+     * IPv4 is NATed, so a whole household leaves through one public address
+     * and the address IS the network. IPv6 is not: with no NAT, every device
+     * on the same LAN carries its own global address out of the site's /64,
+     * so comparing the addresses compares two values that were never going
+     * to be equal. The /64 is where they meet, and it is one link by
+     * RFC 4291 rather than a guess. The suffix is kept so a network can
+     * never be confused with a bare address.
+     *
+     * A mapped ::ffff:a.b.c.d is unwrapped first (see ipInfo), so one v4
+     * client is one network however the host presents it. What cannot be
+     * reconciled is a v4 device beside a v6 one: nothing in the two
+     * addresses says they share a room, so they are not matched.
+     */
+    public static function ipNet(string $ip): string
+    {
+        $info = self::ipInfo($ip);
+        if ($info['family'] !== 6) {
+            return $info['ip'];
+        }
+        $bin = @inet_pton($info['ip']);
+        if (!is_string($bin) || strlen($bin) !== 16) {
+            return $info['ip'];
+        }
+        $net = @inet_ntop(substr($bin, 0, 8) . str_repeat("\0", 8));
+        return is_string($net) ? $net . '/64' : $info['ip'];
+    }
+
     public static function nowMs(): int
     {
         return (int)round(microtime(true) * 1000);

@@ -1228,10 +1228,16 @@ final class Tournament
     // ---- hello.php maintenance and announce -------------------------------
 
     /**
-     * Open lobbies whose host is on the CALLER's address - the whole of the
+     * Open lobbies whose host is on the CALLER's network - the whole of the
      * "announced on the local network" mechanism. Everyone else joins by
-     * code, and the code is the capability. Served by idx_players_ip_seen,
+     * code, and the code is the capability. Served by idx_players_net_seen,
      * so a hello that asks stays flat-cost.
+     *
+     * The match is on the network and not on the address itself: two devices
+     * in one room share a public IPv4 address, but on IPv6 they share only
+     * the /64 they are both numbered out of (see Util::ipNet). Comparing the
+     * raw addresses therefore announced nothing at all to a dual-stack LAN,
+     * which is the whole point of the feature.
      */
     public static function announce(string $ip): array
     {
@@ -1239,10 +1245,10 @@ final class Tournament
             "SELECT t.tid, t.code, t.host, t.stakes, p.name AS host_name,
                     (SELECT COUNT(*) FROM tournament_players tp WHERE tp.tid = t.tid) AS players
              FROM players p JOIN tournaments t ON t.host = p.id
-             WHERE p.ip = ? AND p.last_seen > ? AND t.state = 'open'
+             WHERE p.ipnet = ? AND p.last_seen > ? AND t.state = 'open'
              ORDER BY t.updated DESC LIMIT 10"
         );
-        $st->execute([$ip, time() - FOK_ONLINE_WINDOW]);
+        $st->execute([Util::ipNet($ip), time() - FOK_ONLINE_WINDOW]);
         $max = Settings::int('tournament_max_players');
         $out = [];
         foreach ($st->fetchAll() as $row) {

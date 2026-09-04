@@ -27,9 +27,9 @@ final class Presence
             : ($autoAccept ? $now + FOK_AUTO_ACCEPT_WINDOW : 0);
         $active = $debugActive === null ? null : (int)$debugActive;
         $st = Db::get()->prepare(
-            'INSERT INTO players (id, ip, first_seen, last_seen, hello_count, latency, name, accept_until, debug_active)
-             VALUES (?, ?, ?, ?, 1, ?, ?, COALESCE(?, 0), COALESCE(?, 0))
-             ON CONFLICT (id) DO UPDATE SET ip = excluded.ip, last_seen = excluded.last_seen,
+            'INSERT INTO players (id, ip, ipnet, first_seen, last_seen, hello_count, latency, name, accept_until, debug_active)
+             VALUES (?, ?, ?, ?, ?, 1, ?, ?, COALESCE(?, 0), COALESCE(?, 0))
+             ON CONFLICT (id) DO UPDATE SET ip = excluded.ip, ipnet = excluded.ipnet, last_seen = excluded.last_seen,
                  hello_count = hello_count + 1,
                  latency = COALESCE(excluded.latency, players.latency),
                  name = COALESCE(excluded.name, players.name),
@@ -37,7 +37,7 @@ final class Presence
                  debug_active = COALESCE(?, players.debug_active)
              RETURNING first_seen = last_seen AS registered, debug'
         );
-        $st->execute([$id, $ip, $now, $now, $latency, $name, $acceptUntil, $active, $acceptUntil, $active]);
+        $st->execute([$id, $ip, Util::ipNet($ip), $now, $now, $latency, $name, $acceptUntil, $active, $acceptUntil, $active]);
         $row = $st->fetch();
         // An INSERT ... RETURNING is a write: finish it before anything else
         // touches the database (see Db).

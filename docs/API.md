@@ -341,7 +341,7 @@ Request:
                                   debug mode right now (absent means it is
                                   not). See Debug mode below.
       "tourneys": true            optional bool: ask for the open tournament
-                                  lobbies hosted on the caller's own address
+                                  lobbies hosted on the caller's own network
                                   (see Tournament mode). Send it only while a
                                   screen that shows them is open.
     }
@@ -382,9 +382,14 @@ invite or join a lobby - so show them as busy rather than inviting them.
 
 `tourneys` is served only when the request set `"tourneys": true`, and
 lists the OPEN lobbies whose host is currently reaching the server from
-the same address as the caller. It is an address-local convenience, not a
-directory: everything else is joined by `code`, and the code is the
-capability (see Tournament mode).
+the same NETWORK as the caller: the same public IPv4 address, or the same
+IPv6 /64. The two are not interchangeable - IPv4 is NATed, so a household
+shares one address, while on IPv6 every device carries its own address out
+of the site's /64 and only the prefix is shared. A device on IPv4 and one
+on IPv6 are never matched: nothing in their addresses says they are in the
+same room. It is a network-local convenience, not a directory: everything
+else is joined by `code`, and the code is the capability (see Tournament
+mode).
 
 Rules:
 
