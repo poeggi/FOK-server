@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.3.0';
+const FOK_SERVER_VERSION = '1.3.1';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -209,6 +209,16 @@ const FOK_POLL_CHECK_USEC = 20000;
 // database transport - used only on fallback (relay_apcu=0 or APCu
 // unavailable) - keeps the wider FOK_POLL_CHECK_USEC.
 const FOK_POLL_CHECK_USEC_APCU = 2000;
+
+// How many FPM workers may be held by long polls at once (admin-configurable,
+// see Settings and Holds). The default follows the HOST, like the tournament
+// size below: measured, this deployment serves ~20 concurrent PHP requests,
+// and a held poll occupies one of them for up to FOK_POLL_WAIT_MAX doing
+// nothing. Twelve leaves the rest of the pool to the requests that are
+// actually working, so the holds - whose own caps are each sized against the
+// pool separately - can never add up to all of it. Raise it with the pool; 0
+// stops budgeting holds altogether.
+const FOK_HOLD_MAX_WORKERS = 12;
 
 // Default players in one tournament (admin-configurable, see Settings).
 // The default follows the HOST, not taste: measured, this deployment serves

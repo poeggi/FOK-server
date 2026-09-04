@@ -506,13 +506,22 @@ only carries the bit.
     -> 204 No Content                          nothing pending
     -> 200 {"ok":true,"signals":[...]}         pending messages, drained
 
-With `wait` (seconds, capped server-side at 9 by default,
-admin-configurable) this is a LONG POLL: the server holds the request
-open and answers the moment a signal arrives, checking every 20 ms. This
-is the lowest-latency delivery path - during an active handshake, loop
-`wait=9` requests back-to-back and a relayed signal reaches you in ~20 ms
-plus network, instead of a full poll interval. Without `wait` it degrades
-to the plain cheap poll (one indexed read, 204).
+With `wait` (seconds, capped server-side at 9) this is a LONG POLL: the
+server holds the request open and answers the moment a signal arrives,
+checking every 20 ms. This is the lowest-latency delivery path - during
+an active handshake, loop `wait=9` requests back-to-back and a relayed
+signal reaches you in ~20 ms plus network, instead of a full poll
+interval. Without `wait` it degrades to the plain cheap poll (one indexed
+read, 204).
+
+`wait` is a REQUEST, not a promise. A held request occupies one of the
+server's limited workers, so there is a budget for how many may be held
+at once (`hold_max_workers`); past it your poll behaves as if you had
+sent no `wait` at all - your mailbox is still read and anything pending
+is still delivered, but an empty one answers 204 immediately instead of
+after nine seconds. Nothing about the response distinguishes the two, and
+nothing has to: the client loop is the same either way. Do not treat a
+fast 204 as an error or back off on it.
 
 Same drain semantics as hello's `signals`. Use it ONLY while waiting
 for or performing matchmaking/signaling; stop when the DataChannel
@@ -943,7 +952,11 @@ indicator so latency self-explains.
       -> {"ok":true,"gone":true}   the pairing was torn down (a bye/decline
          marked it ended): the peer LEFT - end the session now (v3.3)
       -> 204 after the hold when nothing arrived (loop wait=9 requests
-         back-to-back while in relay mode, like poll.php)
+         back-to-back while in relay mode, like poll.php). Also like
+         poll.php, the hold is subject to the server's worker budget and
+         may answer at once instead of waiting - the pass still drains,
+         and POST "pull" is the delivery path that never depends on the
+         held GET being held.
 
 LEAVE ("gone", v3.3). In relay mode the peer is watching only its held GET,
 not the signal mailbox, so a P2P DataChannel-close has no equivalent: without

@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 31;
+    private const SCHEMA_VERSION = 32;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -476,6 +476,19 @@ final class Db
             // safe here because a migration step runs once, under the
             // single writer, before the request does any work of its own.
             $pdo->exec('VACUUM');
+        }
+        if ($v < 32) {
+            // relay_max_duels drops from 9 to 4. The relay is deprecated (see
+            // docs/DEPRECATED-relay.md) and each relayed player holds an FPM
+            // worker for the whole duel, so nine pairs could ask for eighteen
+            // of the ~20 this host serves - a fallback crowding out the
+            // ordinary traffic it exists beside. Four pairs is eight workers,
+            // which fits under the pool-wide hold budget (see Holds) with the
+            // signal polls it shares that budget with. A stored row would
+            // shadow the new default in silence (settings_save writes every
+            // key the card shows), so the row goes and every deployment picks
+            // the default up.
+            $pdo->exec("DELETE FROM settings WHERE key = 'relay_max_duels'");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

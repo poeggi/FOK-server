@@ -348,10 +348,10 @@ final class Util
             // the load includes every neighbour's traffic and nothing we do
             // clears it. That is why the threshold is per core and loose: it
             // is a "the host is thrashing" signal, not a capacity gauge.
-            // TODO: alert on OUR OWN saturation instead. Requests queueing
-            // behind the worker pool (measured at ~20 concurrent, see the
-            // README) is a condition we cause, can see and can act on, where
-            // a shared host's load average is none of the three.
+            // Our own saturation is the check below, and the more actionable
+            // of the two: requests queueing behind the worker pool is a
+            // condition we cause, can see and can act on, where a shared
+            // host's load average is none of the three.
             $load = sys_getloadavg()[0] ?? 0.0;
             $cores = self::cores();
             if ($load / $cores > Settings::int('alert_load_per_core')) {
@@ -362,6 +362,17 @@ final class Util
                     $load / $cores
                 ));
             }
+        }
+        // The saturation we cause ourselves, which no host load average can
+        // show: every slot in the long-poll budget is taken, so the workers
+        // left for ordinary requests are the ones the budget held back. It is
+        // not a failure - the budget did its job and those polls answered
+        // early instead of queueing - but sustained it is the signal that a
+        // cap wants lowering, or the pool raising.
+        require_once __DIR__ . '/Holds.php';
+        $budget = Settings::int('hold_max_workers');
+        if ($budget > 0 && Holds::inUse() >= $budget) {
+            Alerts::raise('overload', "Long-poll saturation: all $budget hold slots taken");
         }
         require_once __DIR__ . '/Presence.php';
         $online = Presence::counts()['online'];

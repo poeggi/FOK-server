@@ -241,12 +241,22 @@ What limits this server, in order:
    setting changes that. Thousands of IDLE clients on the 30 s heartbeat
    are cheap (~170 short req/s at 5000 clients); thousands matchmaking at
    once are not - that is ~1 held worker each, and the reason
-   FOK_POLL_WAIT_MAX and relay_max_duels exist.
+   FOK_POLL_WAIT_MAX and relay_max_duels exist. Those cap one hold and
+   one feature; `hold_max_workers` (default 12, see Holds) caps their
+   SUM, because the per-feature caps were each sized against the whole
+   pool and nothing stopped them adding up to it. A poll that cannot get
+   a slot answers 204 at once instead of queueing - it still reads its
+   mailbox and still delivers anything pending, it just does not wait -
+   so the workers the budget holds back stay available to the requests
+   that are actually doing work.
 2. **SQLite has one writer.** Every hello writes. Sustained contention
    shows up as latency, then 500s (busy_timeout is 5 s), so the long
    polls peek lock-free and take the write lock only to drain.
 3. **Relayed duels**, the most expensive client: a long poll each plus
-   ~30 messages/s. relay_max_duels (default 9) is the honest "busy".
+   ~30 messages/s. relay_max_duels (default 4, i.e. 8 held workers) is
+   the honest "busy". It is deliberately a small share of the pool: the
+   relay is deprecated and is the P2P fallback, so it may not price out
+   the traffic it exists beside.
 
 The server's own bookkeeping does not sit in the client's latency:
 Util::defer runs the counters, the threshold sweep and the hourly player

@@ -28,6 +28,7 @@ require_once __DIR__ . '/../public/src/Friends.php';
 require_once __DIR__ . '/../public/src/RelayRate.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
 require_once __DIR__ . '/../public/src/Caps.php';
+require_once __DIR__ . '/../public/src/Holds.php';
 require_once __DIR__ . '/../public/src/RelayStore.php';
 require_once __DIR__ . '/../public/src/Relay.php';
 require_once __DIR__ . '/../public/src/Load.php';
@@ -1740,6 +1741,38 @@ Tournament::leave('77000002', $c2['tid']);
 ok(apcu_key_info($k2)['ttl'] === Settings::int('tournament_done_ttl'),
     'and a tournament nobody can still play only as long as its result is worth reading');
 Settings::set('tournament_create_cooldown', 10);
+
+// The long-poll worker budget (Holds). Slots stand in for the OTHER workers
+// of the pool, which a single test process has no other way to have.
+Settings::set('hold_max_workers', 3);
+apcu_delete(new APCUIterator('/^fok:hold:/'));
+ok(Holds::inUse() === 0, 'no long poll is holding a worker to start with');
+for ($i = 0; $i < 3; $i++) {
+    apcu_add("fok:hold:$i", 999, 20);
+}
+ok(Holds::inUse() === 3, 'a full budget reads as full');
+ok(Holds::claim() === false, 'a hold over the budget is refused, not queued');
+// A refusal is not a rejection: poll.php drops the WAIT and answers, so the
+// caller still gets its mailbox. That is the endpoint's half; here it is
+// enough that the budget says no.
+apcu_delete('fok:hold:1');
+ok(Holds::claim() === true, 'and is admitted again the moment a slot frees');
+ok(Holds::inUse() === 3, 'taking the freed slot rather than a fourth');
+Holds::release();
+ok(Holds::inUse() === 2, 'releasing hands the slot straight back');
+// The TTL is a safety net for a worker that dies mid-hold, so a slot can
+// expire under a hold that is still running and be handed to somebody else.
+// The late release must not then evict the new owner.
+ok(Holds::claim() === true, 'a fresh hold takes the free slot');
+apcu_store('fok:hold:1', 4242, 20);
+Holds::release();
+ok(apcu_fetch('fok:hold:1') === 4242,
+    'a release cannot take back a slot that expired and was handed on');
+apcu_delete(new APCUIterator('/^fok:hold:/'));
+Settings::set('hold_max_workers', 0);
+ok(Holds::claim() === true && Holds::inUse() === 0,
+    'and the budget switched off holds nothing at all');
+Settings::set('hold_max_workers', FOK_HOLD_MAX_WORKERS);
 
 // Cleanup
 Db::close();

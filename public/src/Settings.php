@@ -17,6 +17,11 @@ final class Settings
         'admin_lock_seconds' => [FOK_ADMIN_LOCK_SECONDS, 'Admin IP block duration (seconds)'],
         'mailbox_cap' => [FOK_MAILBOX_CAP, 'Max pending signals per recipient'],
         'signal_ttl' => [FOK_SIGNAL_TTL, 'Undelivered signal lifetime (seconds)'],
+        // The pool-wide ceiling on held long polls (see Holds). It sits above
+        // the per-feature caps below rather than beside them: those bound one
+        // relay or one tournament, this bounds what all of them together may
+        // take from a worker pool that has to answer everything else too.
+        'hold_max_workers' => [FOK_HOLD_MAX_WORKERS, 'Max FPM workers held by long polls at once (0 = unlimited)'],
         'score_rate_max' => [FOK_SCORE_RATE_MAX, 'Max score submissions per window'],
         'score_rate_window' => [FOK_SCORE_RATE_WINDOW, 'Score submission window (seconds)'],
         'chat_max_len' => [FOK_CHAT_MAX_LEN, 'Max chat message bytes'],
@@ -24,7 +29,7 @@ final class Settings
         'start_sync_max_age_ms' => [2000, 'Reject a start whose sync proof is older than (ms)'],
         // DEPRECATED: relay fallback (see docs/DEPRECATED-relay.md). These
         // seven relay_* settings are removed with the feature.
-        'relay_max_duels' => [9, 'Max concurrent relayed duels (protects FPM workers)'],
+        'relay_max_duels' => [4, 'Max concurrent relayed duels (protects FPM workers)'],
         'relay_max_payload' => [2048, 'Max relayed message bytes'],
         'relay_pending_cap' => [128, 'Max undelivered relay messages per receiver'],
         'relay_ttl' => [30, 'Undelivered relay message lifetime (seconds)'],

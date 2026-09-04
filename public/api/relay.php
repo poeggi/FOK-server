@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Alerts.php';
+require_once __DIR__ . '/../src/Holds.php';
 require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/Relay.php';
 require_once __DIR__ . '/../src/RelayRate.php';
@@ -74,6 +75,17 @@ if ($method === 'GET') {
         Util::fail('invalid id/peer');
     }
     $wait = min((int)($_GET['wait'] ?? 0), FOK_POLL_WAIT_MAX);
+    // Two relayed players hold two workers for as long as their duel runs,
+    // which is why relay_max_duels exists - but that cap only knows about
+    // relays, and the pool also has signal polls and everything else on it.
+    // The pool-wide budget (Holds) is what the sum answers to: over it this
+    // GET makes one pass and answers, rather than waiting on a worker the
+    // rest of the traffic needs. A relayed duel keeps working either way -
+    // the pass still drains, and the POST "pull" piggyback (v3.2) exists for
+    // exactly this, delivery not hanging on the held GET alone.
+    if ($wait > 0 && !Holds::claim()) {
+        $wait = 0;
+    }
     // The hold loop peeks and takes no lock while idle: a waiting poll must
     // not fight the duels that are actually sending (see RelayStore). On the
     // APCu transport a peek is two shared-memory reads, so it can poll tight
@@ -103,7 +115,11 @@ if ($method === 'GET') {
                 Util::jsonOut(['ok' => true, 'gone' => true]);
             }
         }
-        if ($t >= $deadline || connection_aborted()) {
+        // The deadline is the only way out: PHP does not learn that the
+        // client went away until the script tries to write to it, and this
+        // loop writes nothing until it answers, so connection_aborted() is
+        // 0 here whatever the peer did. A worker is held for the full wait.
+        if ($t >= $deadline) {
             http_response_code(204);
             exit;
         }
