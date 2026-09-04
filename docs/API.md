@@ -1500,11 +1500,17 @@ rather than an error, so a client that lost the first response just asks
 again. So is `continue`: with no break open it answers `{"ok": true}`,
 because the press that closed it may well have been this client's own.
 
-`leave` depends on the state. In the lobby it is a plain departure - and
-the HOST leaving abandons the lobby, because the lobby is the one thing
-the host owns. While running it is a FORFEIT: the tournament belongs to
-everyone by then and continues without the leaver, whose remaining matches
-become walkovers.
+`leave` depends on who sends it. From a GUEST it is a plain departure in
+the lobby, and a FORFEIT once the tournament is running: the bracket
+carries on without them and their remaining matches become walkovers.
+From the HOST it ends the tournament for everyone at any point in its
+life - state `abandoned`, `cursor` null, and a `lobby` event carrying that
+state to every participant. There is no separate action for it: the same
+`leave` means both things, and the server decides which by the sender.
+
+A match in flight when the host ends it is peer-to-peer and simply plays
+out; the result report is answered 409, which clients already treat as
+final.
 
 ### The first round
 

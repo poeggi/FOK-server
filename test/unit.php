@@ -1560,11 +1560,45 @@ foreach ($v3['schedule'] as $node) {
 }
 ok(Tournament::leave($f[2], $tid3)['ok'] === true, 'and leaving twice is harmless');
 
-// The host owns the lobby, and only the lobby.
+// The host ends it for everyone, before a ball is kicked...
 $tid4 = Tournament::create('73000001', false)['tid'];
 Tournament::leave('73000001', $tid4);
 ok(Tournament::load($tid4)['state'] === 'abandoned', 'the host leaving an unstarted lobby ends it');
 ok(Tournament::join('73000002', $tid4)['http'] === 404, 'which cannot then be joined');
+
+// ...and once it is being played. Host and guest send the identical `leave`;
+// the server is the only thing that makes the two mean different things, and
+// the client has always told the host it means END TOURNAMENT FOR ALL.
+$h = ['73100001', '73100002', '73100003'];
+foreach ($h as $p) {
+    Presence::touch($p, '127.0.0.1');
+}
+$tidH = Tournament::create($h[0], false)['tid'];
+Tournament::join($h[1], $tidH);
+Tournament::join($h[2], $tidH);
+Tournament::start($h[0], $tidH);
+foreach ($h as $p) {
+    Signals::take($p);                  // clear the deal, so only the exit is read back
+}
+$before = Stats::all();
+ok(Tournament::leave($h[0], $tidH)['ok'] === true, 'the host may leave a running tournament');
+$tH = Tournament::load($tidH);
+ok($tH['state'] === 'abandoned', 'which ends it rather than playing on without them');
+ok($tH['data']['cursor'] === null, 'with nothing still pointing at a match nobody will play');
+$told = 0;
+foreach ($h as $p) {
+    foreach (Signals::take($p) as $sig) {
+        $e = json_decode($sig['payload'], true);
+        if (($e['event'] ?? '') === 'lobby' && ($e['state'] ?? '') === 'abandoned') {
+            $told++;
+        }
+    }
+}
+ok($told === 3, 'and every participant is dropped, the host included');
+$after = Stats::all();
+ok(($after['tourney_finished'] ?? 0) === ($before['tourney_finished'] ?? 0) + 1,
+    'a tournament abandoned mid-run leaves the trace its played matches earned');
+ok(Tournament::leave($h[1], $tidH)['ok'] === true, 'and a guest leaving afterwards is a no-op');
 
 // ---- A node nobody can play must not be re-dealt ---------------------
 // Both finalists vanish mid-match: the walkover deadline finds neither of

@@ -378,9 +378,8 @@ final class Tournament
             }
             if ($t['state'] === 'open') {
                 if ($id === $t['host']) {
-                    // The host owns the LOBBY, and only the lobby. Leaving
-                    // one that never started ends it; leaving a running
-                    // tournament (below) merely forfeits, like anyone else.
+                    // The host ends it for everyone, at any point in its
+                    // life: here before anyone played, below once they have.
                     $t['state'] = 'abandoned';
                     self::event($t, self::lobby($t, 'host left'));
                     return ['ok' => true];
@@ -394,10 +393,24 @@ final class Tournament
                 self::event($t, self::lobby($t));
                 return ['ok' => true];
             }
-            // Running: forfeit. The bracket belongs to everyone now, so it
-            // continues without the leaver - every node they were still due
-            // to play becomes a walkover as the cursor reaches it, and the
-            // one in flight right now is settled by the advance below.
+            if ($id === $t['host']) {
+                // Running, and it is the host: they own the TOURNAMENT, not
+                // just the lobby, and the client offers them exactly this -
+                // END TOURNAMENT FOR ALL. Everyone is dropped rather than
+                // left playing a bracket its host has been forfeited out of.
+                // Matches were played, so unlike an abandoned lobby this one
+                // leaves the same stats trace a finished tournament does.
+                $t['state'] = 'abandoned';
+                $t['data']['cursor'] = null;   // nothing is being played now
+                self::event($t, self::lobby($t, 'host ended it'));
+                self::record($t);
+                return ['ok' => true];
+            }
+            // Running, and it is a guest: forfeit. The bracket belongs to
+            // everyone now, so it continues without the leaver - every node
+            // they were still due to play becomes a walkover as the cursor
+            // reaches it, and the one in flight right now is settled by the
+            // advance below.
             foreach ($t['players'] as &$p) {
                 if ($p['id'] === $id) {
                     $p['forfeited'] = true;
