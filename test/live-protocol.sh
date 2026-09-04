@@ -153,6 +153,66 @@ sig "$C" "$D" bye ''
 expect "after bye the relay peer is told it is gone" '"gone":true' "$(rlyget "$D" "$C")"
 poll "$D" > /dev/null
 
+# --- Tournament (API 4.1): the server orchestrates, the players play. Not one
+# match or spectator byte passes through it, so what a live run can check is
+# the orchestration wire - and above all the two things that only ever bite in
+# production: the cap this deployment actually hands out, and the rule that a
+# settled node cannot be reopened.
+#
+# A host may only create once per tournament_create_cooldown (300s), so a
+# re-run inside that window SKIPS this section instead of failing it: nothing
+# is wrong with the server, the run is simply too soon after the last one.
+# The walk ends in 'done'. A terminal tournament is never read again, which is
+# what makes leaving one behind on production harmless.
+tourney() { # tourney <json-body> : POST to api/tournament.php, print the body
+    curl -s -X POST -H 'Content-Type: application/json' -d "$1" "$BASE/api/tournament.php"
+}
+# A no-match grep exits 1, which the extractor swallows rather than let it
+# abort the run (see test/smoke/07_tournament.sh).
+tfield() { echo "$1" | grep -oE "\"$2\":\"[0-9A-Za-z]+\"" | head -1 | cut -d'"' -f4 || true; }
+act() { # act <id> <action> <tid>
+    tourney "{\"id\":\"$1\",\"action\":\"$2\",\"tid\":\"$3\"}"
+}
+result() { # result <id> <tid> <nid> <outcome> <mine> <theirs>
+    tourney "{\"id\":\"$1\",\"action\":\"result\",\"tid\":\"$2\",\"nid\":\"$3\",\"outcome\":\"$4\",\"score\":[$5,$6]}"
+}
+
+TR=$(tourney "{\"id\":\"$A\",\"action\":\"create\"}")
+case "$TR" in
+*'"ok":true'*)
+    T1=$(tfield "$TR" tid)
+    CODE=$(tfield "$TR" code)
+    # The cap is a Settings key, so this reads what the HOST is serving, not
+    # what Config.php says: a stored row shadows a changed default silently.
+    expect "a host opens a lobby at the deployed player cap" '"max":8' "$TR"
+    R=$(tourney "{\"id\":\"$B\",\"action\":\"join\",\"code\":\"$CODE\"}")
+    expect "the second player joins by code" "\"host\":\"$A\"" "$R"
+    expect "the host starts it" '"ok":true' "$(act "$A" start "$T1")"
+    R=$(act "$A" state "$T1")
+    expect "the tournament is running" '"state":"running"' "$R"
+    expect "with the first match dealt" '"cursor":"r1.1"' "$R"
+    expect "and the caller holding its own roles sheet" '"you":' "$R"
+    # Nobody lies to lose, so one reported loss settles the node on the spot.
+    # Once settled it is closed: the other side claiming the opposite must be
+    # answered with the standing verdict, never with a reopened node.
+    expect "a reported loss settles at once" '"state":"settled"' "$(result "$A" "$T1" r1.1 loss 9 12)"
+    expect "a contradicting late report cannot reopen it" '"state":"settled"' "$(result "$B" "$T1" r1.1 loss 12 9)"
+    R=$(act "$A" state "$T1")
+    expect "the settled node advanced the cursor to the final" '"cursor":"final"' "$R"
+    expect "the final settles the same way" '"state":"settled"' "$(result "$A" "$T1" final loss 4 6)"
+    R=$(act "$B" state "$T1")
+    expect "the final settles the tournament" '"state":"done"' "$R"
+    expect "and there is no match left in flight" '"cursor":null' "$R"
+    ;;
+*'create cooldown'* | *'already hosting'*)
+    echo "skip the tournament walk: $A is too soon after its last one ($TR)"
+    ;;
+*)
+    echo "FAIL a host could not open a lobby: $TR"
+    fail=1
+    ;;
+esac
+
 echo
 if [ "$fail" -ne 0 ]; then
     echo "LIVE PROTOCOL SMOKE FAILED"
