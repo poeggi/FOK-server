@@ -36,6 +36,20 @@ if [ "${#HN}" -eq 13 ]; then echo "ok   hello now is milliseconds"; else echo "F
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"XYZ"}' "$BASE/api/hello.php")
 expect "hello rejects bad id" '"error":"invalid id"' "$R"
 
+# The client tells us its OWN public addresses (STUN), which is the only way
+# the family this request did not arrive over can be known. Locally every
+# address here is either private or the loopback the request came from, so
+# what the endpoint can be held to is that it ACCEPTS the field and refuses
+# a malformed one - the recording rules are pinned in test/unit.php.
+R=$(curl -s -X POST -H 'Content-Type: application/json' \n    -d "{\"id\":\"$ID1\",\"nets\":[\"198.51.100.4\",\"2a01:db8:5:5::9\"]}" "$BASE/api/hello.php")
+expect "hello accepts self-reported networks" '"ok":true' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \n    -d "{\"id\":\"$ID1\",\"nets\":\"198.51.100.4\"}" "$BASE/api/hello.php")
+expect "hello rejects nets that are not a list" '"error":"invalid nets"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \n    -d "{\"id\":\"$ID1\",\"nets\":[1,2]}" "$BASE/api/hello.php")
+expect "hello rejects a net that is not a string" '"error":"invalid nets"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \n    -d "{\"id\":\"$ID1\",\"nets\":[\"1\",\"2\",\"3\",\"4\",\"5\"]}" "$BASE/api/hello.php")
+expect "hello rejects more networks than a device can have" '"error":"invalid nets"' "$R"
+
 # An oversized body must be refused loudly, not buffered into a worker.
 # The cap is FOK_MAX_BODY (replay material + slack); this clears it.
 { printf '{"id":"%s","pad":"' "$ID1"; head -c 300000 /dev/zero | tr '\0' 'x'; printf '"}'; } > "$DATA/big.json"

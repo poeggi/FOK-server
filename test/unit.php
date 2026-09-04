@@ -1391,6 +1391,78 @@ ok(Tournament::announce('72000006', '2a01:db8:9:9:beef::2') === [],
 $age($dual, 90);
 ok(count(Tournament::announce('72000006', '2a01:db8:9:9:beef::2')) >= 1,
     'but one throttled to a hello a minute still is, where 60s would have dropped it');
+
+// CLIENT-REPORTED NETWORKS. The server sees one address family per request
+// and cannot ask a browser for the other, so the second one is only ever
+// known because the client discovered it (STUN) and said so. It is a claim,
+// not evidence, and the rules that keeps it honest are asserted here.
+ok(Util::isPublicIp('203.0.113.9'), 'a public v4 address counts as a network');
+ok(Util::isPublicIp('2a01:db8:9:9::1'), 'so does a global v6 one');
+ok(!Util::isPublicIp('192.168.1.20'), 'an rfc1918 address does not');
+ok(!Util::isPublicIp('10.0.0.5'), 'nor another private range');
+ok(!Util::isPublicIp('127.0.0.1'), 'nor loopback');
+ok(!Util::isPublicIp('fe80::1'), 'nor a v6 link-local');
+ok(!Util::isPublicIp('fd00::1'), 'nor a v6 unique-local');
+ok(!Util::isPublicIp('a1b2c3d4-e5f6.local'), 'nor an mDNS placeholder, which is not an address at all');
+
+// The case the whole feature exists for: this host has ONLY ever been seen
+// over v6, so its v4 network cannot be observed - it has to be claimed.
+$claimer = '72000010';
+Presence::touch($claimer, '2a01:db8:11:11::1');
+ok($netsOf($claimer) === [6 => '2a01:db8:11:11::/64'],
+    'a v6-only client has no v4 network the server could have seen');
+Presence::claim($claimer, ['198.51.100.77', 'fe80::dead', '192.168.0.9']);
+ok($netsOf($claimer) === [4 => '198.51.100.77', 6 => '2a01:db8:11:11::/64'],
+    'a claimed public v4 is recorded, and the private candidates beside it are dropped');
+$tid6 = Tournament::create($claimer, false)['tid'];
+ok(count(Tournament::announce('72000011', '198.51.100.77')) >= 1,
+    'so a v4-only seeker is told about a lobby opened by a v6-only host');
+Tournament::leave($claimer, $tid6);
+
+// A claim never displaces what the server saw for itself. The v6 row above
+// is observed and fresh, so a client claiming a different /64 for that
+// family - which is what a forged or simply stale report looks like - is
+// ignored rather than believed.
+Presence::claim($claimer, ['2a01:db8:99:99::5']);
+ok($netsOf($claimer) === [4 => '198.51.100.77', 6 => '2a01:db8:11:11::/64'],
+    'a claim is ignored while the observed row for that family is fresh');
+// And a claim cannot be churned: the first one is a minute old at most, so
+// the next different one waits rather than sweeping networks per heartbeat.
+Presence::claim($claimer, ['198.51.100.78']);
+ok($netsOf($claimer) === [4 => '198.51.100.77', 6 => '2a01:db8:11:11::/64'],
+    'nor can a claim be rewritten faster than an observation would be');
+// Once it has gone stale it may be corrected - a real client does move.
+Db::get()->prepare('UPDATE player_nets SET seen = ? WHERE id = ? AND family = 4')
+    ->execute([time() - 120, $claimer]);
+Presence::claim($claimer, ['198.51.100.78']);
+ok($netsOf($claimer) === [4 => '198.51.100.78', 6 => '2a01:db8:11:11::/64'],
+    'a stale claim is replaced by the next one the client sends');
+// The server observing that family for real outranks the claim at once.
+Presence::touch($claimer, '198.51.100.90');
+ok($netsOf($claimer) === [4 => '198.51.100.90', 6 => '2a01:db8:11:11::/64'],
+    'and an observation takes the row back from a claim immediately');
+ok(count(Tournament::announce('72000012', '198.51.100.78')) === 0,
+    'the replaced network stops matching');
+
+// The trust rule on its own, with the churn guard out of the way: an
+// observation that is too old to be refreshed but young enough for the
+// announce to still act on it OUTRANKS a claim. Only once it has aged out
+// of the announce entirely - it is doing no work by then - may a claim take
+// the row. This is the boundary that decides whether telling the server
+// "I am on /64 X" can put you in a stranger's room.
+$ageNet = static function (string $id, int $family, int $secs) use ($claimer): void {
+    Db::get()->prepare('UPDATE player_nets SET seen = ? WHERE id = ? AND family = ?')
+        ->execute([time() - $secs, $id, $family]);
+};
+$ageNet($claimer, 6, 120);
+Presence::claim($claimer, ['2a01:db8:99:99::5']);
+ok($netsOf($claimer)[6] === '2a01:db8:11:11::/64',
+    'a stale observation still outranks a claim while the announce would act on it');
+$ageNet($claimer, 6, 400);
+Presence::claim($claimer, ['2a01:db8:99:99::5']);
+ok($netsOf($claimer)[6] === '2a01:db8:99:99::/64',
+    'but once it has aged out of the announce, a claim may take the row');
+
 Tournament::leave($dual, $tid5);
 Tournament::leave('72000004', $tid4);
 Tournament::start($f[0], $tid3);

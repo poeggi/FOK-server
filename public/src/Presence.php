@@ -56,8 +56,8 @@ final class Presence
     }
 
     /**
-     * Records the NETWORK this hello arrived over, one row per address
-     * family (see Util::ipNet and Db step 28).
+     * Records a NETWORK this player is on, one row per address family (see
+     * Util::ipNet and Db steps 28/29).
      *
      * The player row keeps a single ipnet, which is the network the LAST
      * request came in on. That is not the same as the networks the player
@@ -67,6 +67,13 @@ final class Presence
      * the one the tournament announce compares. Keeping both is what lets
      * two devices in one room match when they did not pick the same family.
      *
+     * $observed says whether the server SAW this address (a REMOTE_ADDR,
+     * which is evidence) or whether the client reported it about itself (a
+     * claim, which is not - see claim()). A claim may not displace an
+     * observation that is still doing work, and may not be rewritten faster
+     * than an observation would be; that is the whole trust model, and it
+     * is here rather than at the caller so no future caller can skip it.
+     *
      * READ BEFORE WRITE, deliberately: this runs on every hello, and hello
      * is the one request every client makes forever. The row only changes
      * when the player actually moved network, so the common case must not
@@ -74,7 +81,7 @@ final class Presence
      * point lookup on the primary key instead. REFRESH_AFTER bounds how
      * stale `seen` may get; the announce reads it, so it may not drift.
      */
-    public static function seenOn(string $id, string $ip): void
+    public static function seenOn(string $id, string $ip, bool $observed = true): void
     {
         $info = Util::ipInfo($ip);
         if ($info['family'] === 0) {
@@ -82,19 +89,70 @@ final class Presence
         }
         $net = Util::ipNet($ip);
         $now = time();
-        $st = Db::get()->prepare('SELECT net, seen FROM player_nets WHERE id = ? AND family = ?');
+        $src = $observed ? 'o' : 'c';
+        $st = Db::get()->prepare('SELECT net, seen, src FROM player_nets WHERE id = ? AND family = ?');
         $st->execute([$id, $info['family']]);
         $row = $st->fetch();
         $st->closeCursor();
-        if ($row !== false && (string)$row['net'] === $net && (int)$row['seen'] > $now - self::NET_REFRESH_AFTER) {
-            return;
+        if ($row !== false) {
+            $fresh = (int)$row['seen'] > $now - self::NET_REFRESH_AFTER;
+            if ($fresh && (string)$row['net'] === $net && (string)$row['src'] === $src) {
+                return;   // nothing would change
+            }
+            if (!$observed) {
+                // What we saw ourselves outranks what we were told, for as
+                // long as the announce would still act on it.
+                if ((string)$row['src'] === 'o'
+                    && (int)$row['seen'] > $now - Settings::int('tournament_announce_window')) {
+                    return;
+                }
+                // And a claim cannot be churned: one write per family per
+                // refresh interval, so a client cannot sweep networks by
+                // reporting a different one on every heartbeat.
+                if ($fresh) {
+                    return;
+                }
+            }
         }
-        Db::retry(static function () use ($id, $info, $net, $now): void {
+        Db::retry(static function () use ($id, $info, $net, $now, $src): void {
             Db::get()->prepare(
-                'INSERT INTO player_nets (id, family, net, seen) VALUES (?, ?, ?, ?)
-                 ON CONFLICT (id, family) DO UPDATE SET net = excluded.net, seen = excluded.seen'
-            )->execute([$id, $info['family'], $net, $now]);
+                'INSERT INTO player_nets (id, family, net, seen, src) VALUES (?, ?, ?, ?, ?)
+                 ON CONFLICT (id, family) DO UPDATE SET net = excluded.net, seen = excluded.seen, src = excluded.src'
+            )->execute([$id, $info['family'], $net, $now, $src]);
         });
+    }
+
+    /**
+     * Networks the CLIENT reports it is on, at most one per family.
+     *
+     * The server sees a client on exactly one address family per request -
+     * whichever the browser picked - and a browser cannot be told to use
+     * the other one, so the second network is unobservable from here. The
+     * client can discover it (a STUN reflexive candidate names its public
+     * v4 address and its global v6 one), and this is where it hands it over.
+     *
+     * Everything here is untrusted input: only public addresses count (see
+     * Util::isPublicIp - an ICE list is full of link-local and RFC 1918
+     * candidates, and two houses sharing 192.168.0.0 are not one room),
+     * only the first address of each family is taken, and the whole lot
+     * ranks below what the server saw for itself (see seenOn).
+     *
+     * @param string[] $ips
+     */
+    public static function claim(string $id, array $ips): void
+    {
+        $done = [];
+        foreach ($ips as $ip) {
+            if (!is_string($ip) || !Util::isPublicIp($ip)) {
+                continue;
+            }
+            $family = Util::ipInfo($ip)['family'];
+            if (isset($done[$family])) {
+                continue;
+            }
+            $done[$family] = true;
+            self::seenOn($id, $ip, false);
+        }
     }
 
     /**

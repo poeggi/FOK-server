@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.1", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.2", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -30,8 +30,8 @@ the dot): disable online features with a friendly notice when the
 server's MAJOR is newer than what they were built against, rather than
 misbehave against an incompatible server. A newer MINOR on the same MAJOR
 is safe to talk to; a client may read the MINOR to tell whether an
-optional feature (e.g. the peer-net hint, added in 3.1, or tournament
-mode, added in 4.1) is available.
+optional feature (e.g. the peer-net hint, added in 3.1, tournament mode,
+added in 4.1, or self-reported networks, added in 4.2) is available.
 
 ## Conventions
 
@@ -344,13 +344,20 @@ Request:
                                   lobbies hosted on the caller's own network
                                   (see Tournament mode). Send it only while a
                                   screen that shows them is open.
+      "nets": ["198.51.100.7",    optional, up to 4: the caller's OWN public
+               "2a02:1:2:3::9"]   addresses, as the client discovered them.
+                                  The server sees one address family per
+                                  request and cannot ask a browser for the
+                                  other, so this is the only way the second
+                                  one becomes known - see Self-reported
+                                  networks below.
     }
 
 Response:
 
     {
       "ok": true,
-      "api": "4.1",               contract version, see Versioning
+      "api": "4.2",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "debug": false,             the server's instruction: the client MUST
@@ -404,6 +411,46 @@ The announce window is deliberately wider than the 60 s presence window: a
 host waiting in a lobby is a background tab or a phone with the screen off
 as often as not, and browsers throttle background timers to about one a
 minute.
+
+### Self-reported networks (`nets`)
+
+The server only learns a network when a request actually arrives over that
+address family, and a browser gives the client no way to choose one: on a
+dual-stack line Happy Eyeballs may pick IPv6 for hours on end, so the
+device's public IPv4 address stays unknown here indefinitely. Optional and
+additive, `nets` closes that: the client reports its own public addresses
+and the server records the family it could not observe.
+
+    "nets": ["198.51.100.7", "2a02:1:2:3:4:5:6:7"]
+
+Rules, none of which the client has to implement - they are what the server
+does with what it is given:
+
+- Send plain IP strings, not prefixes. The server derives the network the
+  same way it does for an observed address (IPv4 as-is, IPv6 collapsed to
+  the /64), so a client cannot claim a wider network than it is on.
+- At most 4 entries, at most one used per family (the first).
+- Only PUBLIC addresses count. Loopback, link-local (`fe80::`),
+  unique-local (`fc00::/7`), RFC 1918 (`10/8`, `172.16/12`, `192.168/16`)
+  and Chrome's `.local` mDNS placeholders are dropped: two households
+  behind `192.168.0.0` are not one room. Sending them is harmless - ICE
+  gathers them by nature - they are simply ignored.
+- A malformed FIELD (not a list, a non-string entry, more than 4) is a
+  `400 invalid nets`. An unusable ADDRESS inside a well-formed list is
+  dropped silently.
+- What the server SAW outranks what it was told. A self-reported network
+  never displaces an observed one for the same family while that
+  observation is still inside the announce window, and a report cannot be
+  rewritten more than once a minute - so a client cannot sweep networks by
+  reporting a different one on every heartbeat.
+
+Where the client gets them: a one-shot ICE gather against a dual-stack STUN
+server yields a server-reflexive candidate per family - the public IPv4
+address and the global IPv6 one - without ever connecting to us over
+either. Send them on every hello once gathered (the server no-ops when
+nothing changed), re-gather every few minutes and on a network change. A
+client that sends nothing keeps today's behaviour exactly: it is matched on
+the families the server happens to see it on.
 
 ### GET /api/net.php - what network the server sees you on
 

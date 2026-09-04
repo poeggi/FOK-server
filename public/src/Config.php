@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.2.6';
+const FOK_SERVER_VERSION = '1.2.7';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -75,7 +75,17 @@ const FOK_SERVER_VERSION = '1.2.6';
 // or spectator traffic passes through the server. Major stays 4 - a 4.0
 // client never calls tournament.php, never sets "tourneys" and simply does
 // not offer tournaments.
-const FOK_API_VERSION = '4.1';
+// v4.2: additive self-reported networks. hello.php gains an optional "nets"
+// list - the caller's OWN public addresses, as the client discovered them
+// (a STUN reflexive candidate names one per family). The server observes
+// only the family a given request arrived over and cannot ask a browser for
+// the other, so on a dual-stack line the second network is unobservable
+// here; this is how it becomes known, and it is what lets the tournament
+// announce put a v6 host and a v4 joiner in the same room. It is a CLAIM:
+// it never displaces a network the server saw for itself (see
+// Presence::seenOn). Major stays 4 - a client that sends nothing is matched
+// exactly as before, on the families we happen to see it on.
+const FOK_API_VERSION = '4.2';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
@@ -214,6 +224,12 @@ const FOK_MATCH_WINDOW = 10;
 // proportionally more often, which is exactly when the row churn warrants it.
 const FOK_MATCH_PRUNE_SAMPLE = 20;
 const FOK_MAX_FRIENDS = 64;
+
+// How many self-reported addresses one hello may carry (see hello.php
+// "nets"). A device has one public address per family, so two is the honest
+// answer; the cap is four so a client that also sends a second global v6 -
+// a temporary privacy address out of the same /64 - is not rejected for it.
+const FOK_MAX_NETS = 4;
 
 // The device categories a score may optionally be tagged with (see
 // api/scores.php): canonical lowercase tokens - pc (desktop or laptop),

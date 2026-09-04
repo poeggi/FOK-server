@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 28;
+    private const SCHEMA_VERSION = 29;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -485,6 +485,15 @@ final class Db
                 PRIMARY KEY (id, family)
             )');
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_player_nets_net ON player_nets (net, seen)');
+        }
+        if ($v < 29) {
+            // Where a network came from. 'o' is a network the server SAW
+            // this player arrive on; 'c' is one the client told us about
+            // (see Presence::seenOn). A client can only ever learn its own
+            // other-family address by asking a STUN server, so the second
+            // family is a CLAIM and not evidence - it has to be marked as
+            // such, because a claim may not displace what we saw ourselves.
+            $pdo->exec("ALTER TABLE player_nets ADD COLUMN src TEXT NOT NULL DEFAULT 'o'");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

@@ -89,9 +89,10 @@ final class Util
      * never be confused with a bare address.
      *
      * A mapped ::ffff:a.b.c.d is unwrapped first (see ipInfo), so one v4
-     * client is one network however the host presents it. What cannot be
-     * reconciled is a v4 device beside a v6 one: nothing in the two
-     * addresses says they share a room, so they are not matched.
+     * client is one network however the host presents it. A v4 address and
+     * a v6 one are never the same network - nothing in the two strings says
+     * they share a room - which is why a player is remembered on one
+     * network PER FAMILY rather than on one network (see Presence::seenOn).
      */
     public static function ipNet(string $ip): string
     {
@@ -105,6 +106,32 @@ final class Util
         }
         $net = @inet_ntop(substr($bin, 0, 8) . str_repeat("\0", 8));
         return is_string($net) ? $net . '/64' : $info['ip'];
+    }
+
+    /**
+     * Whether an address is one the public internet could have routed to
+     * us - the only kind worth recording as a network.
+     *
+     * It exists for the addresses a CLIENT reports about itself (see
+     * Presence::seenOn): a server-observed REMOTE_ADDR is public by
+     * construction, but an ICE candidate list is full of things that are
+     * not - link-local, unique-local, RFC 1918, loopback, and Chrome's
+     * mDNS .local placeholders, which are not addresses at all. Two devices
+     * that both claim 192.168.0.0 are not in the same room, they are in two
+     * different houses behind the same default router range, so a private
+     * address is worse than no address here.
+     */
+    public static function isPublicIp(string $ip): bool
+    {
+        $info = self::ipInfo($ip);
+        if ($info['family'] === 0) {
+            return false;
+        }
+        return filter_var(
+            $info['ip'],
+            FILTER_VALIDATE_IP,
+            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+        ) !== false;
     }
 
     public static function nowMs(): int

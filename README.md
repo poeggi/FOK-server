@@ -6,10 +6,12 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 Version 1.0.0 was the first stable release. The admin, relay and matchmaking
 surfaces are considered production-stable.
 
-Contract 4.0 is the current API line and the first MAJOR bump since 3.x: the
-server now owns item-instance ownership (see Item registry below). The wire
-additions are backward-compatible, but a client that carries items must speak
-the registry to play online, which is what makes it a major.
+Contract 4.2 is the current API line: 4.0 was the first MAJOR bump since
+3.x - the server now owns item-instance ownership (see Item registry below),
+and while the wire additions are backward-compatible, a client that carries
+items must speak the registry to play online, which is what makes it a
+major. 4.1 added tournament mode and 4.2 self-reported networks, both
+additive.
 
 ## What it does
 
@@ -67,6 +69,20 @@ the registry to play online, which is what makes it a major.
   stays client-trusted (the coin economy is client-side), so this makes
   items conserved and auditable, not unforgeable - see the scope boundary
   in docs/API.md.
+- Tournament mode (contract 4.1): 2-8 players in a lobby joined by a
+  6-character code, a sparse first round, a seeded knockout and standings
+  between them. The server orchestrates and settles only - schedule, roles,
+  results, bracket - and never carries a byte of match traffic: every
+  tournament match is an ordinary P2P duel between the two players its
+  roles sheet names. Open lobbies are also ANNOUNCED to the host's own
+  network, so people in one room find each other without typing a code.
+  A player is remembered on one network per address family (IPv4 as the
+  public address, IPv6 as the /64), because a dual-stack client picks a
+  family per connection and the two devices in a room need not pick the
+  same one; the family the server cannot observe is filled in from the
+  addresses the client reports about itself (hello "nets"), which rank
+  below what the server saw for itself. The code remains the capability
+  and the way in from anywhere else.
 - Connection tracking: per-client state of the current 1:1 connection -
   idle, inviting, invited, connecting or playing, with the peer and
   whether the pair runs p2p or relayed. Inferred from traffic the server
@@ -104,7 +120,10 @@ the registry to play online, which is what makes it a major.
                       header, so sync never queues for a PHP worker
         time.php      millisecond clock sync, fallback for t.txt
         hello.php     heartbeat: presence, counters, signals, friends online,
-                      debug flag (server instruction + client report)
+                      debug flag (server instruction + client report),
+                      local tournament lobbies, self-reported networks
+        net.php       what network the server sees the caller on - a field
+                      diagnostic, reads and writes nothing
         poll.php      fast signal poll, 204 when idle (matchmaking window)
         friend.php    friendship handshake: request/accept/remove/list
         match.php     quick-match queue (pair with anyone waiting)
@@ -275,19 +294,25 @@ host-level. If this outgrows shared hosting, fix workers first.
 ## API sketch
 
     GET  /api/version.php
-      -> {"ok":true,"server":"<x.y.z>","api":"4.0","env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":"4.2","env":"live"}
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
     GET  /api/time.php
       -> {"ok":true,"t":<server ms>}   fallback clock source
     POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,
-                          "friends":[...]?}
-      -> {"ok":true,"api":"4.0","now":ms,"debug":bool,"online":n,"playing":n,
+                          "friends":[...]?, "tourneys":bool?, "nets":[ip,...]?}
+      -> {"ok":true,"api":"4.2","now":ms,"debug":bool,"online":n,"playing":n,
           "registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_online":{...}?, "friends_latency":{...}?,
-          "friends_name":{...}?}   (friends_* only real for accepted friends)
+          "friends_name":{...}?, "tourneys":[...]?}
+         (friends_* only real for accepted friends; tourneys lists the open
+          lobbies hosted on one of the caller's own networks)
+    GET  /api/net.php
+      -> {"ok":true,"ip":"...","family":4|6|0,"net":"..."}
+         (what network the server sees YOU on - open it on two devices to
+          settle whether they share one; reads and writes nothing)
     POST /api/friend.php {"id","action":"request|accept|remove|list","peer"?}
       -> {"ok":true,"state":...} | {"ok":true,"friends":[...]}
          (request/accept notify the peer via a reserved 'friend' signal)

@@ -23,7 +23,11 @@ require_once __DIR__ . '/../src/Tournament.php';
  *                               mode (absent means it is not)
  *   "friends": ["8-hex", ...]   optional, ids to check
  *   "tourneys": bool            optional, ask for open tournament lobbies
- *                               hosted on the caller's own address
+ *                               hosted on one of the caller's own networks
+ *   "nets": ["ip", ...]         optional, the caller's OWN public addresses
+ *                               as it discovered them (STUN), so the family
+ *                               this request did not arrive over is known
+ *                               too - see Presence::claim
  * }
  * Returns presence counters, the server's debug wish for this client,
  * pending signaling messages for the caller (drained on read) and, for
@@ -67,9 +71,30 @@ $debugActive = $body['debug'] ?? false;
 if (!is_bool($debugActive)) {
     Util::fail('invalid debug');
 }
+// What the client says about ITSELF: the public addresses it found for its
+// own machine. We see one address family per request and cannot ask a
+// browser for the other, so this is the only way the second one can be
+// known - it is a claim, and Presence ranks it below what we observed.
+// Structure is validated strictly; an individual address that turns out to
+// be unusable (a private ICE candidate, an mDNS placeholder) is dropped
+// there rather than failed here, because gathering those is normal.
+$nets = $body['nets'] ?? null;
+if ($nets !== null) {
+    if (!is_array($nets) || count($nets) > FOK_MAX_NETS) {
+        Util::fail('invalid nets');
+    }
+    foreach ($nets as $n) {
+        if (!is_string($n) || strlen($n) > 45) {
+            Util::fail('invalid nets');
+        }
+    }
+}
 
 $debug = Presence::touch($id, Util::clientIp(), $latency, $name, $autoAccept, $debugActive);
 Util::bump('hello');
+if ($nets !== null) {
+    Presence::claim($id, $nets);
+}
 
 $duelWith = $body['duel_with'] ?? null;
 if ($duelWith !== null) {
@@ -132,7 +157,7 @@ if ($friends !== null) {
     $out['friends_playing'] = Presence::playingOf(array_keys($accepted));
 }
 
-// Lobbies are announced by ADDRESS, not by friendship: a tournament is a
+// Lobbies are announced by NETWORK, not by friendship: a tournament is a
 // room full of people who are in the same room. The code stays the way in
 // from anywhere else, and it is the capability - so nothing here reveals a
 // lobby to someone who could not already see the host.
