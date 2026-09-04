@@ -103,6 +103,12 @@ final class Load
      */
     public static function lastMinute(): array
     {
+        // The request total for a closed minute is buffered in shared memory
+        // until some request folds it in (see Counters). On a quiet server
+        // that request may not have come yet, so ask for the fold here -
+        // otherwise the dashboard would read a minute that is still in APCu.
+        require_once __DIR__ . '/Counters.php';
+        Counters::flushDue();
         $prev = gmdate('YmdHi', time() - 60);
         $db = Db::get();
         $st = $db->prepare('SELECT metric, value FROM loadmin WHERE bucket = ?');

@@ -257,16 +257,25 @@ the database (61 %) past the answer. It buys latency and predictability
 only - the worker is held either way, so the ceiling above is unmoved.
 
 For the writer itself, what counts is how often a request takes the lock,
-not how long it waits. Both counters go in one multi-row upsert, so a
-hello takes it twice (heartbeat + counters) instead of three times; the
-heartbeat write is irreducible, since it IS the heartbeat. Dropping the
-counters off the writer altogether would need shared memory between
-workers; whether this host has usable APCu is assessed live on the
-Properties card. The relay already runs ITS OWN traffic over APCu shared
-memory BY DEFAULT (falling back to the database only when APCu is switched
-off or unavailable, see docs/API.md); the counters have not followed. The same
-card reports opcache, whether the deferred flush is really available, and
-what opening the database cost the request that drew it.
+not how long it waits, so nothing that dies within seconds is kept in the
+database any more. The signal mailbox, the presence-counter cache and the
+request counters all live in APCu shared memory: the mailbox because a
+long poll asked it "anything for me?" every 20 ms, the counters because
+they took the lock once per request to add one to a number (they are now
+accumulated in memory and folded into the counters table once a minute,
+see Counters). What is left on a hello is the heartbeat write itself,
+which is irreducible - it IS the heartbeat.
+
+That makes shared memory load-bearing rather than an optimization, and it
+is treated as such: the relay runs its traffic over APCu by default
+(falling back to the database only when APCu is switched off or
+unavailable, see docs/API.md), while the mailbox has NO database
+transport at all and answers 503 with an alert on a host without usable
+APCu - an untested fallback would only move the outage into the write
+lock. Whether this host has usable APCu is assessed live on the
+Properties card, which also reports opcache, whether the deferred flush is
+really available, and what opening the database cost the request that
+drew it.
 
 `public/api/.user.ini` holds the only PHP settings we own (no FPM pool
 access on shared hosting): body, memory and runtime caps for the game API

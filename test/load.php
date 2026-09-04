@@ -43,9 +43,10 @@ $st = $db->prepare('INSERT OR REPLACE INTO duels (a, b, started, last_seen) VALU
 for ($i = 0; $i < $duels; $i++) {
     $st->execute([sprintf('%08x', $i * 2), sprintf('%08x', $i * 2 + 1), $now, $now]);
 }
-$st = $db->prepare('INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)');
 for ($i = 0; $i < 200; $i++) {
-    $st->execute([sprintf('%08x', $i), 'ffffff01', 'ice', 'c', $now]);
+    // The mailbox is shared memory now, so it is filled through its own
+    // interface rather than by inserting rows (see Signals).
+    Signals::send(sprintf('%08x', $i), 'ffffff01', 'ice', 'c');
 }
 $st = $db->prepare('INSERT INTO relay (pair, from_id, to_id, payload, created) VALUES (?, ?, ?, ?, ?)');
 for ($i = 0; $i < 200; $i++) {

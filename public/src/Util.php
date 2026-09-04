@@ -290,8 +290,7 @@ final class Util
      * Per-hour counters feed the admin load statistics; the per-minute
      * request counter feeds the traffic alert.
      *
-     * Deferred, because none of it is the caller's: two writes on the
-     * single SQLite writer for every request, every 25th request a
+     * Deferred, because none of it is the caller's: every 25th request a
      * threshold sweep, and once an hour the whole player expiry.
      */
     public static function bump(string $metric): void
@@ -301,24 +300,10 @@ final class Util
 
     private static function bumpNow(string $metric): void
     {
-        // BOTH counters in one statement. Two upserts meant two implicit
-        // transactions, so every request took the single write lock twice -
-        // and that writer, not the microseconds, is the ceiling behind the
-        // worker pool. The rows never conflict with each other: the hour
-        // bucket is YmdH, the minute bucket YmdHi.
-        $minute = gmdate('YmdHi');
-        $st = Db::get()->prepare(
-            'INSERT INTO counters (bucket, metric, value) VALUES (?, ?, 1), (?, ?, 1)
-             ON CONFLICT (bucket, metric) DO UPDATE SET value = value + 1
-             RETURNING bucket, metric, value'
-        );
-        $st->execute([gmdate('YmdH'), $metric, $minute, 'req_min']);
-        $reqPerMin = 0;
-        foreach ($st->fetchAll() as $r) {
-            if ($r['bucket'] === $minute && $r['metric'] === 'req_min') {
-                $reqPerMin = (int)$r['value'];
-            }
-        }
+        // Counting is a shared-memory increment; the database sees one
+        // write per minute rather than one per request (see Counters).
+        require_once __DIR__ . '/Counters.php';
+        $reqPerMin = Counters::hit($metric);
         // Threshold checks are cheap but not free; sample every 25 requests.
         // The > 0 guard matters: a miss must not read as "every request".
         if ($reqPerMin > 0 && $reqPerMin % 25 === 0) {

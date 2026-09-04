@@ -12,6 +12,9 @@ final class Presence
     /** How stale a player_nets row may get before a hello rewrites it. */
     private const NET_REFRESH_AFTER = 60;
 
+    /** Shared-memory slot for the presence counters (see counts()). */
+    private const COUNTS_KEY = 'fok:counts';
+
     /**
      * Records the heartbeat and returns whether the server wants this
      * client in debug mode. $debugActive is what the client REPORTS it is
@@ -180,7 +183,7 @@ final class Presence
     /** Forces the next counts() to recount (see the caching there). */
     public static function flushCounts(): void
     {
-        Db::get()->exec('DELETE FROM stats');
+        apcu_delete(self::COUNTS_KEY);
     }
 
     public static function isAutoAccepting(string $id): bool
@@ -330,25 +333,23 @@ final class Presence
     }
 
     /**
-     * Presence counters, cached for FOK_COUNTS_TTL seconds. Every hello
-     * returns these, so counting rows here would make a heartbeat cost
-     * more as the player base grows - the one thing that must not happen.
-     * Nobody needs an exact count (online is a 60 s window anyway). The
-     * recompute is unlocked: racing requests write the same numbers.
+     * Presence counters, cached in shared memory for FOK_COUNTS_TTL seconds.
+     * Every hello returns these, so counting rows here would make a heartbeat
+     * cost more as the player base grows - the one thing that must not
+     * happen. Nobody needs an exact count (online is a 60 s window anyway).
+     * The recompute is unlocked: racing requests write the same numbers.
+     *
+     * The cache lives in shared memory because a five-second cache has no
+     * business in a durable single-writer database: it used to be a row that
+     * every hello read and every registration deleted.
      */
     public static function counts(): array
     {
         $db = Db::get();
         $now = time();
-        $st = $db->query('SELECT online, playing, registered, updated FROM stats WHERE id = 1');
-        $row = $st->fetch();
-        $st->closeCursor();
-        if ($row !== false && (int)$row['updated'] > $now - FOK_COUNTS_TTL) {
-            return [
-                'online' => (int)$row['online'],
-                'playing' => (int)$row['playing'],
-                'registered' => (int)$row['registered'],
-            ];
+        $hit = apcu_fetch(self::COUNTS_KEY, $ok);
+        if ($ok && is_array($hit)) {
+            return $hit;
         }
         // Online and registered are the same table, so one pass yields both.
         $players = $db->prepare(
@@ -367,11 +368,9 @@ final class Presence
             'playing' => 2 * $duelsN,
             'registered' => (int)$prow['registered'],
         ];
-        $db->prepare(
-            'INSERT INTO stats (id, online, playing, registered, updated) VALUES (1, ?, ?, ?, ?)
-             ON CONFLICT (id) DO UPDATE SET online = excluded.online, playing = excluded.playing,
-                 registered = excluded.registered, updated = excluded.updated'
-        )->execute([$out['online'], $out['playing'], $out['registered'], $now]);
+        // The TTL is the cache's own, so there is no stored timestamp to
+        // compare against and no sweep to run.
+        apcu_store(self::COUNTS_KEY, $out, FOK_COUNTS_TTL);
         return $out;
     }
 }

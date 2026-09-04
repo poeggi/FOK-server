@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 30;
+    private const SCHEMA_VERSION = 31;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -457,6 +457,25 @@ final class Db
             // family is a CLAIM and not evidence - it has to be marked as
             // such, because a claim may not displace what we saw ourselves.
             $pdo->exec("ALTER TABLE player_nets ADD COLUMN src TEXT NOT NULL DEFAULT 'o'");
+        }
+        if ($v < 31) {
+            // The signal mailbox and the presence-counter cache moved to
+            // shared memory (see Signals, Presence::counts). Neither held
+            // anything worth keeping for longer than seconds - a mailbox
+            // entry dies after signal_ttl and the cache after five - so
+            // there is nothing to migrate, only the tables and their
+            // indexes to reclaim. Dropping the index first is not required
+            // (DROP TABLE takes its indexes with it); it is spelled out so
+            // the reclaim is obvious to whoever reads this ladder later.
+            $pdo->exec('DROP INDEX IF EXISTS idx_signals_created');
+            $pdo->exec('DROP INDEX IF EXISTS idx_signals_to');
+            $pdo->exec('DROP TABLE IF EXISTS signals');
+            $pdo->exec('DROP TABLE IF EXISTS stats');
+            // The pages those tables held are free now but still in the
+            // file; VACUUM is the only way to hand them back, and it is
+            // safe here because a migration step runs once, under the
+            // single writer, before the request does any work of its own.
+            $pdo->exec('VACUUM');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

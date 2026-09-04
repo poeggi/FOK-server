@@ -11,6 +11,7 @@ require_once __DIR__ . '/Vault.php';
 require_once __DIR__ . '/PStats.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Ledger.php';
+require_once __DIR__ . '/Signals.php';
 
 /**
  * Read-only aggregation for the admin dashboard's two heaviest views - the
@@ -21,9 +22,11 @@ require_once __DIR__ . '/Ledger.php';
 final class AdminData
 {
     // Every table the "DB entries" tile sums (see the Statistics card).
-    private const TABLES = ['players', 'scores', 'signals', 'duels', 'mm_queue',
+    // The signal mailbox and the presence-counter cache are not here: they
+    // live in shared memory now, not in any table (see Signals).
+    private const TABLES = ['players', 'scores', 'duels', 'mm_queue',
         'counters', 'alerts', 'settings', 'admin_fails', 'ipcount', 'friends',
-        'relay', 'starts', 'conn', 'stats', 'pstats', 'items', 'matches', 'ledger'];
+        'relay', 'starts', 'conn', 'pstats', 'items', 'matches', 'ledger'];
 
     /** The Statistics card: live counts, stored totals and the load gauges. */
     public static function stats(): array
@@ -150,10 +153,7 @@ final class AdminData
         }
         $fr->closeCursor();
         $scores = self::one($db, 'SELECT COUNT(*) c, MAX(score) best FROM scores WHERE player_id = ?', $id);
-        $mb = $db->prepare('SELECT COUNT(*) FROM signals WHERE to_id = ?');
-        $mb->execute([$id]);
-        $mailbox = (int)$mb->fetchColumn();
-        $mb->closeCursor();
+        $mailbox = Signals::pending($id);
         $backup = Vault::peek($id);
         $stats = PStats::get($id);
         return [

@@ -16,6 +16,7 @@ foreach (glob($tmp . '/*') ?: [] as $f) {
 }
 
 require_once __DIR__ . '/../public/src/Util.php';
+require_once __DIR__ . '/../public/src/Counters.php';
 require_once __DIR__ . '/../public/src/Presence.php';
 require_once __DIR__ . '/../public/src/Scores.php';
 require_once __DIR__ . '/../public/src/Signals.php';
@@ -482,9 +483,11 @@ ok(count(Signals::take('bbbbbbbb')) === FOK_MAILBOX_CAP, 'capped mailbox drains 
 
 // Signals: expired messages are dropped, but an invite that expires
 // UNDELIVERED must fail loudly back to the sender, never just evaporate.
-Db::get()->prepare('INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)')
-    ->execute(['aaaaaaaa', 'bbbbbbbb', 'invite', 'old', time() - FOK_SIGNAL_TTL - 1]);
+// sweepNow() only lifts the sweep's once-a-second rate gate; the receipt
+// itself is produced by the ordinary sweep inside take().
+Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'invite', 'old', FOK_SIGNAL_TTL + 1);
 ok(Signals::take('bbbbbbbb') === [], 'expired signal not delivered');
+Signals::sweepNow();
 $receipt = Signals::take('aaaaaaaa');
 ok(count($receipt) === 1, 'sender gets a receipt for the expired invite');
 ok($receipt[0]['type'] === 'undelivered', 'receipt is an undelivered signal');
@@ -493,27 +496,26 @@ ok(str_contains($receipt[0]['payload'], '"type":"invite"'), 'receipt names the l
 
 // Signals: the receipt must survive a FULL mailbox - a flood must not be
 // able to swallow the one message that says the connection failed.
-Db::get()->prepare('INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)')
-    ->execute(['aaaaaaaa', 'bbbbbbbb', 'invite', 'old', time() - FOK_SIGNAL_TTL - 1]);
+Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'invite', 'old', FOK_SIGNAL_TTL + 1);
 for ($i = 0; $i < FOK_MAILBOX_CAP; $i++) {
     Signals::send('cccccccc', 'aaaaaaaa', 'ice', "flood$i");
 }
 ok(!Signals::send('cccccccc', 'aaaaaaaa', 'ice', 'over'), 'mailbox really is full');
+Signals::sweepNow();
 $flooded = Signals::take('aaaaaaaa');
 ok(count(array_filter($flooded, static fn(array $s) => $s['type'] === 'undelivered')) === 1,
     'receipt is delivered even past a full mailbox');
 Signals::take('bbbbbbbb');
 
 // Signals: an expiring message nobody waits on generates no receipt
-Db::get()->prepare('INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)')
-    ->execute(['aaaaaaaa', 'bbbbbbbb', 'ice', 'old', time() - FOK_SIGNAL_TTL - 1]);
+Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'ice', 'old', FOK_SIGNAL_TTL + 1);
 ok(Signals::take('bbbbbbbb') === [], 'expired ice not delivered');
+Signals::sweepNow();
 ok(Signals::take('aaaaaaaa') === [], 'no receipt for an expired ice candidate');
 
 // Signals: an expired message must not wake a long poll (any() and take()
 // have to agree on the TTL, or poll.php answers 200 with an empty list)
-Db::get()->prepare('INSERT INTO signals (from_id, to_id, type, payload, created) VALUES (?, ?, ?, ?, ?)')
-    ->execute(['aaaaaaaa', 'bbbbbbbb', 'ice', 'old', time() - FOK_SIGNAL_TTL - 1]);
+Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'ice', 'old', FOK_SIGNAL_TTL + 1);
 ok(!Signals::any('bbbbbbbb'), 'expired signal does not count as pending');
 Signals::take('bbbbbbbb');
 
@@ -853,7 +855,7 @@ Db::get()->exec('DELETE FROM debug');
 
 // peer-net: a confirmed pairing hands each side the other's IP + family,
 // plus its own, as a server-generated 'peer-net' signal.
-Db::get()->exec('DELETE FROM signals');
+Signals::purgeAll();
 Presence::touch('a1a1a1a1', '1.2.3.4');
 Presence::touch('b2b2b2b2', '2a01:db8::9');
 Presence::announceNet('a1a1a1a1', 'b2b2b2b2');
@@ -867,7 +869,7 @@ $dB = json_decode($pnB[0]['payload'], true);
 ok($dB['peer'] === 'a1a1a1a1' && $dB['ip'] === '1.2.3.4' && $dB['family'] === 4, 'the mirror hint points the other way');
 Presence::announceNet('a1a1a1a1', 'zzzzzzzz');
 ok(Signals::take('a1a1a1a1') === [], 'a never-seen peer yields no hint');
-Db::get()->exec('DELETE FROM signals');
+Signals::purgeAll();
 
 // Auth: verify against hash file, lockout after repeated failures
 file_put_contents(FOK_ADMIN_HASH_FILE, password_hash('u:p', PASSWORD_DEFAULT));
@@ -956,10 +958,16 @@ $before = $countOf('unittest');
 Util::bump('unittest');
 ok($countOf('unittest') === $before, 'bump writes nothing before the answer is out');
 Util::runDeferred();
-ok($countOf('unittest') === $before + 1, 'bump lands once the answer is out');
+// The count is real but buffered: the database sees one write per closed
+// minute, not one per request (see Counters).
+ok($countOf('unittest') === $before, 'and still nothing - the count is held in shared memory');
+Counters::flushDue(gmdate('YmdHi', time() + 60));
+ok($countOf('unittest') === $before + 1, 'a closed minute is folded into the database');
+Counters::flushDue(gmdate('YmdHi', time() + 60));
+ok($countOf('unittest') === $before + 1, 'and folding it again does not double-count');
 
-// Both counters ride in ONE statement now (one write lock instead of two),
-// so prove the second row is still really written.
+// The endpoint metric and the shared request counter are folded in ONE
+// statement per closed minute, so prove the second row is still written.
 $reqMinOf = function (): int {
     $st = Db::get()->query("SELECT COALESCE(SUM(value), 0) FROM counters WHERE metric = 'req_min'");
     $n = (int)$st->fetchColumn();
@@ -969,12 +977,24 @@ $reqMinOf = function (): int {
 $rm = $reqMinOf();
 Util::bump('unittest');
 Util::runDeferred();
+Counters::flushDue(gmdate('YmdHi', time() + 60));
 ok($reqMinOf() === $rm + 1, 'the per-minute request counter rides along');
+// A minute's requests are counted in shared memory and written once, so the
+// writer sees one statement no matter how many requests arrived in it.
+$rm = $reqMinOf();
+for ($i = 0; $i < 20; $i++) {
+    Util::bump('unittest');
+}
+Util::runDeferred();
+ok($reqMinOf() === $rm, 'twenty requests in one minute write nothing yet');
+Counters::flushDue(gmdate('YmdHi', time() + 60));
+ok($reqMinOf() === $rm + 20, 'and land as a single folded write');
 
-// ... and that its value is still FOUND among the returned rows. Miss it
-// and reqPerMin reads 0, the sampling never hits a multiple of 25, and the
-// traffic alert dies silently - monitoring that fails quietly is worse
-// than none.
+// ... and that hit() still RETURNS that running total to its caller. Miss
+// it and reqPerMin reads 0, the sampling never hits a multiple of 25, and
+// the traffic alert dies silently - monitoring that fails quietly is worse
+// than none. The alert reads shared memory, so it fires on the live minute
+// rather than waiting for the fold.
 Settings::set('alert_req_per_min', 1);
 $traffic = inOneMinute(static function (): array {
     Db::get()->exec("DELETE FROM counters WHERE metric = 'req_min'");
