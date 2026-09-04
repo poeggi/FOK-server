@@ -392,43 +392,6 @@ final class Db
             $pdo->exec("ALTER TABLE starts ADD COLUMN mid TEXT NOT NULL DEFAULT ''");
         }
         if ($v < 25) {
-            // Tournament mode (see Tournament, Bracket, api/tournament.php).
-            // ONE row per tournament, and everything that changes during it -
-            // seats, schedule, results, standings, bracket, cursor - lives in
-            // the `data` JSON blob rather than in rows of its own. It is read
-            // and written whole, only ever by the tournament's own
-            // transitions (a few per minute), and it is never queried BY its
-            // contents; splitting it into tables would buy indexes nothing
-            // reads and cost a multi-statement write where one suffices.
-            $pdo->exec("CREATE TABLE IF NOT EXISTS tournaments (
-                tid TEXT PRIMARY KEY,
-                host TEXT NOT NULL,
-                code TEXT NOT NULL,
-                state TEXT NOT NULL DEFAULT 'open',
-                round INTEGER NOT NULL DEFAULT 0,
-                seed TEXT NOT NULL,
-                stakes INTEGER NOT NULL DEFAULT 0,
-                data TEXT NOT NULL DEFAULT '{}',
-                created INTEGER NOT NULL,
-                updated INTEGER NOT NULL
-            )");
-            // The lazy lobby reaping sweeps by (state, updated), and the
-            // one-per-host and cooldown guards look up by (host, created).
-            // Both run on the hot lobby path, so neither may be a scan.
-            $pdo->exec('CREATE INDEX IF NOT EXISTS tournaments_state ON tournaments (state, updated)');
-            $pdo->exec('CREATE INDEX IF NOT EXISTS tournaments_host ON tournaments (host, created)');
-            // Participation is a real row rather than another JSON list: it
-            // is the one part a request writes WITHOUT a full transition (a
-            // join or a leave in the lobby touches nothing else), and the one
-            // part that has to be countable without reading the blob.
-            $pdo->exec('CREATE TABLE IF NOT EXISTS tournament_players (
-                tid TEXT NOT NULL,
-                id TEXT NOT NULL,
-                seat INTEGER NOT NULL DEFAULT -1,
-                forfeited INTEGER NOT NULL DEFAULT 0,
-                joined INTEGER NOT NULL,
-                PRIMARY KEY (tid, id)
-            )');
             // hello announces open lobbies hosted on the CALLER's address, so
             // that lookup is by (ip, last_seen) - a scan of every player row
             // on every hello otherwise.
@@ -494,19 +457,6 @@ final class Db
             // family is a CLAIM and not evidence - it has to be marked as
             // such, because a claim may not displace what we saw ourselves.
             $pdo->exec("ALTER TABLE player_nets ADD COLUMN src TEXT NOT NULL DEFAULT 'o'");
-        }
-        if ($v < 30) {
-            // Tournament state moved to APCu shared memory (see TourneyStore).
-            // Nothing outside Tournament ever read these tables, no score,
-            // item or ledger row is derived from them, and a finished
-            // tournament was never looked at again - so there is nothing to
-            // migrate, only a durable structure to stop paying for. The few
-            // totals worth keeping are counted from here on (see Stats).
-            $pdo->exec('DROP TABLE IF EXISTS tournament_players');
-            $pdo->exec('DROP TABLE IF EXISTS tournaments');
-            // The reap that ran off this marker is gone with them: an open
-            // lobby now expires on its own TTL.
-            $pdo->exec("DELETE FROM counters WHERE bucket = 'meta' AND metric = 'tourney_sweep'");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that
