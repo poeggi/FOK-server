@@ -197,8 +197,15 @@ case "$TR" in
     # answered with the standing verdict, never with a reopened node.
     expect "a reported loss settles at once" '"state":"settled"' "$(result "$A" "$T1" r1.1 loss 9 12)"
     expect "a contradicting late report cannot reopen it" '"state":"settled"' "$(result "$B" "$T1" r1.1 loss 12 9)"
+    # A finished round does not roll into the next one: the server stops on a
+    # scoreboard and waits for the host to press on (the whole break is walked
+    # in test/smoke/07_tournament.sh).
     R=$(act "$A" state "$T1")
-    expect "the settled node advanced the cursor to the final" '"cursor":"final"' "$R"
+    expect "the round ends on a board, not on the next match" '"stage":"final"' "$R"
+    sleep 1.1
+    expect "the host presses on once the board has been up" '"ok":true' "$(act "$A" continue "$T1")"
+    R=$(act "$A" state "$T1")
+    expect "which deals the final" '"cursor":"final"' "$R"
     expect "the final settles the same way" '"state":"settled"' "$(result "$A" "$T1" final loss 4 6)"
     R=$(act "$B" state "$T1")
     expect "the final settles the tournament" '"state":"done"' "$R"

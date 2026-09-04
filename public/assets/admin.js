@@ -98,21 +98,6 @@ function downloadPin(pin) {
 // different enough to be worth a palette of its own.
 const TSTATE = { open: 'matchmaking', running: 'playing', done: 'ended', abandoned: 'declined' };
 
-/**
- * Lifetime totals (Stats). Tournament state itself is disposable and lives in
- * shared memory, so these counters are the only record that any of it
- * happened - which is exactly why they are shown under the live tables.
- */
-function totals(t) {
-    const n = (k) => (t[k] || 0).toLocaleString();
-    const p = el('p', 'muted');
-    p.append('Since this server was first deployed: ' + n('duel_started') + ' duels started, '
-        + n('tourney_created') + ' tournaments created, ' + n('tourney_finished')
-        + ' played out (' + n('tourney_matches') + ' tournament matches, '
-        + n('tourney_seats') + ' seats filled).');
-    return p;
-}
-
 const STATE_LABEL = {
     idle: 'idle',
     matchmaking: 'matchmaking',
@@ -772,11 +757,7 @@ const MODULES = [
                 }
                 box.append(table);
                 sortable(table, 'tourneys');
-                box.append(el('p', 'muted', 'Lobbies and running brackets. Matches: closed of '
-                    + 'scheduled. A tournament carries no game traffic - every match in it is an '
-                    + 'ordinary P2P duel and appears above as one.'));
             }
-            box.append(totals(d.totals || {}));
         },
     },
     {
