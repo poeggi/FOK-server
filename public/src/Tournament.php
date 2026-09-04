@@ -46,6 +46,9 @@ final class Tournament
     // A node that reached one of these counts towards the advancer cut.
     private const DONE = ['settled', 'confirmed', 'void'];
 
+    // How often the lobby reap is allowed to actually run (see reapLobbies).
+    private const SWEEP_INTERVAL = 60;
+
     // ---- Store ------------------------------------------------------------
 
     /** @return ?array the whole tournament, players and decoded data included */
@@ -278,10 +281,42 @@ final class Tournament
 
     // ---- create / join / leave --------------------------------------------
 
-    /** @return array{ok:bool,...} the endpoint's response, error and http status included */
+    /**
+     * @return array{ok:bool,...} the endpoint's response, error and http status included
+     *
+     * ALL of it runs inside BEGIN IMMEDIATE. The one-per-host guard, the
+     * cooldown and the join code are each a read followed by a write, and
+     * outside the writer lock two simultaneous creates can pass all three
+     * reads before either writes - handing out the same join code twice,
+     * which is the one thing a lobby's whole identity rests on.
+     */
     public static function create(string $host, bool $stakes): array
     {
         $db = Db::get();
+        // Minted before the transaction on purpose: both are random and
+        // derived from nothing the transaction reads, so a retried attempt
+        // reusing them is exactly right. The seed in particular is fixed
+        // BEFORE anyone knows who will join, which is what makes the seating
+        // shuffle and the final coin-toss tie-break fair rather than merely
+        // deterministic.
+        $tid = bin2hex(random_bytes(16));
+        $seed = bin2hex(random_bytes(16));
+        return Db::retry(static function () use ($db, $tid, $host, $seed, $stakes): array {
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                $out = self::mint($db, $tid, $host, $seed, $stakes);
+                $db->exec($out['ok'] === true ? 'COMMIT' : 'ROLLBACK');
+                return $out;
+            } catch (Throwable $e) {
+                $db->exec('ROLLBACK');
+                throw $e;
+            }
+        });
+    }
+
+    /** The body of create(), and only ever called with the writer lock held. */
+    private static function mint(PDO $db, string $tid, string $host, string $seed, bool $stakes): array
+    {
         $st = $db->prepare("SELECT tid FROM tournaments WHERE host = ? AND state IN ('open','running') LIMIT 1");
         $st->execute([$host]);
         $busy = $st->fetchColumn();
@@ -299,25 +334,17 @@ final class Tournament
         if ($wait > 0) {
             return ['ok' => false, 'error' => 'create cooldown', 'http' => 429, 'retry_after' => $wait];
         }
-
-        $tid = bin2hex(random_bytes(16));
-        // The seed is minted HERE, before anyone knows who will join, which
-        // is what makes the seating shuffle and the final coin-toss
-        // tie-break fair rather than merely deterministic.
-        $seed = bin2hex(random_bytes(16));
         $code = self::newCode($db);
         if ($code === null) {
             return ['ok' => false, 'error' => 'no join code available', 'http' => 503];
         }
         $now = time();
-        Db::retry(static function () use ($db, $tid, $host, $code, $seed, $stakes, $now): void {
-            $db->prepare('INSERT INTO tournaments (tid, host, code, state, round, seed, stakes, data, created, updated)
-                          VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)')
-                ->execute([$tid, $host, $code, 'open', $seed, $stakes ? 1 : 0,
-                    (string)json_encode(self::emptyData()), $now, $now]);
-            $db->prepare('INSERT INTO tournament_players (tid, id, seat, forfeited, joined)
-                          VALUES (?, ?, -1, 0, ?)')->execute([$tid, $host, $now]);
-        });
+        $db->prepare('INSERT INTO tournaments (tid, host, code, state, round, seed, stakes, data, created, updated)
+                      VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)')
+            ->execute([$tid, $host, $code, 'open', $seed, $stakes ? 1 : 0,
+                (string)json_encode(self::emptyData()), $now, $now]);
+        $db->prepare('INSERT INTO tournament_players (tid, id, seat, forfeited, joined)
+                      VALUES (?, ?, -1, 0, ?)')->execute([$tid, $host, $now]);
         return [
             'ok' => true,
             'tid' => $tid,
@@ -497,8 +524,17 @@ final class Tournament
                 return ['ok' => false, 'error' => 'not your match', 'http' => 403];
             }
             $r = $t['data']['results'][$nid] ?? null;
-            $closed = $r !== null && in_array($r['state'], ['settled', 'confirmed', 'frozen', 'void'], true);
-            if ($nid !== $t['data']['cursor'] && !$closed) {
+            if ($r !== null && in_array($r['state'], ['settled', 'confirmed', 'frozen', 'void'], true)) {
+                // A decided node is decided. The client that lost its
+                // response gets the recorded state back and nothing moves -
+                // the report is not applied at all. Letting one in is how a
+                // walkover gets re-settled by the player it was taken from,
+                // how a node nobody disputed freezes on a late contradiction,
+                // and how a knockout node that already sent its winner
+                // forward gets replayed underneath the bracket.
+                return ['ok' => true, 'nid' => $nid, 'state' => $r['state']];
+            }
+            if ($nid !== $t['data']['cursor']) {
                 return ['ok' => false, 'error' => 'not current', 'http' => 409];
             }
 
@@ -587,9 +623,17 @@ final class Tournament
         ]);
 
         $node = self::node($t, $nid);
-        if ($draw && $node !== null && $node['round'] > 1) {
+        if ($draw && $state !== 'void' && $node !== null && $node['round'] > 1) {
             // A knockout has to produce a winner, so a drawn one is simply
             // played again: same node, fresh mid, fresh roles.
+            //
+            // A VOID one is the exception, and must never be re-dealt: it is
+            // void precisely because neither side is there to play it, so a
+            // replay only deals the same unplayable node again and the round
+            // never moves. It advances an EMPTY slot instead, which the next
+            // node reads as a bye for whoever is still standing - and if that
+            // one is empty on both sides too, it voids in turn until the
+            // bracket runs out, which is the documented empty podium.
             $t['data']['results'][$nid] = self::blankResult(Util::nowMs());
             self::deal($t, $nid);
             return;
@@ -1106,30 +1150,60 @@ final class Tournament
      */
     public static function view(string $id, string $tid): ?array
     {
+        // A reload is by far the most common tournament request, and the
+        // overwhelming majority of them change nothing at all: no deadline is
+        // due, so there is nothing to write. Those must not take the writer
+        // lock, and BEGIN IMMEDIATE takes it whether or not the row is
+        // written in the end.
+        //
+        // So the deadlines are run on a snapshot loaded OUTSIDE any
+        // transaction, and only when that dry run actually moves something is
+        // the whole thing redone under the lock, where it counts. What makes
+        // this safe is that touch() writes no rows of its own - everything it
+        // does lands in $t - so a dry run that decides nothing is due has
+        // changed nothing anywhere.
+        $t = self::load($tid);
+        if ($t === null) {
+            return null;
+        }
+        if (!self::isMember($t, $id)) {
+            return ['ok' => false, 'error' => 'not a participant', 'http' => 403];
+        }
+        $before = [$t['state'], $t['round'], json_encode($t['data'])];
+        self::touch($t);
+        if ($t['events'] === [] && $before === [$t['state'], $t['round'], json_encode($t['data'])]) {
+            return self::project($t, $id);
+        }
         return self::mutate($tid, static function (array &$t) use ($id): array {
             self::touch($t);
             if (!self::isMember($t, $id)) {
                 return ['ok' => false, 'error' => 'not a participant', 'http' => 403];
             }
-            $out = ['ok' => true] + self::lobby($t);
-            $out['round'] = $t['round'];
-            $out['cursor'] = $t['data']['cursor'];
-            $out['schedule'] = self::projectNodes($t, 'schedule');
-            $out['bracket'] = self::projectNodes($t, 'bracket');
-            $out['standings'] = $t['data']['standings'] === [] ? [] : self::ranked($t);
-            $out['roles'] = null;
-            $cur = $t['data']['cursor'] ?? null;
-            if ($t['state'] === 'running' && $cur !== null && !self::isClosed($t, $cur)) {
-                $roles = self::rolesOf($t, $cur);
-                if ($roles !== null) {
-                    $spectators = $roles['spectators'];
-                    unset($roles['spectators']);
-                    $out['roles'] = $roles + ['you' => in_array($id, $roles['players'], true) ? 'play'
-                        : (in_array($id, $spectators, true) ? 'spectate' : 'idle')];
-                }
-            }
-            return $out;
+            return self::project($t, $id);
         });
+    }
+
+    /** The whole-tournament projection, as $id sees it. */
+    private static function project(array $t, string $id): array
+    {
+        $out = ['ok' => true] + self::lobby($t);
+        $out['round'] = $t['round'];
+        $out['cursor'] = $t['data']['cursor'];
+        $out['schedule'] = self::projectNodes($t, 'schedule');
+        $out['bracket'] = self::projectNodes($t, 'bracket');
+        $out['standings'] = $t['data']['standings'] === [] ? [] : self::ranked($t);
+        $out['roles'] = null;
+        $cur = $t['data']['cursor'] ?? null;
+        if ($t['state'] === 'running' && $cur !== null && !self::isClosed($t, $cur)) {
+            $roles = self::rolesOf($t, $cur);
+            if ($roles !== null) {
+                $spectators = $roles['spectators'];
+                unset($roles['spectators']);
+                $out['roles'] = $roles + ['you' => in_array($id, $roles['players'], true) ? 'play'
+                    : (in_array($id, $spectators, true) ? 'spectate' : 'idle')];
+            }
+        }
+        return $out;
     }
 
     private static function projectNodes(array $t, string $list): array
@@ -1185,12 +1259,37 @@ final class Tournament
         return $out;
     }
 
-    /** A lobby nobody ever started is abandoned rather than left to linger. */
+    /**
+     * A lobby nobody ever started is abandoned rather than left to linger.
+     *
+     * Marker-gated to once a minute, the same shape as the player sweep:
+     * hello calls this whenever a client asks for lobbies, and an
+     * unconditional UPDATE there puts a write on the single writer for every
+     * one of those requests - a sweep that finds nothing, over and over,
+     * competing with the game traffic. The TTL is 15 minutes, so a minute of
+     * slack costs a lobby nothing.
+     */
     public static function reapLobbies(): void
     {
-        $cut = time() - Settings::int('tournament_join_ttl');
-        Db::retry(static fn() => Db::get()
-            ->prepare("UPDATE tournaments SET state = 'abandoned' WHERE state = 'open' AND updated < ?")
-            ->execute([$cut]));
+        $db = Db::get();
+        $st = $db->prepare("SELECT value FROM counters WHERE bucket = 'meta' AND metric = 'tourney_sweep'");
+        $st->execute();
+        $last = (int)$st->fetchColumn();
+        $st->closeCursor();
+        $now = time();
+        if ($last > $now - self::SWEEP_INTERVAL) {
+            return;
+        }
+        $cut = $now - Settings::int('tournament_join_ttl');
+        Db::retry(static function () use ($db, $now, $cut): void {
+            // The marker is written first and unconditionally: if the sweep
+            // itself finds nothing there is still no reason for the next
+            // hello to come straight back and look again.
+            $db->prepare("INSERT INTO counters (bucket, metric, value) VALUES ('meta', 'tourney_sweep', ?)
+                          ON CONFLICT (bucket, metric) DO UPDATE SET value = excluded.value")
+                ->execute([$now]);
+            $db->prepare("UPDATE tournaments SET state = 'abandoned' WHERE state = 'open' AND updated < ?")
+                ->execute([$cut]);
+        });
     }
 }

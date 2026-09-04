@@ -138,6 +138,11 @@ R=$(result "$ID1" "$T1" final loss 4 6)
 expect "a reported loss settles at once" '"state":"settled"' "$R"
 R=$(result "$ID1" "$T1" final loss 4 6)
 expect "and re-sending it is idempotent" '"state":"settled"' "$R"
+# The other side now claims the opposite, far too late. Applied, it would
+# freeze a node nobody was disputing - and the loser's own admission is the
+# one report that cannot be a lie in the reporter's favour.
+R=$(result "$ID2" "$T1" final loss 6 4)
+expect "a contradicting late report cannot reopen a settled node" '"state":"settled"' "$R"
 
 R=$(act "$ID2" state "$T1")
 expect "the final settles the tournament" '"state":"done"' "$R"

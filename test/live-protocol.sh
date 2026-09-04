@@ -73,7 +73,10 @@ echo "   ids A=$A B=$B C=$C D=$D"
 # --- Health: is the deployment answering, and is it the contract we expect?
 V=$(curl -s "$BASE/api/version.php")
 expect "version endpoint answers" '"ok":true' "$V"
-expect "api contract is 3.5" '"api":"3.5"' "$V"
+# Clients gate on the MAJOR only (see docs/API.md "Versioning"), so that is
+# what a protocol harness pins: a MINOR bump is additive by definition and
+# must not fail a run, where a MAJOR one means this script's wire is gone.
+expect "api contract is major 4" '"api":"4.' "$V"
 
 # Skew the client clock to the server so a start pts lands just in the past,
 # never the future the sync gate rejects.

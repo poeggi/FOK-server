@@ -1301,6 +1301,57 @@ Tournament::leave('73000001', $tid4);
 ok(Tournament::load($tid4)['state'] === 'abandoned', 'the host leaving an unstarted lobby ends it');
 ok(Tournament::join('73000002', $tid4)['http'] === 404, 'which cannot then be joined');
 
+// ---- A node nobody can play must not be re-dealt ---------------------
+// Both finalists vanish mid-match: the walkover deadline finds neither of
+// them present and voids the node. A drawn knockout node is normally
+// REPLAYED - a knockout has to produce a winner - but a void one has nobody
+// to replay it, and re-dealing it deals the same unplayable match again
+// while the tournament waits for a result that can never come.
+$v = ['74000001', '74000002'];
+foreach ($v as $p) {
+    Presence::touch($p, '127.0.0.1');
+}
+$tid5 = Tournament::create($v[0], false)['tid'];
+Tournament::join($v[1], $tid5);
+Tournament::start($v[0], $tid5);
+$v5 = Tournament::view($v[0], $tid5);
+$p5 = $v5['roles']['players'];
+Tournament::report($p5[1], $tid5, 'r1.1', 'loss', [0, 9], null);
+$v5 = Tournament::view($v[0], $tid5);
+ok($v5['cursor'] === 'final', 'both of two players reach the final');
+// Both of them go dark, and the match has been in flight long enough.
+Settings::set('tournament_walkover_ms', 1);
+Db::get()->prepare('UPDATE players SET last_seen = 1 WHERE id = ? OR id = ?')->execute($v);
+$v5 = Tournament::view($v[0], $tid5);
+ok($v5['bracket'][0]['state'] === 'void' && $v5['bracket'][0]['winner'] === null,
+    'a final neither side could play is voided, never replayed');
+ok($v5['state'] === 'done' && $v5['cursor'] === null,
+    'and the tournament ends rather than waiting on it forever');
+Settings::set('tournament_walkover_ms', 180000);
+foreach ($v as $p) {
+    Presence::touch($p, '127.0.0.1');
+}
+
+// ---- A decided node cannot be reopened by a late report --------------
+$w = ['75000001', '75000002'];
+foreach ($w as $p) {
+    Presence::touch($p, '127.0.0.1');
+}
+$tid6 = Tournament::create($w[0], false)['tid'];
+Tournament::join($w[1], $tid6);
+Tournament::start($w[0], $tid6);
+$v6 = Tournament::view($w[0], $tid6);
+$p6 = $v6['roles']['players'];
+ok(Tournament::report($p6[1], $tid6, 'r1.1', 'loss', [1, 9], null)['state'] === 'settled',
+    'the loser settles the match on its own');
+// The same player now claims the opposite. Applied, it would freeze a node
+// nobody was disputing; the winner never even reported it.
+$late = Tournament::report($p6[1], $tid6, 'r1.1', 'win', [9, 1], null);
+ok($late['state'] === 'settled', 'a late report is answered with the state that already stands');
+$v6 = Tournament::view($w[0], $tid6);
+ok($v6['schedule'][0]['state'] === 'settled' && $v6['schedule'][0]['winner'] === $p6[0],
+    'and cannot re-decide, freeze or replay what is already closed');
+
 
 // Cleanup
 Db::close();

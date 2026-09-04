@@ -1481,6 +1481,12 @@ Nodes are named `ko1.1`, `ko1.2`, ... `ko2.1`, ... and the last one is
 normal 3-heart duel. A drawn knockout node is simply REPLAYED: same node
 id, fresh match, fresh roles.
 
+A VOIDED one is not - there is nobody left to replay it. It advances an
+empty slot instead, which the next node reads as a bye for whoever is
+still standing; if that node is empty on both sides too it voids in turn,
+and a bracket that voids all the way to the top ends with an empty
+podium.
+
 ### Roles - who plays and who watches
 
 When a match comes up, every participant gets a `roles` event. It names
@@ -1491,6 +1497,8 @@ the two players, the feeder, and the spectator tree.
                 feeds the primaries
     primaries   at most 2 spectators, fed by the feeder
     secondaries the rest, fed by a primary
+    names       {id: display name or null} for every participant, so the
+                bracket can be drawn without a second lookup
     you         "play" | "spectate" | "idle"
 
 Spectators are the participants who are online and have not forfeited, in
@@ -1531,7 +1539,7 @@ order. `mid` is optional and recorded for audit only.
     draw           held, then settles after   confirmed
                    tournament_result_ms
 
-Response `state` is `settled`, `confirmed`, `held` or `frozen`.
+Response `state` is `settled`, `confirmed`, `held`, `frozen` or `void`.
 
 Nobody lies to lose, so a reported LOSS is taken at once. A lone win or
 draw waits ~15 s for the other side and then stands - the opponent's
@@ -1547,8 +1555,13 @@ a frozen knockout node ends that tournament in place.
 
 Only the two players of a node may report it (403 otherwise) - a spectator
 report is the one input that could rewrite a result nobody disputes.
-Reporting a node that is not the current one is a 409, except for a node
-that is already closed (which is a harmless late duplicate).
+Reporting a node that is not the current one is a 409.
+
+A node that is already CLOSED (settled, confirmed, frozen or void) is a
+different case: the report is accepted, answered with the state that
+already stands, and not applied. Retrying a report whose response went
+missing is therefore safe, and a late contradiction can neither re-decide
+a settled node nor freeze one nobody was disputing.
 
 ### When nobody answers
 
@@ -1573,6 +1586,8 @@ the whole picture.
 
     {
       "ok": true,
+      "event": "lobby",           the lobby fields are carried verbatim,
+                                  this one included - ignore it here
       "tid": "<32-hex>", "state": "running", "code": "K7QMX2",
       "host": "c0ffee42", "stakes": false, "max": 10,
       "players": [{"id": "c0ffee42", "name": "KAI"}, ...],
@@ -1593,7 +1608,8 @@ A node is:
      "state": "pending"|"held"|"settled"|"confirmed"|"frozen"|"void",
      "winner": "c0ffee42" | null,
      "draw": false,
-     "score": [12, 9] | null}                null for a walkover or a bye
+     "score": [12, 9] | null}                null for a walkover, a bye
+                                             or a void
 
 ### Events
 
@@ -1632,7 +1648,8 @@ extent of playing a match it cannot see in `state` - when in doubt, call
 
 ### Errors
 
-    400  invalid id / action / tid / code / nid / outcome / score / mid
+    400  invalid id / action / tid / outcome / score / mid, and
+         invalid tid/code when a join names neither
     403  host only (start); not a participant; not your match (result)
     404  no such tournament; no such node
     409  already hosting; already started; full; need 2; not running;
