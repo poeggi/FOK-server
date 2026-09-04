@@ -151,10 +151,7 @@ if (!RelayStore::admitted($id, $peer)) {
     // only a pair that holds no slot THERE either is genuinely new and pays
     // the COUNT and the cap.
     if (Relay::capReached($id, $peer)) {
-        $msg = 'Relay duel cap reached: new relayed duel rejected';
-        if (Alerts::raise('relay', $msg)) {
-            error_log('FOK relay: ' . $msg);
-        }
+        Alerts::raise('relay', 'Relay duel cap reached: new relayed duel rejected');
         Util::fail('relay busy', 503);
     }
 }

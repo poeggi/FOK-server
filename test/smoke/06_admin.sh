@@ -247,7 +247,6 @@ else
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=alerts")
     expect "alerts list" '"ok":true' "$R"
-    expect "failed login raised alert" '"type":"admin-fail"' "$R"
     expect "bogus client event logged" '"type":"bogus"' "$R"
     expect "friend spam logged" '"type":"friend-spam"' "$R"
     # Suspected item fraud is logged for review, never answered with silence.
@@ -255,6 +254,14 @@ else
     expect "a forged attestation logged" '"type":"item_tag_invalid"' "$R"
     expect "a claim on an unminted item logged" '"type":"item_counterfeit"' "$R"
     expect "contradictory claims logged" '"type":"item_contradiction"' "$R"
+
+    # The server log carries what the alerts deliberately do not: one audited
+    # line per admin write, and the events that are noted rather than raised.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=log")
+    expect "server log readable" '"ok":true' "$R"
+    expect "admin write audited" 'FOK admin: created a database backup' "$R"
+    expect "failed login noted, not alerted" 'FOK admin: failed login attempt' "$R"
+    expect "every alert is a log line too" 'FOK alert ' "$R"
 
     R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_seen")
     expect "alerts mark seen" '"ok":true' "$R"

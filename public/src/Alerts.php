@@ -6,10 +6,24 @@ require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Settings.php';
 
 /**
- * Alert store for operational events (traffic spikes, overload, client
- * spam, admin login trouble). Alerts are shown in the admin dashboard.
- * Raising is de-duplicated per type within the alert_cooldown window so
- * a sustained condition produces one alert, not thousands.
+ * Alert store for operational events, and the one place that decides what an
+ * operator is shown. Two calls, and the difference between them is the whole
+ * doctrine:
+ *
+ *   raise() - something is WRONG and someone has to look: an overload, a
+ *             broken hash chain, an abuse guard that escalated, live state
+ *             replaced wholesale. Stores a dashboard row AND writes one
+ *             "FOK alert <type>:" log line, both de-duplicated per type
+ *             within alert_cooldown, so a sustained condition alerts once
+ *             instead of thousands of times.
+ *   note()  - something worth being able to read back, but needing no
+ *             reaction: a rate limit that tripped once, an admin write, a
+ *             login. A log line only - never a row, never de-duplicated.
+ *
+ * The rule between them is escalation: a condition that is ordinary once and
+ * suspicious when it repeats is noted every time and raised only when the
+ * repeat guard fires (see Friends::rateHit, Auth::login). That is what keeps
+ * an unseen alert count meaning something.
  */
 final class Alerts
 {
@@ -18,10 +32,10 @@ final class Alerts
     // to configured backends; until then alerts are local-only (admin UI).
 
     /**
-     * Record an operational alert. Returns true when a FRESH alert was stored,
-     * false when it was suppressed as a duplicate within alert_cooldown - so a
-     * caller that also wants a server-log line can gate it on the return and
-     * inherit the same de-duplication (see RelayStore::usingApcu).
+     * Record an operational alert: a dashboard row plus a server-log line.
+     * Returns true when a FRESH alert was stored, false when it was suppressed
+     * as a duplicate within alert_cooldown. Callers rarely need the return -
+     * the log line is written here, not by them.
      */
     public static function raise(string $type, string $message): bool
     {
@@ -35,7 +49,21 @@ final class Alerts
         }
         $db->prepare('INSERT INTO alerts (type, message, created, seen) VALUES (?, ?, ?, 0)')
             ->execute([$type, $message, time()]);
+        // Every alert is also a log line: the dashboard shows the last 50 and
+        // can be cleared, the log keeps the history and the exact time. The
+        // "alert" word is what Logs::level reads to colour it as a warning.
+        error_log('FOK alert ' . $type . ': ' . $message);
         return true;
+    }
+
+    /**
+     * Record an operational note: one log line, no dashboard row, no
+     * de-duplication. For events that must be readable back but must not
+     * compete for attention with the alerts that need acting on.
+     */
+    public static function note(string $type, string $message): void
+    {
+        error_log('FOK ' . $type . ': ' . $message);
     }
 
     public static function recent(int $limit = 50): array

@@ -92,10 +92,17 @@ else
     done
     expect "a repeat burst within the window escalates to the long cooldown" '"retry_after":7200' "$R"
     if [ "$REMOTE" -eq 0 ]; then
-        if grep -q 'escalated friend-request cooldown' "$DATA/php-error.log" 2>/dev/null; then
-            echo "ok   escalation logged a distinct server warning"
+        # The first trip is a note, the escalation is an alert - and an alert
+        # always writes its own "FOK alert <type>:" line (see Alerts).
+        if grep -q 'FOK alert friend-cooldown-hard' "$DATA/php-error.log" 2>/dev/null; then
+            echo "ok   escalation raised an alert and logged it"
         else
             echo "FAIL escalation not written to the server log"; fail=1
+        fi
+        if grep -q 'FOK friend: c2c2c2c2 hit the friend-request cooldown' "$DATA/php-error.log" 2>/dev/null; then
+            echo "ok   the first trip is noted, not alerted"
+        else
+            echo "FAIL first cooldown trip not noted in the server log"; fail=1
         fi
     fi
     setting friend_rate_cooldown 60

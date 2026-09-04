@@ -500,6 +500,10 @@ final class Db
         // must not touch the single SQLite writer while they idle.
         if ($v < self::SCHEMA_VERSION) {
             $pdo->exec('PRAGMA user_version = ' . self::SCHEMA_VERSION);
+            // The one trace a deploy leaves in the log: which request found an
+            // old database and migrated it. Plain error_log, not Alerts - that
+            // would require Db back into Db while it is still opening.
+            error_log("FOK schema: migrated $v -> " . self::SCHEMA_VERSION);
         }
     }
 

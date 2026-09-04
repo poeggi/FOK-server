@@ -54,6 +54,9 @@ final class Auth
             session_regenerate_id(true);
             $_SESSION['fok_admin'] = true;
             $db->prepare('DELETE FROM admin_fails WHERE ip = ?')->execute([$ip]);
+            // Who got in, and when - the opening line of the admin audit
+            // trail that admin/api.php continues for every write.
+            Alerts::note('admin', "login from $ip");
             return true;
         }
 
@@ -65,10 +68,12 @@ final class Auth
             'INSERT INTO admin_fails (ip, fails, locked_until) VALUES (?, ?, ?)
              ON CONFLICT (ip) DO UPDATE SET fails = excluded.fails, locked_until = excluded.locked_until'
         )->execute([$ip, $fails, $lock]);
+        // A single miss is a typo far more often than an attack, so it is
+        // only noted; the lockout is the escalation worth alerting on.
         if ($lock > 0) {
             Alerts::raise('admin-lock', "Admin login: IP $ip blocked for {$lockSeconds}s after $fails failed attempts");
         } else {
-            Alerts::raise('admin-fail', "Admin login: failed attempt from $ip ($fails recent)");
+            Alerts::note('admin', "failed login attempt from $ip ($fails recent)");
         }
         return false;
     }

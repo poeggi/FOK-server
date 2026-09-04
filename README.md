@@ -91,7 +91,8 @@ additive.
   it for every online client.
 - Admin interface at /admin/: a one-screen dashboard - statistics,
   connection state of every online client, server properties (PTS anchor,
-  versions), alert feed, per-hour load, registered users, top-100
+  versions), alerts & diagnostics (alert feed, server log, host
+  capabilities, per-hour load), registered users, top-100
   management, item registry (frozen instances, players by disputed-claim
   count, recent ledger entries and an on-demand chain verify) - plus a
   settings view behind the gear with the runtime
@@ -102,9 +103,13 @@ additive.
 - Monitoring and alerting: inline checks (no daemons on shared hosting)
   raise de-duplicated alerts for excessive traffic, system overload, too
   many connections, client spam (flooding, oversized or repeatedly invalid
-  messages) and admin login failures/lockouts. Alerts are local-only in
-  the admin UI for now; delivery backends (Telegram/SMS/Email) are a
-  marked TODO in src/Alerts.php.
+  messages), abuse guards that escalated and admin lockouts. An alert is
+  reserved for something that needs a look; everything else worth reading
+  back - a first rate-limit trip, an admin login, every state-changing
+  admin action - is a plain log line instead, so an unseen alert always
+  means something (the rule is documented in src/Alerts.php). Every alert
+  is a log line too. Alerts are local-only in the admin UI for now;
+  delivery backends (Telegram/SMS/Email) are a marked TODO there.
 - Runtime configuration: thresholds and abuse caps (admin lockout, mailbox
   cap, score throttle, chat length, alert limits) are editable in the
   admin config card and take effect immediately; code constants are only
@@ -277,7 +282,11 @@ host-level. If this outgrows shared hosting, fix workers first.
   fok-server-data/admin.hash on the server. Neither the credentials nor the
   hash are in this repo. Excessive failed logins block the source IP
   (default: 5 fails -> 300 s, configurable in the admin config card) and
-  raise an alert.
+  raise an alert; a single failed attempt is logged, not alerted.
+- Admin audit trail: every state-changing admin action writes one log line
+  naming what was done, to what, and from which IP - and only once it has
+  actually succeeded. The two that replace live state wholesale (settings
+  import, database restore) raise an alert on top.
 - Deploy credentials live in ~/.fok-server-deploy.json locally, outside the
   repo.
 - Player IDs are public identities (as designed in FOK-snake); a secret

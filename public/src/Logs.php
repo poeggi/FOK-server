@@ -70,12 +70,15 @@ final class Logs
     // Severity taken from the entry's first line, for the Logs filter.
     // FOK fault = an uncaught exception or fatal (see Util); FOK deferred =
     // a post-response bookkeeping task that threw - both are errors.
+    // FOK alert = a condition Alerts::raise judged worth waking someone for,
+    // so it reads as a warning here too; a plain "FOK <type>:" note stays
+    // info, which is exactly what the note/raise split is for.
     private static function level(string $line): string
     {
         if (preg_match('/Fatal error|Parse error|Uncaught|FOK fault|FOK deferred/i', $line) === 1) {
             return 'error';
         }
-        if (preg_match('/Warning|Deprecated|Notice/i', $line) === 1) {
+        if (preg_match('/Warning|Deprecated|Notice|FOK alert/i', $line) === 1) {
             return 'warn';
         }
         return 'info';

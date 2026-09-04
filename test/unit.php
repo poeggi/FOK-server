@@ -891,8 +891,14 @@ try {
 }
 ok($threw, 'unknown setting rejected');
 
-// Alerts: raised by failed admin logins above, de-duplicated, seen-tracking
-ok(Alerts::unseenCount() > 0, 'failed logins raised alerts');
+// Alerts: the lockout above alerted, de-duplicated, seen-tracking. A single
+// failed login deliberately does NOT alert - it is noted (see Alerts).
+ok(Alerts::unseenCount() > 0, 'the admin lockout raised an alert');
+ok(array_filter(Alerts::recent(), static fn(array $a) => $a['type'] === 'admin-fail') === [],
+    'a single failed login raises no alert');
+Alerts::note('test-note', 'read back, not acted on');
+ok(array_filter(Alerts::recent(), static fn(array $a) => $a['type'] === 'test-note') === [],
+    'a note stores no alert row');
 Alerts::raise('test-x', 'first');
 Alerts::raise('test-x', 'second within cooldown');
 $testX = array_filter(Alerts::recent(), static fn(array $a) => $a['type'] === 'test-x');

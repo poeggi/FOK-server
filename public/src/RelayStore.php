@@ -50,16 +50,12 @@ final class RelayStore
         }
         if (!Caps::apcu()) {
             // Asked for (relay_apcu defaults ON) but the host cannot offer it:
-            // warn where an operator will see it - the admin Alerts tab AND the
-            // server log. Both de-duplicate to the alert_cooldown window (the
-            // log line is gated on raise() reporting a fresh alert), so a
-            // persistent fallback warns steadily without flooding either.
-            $msg = 'Relay fell back to the database: APCu was requested '
+            // warn where an operator will see it. raise() writes the alert and
+            // its log line together, de-duplicated to the alert_cooldown
+            // window, so a persistent fallback warns steadily without flooding.
+            Alerts::raise('perf', 'Relay fell back to the database: APCu was requested '
                 . '(relay_apcu=1) but is not usable on this host. Expect SQLite write '
-                . 'contention and dropped messages under relayed play.';
-            if (Alerts::raise('perf', $msg)) {
-                error_log('FOK relay: ' . $msg);
-            }
+                . 'contention and dropped messages under relayed play.');
             return self::$apcu = false;
         }
         // APCu is usable, so the relay runs on shared memory - the default. The

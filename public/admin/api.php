@@ -49,6 +49,53 @@ function download(string $filename, string $body, string $type = 'application/js
     exit;
 }
 
+/**
+ * The admin audit trail: one log line per state-changing action, naming what
+ * was done, to what, and from where - the log's own timestamp says when. A
+ * change nobody remembers making can then be traced to the call that made it.
+ * Reads and downloads are deliberately absent: they change nothing, and
+ * auditing them would bury the writes in noise.
+ */
+const AUDIT = [
+    'set_debug' => 'set the client debug flag',
+    'delete_player' => 'deleted player',
+    'vault_reset' => 'reset the config-vault token of',
+    'debug_delete' => 'deleted debug datasets',
+    'delete_score' => 'deleted score',
+    'alerts_seen' => 'marked the alerts seen',
+    'caps_refresh' => 're-assessed the host capabilities',
+    'log_clear' => 'cleared the server log',
+    'settings_save' => 'saved the settings',
+    'config_import' => 'imported a settings file',
+    'backup_create' => 'created a database backup',
+    'backup_restore' => 'restored the database from an upload',
+];
+// The two that replace live state wholesale. A line in the log is not enough
+// for these: an operator must find them on the dashboard without going
+// looking, so they alert as well as being audited.
+const AUDIT_ALERT = ['config_import', 'backup_restore'];
+
+if (isset(AUDIT[$action])) {
+    // Whatever names the target of this call, in the order the actions pass
+    // it. It is client input, so it is cut down to a printable subset and
+    // capped - a crafted field must not be able to forge log lines of its own.
+    $target = (string)($_POST['id'] ?? $_POST['pins'] ?? $_GET['id'] ?? '');
+    $target = substr((string)preg_replace('/[^0-9a-zA-Z,_.-]/', '', $target), 0, 64);
+    $what = AUDIT[$action] . ($target === '' ? '' : ' ' . $target);
+    // Written when the response is on its way out, not here: an action that
+    // gets rejected (a GET where POST is required, an invalid id) changed
+    // nothing, and a trail claiming otherwise is worse than no trail.
+    register_shutdown_function(static function () use ($action, $what): void {
+        if (http_response_code() >= 400) {
+            return;
+        }
+        Alerts::note('admin', $what . ' (from ' . Util::clientIp() . ')');
+        if (in_array($action, AUDIT_ALERT, true)) {
+            Alerts::raise('admin-' . $action, 'Admin ' . $what . ' - live state was replaced');
+        }
+    });
+}
+
 switch ($action) {
     // ---- dashboard cards (read-only) ----
     case 'stats':
