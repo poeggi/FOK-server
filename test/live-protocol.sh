@@ -225,7 +225,7 @@ esac
 # needs a player with no other network recorded, and these ids are reused
 # across runs by design, so that boundary is pinned in test/unit.php where the
 # state is built from nothing.
-E=55557e57; G=77777e57
+E=55557e57; F=66667e57; G=77777e57; H=88887e57
 V4=0; V6=0
 curl -4 -sf -m 10 -o /dev/null "$BASE/api/version.php" && V4=1
 curl -6 -sf -m 10 -o /dev/null "$BASE/api/version.php" && V6=1
@@ -252,6 +252,33 @@ if [ "$V4" -eq 1 ] && [ "$V6" -eq 1 ]; then
         hf -4 "$E" > /dev/null
         expect "a dual-stack host reaches a v4-only seeker" "\"tid\":\"$T2\"" "$(hf -4 "$G")"
         tf -6 "{\"id\":\"$E\",\"action\":\"leave\",\"tid\":\"$T2\"}" > /dev/null
+        # THE CLAIM PATH (api 4.2), which only a real dual-stack machine can
+        # exercise: $F is never touched over IPv4 here, so the server cannot
+        # have OBSERVED its v4 network - the only way a v4 seeker learns
+        # about its lobby is the address $F reported about itself. That is
+        # what a browser will do: it cannot choose a family for a request,
+        # but it can find its own public addresses through STUN.
+        MY4=$(curl -4 -s -m 10 "$BASE/api/net.php" | grep -oE '"ip":"[0-9.]+"' | cut -d'"' -f4)
+        if [ -n "$MY4" ]; then
+            curl -6 -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$F\",\"name\":\"CLAIM\",\"nets\":[\"$MY4\"]}" "$BASE/api/hello.php" > /dev/null
+            TR=$(tf -6 "{\"id\":\"$F\",\"action\":\"create\"}")
+            case "$TR" in
+            *'"ok":true'*)
+                T3=$(tfield "$TR" tid)
+                expect "a v6-only host is reachable on the v4 network it reported" "\"tid\":\"$T3\"" "$(hf -4 "$H")"
+                tf -6 "{\"id\":\"$F\",\"action\":\"leave\",\"tid\":\"$T3\"}" > /dev/null
+                ;;
+            *'create cooldown'* | *'already hosting'*)
+                echo "skip the claimed-network announce: $F is too soon after its last one ($TR)"
+                ;;
+            *)
+                echo "FAIL the claiming host could not open a lobby: $TR"
+                fail=1
+                ;;
+            esac
+        else
+            echo "skip the claimed-network announce: could not read this machine's own v4 address"
+        fi
         ;;
     *'create cooldown'* | *'already hosting'*)
         echo "skip the dual-stack announce: $E is too soon after its last one ($TR)"
