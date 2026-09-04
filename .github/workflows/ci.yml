@@ -76,11 +76,21 @@ jobs:
       - name: Deploy to live
         run: bash tools/deploy.sh
 
+      # The deploy uploads file by file, so for a moment after it returns the
+      # live tree is a mix of both releases and version.php can still answer
+      # the old number. That is not a failed deploy, so give the swap a few
+      # seconds to settle rather than reading once and going red.
       - name: Verify live
         run: |
           want=$(grep -oE "FOK_SERVER_VERSION = '[^']+'" public/src/Config.php | cut -d"'" -f2)
-          got=$(curl -s https://fok-server.poggensee.it/api/version.php)
-          echo "expect server $want, got: $got"
+          for i in $(seq 1 15); do
+            got=$(curl -s https://fok-server.poggensee.it/api/version.php)
+            echo "attempt $i: expect server $want, got: $got"
+            if echo "$got" | grep -q "\"server\":\"$want\""; then
+              break
+            fi
+            sleep 2
+          done
           echo "$got" | grep -q "\"server\":\"$want\""
           echo "$got" | grep -q '"env":"live"'
           cors=$(curl -s -i -H 'Origin: https://poeggi.github.io' \
