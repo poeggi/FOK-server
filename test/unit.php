@@ -1324,15 +1324,74 @@ foreach ($f as $p) {
 $tid3 = Tournament::create($f[0], false)['tid'];
 Tournament::join($f[1], $tid3);
 Tournament::join($f[2], $tid3);
-ok(count(Tournament::announce('127.0.0.1')) >= 1, 'an open lobby is announced on the host address');
-ok(Tournament::announce('10.9.9.9') === [], 'but never to another address');
+$seeker = '72000009';
+Presence::touch($seeker, '127.0.0.1');
+ok(count(Tournament::announce($seeker, '127.0.0.1')) >= 1, 'an open lobby is announced on the host address');
+ok(Tournament::announce('7200000a', '10.9.9.9') === [], 'but never to another address');
 // The case the announce exists for and could not serve: two devices in one
 // room, on ipv6, where nothing is NATed and the addresses never match.
 Presence::touch('72000004', '2a01:db8:7:7::1');
 $tid4 = Tournament::create('72000004', false)['tid'];
-ok(count(Tournament::announce('2a01:db8:7:7:aaaa::9')) >= 1,
+ok(count(Tournament::announce('7200000b', '2a01:db8:7:7:aaaa::9')) >= 1,
     'an ipv6 lobby is announced to the rest of the host /64');
-ok(Tournament::announce('2a01:db8:7:8::9') === [], 'but not to the next /64 along');
+ok(Tournament::announce('7200000c', '2a01:db8:7:8::9') === [], 'but not to the next /64 along');
+
+// DUAL STACK, the case a single stored network could not serve: the host's
+// last request came in over ipv6 and the joiner's over ipv4, which is what
+// two browsers on one line do when each picks a family for itself. The host
+// is on BOTH networks and has to be matched on either.
+$dual = '72000005';
+Presence::touch($dual, '203.0.113.9');            // seen once over ipv4
+Presence::touch($dual, '2a01:db8:9:9::1');        // and now over ipv6
+$tid5 = Tournament::create($dual, false)['tid'];
+ok(count(Tournament::announce('72000006', '2a01:db8:9:9:beef::2')) >= 1,
+    'a dual-stack host is announced to the ipv6 side of its line');
+ok(count(Tournament::announce('72000007', '203.0.113.9')) >= 1,
+    'and to the ipv4 side of the same line, though its last hello was ipv6');
+ok(Tournament::announce('72000008', '203.0.113.10') === [],
+    'but not to the ipv4 address next door');
+// The joiner is the dual-stack one just as often: it asks over ipv4 while
+// the network it shares with the host is the ipv6 one it used a moment ago.
+Presence::touch('7200000d', '2a01:db8:9:9:cafe::7');
+ok(count(Tournament::announce('7200000d', '198.51.100.4')) >= 1,
+    'a joiner asking from its other family is still matched on the network it shares');
+// Proof that the two above are served by player_nets and not by the player
+// row: the row holds the LAST family only, so an ipv4 match off it is not
+// possible. One row per family is also the whole bound on the table's size.
+$netsOf = static function (string $id): array {
+    $st = Db::get()->prepare('SELECT family, net FROM player_nets WHERE id = ? ORDER BY family');
+    $st->execute([$id]);
+    $rows = $st->fetchAll();
+    $st->closeCursor();
+    return array_column($rows, 'net', 'family');
+};
+$st = Db::get()->prepare('SELECT ipnet FROM players WHERE id = ?');
+$st->execute([$dual]);
+$dualRow = (string)$st->fetchColumn();
+$st->closeCursor();
+ok($dualRow === '2a01:db8:9:9::/64', 'the player row itself only remembers the last family');
+ok($netsOf($dual) === [4 => '203.0.113.9', 6 => '2a01:db8:9:9::/64'],
+    'both networks are kept, one row per family');
+Presence::touch($dual, '203.0.113.55');
+ok($netsOf($dual) === [4 => '203.0.113.55', 6 => '2a01:db8:9:9::/64'],
+    'moving network overwrites that family rather than adding a row');
+
+// A host that stopped being seen drops out of the announce - the lobby is
+// still joinable by code, it just is not claimed to be in the room any more.
+// The window is deliberately wider than presence: a host waiting in a lobby
+// is a background tab, and those are throttled to about one hello a minute.
+$age = static function (string $id, int $secs): void {
+    $t = time() - $secs;
+    Db::get()->prepare('UPDATE players SET last_seen = ? WHERE id = ?')->execute([$t, $id]);
+    Db::get()->prepare('UPDATE player_nets SET seen = ? WHERE id = ?')->execute([$t, $id]);
+};
+$age($dual, 300);
+ok(Tournament::announce('72000006', '2a01:db8:9:9:beef::2') === [],
+    'a host last seen 5 minutes ago is no longer announced');
+$age($dual, 90);
+ok(count(Tournament::announce('72000006', '2a01:db8:9:9:beef::2')) >= 1,
+    'but one throttled to a hello a minute still is, where 60s would have dropped it');
+Tournament::leave($dual, $tid5);
 Tournament::leave('72000004', $tid4);
 Tournament::start($f[0], $tid3);
 $v3 = Tournament::view($f[0], $tid3);

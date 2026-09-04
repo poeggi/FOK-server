@@ -213,6 +213,58 @@ case "$TR" in
     ;;
 esac
 
+# --- Dual-stack announce -------------------------------------------------
+# The one thing a single-stack CI runner cannot test, and the reason the local
+# tournament announce did not work in a real house: a dual-stack client picks
+# an address family per connection, so the host's hello can arrive over IPv6
+# while the joiner's arrives over IPv4, and the two describe the same room in
+# two strings that will never be equal. Here both families are real, so drive
+# them on purpose (curl -4 / -6) instead of hoping the resolver alternates.
+#
+# Only the POSITIVE cases are asserted here. "A network that must NOT match"
+# needs a player with no other network recorded, and these ids are reused
+# across runs by design, so that boundary is pinned in test/unit.php where the
+# state is built from nothing.
+E=55557e57; G=77777e57
+V4=0; V6=0
+curl -4 -sf -m 10 -o /dev/null "$BASE/api/version.php" && V4=1
+curl -6 -sf -m 10 -o /dev/null "$BASE/api/version.php" && V6=1
+if [ "$V4" -eq 1 ] && [ "$V6" -eq 1 ]; then
+    echo "   dual-stack runner: driving the announce over both families (host=$E seekers=$D,$G)"
+    hf() { # hf <-4|-6> <id> : hello asking for the announce
+        curl "$1" -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$2\",\"name\":\"DUAL\",\"tourneys\":true}" "$BASE/api/hello.php"
+    }
+    tf() { curl "$1" -s -X POST -H 'Content-Type: application/json' -d "$2" "$BASE/api/tournament.php"; }
+    hf -6 "$E" > /dev/null
+    TR=$(tf -6 "{\"id\":\"$E\",\"action\":\"create\"}")
+    case "$TR" in
+    *'"ok":true'*)
+        T2=$(tfield "$TR" tid)
+        # Same family, the case that always worked: both sides came in over v6.
+        expect "an ipv6 host is announced to an ipv6 seeker" "\"tid\":\"$T2\"" "$(hf -6 "$D")"
+        # THE FIX, seeker side: the same seeker now asks over IPv4. Its own v6
+        # network is still one of the networks it is on, so the room it shares
+        # with the host is still found.
+        expect "and to that seeker when it asks over ipv4 instead" "\"tid\":\"$T2\"" "$(hf -4 "$D")"
+        # THE FIX, host side: the host is seen over IPv4 too, which is what a
+        # browser does on its own sooner or later. A seeker that only ever
+        # speaks v4 can now be told about a lobby opened over v6.
+        hf -4 "$E" > /dev/null
+        expect "a dual-stack host reaches a v4-only seeker" "\"tid\":\"$T2\"" "$(hf -4 "$G")"
+        tf -6 "{\"id\":\"$E\",\"action\":\"leave\",\"tid\":\"$T2\"}" > /dev/null
+        ;;
+    *'create cooldown'* | *'already hosting'*)
+        echo "skip the dual-stack announce: $E is too soon after its last one ($TR)"
+        ;;
+    *)
+        echo "FAIL a dual-stack host could not open a lobby: $TR"
+        fail=1
+        ;;
+    esac
+else
+    echo "skip the dual-stack announce checks: this machine reaches $BASE over one family only (v4=$V4 v6=$V6)"
+fi
+
 echo
 if [ "$fail" -ne 0 ]; then
     echo "LIVE PROTOCOL SMOKE FAILED"

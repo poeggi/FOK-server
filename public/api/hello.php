@@ -142,7 +142,7 @@ if ($friends !== null) {
 // whichever hello asks about lobbies next. Deferred - it is the server's
 // bookkeeping, not this caller's, and it must not sit in a heartbeat.
 if ($tourneys) {
-    $out['tourneys'] = Tournament::announce(Util::clientIp());
+    $out['tourneys'] = Tournament::announce($id, Util::clientIp());
     Util::defer(static fn() => Tournament::reapLobbies());
 }
 

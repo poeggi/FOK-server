@@ -381,15 +381,40 @@ Online is not the same as available - a friend mid-duel cannot take an
 invite or join a lobby - so show them as busy rather than inviting them.
 
 `tourneys` is served only when the request set `"tourneys": true`, and
-lists the OPEN lobbies whose host is currently reaching the server from
-the same NETWORK as the caller: the same public IPv4 address, or the same
-IPv6 /64. The two are not interchangeable - IPv4 is NATed, so a household
-shares one address, while on IPv6 every device carries its own address out
-of the site's /64 and only the prefix is shared. A device on IPv4 and one
-on IPv6 are never matched: nothing in their addresses says they are in the
-same room. It is a network-local convenience, not a directory: everything
-else is joined by `code`, and the code is the capability (see Tournament
-mode).
+lists the OPEN lobbies whose host shares a NETWORK with the caller: the
+same public IPv4 address, or the same IPv6 /64. The two are not
+interchangeable - IPv4 is NATed, so a household shares one address, while
+on IPv6 every device carries its own address out of the site's /64 and only
+the prefix is shared. It is a network-local convenience, not a directory:
+everything else is joined by `code`, and the code is the capability (see
+Tournament mode).
+
+A player is on as many networks as the address families it has spoken.
+A dual-stack client picks a family per connection, so the host's hello can
+arrive over IPv6 while the joiner's arrives over IPv4 - the same room,
+described by two strings that can never be equal. The server therefore
+remembers one network per family per player (v4 and v6) and announces a
+lobby when ANY network of the host meets ANY network of the caller, both
+seen within `tournament_announce_window` (default 180 s). A device that has
+only ever spoken one family has exactly one network, and a pair that never
+overlaps - one on cellular, one behind iCloud Private Relay - is genuinely
+not in the same room and still has the join code.
+
+The announce window is deliberately wider than the 60 s presence window: a
+host waiting in a lobby is a background tab or a phone with the screen off
+as often as not, and browsers throttle background timers to about one a
+minute.
+
+### GET /api/net.php - what network the server sees you on
+
+    { "ok": true, "ip": "2a01:db8:7:7:aaaa::9", "family": 6,
+      "net": "2a01:db8:7:7::/64" }
+
+A field diagnostic, not part of the contract: it reports the caller's own
+address, its family, and the network key the announce above matches on.
+Open it in a browser on two devices to settle whether they reach the server
+the same way at all - the question behind "the lobby on my PC is not
+announced to my phone". It reads and writes nothing.
 
 Rules:
 

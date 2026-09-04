@@ -17,6 +17,15 @@ R=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: https://poeggi
     -H 'Access-Control-Request-Method: POST' "$BASE/api/hello.php")
 expect "CORS preflight passes" '204' "$R"
 
+# The field diagnostic behind "my phone cannot see the lobby on my PC": it
+# reports the network the announce matches on, so the two devices can be
+# compared without an admin login. Locally the caller is 127.0.0.1, which is
+# its own network key, so the shape is what is asserted here.
+R=$(curl -s "$BASE/api/net.php")
+expect "net diagnostic answers" '"ok":true' "$R"
+expect "net diagnostic names the family" '"family":' "$R"
+expect "net diagnostic names the network" '"net":' "$R"
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"}" "$BASE/api/hello.php")
 expect "hello registers" "$(strict '"registered":1')" "$R"
 expect "hello online" "$(strict '"online":1')" "$R"

@@ -9,6 +9,9 @@ require_once __DIR__ . '/ConnTrack.php';
 
 final class Presence
 {
+    /** How stale a player_nets row may get before a hello rewrites it. */
+    private const NET_REFRESH_AFTER = 60;
+
     /**
      * Records the heartbeat and returns whether the server wants this
      * client in debug mode. $debugActive is what the client REPORTS it is
@@ -42,6 +45,7 @@ final class Presence
         // An INSERT ... RETURNING is a write: finish it before anything else
         // touches the database (see Db).
         $st->closeCursor();
+        self::seenOn($id, $ip);
         // Nobody may watch their own first hello report zero online, so a
         // registration drops the cache. The repeat heartbeats that are
         // virtually all the traffic leave it alone.
@@ -49,6 +53,64 @@ final class Presence
             self::flushCounts();
         }
         return (int)$row['debug'] === 1;
+    }
+
+    /**
+     * Records the NETWORK this hello arrived over, one row per address
+     * family (see Util::ipNet and Db step 28).
+     *
+     * The player row keeps a single ipnet, which is the network the LAST
+     * request came in on. That is not the same as the networks the player
+     * can be reached on: a dual-stack client picks a family per connection,
+     * so the same device answers from a v4 address one minute and out of its
+     * v6 /64 the next, and whichever one the player row happens to hold is
+     * the one the tournament announce compares. Keeping both is what lets
+     * two devices in one room match when they did not pick the same family.
+     *
+     * READ BEFORE WRITE, deliberately: this runs on every hello, and hello
+     * is the one request every client makes forever. The row only changes
+     * when the player actually moved network, so the common case must not
+     * reach for the single SQLite writer at all - it costs one indexed
+     * point lookup on the primary key instead. REFRESH_AFTER bounds how
+     * stale `seen` may get; the announce reads it, so it may not drift.
+     */
+    public static function seenOn(string $id, string $ip): void
+    {
+        $info = Util::ipInfo($ip);
+        if ($info['family'] === 0) {
+            return;   // nothing we can compare later, so nothing worth storing
+        }
+        $net = Util::ipNet($ip);
+        $now = time();
+        $st = Db::get()->prepare('SELECT net, seen FROM player_nets WHERE id = ? AND family = ?');
+        $st->execute([$id, $info['family']]);
+        $row = $st->fetch();
+        $st->closeCursor();
+        if ($row !== false && (string)$row['net'] === $net && (int)$row['seen'] > $now - self::NET_REFRESH_AFTER) {
+            return;
+        }
+        Db::retry(static function () use ($id, $info, $net, $now): void {
+            Db::get()->prepare(
+                'INSERT INTO player_nets (id, family, net, seen) VALUES (?, ?, ?, ?)
+                 ON CONFLICT (id, family) DO UPDATE SET net = excluded.net, seen = excluded.seen'
+            )->execute([$id, $info['family'], $net, $now]);
+        });
+    }
+
+    /**
+     * Every network the player has been seen on recently - what "the same
+     * line" has to mean for a dual-stack household (see seenOn). Ordered so
+     * the caller's own current network, which the caller passes in, can be
+     * folded in by the caller itself.
+     * @return string[]
+     */
+    public static function netsOf(string $id, int $since): array
+    {
+        $st = Db::get()->prepare('SELECT net FROM player_nets WHERE id = ? AND seen > ?');
+        $st->execute([$id, $since]);
+        $out = array_map(static fn(array $r): string => (string)$r['net'], $st->fetchAll());
+        $st->closeCursor();
+        return $out;
     }
 
     /** Admin-set: what the server WANTS the client to do (see touch). */

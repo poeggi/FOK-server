@@ -1228,27 +1228,55 @@ final class Tournament
     // ---- hello.php maintenance and announce -------------------------------
 
     /**
-     * Open lobbies whose host is on the CALLER's network - the whole of the
-     * "announced on the local network" mechanism. Everyone else joins by
-     * code, and the code is the capability. Served by idx_players_net_seen,
+     * Open lobbies whose host is on ANY network the caller is on - the whole
+     * of the "announced on the local network" mechanism. Everyone else joins
+     * by code, and the code is the capability. Served by idx_player_nets_net,
      * so a hello that asks stays flat-cost.
      *
-     * The match is on the network and not on the address itself: two devices
-     * in one room share a public IPv4 address, but on IPv6 they share only
-     * the /64 they are both numbered out of (see Util::ipNet). Comparing the
-     * raw addresses therefore announced nothing at all to a dual-stack LAN,
-     * which is the whole point of the feature.
+     * Three things had to be true before two devices in one room could match,
+     * and each of them broke this feature on its own:
+     *
+     * The match is on the NETWORK, not the address. Two devices share a
+     * public IPv4 address, but on IPv6 they share only the /64 they are both
+     * numbered out of (see Util::ipNet).
+     *
+     * A player is on as many networks as the families it speaks. A
+     * dual-stack client picks a family per connection, and the host and the
+     * joiner in one room do not have to pick the same one - so the host is
+     * matched on every network it has recently been seen on, against every
+     * network the CALLER has recently been seen on (see Presence::seenOn).
+     * A pair that never overlaps at all still has the join code, and a
+     * device that has only ever spoken one family has exactly one network,
+     * which is the old behaviour.
+     *
+     * And the host has to still count as present. That window is its own
+     * setting rather than FOK_ONLINE_WINDOW: a host waiting in a lobby is a
+     * BACKGROUND tab or a phone with the screen off as often as not, and a
+     * browser throttles background timers to about one a minute - right at
+     * the edge of the 60s presence window, so the lobby flickered in and out
+     * of the announce while it stayed perfectly joinable by code.
      */
-    public static function announce(string $ip): array
+    public static function announce(string $id, string $ip): array
     {
+        $since = time() - Settings::int('tournament_announce_window');
+        // The caller's CURRENT network is included whether or not it has been
+        // recorded yet: this request is the evidence for it, and a first-ever
+        // hello must not have to wait for a second one to see the room.
+        $nets = Presence::netsOf($id, $since);
+        $nets[] = Util::ipNet($ip);
+        $nets = array_values(array_unique($nets));
         $st = Db::get()->prepare(
             "SELECT t.tid, t.code, t.host, t.stakes, p.name AS host_name,
                     (SELECT COUNT(*) FROM tournament_players tp WHERE tp.tid = t.tid) AS players
-             FROM players p JOIN tournaments t ON t.host = p.id
-             WHERE p.ipnet = ? AND p.last_seen > ? AND t.state = 'open'
+             FROM player_nets hn
+             JOIN players p ON p.id = hn.id
+             JOIN tournaments t ON t.host = hn.id
+             WHERE hn.net IN (" . implode(',', array_fill(0, count($nets), '?')) . ")
+               AND hn.seen > ? AND p.last_seen > ? AND t.state = 'open'
+             GROUP BY t.tid
              ORDER BY t.updated DESC LIMIT 10"
         );
-        $st->execute([Util::ipNet($ip), time() - FOK_ONLINE_WINDOW]);
+        $st->execute([...$nets, $since, $since]);
         $max = Settings::int('tournament_max_players');
         $out = [];
         foreach ($st->fetchAll() as $row) {

@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 27;
+    private const SCHEMA_VERSION = 28;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -464,6 +464,27 @@ final class Db
             // key the card shows), so the row goes and every deployment
             // picks the default up.
             $pdo->exec("DELETE FROM settings WHERE key = 'tournament_create_cooldown'");
+        }
+        if ($v < 28) {
+            // A dual-stack client reaches us over whichever family its
+            // browser picked for that connection, and the two devices in one
+            // room do not have to pick the same one - so a single ipnet on
+            // the player row describes the caller, not the LINE the caller is
+            // on, and the announce missed exactly the pair it exists for.
+            // One row per family instead: at most a v4 and a v6 network per
+            // player, each overwritten in place when the player moves, so the
+            // table stays two rows per player and needs no reaping of its
+            // own. Indexed by (net, seen) because the announce asks "who is
+            // on one of MY networks", the same lookup idx_players_net_seen
+            // served for one family.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS player_nets (
+                id     TEXT    NOT NULL,
+                family INTEGER NOT NULL,
+                net    TEXT    NOT NULL,
+                seen   INTEGER NOT NULL,
+                PRIMARY KEY (id, family)
+            )');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_player_nets_net ON player_nets (net, seen)');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that
