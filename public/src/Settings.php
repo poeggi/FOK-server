@@ -49,7 +49,6 @@ final class Settings
         'alert_invalid_per_min' => [30, 'Alert: invalid requests per IP per minute above'],
         'alert_cooldown' => [900, 'Alert de-duplication window (seconds)'],
         'load_sample' => [10, 'Load-gauge write sampling (1 = exact, every request)'],
-        'relay_apcu' => [1, 'Relay via APCu shared memory when usable (the default; 0 = force the database)'],
         // Item registry (see Items, Ledger). match_open_max_ms is generous on
         // purpose: the server never learns a match ended, so a late but honest
         // claim must still land. claim_grace_ms is how long an unconfirmed gain

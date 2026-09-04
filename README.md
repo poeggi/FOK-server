@@ -277,15 +277,13 @@ see Counters). What is left on a hello is the heartbeat write itself,
 which is irreducible - it IS the heartbeat.
 
 That makes shared memory load-bearing rather than an optimization, and it
-is treated as such: the relay runs its traffic over APCu by default
-(falling back to the database only when APCu is switched off or
-unavailable, see docs/API.md), while the mailbox has NO database
-transport at all and answers 503 with an alert on a host without usable
-APCu - an untested fallback would only move the outage into the write
-lock. Whether this host has usable APCu is assessed live on the
-Properties card, which also reports opcache, whether the deferred flush is
-really available, and what opening the database cost the request that
-drew it.
+is treated as such: the signal mailbox and the relay hub both live there
+with NO database transport at all, and answer 503 with an alert on a host
+without usable APCu - an untested fallback would only move the outage
+into the write lock. Whether this host has usable APCu is assessed live
+on the Properties card, which also reports opcache, whether the deferred
+flush is really available, and what opening the database cost the request
+that drew it.
 
 `public/api/.user.ini` holds the only PHP settings we own (no FPM pool
 access on shared hosting): body, memory and runtime caps for the game API

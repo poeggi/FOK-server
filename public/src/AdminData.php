@@ -22,11 +22,12 @@ require_once __DIR__ . '/Signals.php';
 final class AdminData
 {
     // Every table the "DB entries" tile sums (see the Statistics card).
-    // The signal mailbox and the presence-counter cache are not here: they
-    // live in shared memory now, not in any table (see Signals).
+    // The signal mailbox, the relay hub and the presence-counter cache are
+    // not here: they live in shared memory, not in any table (see Signals
+    // and RelayStore).
     private const TABLES = ['players', 'scores', 'duels', 'mm_queue',
         'counters', 'alerts', 'settings', 'admin_fails', 'ipcount', 'friends',
-        'relay', 'starts', 'conn', 'pstats', 'items', 'matches', 'ledger'];
+        'starts', 'conn', 'pstats', 'items', 'matches', 'ledger'];
 
     /** The Statistics card: live counts, stored totals and the load gauges. */
     public static function stats(): array

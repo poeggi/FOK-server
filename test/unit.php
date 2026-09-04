@@ -402,38 +402,41 @@ Starts::request('aaaaaaaa', 'bbbbbbbb', 1, 'level');
 Starts::forget('aaaaaaaa', 'cccccccc');
 ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'level') === null, "a stranger's bye leaves the pair's epoch alone");
 
-// Force the database relay transport (relay_apcu=0) so this single-process
-// test exercises its exactly-once/ordering deterministically, whether or not
-// the CLI has APCu. The APCu transport is exercised by the staging smoke run
-// on real FPM (test/smoke/05_admin.sh).
-Settings::set('relay_apcu', 0);
+// The relay hub and its rate guard live in APCu and have no database
+// transport at all (see RelayStore), so start from a clean keyspace: a
+// backlog left behind by an earlier run would make the counts below depend
+// on history.
+apcu_delete(new APCUIterator('/^fok:r[qr]:/'));
 
-// RelayRate: the relay table is drained on delivery, so the send rate is
-// tracked as a running total per client. mark_time is pre-set so a full
-// slice has already passed and the very next record() checks the rate.
-Db::get()->prepare('INSERT INTO relay_rate (id, total, mark_total, mark_time, blocked_until) VALUES (?, ?, ?, ?, 0)')
-    ->execute(['dddddddd', 1000, 0, time() - 3]);
+// RelayRate: the backlog is drained on delivery, so the send rate is tracked
+// as a running total per client. The slice mark is pre-set so a full slice
+// has already passed and the very next record() checks the rate.
+apcu_store('fok:rr:dddddddd:t', 1000, 3600);
+apcu_store('fok:rr:dddddddd:m', ['t' => 0, 's' => time() - 3], 3600);
 RelayRate::record('dddddddd'); // ~334 msg/s over 3 s, far over the 128 default
 ok(RelayRate::blocked('dddddddd'), 'a client over the sustained relay rate is blocked');
-ok(!RelayRate::usesApcu(), 'rate-limiting follows the database transport when APCu is off');
 ok(RelayRate::totalOf('dddddddd') === 1001, 'the running message total is readable for the admin gauge');
-Db::get()->prepare('INSERT INTO relay_rate (id, total, mark_total, mark_time, blocked_until) VALUES (?, ?, ?, ?, 0)')
-    ->execute(['eeeeeeee', 10, 0, time() - 3]);
+$rateDetail = RelayRate::detail('dddddddd');
+ok($rateDetail !== null && $rateDetail['total'] === 1001 && $rateDetail['blocked_until'] > time(),
+    'the admin popup reads the total and the live block');
+ok(RelayRate::detail('ffffffff') === null, 'a client that never relayed has no rate detail');
+apcu_store('fok:rr:eeeeeeee:t', 10, 3600);
+apcu_store('fok:rr:eeeeeeee:m', ['t' => 0, 's' => time() - 3], 3600);
 RelayRate::record('eeeeeeee'); // ~3 msg/s, comfortably under the cap
 ok(!RelayRate::blocked('eeeeeeee'), 'a client under the sustained relay rate is not blocked');
 ok(!RelayRate::blocked('ffffffff'), 'an unseen client is never blocked');
 
-// RelayStore on the database transport (forced above): exactly-once and
-// ordered, and push() reports success so the caller does not turn it into a
-// 503.
-ok(!RelayStore::usingApcu(), 'the relay uses the database transport when APCu is off');
+// RelayStore: exactly-once and ordered, and push() reports success so the
+// caller does not turn it into a 429.
 ok(RelayStore::push('11111111', '22222222', 'IN:1') === true, 'a relayed message enqueues');
 RelayStore::push('11111111', '22222222', 'IN:2');
 ok(RelayStore::hasAny('22222222', '11111111'), 'the receiver sees a pending message');
 ok(!RelayStore::hasAny('11111111', '22222222'), 'the sender has nothing pending back');
 ok(RelayStore::pending('22222222', '11111111') === 2, 'pending counts the receiver backlog from the sender');
 ok(RelayStore::shouldTrackRelay('11111111', '22222222', time()),
-    'the database transport tracks the pair on every message');
+    "the pair's first message refreshes its liveness marker");
+ok(!RelayStore::shouldTrackRelay('11111111', '22222222', time()),
+    'the next one is throttled off the single writer');
 $drained = RelayStore::drain('22222222', '11111111');
 ok(count($drained) === 2 && $drained[0]['payload'] === 'IN:1' && $drained[1]['payload'] === 'IN:2',
     'the backlog drains oldest first');
@@ -443,6 +446,14 @@ ok($drained[0]['created'] >= time() - 2 && $drained[0]['created'] <= time(),
 ok($drained[0]['age'] >= 0 && $drained[0]['age'] < 5000, 'age is milliseconds on the server');
 ok(RelayStore::drain('22222222', '11111111') === [], 'a drained backlog is empty (exactly-once)');
 ok(RelayStore::pending('22222222', '11111111') === 0, 'a drained backlog is no longer pending');
+// A bye must leave nothing behind: an undelivered input reaching the pair's
+// NEXT duel would be an input from the wrong game.
+RelayStore::push('11111111', '22222222', 'IN:3');
+RelayStore::markAdmitted('11111111', '22222222');
+ok(RelayStore::admitted('22222222', '11111111'), 'a relaying pair is admitted from either side');
+RelayStore::forgetPair('11111111', '22222222');
+ok(!RelayStore::hasAny('22222222', '11111111'), 'a bye drops the undelivered backlog');
+ok(!RelayStore::admitted('11111111', '22222222'), 'and releases the relay slot for a rematch');
 
 // The debug flag: the admin's wish and the client's report are separate
 ok(Presence::touch('eeeeeeee', '1.2.3.4') === false, 'debug is off for a new player');

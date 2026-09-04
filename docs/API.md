@@ -922,10 +922,8 @@ is wasted. When neither side declared the bit, nothing is checked
 early and the 5 s-fallback path applies unchanged. Budget ~200-400 ms
 one-way as a CONSERVATIVE upper bound - the figure the prediction/correction
 model should be built to absorb, not a measured typical. The server's own
-contribution is small: the hub runs on APCu shared memory BY DEFAULT and
-forwards in roughly a millisecond; the wider poll interval only adds latency
-when it has fallen back to the database transport (APCu switched off with
-relay_apcu, or not offered by the host). The rest is client poll cadence,
+contribution is small: the hub runs in APCu shared memory - its only
+transport - and forwards in roughly a millisecond. The rest is client cadence,
 round trips and the wider internet. Relay INPUT events, state hashes and control
 messages only - never high-rate state. The local snake stays instant; the
 remote side trails and the model absorbs the lag. Show a "relay mode"
@@ -945,6 +943,10 @@ indicator so latency self-explains.
       -> 503 "relay busy"           concurrent relayed-duel cap reached:
                                     tell the user the server is full and
                                     end the match attempt
+      -> 503 "relay unavailable"    this host has no usable shared memory, so
+                                    the hub cannot run at all (GET answers it
+                                    too): there is no relay play on this
+                                    deployment, do not retry
 
     GET /api/relay.php?id=me&peer=opponent&wait=9
       -> {"ok":true,"messages":[{"seq":n,"payload":"...","created":s,"age":ms}]}

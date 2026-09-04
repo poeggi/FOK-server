@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 32;
+    private const SCHEMA_VERSION = 33;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -489,6 +489,22 @@ final class Db
             // key the card shows), so the row goes and every deployment picks
             // the default up.
             $pdo->exec("DELETE FROM settings WHERE key = 'relay_max_duels'");
+        }
+        if ($v < 33) {
+            // The relay's database transport is gone: the hub is APCu only
+            // (see RelayStore), so these two tables no longer back anything.
+            // Their content was ephemeral by definition - an undelivered
+            // input and an approximate send count - so nothing is lost by
+            // dropping them, and their indexes go with them. No VACUUM: they
+            // hold a handful of rows between them, which is not worth
+            // rewriting the whole file under the single writer for.
+            $pdo->exec('DROP TABLE IF EXISTS relay');
+            $pdo->exec('DROP TABLE IF EXISTS relay_rate');
+            // relay_apcu chose between the two transports and now has no
+            // second choice to make. The stored row would linger as a key no
+            // release knows (config export/import rejects unknown keys), so
+            // it goes with them.
+            $pdo->exec("DELETE FROM settings WHERE key = 'relay_apcu'");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

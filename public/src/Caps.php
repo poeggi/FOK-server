@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
-require_once __DIR__ . '/Settings.php';
 
 /**
  * What this host actually gives us, assessed once and remembered.
@@ -17,7 +16,7 @@ require_once __DIR__ . '/Settings.php';
  * indexed read (cached per request on top of that). The admin Performance
  * tab shows the result and can force a re-assessment.
  *
- * The relay reads apcu() from here to pick its transport - it never probes.
+ * The relay and the mailbox read apcu() from here; neither ever probes.
  */
 final class Caps
 {
@@ -38,50 +37,25 @@ final class Caps
         if ($row !== false && $row['version'] === FOK_SERVER_VERSION) {
             $stored['version'] = (string)$row['version'];
             $stored['checked'] = (int)$row['checked'];
-            return self::$cache = self::withRelayRow($stored);
+            return self::$cache = $stored;
         }
         // Missing or from another release: assess once.
-        return self::$cache = self::withRelayRow(self::assess());
+        return self::$cache = self::assess();
     }
 
     /** Operator-triggered re-assessment (admin Performance tab). */
     public static function refresh(): array
     {
         self::$cache = null;
-        return self::$cache = self::withRelayRow(self::assess());
+        return self::$cache = self::assess();
     }
 
     /**
-     * The transport row is computed on READ and never stored. relay_apcu is
-     * an operator switch that can change at any moment, so a stored verdict
-     * would keep reporting the previous transport until somebody pressed
-     * Update - the card would be lying about the thing it exists to show.
+     * Is APCu usable on this host? Load-bearing rather than an optimization:
+     * the signal mailbox and the relay hub live there and have no database
+     * transport, so a false here means those features are down (503) until it
+     * is fixed - see Signals and RelayStore.
      */
-    private static function withRelayRow(array $c): array
-    {
-        $usable = ($c['apcu'] ?? false) === true;
-        $wanted = Settings::int('relay_apcu') === 1;
-        // APCu is the default transport: usable shared memory is trusted to be
-        // shared across the pool's workers (see RelayStore::usingApcu). The
-        // relay stays on the database only when APCu is switched off or the
-        // host cannot offer it.
-        $live = $wanted && $usable;
-        $c['relay_backend'] = $live ? 'apcu' : 'database';
-        $c['checks'][] = [
-            'key' => 'relay_backend',
-            'label' => 'Relay transport',
-            'value' => $live ? 'APCu shared memory' : 'database',
-            'status' => $live ? 'good' : ($wanted ? 'bad' : 'warn'),
-            'note' => $live
-                ? 'relay traffic never touches the SQLite writer'
-                : (!$wanted
-                    ? 'set relay_apcu to 1 to move relay traffic off the database'
-                    : 'APCu was requested but is not usable - falling back, expect lock contention'),
-        ];
-        return $c;
-    }
-
-    /** True when the relay may use shared memory instead of the database. */
     public static function apcu(): bool
     {
         $c = self::get();

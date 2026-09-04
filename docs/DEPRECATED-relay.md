@@ -6,7 +6,7 @@ The in-duel message relay lets a duel fall back to forwarding its
 input-level messages through this server when the peer-to-peer WebRTC
 DataChannel cannot be established. It is a blocking one-worker-per-long-poll
 design on shared PHP-FPM hosting, so it can never scale past a fraction of
-the worker pool (relay_max_duels, default 9). The intended replacement is a
+the worker pool (relay_max_duels, default 4). The intended replacement is a
 persistent async hub (a single event loop / WebSocket process holding many
 connections at once) on a VPS or container, where a duel costs a socket
 instead of a blocked worker. Until that exists the relay stays in place as a
@@ -41,7 +41,7 @@ then run one drop-migration.
   file goes through, and the home of the relay slot accounting (the four
   methods that used to sit in ConnTrack).
 - `public/api/relay.php`      - the POST/GET relay endpoint.
-- `public/src/RelayStore.php`  - the message store (APCu + DB transports).
+- `public/src/RelayStore.php`  - the message store (APCu shared memory).
 - `public/src/RelayRate.php`   - the per-client send-rate guard.
 
 Nothing else `require`s these four except the shared seams listed in B,
@@ -77,9 +77,8 @@ means deleting that call (and its `require_once .../Relay.php`), nothing more.
     migration).
 
 - `public/src/Settings.php`
-  - Remove the seven `relay_*` defs: `relay_max_duels`, `relay_max_payload`,
-    `relay_pending_cap`, `relay_ttl`, `relay_rate_max`, `relay_rate_block_secs`,
-    `relay_apcu`.
+  - Remove the six `relay_*` defs: `relay_max_duels`, `relay_max_payload`,
+    `relay_pending_cap`, `relay_ttl`, `relay_rate_max`, `relay_rate_block_secs`.
 
 - `public/src/Config.php`
   - Remove `FOK_RELAY_WINDOW`, `FOK_RELAY_TRACK_THROTTLE`,
@@ -88,9 +87,9 @@ means deleting that call (and its `require_once .../Relay.php`), nothing more.
     v3.2, v3.3) - history only, safe to leave, but stale once the feature is gone.
 
 - `public/src/AdminData.php`
-  - Remove `'relay'` from `TABLES`; the `'relaying' => Relay::activePairs()`
-    stat; the `Relay::rateDetail()` read and the `relay_rate` field in the
-    client detail. Drop `require_once .../Relay.php`.
+  - Remove the `'relaying' => Relay::activePairs()` stat; the
+    `Relay::rateDetail()` read and the `relay_rate` field in the client
+    detail. Drop `require_once .../Relay.php`.
 
 - `public/assets/admin.js`
   - Remove the `Relaying` stat tile, the `Relay messages` / `Rate-limited`
@@ -107,23 +106,27 @@ means deleting that call (and its `require_once .../Relay.php`), nothing more.
 ## C. Schema (CANNOT be deleted with zero impact - append-only ladder)
 
 `public/src/Db.php` migrations are append-only and a fresh DB replays them
-all, so you never edit a past step. The relay left three schema objects:
+all, so you never edit a past step. What the relay put in the schema:
 
 - v6:  `relay` table + `idx_relay_to` / `idx_relay_pair` indexes.
 - v10: `conn.relay_seen` column + `idx_conn_relay` index.
 - v11: `idx_relay_created` index.
 - v13: `relay_rate` table.
+- v33: DROPs `relay` and `relay_rate` (their indexes go with them) and
+  deletes the `relay_apcu` setting - the hub moved wholly into shared memory,
+  and those tables only ever backed the removed database transport.
 
-Options the day it is removed:
-1. Leave them as orphan tables/columns (simplest; a little dead schema).
-2. Add a NEW forward migration that DROPs the `relay` and `relay_rate`
-   tables and (via table rebuild, since SQLite drops columns awkwardly)
-   `conn.relay_seen`. This is the only way to actually reclaim them, and it
-   is itself a schema change to test on a real DB copy.
+So the only schema the relay still holds is `conn.relay_seen` (with
+`idx_conn_relay`), plus the `'relay'` value in `conn.mode`. Options the day
+the relay itself is removed:
+1. Leave the column as orphan schema (simplest; a little dead weight).
+2. Add a NEW forward migration that rebuilds `conn` without it, since SQLite
+   drops columns awkwardly. This is the only way to actually reclaim it, and
+   it is itself a schema change to test on a real DB copy.
 
-Either way, existing production databases keep the columns/tables until a
-drop-migration runs. This is the one seam where "delete without any impact"
-is not literally achievable.
+Either way, existing production databases keep the column until such a
+migration runs. This is the one seam where "delete without any impact" is
+not literally achievable.
 
 
 ## D. Contract, docs, tests

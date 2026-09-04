@@ -273,7 +273,7 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=caps")
     expect "capabilities assessed" '"checks"' "$R"
     expect "assessment is for this release" "\"version\":\"$VER\"" "$R"
-    expect "capabilities name the relay transport" '"key":"relay_backend"' "$R"
+    expect "capabilities name the shared memory the hub needs" '"key":"apcu"' "$R"
     R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=caps_refresh")
     expect "caps_refresh via GET rejected" '405' "$R"
     R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=caps_refresh")
@@ -333,14 +333,9 @@ else
     # setting relay_rate_max 128
 
     # A full hub rejects a NEW relayed duel loudly - but a duel that is
-    # already relaying must never be cut off by it. The admission cap is
-    # transport-independent (it counts relay_seen in the conn table), so pin it
-    # to the database here: a single-process php -S keeps APCu state across
-    # these back-to-back sub-tests (a throttled relay_seen refresh and undrained
-    # queues leak between them) in ways this precise setup was never written
-    # for. Real APCu delivery has its own section below (relay_apcu 1), and
-    # staging exercises that on real shared memory.
-    setting relay_apcu 0
+    # already relaying must never be cut off by it. The cap counts relay_seen
+    # in the conn table; what lets a duel already relaying through is the
+    # pair's own APCu admission marker (see relay.php).
     setting relay_max_duels 1
     rly "$ID1" "$ID2" 'holding the slot' > /dev/null
     R=$(rlycode "$ID3" "$ID4" 'may i')
@@ -369,47 +364,32 @@ else
     curl -s "$BASE/api/poll.php?id=$ID1" > /dev/null
     curl -s "$BASE/api/poll.php?id=$ID4" > /dev/null
 
-    # The relay transport switch. Observable behaviour must be IDENTICAL on
-    # either side of it - that is the whole point of the abstraction. There is
-    # no APCu under the local php -S, so a local run exercises the documented
-    # fallback (asked for APCu, cannot have it, must keep working on the
-    # database); the staging run is real FPM with APCu, so the same assertions
-    # exercise shared memory for real. Neither environment can be skipped
-    # without losing one half of the switch.
-    setting relay_apcu 1
-    # PROVE which transport the assertions below actually exercise. They are
-    # deliberately identical on both, so a green run says nothing about which
-    # one ran - on a host with APCu this must report apcu, and without it the
-    # fallback. Self-adapting, so it is a real check in BOTH environments.
+    # Hub delivery end to end. The relay runs in APCu shared memory and
+    # nothing else - the database transport is gone - so a host that cannot
+    # offer it answers 503 "relay unavailable" and every assertion below fails
+    # loudly. That is the honest signal: there is no relay play on such a
+    # host, and no silent fallback pretending otherwise.
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=caps")
-    if [[ "$R" == *'"apcu":true'* ]]; then
-        expect "relay uses APCu where the host offers it" '"relay_backend":"apcu"' "$R"
-        echo "  (transport under test: APCu shared memory)"
-    else
-        expect "relay falls back to the database without APCu" '"relay_backend":"database"' "$R"
-        echo "  (transport under test: database fallback)"
-    fi
+    expect "the host offers the shared memory the hub requires" '"apcu":true' "$R"
     R=$(rly "$ID1" "$ID2" 'TRANSPORT:1')
-    expect "configured transport accepts a message" '"ok":true' "$R"
+    expect "the hub accepts a message" '"ok":true' "$R"
     rly "$ID1" "$ID2" 'TRANSPORT:2' > /dev/null
     R=$(curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1&wait=2")
-    expect "configured transport delivers" 'TRANSPORT:1' "$R"
-    expect "configured transport delivers the second message" 'TRANSPORT:2' "$R"
-    ordered "configured transport preserves order" 'TRANSPORT:1' 'TRANSPORT:2' "$R"
+    expect "the hub delivers" 'TRANSPORT:1' "$R"
+    expect "the hub delivers the second message" 'TRANSPORT:2' "$R"
+    ordered "the hub preserves order" 'TRANSPORT:1' 'TRANSPORT:2' "$R"
     R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
-    expect "configured transport delivers exactly once" '204' "$R"
+    expect "the hub delivers exactly once" '204' "$R"
     R=$(rly "$ID2" "$ID1" 'TRANSPORT:back')
-    expect "configured transport carries the other direction too" '"ok":true' "$R"
+    expect "the hub carries the other direction too" '"ok":true' "$R"
     R=$(curl -s "$BASE/api/relay.php?id=$ID1&peer=$ID2&wait=2")
     expect "the reverse direction is separate" 'TRANSPORT:back' "$R"
     rly "$ID1" "$ID2" 'TRANSPORT:orphan' > /dev/null
     sig "$ID1" "$ID2" bye '' > /dev/null
-    # bye tears the pair down: the held GET reports gone (v3.3, from ConnTrack,
-    # so transport-independent) and the orphan backlog dies with it (a gone
-    # reply carries no messages).
+    # bye tears the pair down: the held GET reports gone (v3.3, from ConnTrack)
+    # and the orphan backlog dies with it (a gone reply carries no messages).
     R=$(curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1")
-    expect "bye tears down the pair on the configured transport" '"gone":true' "$R"
-    setting relay_apcu 1   # back to the default (shared memory where usable)
+    expect "bye tears down the pair" '"gone":true' "$R"
     curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 
     # An invite nobody picks up must not evaporate behind its ok:true:

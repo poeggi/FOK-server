@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.3.1';
+const FOK_SERVER_VERSION = '1.3.2';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -164,12 +164,11 @@ const FOK_DUEL_LINGER = 10;
 // only has to outlast a pause (level transition, backgrounded tab) - keep
 // it well above the ~30 s hello cadence or a live duel loses its slot.
 const FOK_RELAY_WINDOW = 90;
-// On the APCu relay transport a pair's conn row is only a liveness marker
-// for the admin cards and the duel cap, both read over FOK_RELAY_WINDOW.
-// Rewriting it per message would drag the single SQLite writer back onto
-// the hot path APCu exists to clear, so it is refreshed at most this often
-// per pair - well under the window it feeds. The database transport writes
-// it every message (the message write already took the writer).
+// A relayed pair's conn row is only a liveness marker for the admin cards
+// and the duel cap, both read over FOK_RELAY_WINDOW. Rewriting it per
+// message would drag the single SQLite writer back onto the hot path APCu
+// exists to clear, so it is refreshed at most this often per pair - well
+// under the window it feeds.
 const FOK_RELAY_TRACK_THROTTLE = 10;
 // Undelivered signaling messages expire after this many seconds. A
 // connection attempt that dies this way is reported back to its sender
@@ -201,13 +200,12 @@ const FOK_POLL_WAIT_MAX = 9;
 // it must stay small enough that concurrent handshakes cannot exhaust the
 // shared-hosting FPM worker pool.
 const FOK_POLL_CHECK_USEC = 20000;
-// The relay hold loop on the APCu transport (the DEFAULT) checks with two
-// shared-memory reads (sub-microsecond), not a database query, so it can poll
-// far tighter and deliver a hub message in about a millisecond instead of a
-// full poll interval. This is as close to a push as a pollable store gets; a
-// true wakeup with no poll term needs the persistent hub (see relay.php). The
-// database transport - used only on fallback (relay_apcu=0 or APCu
-// unavailable) - keeps the wider FOK_POLL_CHECK_USEC.
+// The relay hold loop checks with two shared-memory reads (sub-microsecond),
+// not a database query - the hub has no other transport - so it polls far
+// tighter than the signal mailbox and delivers a message in about a
+// millisecond instead of a full poll interval. This is as close to a push as
+// a pollable store gets; a true wakeup with no poll term needs the persistent
+// hub (see relay.php).
 const FOK_POLL_CHECK_USEC_APCU = 2000;
 
 // How many FPM workers may be held by long polls at once (admin-configurable,

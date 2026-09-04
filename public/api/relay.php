@@ -34,6 +34,9 @@ require_once __DIR__ . '/../src/RelayStore.php';
  *                                blocked for relay_rate_block_secs
  *   -> 503 "relay busy"          concurrent-duel cap reached; the pair
  *                                cannot start relaying now
+ *   -> 503 "relay unavailable"   this host has no usable shared memory, so
+ *                                the hub cannot run at all (see RelayStore);
+ *                                answered to GET and POST alike
  *
  * GET ?id=<me>&peer=<sender>[&wait=<seconds>]
  *   -> 200 {"ok":true,"messages":[{"seq":n,"payload":"...","created":s,"age":ms}]}
@@ -50,8 +53,8 @@ require_once __DIR__ . '/../src/RelayStore.php';
  * so a running duel is never turned away. Budget ~200-400 ms one-way as a
  * CONSERVATIVE upper bound - what the client's prediction model should be
  * built to absorb, not a measured typical. The server's own share is small:
- * about the poll interval on the database transport, ~1 ms on shared memory
- * (see FOK_POLL_CHECK_USEC_APCU); the rest is client cadence and the network.
+ * about a millisecond in shared memory (see FOK_POLL_CHECK_USEC_APCU); the
+ * rest is client cadence and the network.
  * Relay INPUT events and hashes, not high-rate state (see docs/API.md).
  *
  * TODO: replace this concept. The blocking one-worker-per-long-poll model
@@ -66,6 +69,10 @@ require_once __DIR__ . '/../src/RelayStore.php';
  * thousands, and forwarding becomes a push with no poll term.
  */
 Util::cors();
+// The hub lives in shared memory and has no database transport (see
+// RelayStore), so a host that cannot offer APCu is told so once, up front,
+// rather than per method below.
+RelayStore::requireApcu();
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
 
 if ($method === 'GET') {
@@ -87,11 +94,9 @@ if ($method === 'GET') {
         $wait = 0;
     }
     // The hold loop peeks and takes no lock while idle: a waiting poll must
-    // not fight the duels that are actually sending (see RelayStore). On the
-    // APCu transport a peek is two shared-memory reads, so it can poll tight
-    // and deliver in about a millisecond; the database peek is a query and
-    // keeps the wider interval.
-    $checkUsec = RelayStore::usingApcu() ? FOK_POLL_CHECK_USEC_APCU : FOK_POLL_CHECK_USEC;
+    // not fight the duels that are actually sending (see RelayStore). A peek
+    // is two shared-memory reads, so it polls tight and delivers in about a
+    // millisecond.
     $deadline = microtime(true) + $wait;
     // A held GET is the only channel a relayed peer is watching mid-game (it
     // is not polling the signal mailbox), so it is where the server tells it
@@ -123,7 +128,7 @@ if ($method === 'GET') {
             http_response_code(204);
             exit;
         }
-        usleep($checkUsec);
+        usleep(FOK_POLL_CHECK_USEC_APCU);
     }
 }
 
@@ -149,7 +154,6 @@ if (!is_string($payload) || $payload === '' || strlen($payload) > Settings::int(
 Util::checkPts($body['pts'] ?? null, "player $id");
 
 $now = time();
-RelayStore::sweep($now);
 
 if (RelayStore::pending($peer, $id) >= Settings::int('relay_pending_cap')) {
     Alerts::raise('spam', "Relay backlog full for $peer (sender $id)");
@@ -172,7 +176,7 @@ if (!RelayStore::admitted($id, $peer)) {
     }
 }
 // Set or refresh the marker so the pair stays admitted for as long as it keeps
-// relaying (a no-op on the database transport, which gates on ConnTrack above).
+// relaying.
 RelayStore::markAdmitted($id, $peer);
 
 if (!RelayStore::push($id, $peer, $payload)) {
@@ -185,9 +189,8 @@ if (!RelayStore::push($id, $peer, $payload)) {
     Util::fail('relay store full, resend', 429);
 }
 // Ground truth for "this pair runs through the hub": no declared no-P2P bit
-// is needed to end up here. On the APCu transport this database write is a
-// mere liveness marker and is throttled off the per-message hot path (see
-// RelayStore::shouldTrackRelay).
+// is needed to end up here. This database write is a mere liveness marker and
+// is throttled off the per-message hot path (see RelayStore::shouldTrackRelay).
 if (RelayStore::shouldTrackRelay($id, $peer, $now)) {
     Relay::markRelaying($id, $peer);
 }

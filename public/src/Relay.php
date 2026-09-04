@@ -138,9 +138,8 @@ final class Relay
 
     /**
      * The running relayed-message count for one client (the admin Duels
-     * card's Msgs column). Follows the relay's transport transparently - the
-     * rate-limiter holds the total on whichever of APCu or the database is
-     * live - so the caller need not know which.
+     * card's Msgs column). The rate guard holds the total in the hub's own
+     * shared memory (see RelayRate).
      */
     public static function msgsFor(string $id): int
     {
@@ -149,18 +148,11 @@ final class Relay
 
     /**
      * The per-client rate-limiter detail for the admin popup (running total
-     * and any active block), or null if the client has no relay_rate row.
-     * Reads the database row directly, as the popup always has.
+     * and any active block), or null if the client has never relayed. The
+     * guard keeps it in shared memory; there is no relay_rate table any more.
      */
     public static function rateDetail(string $id): ?array
     {
-        $st = Db::get()->prepare('SELECT total, blocked_until FROM relay_rate WHERE id = ?');
-        $st->execute([$id]);
-        $row = $st->fetch();
-        $st->closeCursor();
-        if ($row === false) {
-            return null;
-        }
-        return ['total' => (int)$row['total'], 'blocked_until' => (int)$row['blocked_until']];
+        return RelayRate::detail($id);
     }
 }

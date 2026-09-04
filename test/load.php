@@ -48,9 +48,10 @@ for ($i = 0; $i < 200; $i++) {
     // interface rather than by inserting rows (see Signals).
     Signals::send(sprintf('%08x', $i), 'ffffff01', 'ice', 'c');
 }
-$st = $db->prepare('INSERT INTO relay (pair, from_id, to_id, payload, created) VALUES (?, ?, ?, ?, ?)');
 for ($i = 0; $i < 200; $i++) {
-    $st->execute([sprintf('%08x:%08x', $i, $i + 1), sprintf('%08x', $i), 'ffffff01', 'IN:1:up', $now]);
+    // The relay hub is shared memory too, so it is filled through its own
+    // interface rather than by inserting rows (see RelayStore).
+    RelayStore::push(sprintf('%08x', $i), 'ffffff01', 'IN:1:up');
 }
 for ($i = 0; $i < 200; $i++) {
     Scores::submit(sprintf('%08x', $i), "P$i", $i, 1, 1, 0, '{}', null, null);
