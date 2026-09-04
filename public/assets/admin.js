@@ -61,6 +61,24 @@ const ICON = {
         + '<path d="M3 4h10M6 4V2.5h4V4M5 4l.6 9h4.8L11 4"/></svg>',
 };
 
+// The ONE scrolling child of a card body or a tab panel (see the height
+// model at the top of admin.css): the bars around it keep their natural
+// height, this takes what is left and scrolls. Every list builds its scroll
+// region through this instead of inventing its own.
+function pane(cls, ...kids) {
+    const p = el('div', cls ? 'pane ' + cls : 'pane');
+    p.append(...kids);
+    return p;
+}
+
+// The bar that sits above a pane: a note or filter chips on the left, an
+// action pushed to the right edge with el('span', 'grow') between them.
+function toolbar(...kids) {
+    const b = el('div', 'toolbar');
+    b.append(...kids);
+    return b;
+}
+
 function iconBtn(svg, title) {
     const b = el('button', 'small iconbtn');
     b.innerHTML = svg;
@@ -108,6 +126,22 @@ function idCell(id) {
     s.onclick = () => showClient(id);
     td.append(s);
     return td;
+}
+
+// A long hex value (an item uid, a state digest): first group shown, the
+// whole thing on hover.
+function hexCell(v, cls) {
+    const td = el('td', cls || '');
+    const s = el('span', 'trunc', v.length > 12 ? v.slice(0, 8) + '..' : v);
+    s.title = v;
+    td.append(s);
+    return td;
+}
+
+// A ledger party is an 8-hex player id (clickable) or empty / a digest.
+function partyCell(v) {
+    if (typeof v === 'string' && v.length === 8) return idCell(v);
+    return v ? hexCell(v, 'muted') : el('td', 'muted', '-');
 }
 
 // IPv6 is too wide for a table column: show the first and last group with
@@ -321,10 +355,46 @@ function renderClientBody(body, overlay, d, reload) {
 // refreshes that follow a debug toggle or a delete.
 let usersFilter = '';
 
-// Alerts card state, kept across the card's live refreshes: the open tab,
-// the log severity filter, and the last log payload so switching filters is
-// instant without a refetch.
-let alertsTab = 'alerts';   // 'alerts' | 'logs' | 'perf'
+// ---------------------------------------------------------- tabbed cards
+//
+// ONE tab implementation for every tabbed card, so no two tiles can drift
+// apart in look or in behaviour. A card declares its tabs as
+// [{key, label, render(panel)}] and RETURNS tabs(...) from its refresh; the
+// markup is always .tabbar + .tabpanel (styled in admin.css) and the panel
+// is always the .pane half of the height model.
+//
+// The bar is built once and kept, so a live refresh never steals the open
+// tab, and only the ACTIVE tab renders: a tab nobody is looking at costs
+// nothing, not even its fetch.
+const tabState = {};
+
+function tabs(box, id, defs) {
+    const open = defs.some((t) => t.key === tabState[id]) ? tabState[id] : defs[0].key;
+    tabState[id] = open;
+    if (!box.querySelector('.tabbar')) {
+        box.replaceChildren();
+        const bar = el('div', 'tabbar');
+        for (const t of defs) {
+            const b = el('button', 'tab', t.label);
+            b.dataset.tab = t.key;
+            b.onclick = () => {
+                if (tabState[id] === t.key) return;
+                tabState[id] = t.key;
+                refreshModule(id);
+            };
+            bar.append(b);
+        }
+        box.append(bar, el('div', 'tabpanel'));
+    }
+    for (const b of box.querySelectorAll('.tabbar .tab')) {
+        b.classList.toggle('active', b.dataset.tab === open);
+    }
+    return defs.find((t) => t.key === open).render(box.querySelector('.tabpanel'));
+}
+
+// Diagnostics state kept across the card's live refreshes: the log severity
+// filter, the last log payload so switching filters is instant without a
+// refetch, and the capability assessment.
 let logFilter = 'all';      // 'all' | 'warn' | 'error'
 let lastLog = null;
 let lastCaps = null;
@@ -334,7 +404,7 @@ function renderAlerts(box, d) {
     if (!d.alerts.length) { box.append(el('p', 'muted', 'No alerts.')); return; }
     box.append(el('p', d.unseen ? 'error' : 'muted',
         d.unseen ? d.unseen + ' unseen alert(s)' : 'All alerts seen.'));
-    const table = el('table');
+    const table = el('table', 'wrap');
     table.append(row(['Time', 'Type', 'Message'], 'th'));
     for (const a of d.alerts) {
         const words = a.message.split(' ');
@@ -353,9 +423,7 @@ function renderAlerts(box, d) {
     }
     // The list is the scroll region; the count above and the button below
     // stay put, so "Mark all seen" is reachable without scrolling to it.
-    const view = el('div', 'pane');
-    view.append(table);
-    box.append(view);
+    box.append(pane('', table));
     if (d.unseen) {
         const btn = el('button', '', 'Mark all seen');
         btn.onclick = async () => {
@@ -378,7 +446,7 @@ function renderLogs(box) {
     box.replaceChildren();
     const d = lastLog || { entries: [], bytes: 0, truncated: false };
 
-    const bar = el('div', 'logbar');
+    const bar = toolbar();
     const chip = (key, label) => {
         const c = el('button', 'chip' + (logFilter === key ? ' active' : ''), label);
         c.onclick = () => { logFilter = key; renderLogs(box); };
@@ -399,7 +467,7 @@ function renderLogs(box) {
         box.append(el('p', 'muted', d.entries.length ? 'No entries at this level.' : 'Log is empty.'));
         return;
     }
-    const view = el('div', 'pane logview');
+    const view = pane('logview');
     for (const e of shown) view.append(el('div', 'logline log-' + e.level, e.text));
     box.append(view);
     box.append(el('p', 'muted', 'Showing ' + shown.length + ' of ' + d.entries.length
@@ -412,7 +480,7 @@ function renderLogs(box) {
 // nothing; Update forces a fresh assessment.
 function renderPerf(box, d) {
     box.replaceChildren();
-    const bar = el('div', 'logbar');
+    const bar = toolbar();
     const when = d.checked
         ? 'assessed ' + fmtTime(d.checked) + ' for v' + d.version
         : 'not assessed yet';
@@ -428,7 +496,7 @@ function renderPerf(box, d) {
     bar.append(upd);
     box.append(bar);
 
-    const table = el('table');
+    const table = el('table', 'wrap');
     table.append(row(['', 'Capability', 'Value'], 'th'));
     for (const c of (d.checks || [])) {
         const r = el('tr');
@@ -443,9 +511,133 @@ function renderPerf(box, d) {
     }
     // The bar above stays put and this scrolls - the .pane half of the one
     // height model (see admin.css), same as the log and the alert list.
-    const view = el('div', 'pane');
-    view.append(table);
+    box.append(pane('', table));
+}
+
+// Requests per UTC hour, from the same 'stats' payload the Statistics tile
+// reads. A diagnostics tab rather than a tile of its own: it is read when
+// something looks wrong, next to the alerts and the log that say so.
+function renderLoad(box, d) {
+    box.replaceChildren();
+    box.append(toolbar(el('span', 'muted', 'Requests per hour, UTC, last 24 h.')));
+    const buckets = Object.keys(d.load).sort();
+    if (!buckets.length) {
+        box.append(el('p', 'muted', 'No traffic recorded yet.'));
+        return;
+    }
+    const table = el('table');
+    table.append(row(['Hour', 'hello', 'score', 'signal'], 'th'));
+    for (const b of buckets) {
+        const m = d.load[b];
+        table.append(row([
+            b.slice(6, 8) + '.' + b.slice(4, 6) + '. ' + b.slice(8) + 'h',
+            m.hello || 0, m.score_submit || 0, m.signal || 0,
+        ]));
+    }
+    box.append(pane('', table));
+}
+
+// ---- Item registry, over its two tabs ---------------------------------
+// Status: what the registry HOLDS - the counters, the chain verify, and the
+// two exception lists (a frozen instance, a player whose claims keep being
+// disputed). The ledger itself is the other tab.
+function renderItemStatus(box, d) {
+    box.replaceChildren();
+
+    const grid = el('div', 'statgrid');
+    const stat = (label, value, wide) => {
+        const s = el('div', 'stat' + (wide ? ' wide' : ''));
+        s.append(el('div', 'stat-value', String(value)), el('div', 'stat-label', label));
+        grid.append(s);
+    };
+    stat('Items', d.items_total);
+    stat('Frozen', d.items_frozen);
+    stat('Open matches', d.matches_open);
+    // Two cells wide: the only bubble holding a pair of numbers.
+    stat('Ledger rows', d.ledger_rows + ' / ' + d.ledger_max, true);
+    box.append(grid);
+
+    // Chain-verify: walks the hash chain from the newest checkpoint forward
+    // and reports whether it is intact. A deliberate click.
+    const line = el('span', 'muted', 'Not verified this session.');
+    const vbtn = el('button', 'small', 'Verify chain');
+    vbtn.onclick = async () => {
+        vbtn.disabled = true;
+        line.replaceChildren(el('span', 'muted', 'verifying...'));
+        try {
+            const v = (await api('items_verify', { method: 'POST' })).verify;
+            line.replaceChildren();
+            if (v.ok) {
+                line.append(el('span', 'badge perf-good', 'intact'),
+                    el('span', 'muted', ' ' + v.checked + ' row(s) from n=' + v.from + '.'));
+            } else {
+                line.append(el('span', 'badge perf-bad', 'BROKEN'),
+                    el('span', 'error', ' at n=' + v.break + ' (from n=' + v.from + ').'));
+            }
+        } catch (e) {
+            line.replaceChildren(el('span', 'error', 'Verify failed: ' + e.message));
+        }
+        vbtn.disabled = false;
+    };
+    box.append(toolbar(vbtn, ' ', line));
+
+    const view = pane('');
+    if (d.frozen.length) {
+        view.append(el('h3', 'subhead', 'Frozen items (' + d.frozen.length + ')'));
+        const t = el('table');
+        t.append(row(['UID', 'Item', 'Owner', 'Seq'], 'th'));
+        for (const f of d.frozen) {
+            const r = el('tr');
+            r.classList.add('gone');
+            r.append(hexCell(f.uid, 'muted'), el('td', '', f.item_id),
+                idCell(f.owner), el('td', 'muted', f.seq));
+            t.append(r);
+        }
+        view.append(t);
+    }
+
+    if (d.disputed.length) {
+        view.append(el('h3', 'subhead', 'Disputed claims by player'));
+        const t = el('table');
+        t.append(row(['ID', 'Name', 'OK', 'Untagged', 'Disputed'], 'th'));
+        for (const p of d.disputed) {
+            const r = el('tr');
+            r.append(idCell(p.id), el('td', '', p.name === null ? '-' : p.name),
+                el('td', 'muted', p.ok), el('td', 'muted', p.untagged),
+                el('td', 'error', p.disputed));
+            t.append(r);
+        }
+        view.append(t);
+        sortable(t, 'items_disputed');
+    }
+
+    if (!d.frozen.length && !d.disputed.length) {
+        view.append(el('p', 'muted', 'Nothing frozen, no disputed claims.'));
+    }
+    view.append(el('p', 'muted', 'Ownership is the items table. A frozen item is a claim the '
+        + 'ladder judged as tampering. Match secrets are never shown.'));
     box.append(view);
+}
+
+// Ledger: the audit trail itself, newest first.
+function renderItemLedger(box, d) {
+    box.replaceChildren();
+    if (!d.recent.length) {
+        box.append(el('p', 'muted', 'No item activity yet.'));
+        return;
+    }
+    const t = el('table');
+    t.append(row(['n', 'Kind', 'UID', 'From', 'To', 'Tick', 'When'], 'th'));
+    for (const e of d.recent) {
+        const r = el('tr');
+        r.append(el('td', 'muted', e.n), el('td', '', e.kind), hexCell(e.uid, 'muted'),
+            partyCell(e.from), partyCell(e.to), el('td', 'muted', e.tick),
+            el('td', 'muted', fmtTime(Math.floor(e.at / 1000))));
+        t.append(r);
+    }
+    box.append(pane('', t));
+    box.append(el('p', 'muted', 'The ledger is audit only and hash-chained - Verify chain on the '
+        + 'Status tab walks it. Newest first.'));
 }
 
 const MODULES = [
@@ -543,43 +735,38 @@ const MODULES = [
     {
         id: 'alerts',
         title: 'Alerts & diagnostics',
-        async refresh(box) {
-            // The tab bar is built once and kept, so a live refresh never
-            // steals the open tab; only the panel below it re-renders.
-            let panel = box.querySelector('.tabpanel');
-            if (!panel) {
-                box.replaceChildren();
-                const bar = el('div', 'tabbar');
-                const mkTab = (key, label) => {
-                    const b = el('button', 'tab', label);
-                    b.dataset.tab = key;
-                    b.onclick = () => { if (alertsTab !== key) { alertsTab = key; refreshModule('alerts'); } };
-                    return b;
-                };
-                bar.append(mkTab('alerts', 'Alerts'), mkTab('logs', 'Logs'), mkTab('perf', 'Performance'));
-                panel = el('div', 'tabpanel');
-                box.append(bar, panel);
-            }
-            for (const b of box.querySelectorAll('.tabbar .tab')) {
-                b.classList.toggle('active', b.dataset.tab === alertsTab);
-            }
-            // The log is fetched ONLY while its tab is open: populated on
-            // select, then live-followed by this card's own refresh. The
-            // default Alerts tab never pays to read the log file.
-            if (alertsTab === 'logs') {
-                lastLog = await api('log');
-                renderLogs(panel);
-            } else if (alertsTab === 'perf') {
-                // Read ONCE and keep. The assessment only changes on a new
-                // release or an explicit Update, so the card's live refresh
-                // must not keep asking for it.
-                if (lastCaps === null) {
-                    lastCaps = await api('caps');
-                }
-                renderPerf(panel, lastCaps);
-            } else {
-                renderAlerts(panel, await api('alerts'));
-            }
+        refresh(box) {
+            return tabs(box, 'alerts', [
+                {
+                    key: 'alerts',
+                    label: 'Alerts',
+                    render: async (p) => renderAlerts(p, await api('alerts')),
+                },
+                {
+                    // The log file is read ONLY while this tab is open:
+                    // populated on select, then live-followed by the card's
+                    // own refresh. The default Alerts tab never pays for it.
+                    key: 'logs',
+                    label: 'Logs',
+                    render: async (p) => { lastLog = await api('log'); renderLogs(p); },
+                },
+                {
+                    // Read ONCE and kept: the assessment only changes on a
+                    // new release or an explicit Update, so the live refresh
+                    // must not keep asking for it.
+                    key: 'perf',
+                    label: 'Performance',
+                    render: async (p) => {
+                        if (lastCaps === null) lastCaps = await api('caps');
+                        renderPerf(p, lastCaps);
+                    },
+                },
+                {
+                    key: 'load',
+                    label: 'Load',
+                    render: async (p) => renderLoad(p, await api('stats')),
+                },
+            ]);
         },
     },
     {
@@ -636,26 +823,6 @@ const MODULES = [
             };
             row2.append(exp, impLabel);
             box.append(row2);
-        },
-    },
-    {
-        id: 'load',
-        title: 'Load (last 24h, per hour UTC)',
-        async refresh(box) {
-            const d = await api('stats');
-            box.replaceChildren();
-            const buckets = Object.keys(d.load).sort();
-            if (!buckets.length) { box.append(el('p', 'muted', 'No traffic recorded yet.')); return; }
-            const table = el('table');
-            table.append(row(['Hour', 'hello', 'score', 'signal'], 'th'));
-            for (const b of buckets) {
-                const m = d.load[b];
-                table.append(row([
-                    b.slice(6, 8) + '.' + b.slice(4, 6) + '. ' + b.slice(8) + 'h',
-                    m.hello || 0, m.score_submit || 0, m.signal || 0,
-                ]));
-            }
-            box.append(table);
         },
     },
     {
@@ -723,8 +890,8 @@ const MODULES = [
             };
             search.oninput = applyFilter;
             applyFilter();
-            box.append(el('p', 'muted', 'Debug: pending = set, not yet picked up '
-                + '(applies on the client next connect); self = the client turned it on itself.'));
+            box.append(el('p', 'muted', 'Debug: pending = set, applies on the client\'s '
+                + 'next connect; self = the client turned it on.'));
         },
     },
     {
@@ -907,108 +1074,19 @@ const MODULES = [
         title: 'Item registry',
         // No own interval: ownership changes slowly and chain-verify is a
         // manual, deliberate action. Refreshes on load and its own button.
-        async refresh(box) {
-            const d = await api('items');
-            box.replaceChildren();
-
-            const grid = el('div', 'statgrid');
-            const stat = (label, value) => {
-                const s = el('div', 'stat');
-                s.append(el('div', 'stat-value', String(value)), el('div', 'stat-label', label));
-                grid.append(s);
-            };
-            stat('Items', d.items_total);
-            stat('Frozen', d.items_frozen);
-            stat('Open matches', d.matches_open);
-            stat('Ledger rows', d.ledger_rows + ' / ' + d.ledger_max);
-            box.append(grid);
-
-            // Chain-verify: walks the hash chain from the newest checkpoint
-            // forward and reports whether it is intact. A deliberate click.
-            const line = el('span', 'muted', 'Not verified this session.');
-            const vbtn = el('button', 'small', 'Verify chain');
-            vbtn.onclick = async () => {
-                vbtn.disabled = true;
-                line.replaceChildren(el('span', 'muted', 'verifying...'));
-                try {
-                    const v = (await api('items_verify', { method: 'POST' })).verify;
-                    line.replaceChildren();
-                    if (v.ok) {
-                        line.append(el('span', 'badge perf-good', 'intact'),
-                            el('span', 'muted', ' ' + v.checked + ' row(s) from n=' + v.from + '.'));
-                    } else {
-                        line.append(el('span', 'badge perf-bad', 'BROKEN'),
-                            el('span', 'error', ' at n=' + v.break + ' (from n=' + v.from + ').'));
-                    }
-                } catch (e) {
-                    line.replaceChildren(el('span', 'error', 'Verify failed: ' + e.message));
-                }
-                vbtn.disabled = false;
-            };
-            const bar = el('p');
-            bar.append(vbtn, ' ', line);
-            box.append(bar);
-
-            // A trunc cell for a long hex value (uid, state digest): first
-            // group shown, the whole thing on hover.
-            const hexCell = (v, cls) => {
-                const td = el('td', cls || '');
-                const s = el('span', 'trunc', v.length > 12 ? v.slice(0, 8) + '..' : v);
-                s.title = v;
-                td.append(s);
-                return td;
-            };
-            // A ledger party is an 8-hex id (clickable) or empty/a digest.
-            const partyCell = (v) => (typeof v === 'string' && v.length === 8)
-                ? idCell(v) : (v ? hexCell(v, 'muted') : el('td', 'muted', '-'));
-
-            if (d.frozen.length) {
-                box.append(el('h3', 'subhead', 'Frozen items (' + d.frozen.length + ')'));
-                const t = el('table');
-                t.append(row(['UID', 'Item', 'Owner', 'Seq'], 'th'));
-                for (const f of d.frozen) {
-                    const r = el('tr');
-                    r.classList.add('gone');
-                    r.append(hexCell(f.uid, 'muted'), el('td', '', f.item_id),
-                        idCell(f.owner), el('td', 'muted', f.seq));
-                    t.append(r);
-                }
-                box.append(t);
-            }
-
-            if (d.disputed.length) {
-                box.append(el('h3', 'subhead', 'Disputed claims by player'));
-                const t = el('table');
-                t.append(row(['ID', 'Name', 'OK', 'Untagged', 'Disputed'], 'th'));
-                for (const p of d.disputed) {
-                    const r = el('tr');
-                    r.append(idCell(p.id), el('td', '', p.name === null ? '-' : p.name),
-                        el('td', 'muted', p.ok), el('td', 'muted', p.untagged),
-                        el('td', 'error', p.disputed));
-                    t.append(r);
-                }
-                box.append(t);
-                sortable(t, 'items_disputed');
-            }
-
-            box.append(el('h3', 'subhead', 'Recent ledger'));
-            if (!d.recent.length) {
-                box.append(el('p', 'muted', 'No item activity yet.'));
-            } else {
-                const t = el('table');
-                t.append(row(['n', 'Kind', 'UID', 'From', 'To', 'Tick', 'When'], 'th'));
-                for (const e of d.recent) {
-                    const r = el('tr');
-                    r.append(el('td', 'muted', e.n), el('td', '', e.kind), hexCell(e.uid, 'muted'),
-                        partyCell(e.from), partyCell(e.to), el('td', 'muted', e.tick),
-                        el('td', 'muted', fmtTime(Math.floor(e.at / 1000))));
-                    t.append(r);
-                }
-                box.append(t);
-            }
-
-            box.append(el('p', 'muted', 'Ownership is the items table; the ledger is audit only. '
-                + 'A frozen item is a claim the ladder judged as tampering. Match secrets are never shown.'));
+        refresh(box) {
+            return tabs(box, 'items', [
+                {
+                    key: 'status',
+                    label: 'Status',
+                    render: async (p) => renderItemStatus(p, await api('items')),
+                },
+                {
+                    key: 'ledger',
+                    label: 'Ledger',
+                    render: async (p) => renderItemLedger(p, await api('items')),
+                },
+            ]);
         },
     },
 ];

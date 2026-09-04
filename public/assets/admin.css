@@ -318,14 +318,24 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
     padding: 5px 6px;
     text-align: center;
 }
+/* A bubble holding a PAIR of numbers (rows / cap) needs two cells, or it
+   wraps where the others do not. */
+.stat.wide { grid-column: span 2; }
 .stat-value { font-size: 16px; color: var(--accent); }
 .stat-label { font-size: 10px; color: var(--muted); }
 
 
-/* ------------------------------------ alerts & diagnostics (tabbed card) */
+/* ------------------------------------------------------- tabbed cards */
 
-/* Tab row above the panel, active tab marked with an accent underline. */
-.tabbar { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+/* EVERY tabbed card is this markup - .tabbar + .tabpanel, built by the one
+   tabs() helper in admin.js - so the tiles cannot drift apart. A tab panel
+   is a bar (or several) plus the one .pane that scrolls; nothing here is
+   card-specific, and nothing card-specific may be added below.
+
+   Tab row above the panel, active tab marked with an accent underline. It
+   wraps rather than overflowing: a card with four tabs is narrower than its
+   labels on a phone. */
+.tabbar { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
 .tabbar .tab {
     background: transparent; border: 0; border-bottom: 2px solid transparent;
     border-radius: 0; padding: 4px 12px; color: var(--muted);
@@ -333,9 +343,11 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 .tabbar .tab:hover { color: var(--text); }
 .tabbar .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-/* Filter/action row: chips or a note on the left, action pushed right. */
-.logbar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-.logbar .grow { margin-left: auto; }
+/* Filter/action row above a pane: chips or a note on the left, the action
+   pushed right. Used by every tab that has one (logs, performance, load,
+   the registry's chain verify). */
+.toolbar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.toolbar .grow { margin-left: auto; }
 .chip {
     padding: 2px 10px; font-size: 12px; border-radius: var(--r-pill);
     background: transparent; color: var(--muted);
@@ -349,9 +361,10 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 .alert-row:hover td { background: rgba(255, 255, 255, 0.03); }
 .alert-row:hover .msg-link { text-decoration: underline; }
 
-/* Alert messages and capability notes wrap instead of forcing the card wide
-   (the global td rule is nowrap). */
-.card-alerts td { white-space: normal; }
+/* Prose columns - an alert message, a capability note - wrap instead of
+   forcing the card wide; the global td rule is nowrap. Marked on the table
+   itself, so it does not depend on which card the table sits in. */
+table.wrap td { white-space: normal; }
 
 /* The log pane is framed as a console; .pane above gives it its scroll. */
 .logview {
