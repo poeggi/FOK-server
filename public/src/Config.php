@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.2.1';
+const FOK_SERVER_VERSION = '1.2.2';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -64,7 +64,7 @@ const FOK_SERVER_VERSION = '1.2.1';
 // major matching. Minting stays client-trusted (see the scope boundary in
 // docs/API.md): 4.0 makes items conserved and auditable, not unforgeable.
 // v4.1: additive tournament mode. New POST /api/tournament.php runs a lobby,
-// a sparse first round, a seeded knockout and the standings for 2-10 players
+// a sparse first round, a seeded knockout and the standings for 2-8 players
 // (see docs/API.md), announcing every transition as a server-generated
 // 'tourney' signal; hello.php gains an optional "tourneys" request flag that
 // returns the open lobbies hosted on the caller's own address, plus an
@@ -186,6 +186,14 @@ const FOK_POLL_CHECK_USEC = 20000;
 // database transport - used only on fallback (relay_apcu=0 or APCu
 // unavailable) - keeps the wider FOK_POLL_CHECK_USEC.
 const FOK_POLL_CHECK_USEC_APCU = 2000;
+
+// Default players in one tournament (admin-configurable, see Settings).
+// The default follows the HOST, not taste: measured, this deployment serves
+// ~20 concurrent PHP requests, and every participant holds one worker for its
+// handshake each time the roles change. Eight keeps a match boundary under
+// half the pool, so several tournaments can overlap. Raise it only against a
+// pool that has the workers to absorb the boundary.
+const FOK_TOURNAMENT_MAX_PLAYERS = 8;
 
 // Abuse caps (HTTP 429): pending signals per recipient, score submissions
 // per player within the rate window.

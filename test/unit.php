@@ -6,6 +6,14 @@ declare(strict_types=1);
 
 $tmp = sys_get_temp_dir() . '/fok-test-' . getmypid();
 putenv('FOK_DATA_DIR=' . $tmp);
+// A failed run exits before its own cleanup below, and process ids are
+// recycled - so a later run can open a database somebody else already
+// populated and fail on assertions that count rows. Start from nothing.
+foreach (glob($tmp . '/*') ?: [] as $f) {
+    if (is_file($f)) {
+        unlink($f);
+    }
+}
 ini_set('zend.assertions', '1');
 ini_set('assert.exception', '1');
 

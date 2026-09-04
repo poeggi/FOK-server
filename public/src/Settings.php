@@ -64,7 +64,7 @@ final class Settings
         // report of a match that just ended. walkover_ms is long, and only
         // ever fires against a player who is also OFFLINE, so a slow match
         // between two present players is never taken away from them.
-        'tournament_max_players' => [10, 'Max players in one tournament'],
+        'tournament_max_players' => [FOK_TOURNAMENT_MAX_PLAYERS, 'Max players in one tournament'],
         'tournament_join_ttl' => [900, 'Abandon a lobby nobody started after (seconds)'],
         'tournament_result_ms' => [15000, 'A one-sided result settles after this long unanswered (ms)'],
         'tournament_walkover_ms' => [180000, 'An offline player forfeits the match in flight after (ms)'],

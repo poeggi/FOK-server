@@ -64,9 +64,9 @@ final class Bracket
     /**
      * The round-1 schedule: seat pairs in play order.
      *
-     * SPARSE on purpose. A dense round-robin at 10 players is 45 matches run
+     * SPARSE on purpose. A dense round-robin at 8 players is 28 matches run
      * one at a time, which is an evening nobody finishes; this gives everyone
-     * at most 4 matches and 10 players 20 of them.
+     * at most 4 matches and 8 players 16 of them.
      *
      * N <= 4: every pair (that IS at most 3 matches each already).
      * N >= 5: the circulant edges at offsets 1 and 2 on the seat circle, so

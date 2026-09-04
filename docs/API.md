@@ -367,7 +367,7 @@ Response:
       "friends_playing": ["deadbeef"],       accepted friends in a duel NOW
       "tourneys": [                          only when "tourneys" was true
         {"tid": "<32-hex>", "code": "K7QMX2", "host": "c0ffee42",
-         "host_name": "KAI", "players": 3, "max": 10, "stakes": false}
+         "host_name": "KAI", "players": 3, "max": 8, "stakes": false}
       ]
     }
 
@@ -1350,7 +1350,7 @@ failed connection - the scoreboard keeps updating either way.
 
 ## Tournament mode
 
-`POST /api/tournament.php` runs a tournament for 2 to 10 players: a lobby,
+`POST /api/tournament.php` runs a tournament for 2 to 8 players: a lobby,
 a first round, a knockout and the standings between them.
 
 THE SERVER ORCHESTRATES, THE PLAYERS PLAY. Every match in a tournament is
@@ -1419,7 +1419,7 @@ become walkovers.
 
 ### The first round
 
-Deliberately SPARSE. A full round-robin at 10 players is 45 matches played
+Deliberately SPARSE. A full round-robin at 8 players is 28 matches played
 one at a time, which is an evening nobody finishes. Instead:
 
 - N <= 4: every pair (that is at most 3 matches each already).
@@ -1589,7 +1589,7 @@ the whole picture.
       "event": "lobby",           the lobby fields are carried verbatim,
                                   this one included - ignore it here
       "tid": "<32-hex>", "state": "running", "code": "K7QMX2",
-      "host": "c0ffee42", "stakes": false, "max": 10,
+      "host": "c0ffee42", "stakes": false, "max": 8,
       "players": [{"id": "c0ffee42", "name": "KAI"}, ...],
       "round": 1,                 1 = the first round, 2+ = knockout stages
       "cursor": "r1.4",           the node being played, or null
