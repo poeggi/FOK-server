@@ -100,6 +100,38 @@ final class AdminData
     }
 
     /**
+     * The last 60 minutes of traffic, one row per UTC minute, in the shape
+     * hours() returns. The Live tab's graphs follow its window selector, so
+     * a per-minute reading opens a per-minute history - an hour bucket next
+     * to a "/min" figure is sixty times the number the operator just read.
+     *
+     * Minute buckets only, and twelve digits is what tells them from the ten
+     * of an hour (see hours()). They are kept for two hours before they are
+     * pruned (see Util::watch), so a full hour of them is always there.
+     *
+     * The sampled LEVELS are not in here at all: they are written once an
+     * hour under the hour bucket (see Counters::sampleGauges), so a gauge
+     * that reads a level keeps its 24 h graph in either window.
+     */
+    public static function minutes(): array
+    {
+        // The newest closed minutes may still be buffered in shared memory,
+        // and those are exactly the ones the graph ends on (see live()).
+        Counters::flushDue();
+        $st = Db::get()->prepare("SELECT bucket, metric, value FROM counters
+                                  WHERE bucket >= ? AND bucket GLOB '[0-9]*'
+                                    AND length(bucket) = 12
+                                    AND metric NOT GLOB 'mint_*'
+                                  ORDER BY bucket");
+        $st->execute([gmdate('YmdHi', time() - 3600)]);
+        $minutes = [];
+        foreach ($st->fetchAll() as $r) {
+            $minutes[$r['bucket']][$r['metric']] = (int)$r['value'];
+        }
+        return ['now' => time(), 'minutes' => $minutes];
+    }
+
+    /**
      * The two windows the Live tab offers, each a COMPLETE one so the figure
      * is a whole window every time it is read instead of a number climbing
      * from zero: the last full minute and the last full hour. The same

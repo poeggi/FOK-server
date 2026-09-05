@@ -73,6 +73,8 @@ function poll(string $action): ?array
             return ['unseen' => Alerts::unseenCount(), 'alerts' => Alerts::recent()];
         case 'load':
             return AdminData::hours();
+        case 'load_min':
+            return AdminData::minutes();
         default:
             return null;
     }
@@ -138,6 +140,7 @@ switch ($action) {
     // ---- dashboard cards (read-only) ----
     case 'stats':
     case 'load':
+    case 'load_min':
         Util::jsonOut(['ok' => true] + poll($action));
 
     // A whole dashboard tick in one request: the cards that came due

@@ -118,6 +118,11 @@ else
     # Envelope only: a bucket is folded from APCu when a minute closes, so
     # a short smoke run is not guaranteed to have produced one yet.
     expect "the 24 h history is keyed by hour bucket" '"hours":' "$R"
+    # The Live tab's per-minute window opens a per-minute history, off the
+    # same table (see AdminData::minutes).
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=load_min")
+    expect "admin minute history" '"ok":true' "$R"
+    expect "the 60 min history is keyed by minute bucket" '"minutes":' "$R"
 
     # Item registry card, over the data 05_items.sh left behind. The matches
     # table is only ever COUNTed here: a per-duel attestation secret must

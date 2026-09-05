@@ -81,24 +81,35 @@ function fmtDate(unix) {
 // A plain count, kept short enough for a bubble: four digits still fit and
 // stay exact, past that the tile has to squeeze and thousands read better.
 // The exact figure is in the bubble's tooltip either way.
-function fmtNum(n) {
-    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-    if (n >= 10000) return Math.round(n / 1000) + 'k';
+//
+// The optional second argument is the value the UNIT is picked for, so a
+// pair of labels on one axis reads in one unit instead of two: a chart whose
+// top says "17.9 s" must not have "0 ms" underneath it. A scaled zero is the
+// bare digit, because "0.0 s" is the unit said twice.
+function fmtNum(n, scale) {
+    if (scale !== undefined && n === 0) return '0';
+    const s = scale === undefined ? n : scale;
+    if (s >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (s >= 10000) return Math.round(n / 1000) + 'k';
     return String(n);
 }
 
-function fmtBytes(n) {
-    if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
-    if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+function fmtBytes(n, scale) {
+    if (scale !== undefined && n === 0) return '0';
+    const s = scale === undefined ? n : scale;
+    if (s >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    if (s >= 1024) return (n / 1024).toFixed(1) + ' KB';
     return n + ' B';
 }
 
 // A duration in milliseconds, at the scale it is read at: an hour of worker
 // time over the whole server is hours, one script's share of it is seconds.
-function fmtMs(ms) {
-    if (ms >= 3600000) return (ms / 3600000).toFixed(1) + ' h';
-    if (ms >= 60000) return (ms / 60000).toFixed(1) + ' min';
-    if (ms >= 1000) return (ms / 1000).toFixed(1) + ' s';
+function fmtMs(ms, scale) {
+    if (scale !== undefined && ms === 0) return '0';
+    const s = scale === undefined ? ms : scale;
+    if (s >= 3600000) return (ms / 3600000).toFixed(1) + ' h';
+    if (s >= 60000) return (ms / 60000).toFixed(1) + ' min';
+    if (s >= 1000) return (ms / 1000).toFixed(1) + ' s';
     return Math.round(ms) + ' ms';
 }
 
@@ -594,12 +605,21 @@ function renderPerf(box, d) {
     box.append(pane('', table));
 }
 
-// One 24 h series, drawn to one scale: max and baseline labelled, an area
-// fill under the line, the newest point emphasized and repeated in the
-// head. The colour comes from a class so it stays on the palette (see
-// admin.css), and the viewBox carries the label gutters so nothing is
-// clipped at any card width.
-function chart(box, title, data, fmt, cls) {
+// The two windows a graph can cover, as the axis reads them. Which one a
+// gauge opens in follows the Live tab's selector (see showGaugeCharts).
+const AXIS = {
+    hour: { start: '-24h', mid: '-12h', aria: 'last 24 hours' },
+    min: { start: '-60min', mid: '-30min', aria: 'last 60 minutes' },
+};
+
+// One series, drawn to one scale: max and baseline labelled, an area fill
+// under the line, the newest point emphasized and repeated in the head. Both
+// tick labels are formatted against the MAX, so one axis carries one unit -
+// picking a unit per label put "17.9 s" over "0 ms". The colour comes from a
+// class so it stays on the palette (see admin.css), and the viewBox carries
+// the label gutters so nothing is clipped at any card width.
+function chart(box, title, data, fmt, cls, axis) {
+    const ax = axis || AXIS.hour;
     const wrap = el('div', 'chartbox ' + cls);
     const head = el('div', 'chart-head');
     head.append(el('span', 'chart-title', title),
@@ -614,7 +634,7 @@ function chart(box, title, data, fmt, cls) {
     const svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
     svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label', title + ', last 24 hours');
+    svg.setAttribute('aria-label', title + ', ' + ax.aria);
     const add = (tag, attrs, text) => {
         const n = document.createElementNS(NS, tag);
         for (const k in attrs) n.setAttribute(k, String(attrs[k]));
@@ -624,14 +644,15 @@ function chart(box, title, data, fmt, cls) {
     for (const [v, dash] of [[max, '2 3'], [0, '']]) {
         add('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), class: 'grid',
             'stroke-dasharray': dash });
-        add('text', { x: L - 5, y: y(v) + 3, 'text-anchor': 'end', class: 'tick' }, fmt(v));
+        add('text', { x: L - 5, y: y(v) + 3, 'text-anchor': 'end', class: 'tick' },
+            fmt(v, max));
     }
     const pts = data.map((v, i) => x(i) + ',' + y(v)).join(' ');
     add('polygon', { points: L + ',' + y(0) + ' ' + pts + ' ' + (W - R) + ',' + y(0), class: 'area' });
     add('polyline', { points: pts, class: 'line' });
     add('circle', { cx: x(data.length - 1), cy: y(data[data.length - 1]), r: 2.2, class: 'dot' });
-    for (const [px, lab, anchor] of [[L, '-24h', 'start'], [x(12), '-12h', 'middle'],
-        [W - R, 'now', 'end']]) {
+    for (const [px, lab, anchor] of [[L, ax.start, 'start'],
+        [x((data.length - 1) / 2), ax.mid, 'middle'], [W - R, 'now', 'end']]) {
         add('text', { x: px, y: H - 3, 'text-anchor': anchor, class: 'tick' }, lab);
     }
     wrap.append(svg);
@@ -649,14 +670,15 @@ function chart(box, title, data, fmt, cls) {
 // carry no window and read the same either way.
 let liveWindow = 'min';
 
-// One 24 h series off the hour buckets. A counted total is a true zero in an
-// hour that counted none; a LEVEL is not - it was simply not sampled that
-// hour - so the last known reading carries forward instead (see
+// One series off the counter buckets, hour or minute: the caller passes the
+// map and the keys of the window it wants. A counted total is a true zero in
+// a bucket that counted none; a LEVEL is not - it was simply not sampled -
+// so the last known reading carries forward instead (see
 // Counters::sampleGauges).
-function series(hist, pick, level) {
+function series(buckets, keys, pick, level) {
     let last = 0;
-    return hourKeys(hist.now).map((k) => {
-        const v = pick(hist.hours[k] || {});
+    return keys.map((k) => {
+        const v = pick(buckets[k] || {});
         if (v === null) return level ? last : 0;
         last = v;
         return v;
@@ -684,13 +706,21 @@ const total = (suffix) => (m) => {
 // Under the grid the graphs had to share the tile's height budget with the
 // bubbles, which on a narrow screen left them scrolled out of sight.
 async function showGaugeCharts(gauge) {
-    const { overlay, head, title, close, body } = makeModal(gauge.label);
+    // Levels are sampled once an hour and only ever written to an hour
+    // bucket (see Counters::sampleGauges), so a gauge that reads one keeps
+    // its 24 h graph in either window - sixty minute buckets it was never
+    // written to would draw a flat zero. Everything else follows the
+    // selector: a "/min" figure opens a per-minute history.
+    const byMin = liveWindow === 'min' && !gauge.charts.every((c) => c[4]);
+    const ax = byMin ? AXIS.min : AXIS.hour;
+    const name = gauge.label.replace(/\/(min|h)$/, '');
+    const { overlay, head, title, close, body } = makeModal(name);
     head.append(title, close);
-    body.append(el('div', 'muted', 'Loading the last 24 h.'));
+    body.append(el('div', 'muted', 'Loading the ' + ax.aria + '.'));
     document.body.append(overlay);
     let hist;
     try {
-        hist = await api('load');
+        hist = await api(byMin ? 'load_min' : 'load');
     } catch (e) {
         body.replaceChildren(el('div', 'error', 'The history could not be read.'));
         return;
@@ -698,8 +728,13 @@ async function showGaugeCharts(gauge) {
     // The operator may have closed it while the history was in flight.
     if (!overlay.isConnected) return;
     const charts = el('div', 'charts');
+    const keys = byMin ? minuteKeys(hist.now) : hourKeys(hist.now);
+    const buckets = (byMin ? hist.minutes : hist.hours) || {};
     for (const [t, cls, pick, fmt, level] of gauge.charts) {
-        chart(charts, t, series(hist, pick, level), fmt, cls);
+        // A level reads the same however long the bucket was; a total is a
+        // total OF its bucket, so the title has to say which.
+        chart(charts, level ? t : t + (byMin ? '/min' : '/h'),
+            series(buckets, keys, pick, level), fmt, cls, ax);
     }
     body.replaceChildren(charts);
 }
@@ -713,12 +748,15 @@ function renderServerLive(box, d) {
     const win = (liveWindow === 'min' ? 'Last full minute (' : 'Last full hour (')
         + w.stamp + ' UTC), over all endpoints. ';
     const now = 'Right now. ';
+    // A level is only ever sampled hourly, so its graph is the day either
+    // way; a total's graph follows the window (see showGaugeCharts).
     const day = 'Click for the last 24 h.';
+    const graph = liveWindow === 'min' ? 'Click for the last 60 min.' : day;
 
     const bar = toolbar();
     for (const [key, label] of [['min', 'Per minute'], ['hour', 'Per hour']]) {
         const c = el('button', 'chip' + (liveWindow === key ? ' active' : ''), label);
-        c.onclick = () => { liveWindow = key; renderServerLive(box, d, hist); };
+        c.onclick = () => { liveWindow = key; renderServerLive(box, d); };
         bar.append(c);
     }
     box.append(bar);
@@ -730,11 +768,11 @@ function renderServerLive(box, d) {
             tip: now + 'Duels whose game messages pass through the server. ' + day,
             charts: [['Relayed duels', 'chart-req', one('g:relaying'), fmtNum, true]] },
         { label: 'Msgs in | out' + per, value: fmtNum(w.in) + ' | ' + fmtNum(w.out),
-            tip: win + 'Requests answered, and hub messages handed out. ' + day,
+            tip: win + 'Requests answered, and hub messages handed out. ' + graph,
             charts: [['Requests', 'chart-req', total(''), fmtNum],
                 ['Messages out', 'chart-req', one('n:msg_out'), fmtNum]] },
         { label: 'DB writes' + per, value: w.db_writes,
-            tip: win + 'Writes through the single SQLite writer. ' + day,
+            tip: win + 'Writes through the single SQLite writer. ' + graph,
             charts: [['DB writes', 'chart-db', one('n:db_w'), fmtNum]] },
         { label: 'DB entries', value: d.db_rows,
             tip: now + 'Rows over every table. ' + day,
@@ -750,17 +788,17 @@ function renderServerLive(box, d) {
             charts: m.total === 0 ? null
                 : [['APCu memory', 'chart-cpu', one('g:apcu'), fmtBytes, true]] },
         { label: 'PHP time' + per, value: fmtMs(w.wall_ms),
-            tip: win + 'Worker time held, the slot other clients queue for. ' + day,
+            tip: win + 'Worker time held, the slot other clients queue for. ' + graph,
             charts: [['PHP worker time', 'chart-wall', total('.ms'), fmtMs]] },
         { label: 'CPU time' + per, value: fmtMs(w.cpu_ms),
-            tip: win + 'Processor time actually burned. ' + day,
+            tip: win + 'Processor time actually burned. ' + graph,
             charts: [['CPU time', 'chart-cpu', total('.cpu'), fmtMs]] },
         { label: 'DB calls' + per, value: w.db,
             tip: win + 'Queries the endpoints caused - opening the connection is '
-                + 'not one of them (see Load::openDone). ' + day,
+                + 'not one of them (see Load::openDone). ' + graph,
             charts: [['DB queries', 'chart-db', total('.db'), fmtNum]] },
         { label: 'Busiest script', value: w.top === null ? '-' : w.top, wide: true,
-            tip: win + 'Held the most worker time. ' + (w.top === null ? '' : day),
+            tip: win + 'Held the most worker time. ' + (w.top === null ? '' : graph),
             charts: w.top === null ? null
                 : [[w.top + ' requests', 'chart-req', one(w.top), fmtNum],
                     [w.top + ' worker time', 'chart-wall', one(w.top + '.ms'), fmtMs]] },
@@ -783,6 +821,22 @@ function hourKeys(now) {
         const t = new Date((now - i * 3600) * 1000);
         keys.push(String(t.getUTCFullYear()) + p(t.getUTCMonth() + 1)
             + p(t.getUTCDate()) + p(t.getUTCHours()));
+    }
+    return keys;
+}
+
+// The 60 minute buckets ending with the last complete one, as the UTC
+// stamps Counters::flushMinute keys them by. Built from the axis for the
+// same reason as hourKeys, and it ends one minute back because the running
+// minute is still being counted - drawn, it would be a dip to nearly zero
+// at the right edge of every graph.
+function minuteKeys(now) {
+    const p = (n) => String(n).padStart(2, '0');
+    const keys = [];
+    for (let i = 60; i >= 1; i--) {
+        const t = new Date((now - i * 60) * 1000);
+        keys.push(String(t.getUTCFullYear()) + p(t.getUTCMonth() + 1)
+            + p(t.getUTCDate()) + p(t.getUTCHours()) + p(t.getUTCMinutes()));
     }
     return keys;
 }
@@ -1496,7 +1550,7 @@ const MODULES = [
     },
     {
         id: 'backup',
-        title: 'Backup and restore (database incl. config)',
+        title: 'Backup and restore (db incl. config)',
         view: 'settings',
         async refresh(box) {
             const d = await api('backup_list');
