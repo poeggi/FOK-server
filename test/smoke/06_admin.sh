@@ -27,7 +27,7 @@ else
     # copy (they are byte-identical at both check sites; ?v= is the version).
     JS_ASSET=$(curl -s "$BASE/assets/admin.js?v=$VER")
     expect "the dashboard stops polling while nobody looks" 'visibilitychange' "$JS_ASSET"
-    expect "a gauge opens its own last 24 h" 'pickedGauge' "$JS_ASSET"
+    expect "a gauge opens its own last 24 h" 'showGaugeCharts' "$JS_ASSET"
     expect "a bubble shortens a count that would not fit" 'function fmtNum' "$JS_ASSET"
     CSS_ASSET=$(curl -s "$BASE/assets/admin.css?v=$VER")
     expect "hidden class wins the cascade" 'display: none !important' "$CSS_ASSET"

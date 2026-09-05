@@ -352,7 +352,9 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
    of them also is: same specificity, so the later rule is the one that
    applies. */
 .stat.pick { cursor: pointer; }
-.stat.pick:hover { border-color: var(--accent); }
+/* Only where a pointer can move off again: on a touch screen the
+   highlight would stick to whatever was tapped last. */
+@media (hover: hover) { .stat.pick:hover { border-color: var(--accent); } }
 .stat.on { border-color: var(--accent); }
 
 

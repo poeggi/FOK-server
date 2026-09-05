@@ -649,11 +649,6 @@ function chart(box, title, data, fmt, cls) {
 // carry no window and read the same either way.
 let liveWindow = 'min';
 
-// Which gauge is showing its last 24 h under the grid, by key. Kept in the
-// module so the card's live refresh redraws the same view instead of closing
-// the graph under the operator (see pickedScript).
-let pickedGauge = null;
-
 // One 24 h series off the hour buckets. A counted total is a true zero in an
 // hour that counted none; a LEVEL is not - it was simply not sampled that
 // hour - so the last known reading carries forward instead (see
@@ -685,7 +680,31 @@ const total = (suffix) => (m) => {
     return n;
 };
 
-function renderServerLive(box, d, hist) {
+// A gauge's last 24 h, in the same overlay a player's details open in.
+// Under the grid the graphs had to share the tile's height budget with the
+// bubbles, which on a narrow screen left them scrolled out of sight.
+async function showGaugeCharts(gauge) {
+    const { overlay, head, title, close, body } = makeModal(gauge.label);
+    head.append(title, close);
+    body.append(el('div', 'muted', 'Loading the last 24 h.'));
+    document.body.append(overlay);
+    let hist;
+    try {
+        hist = await api('load');
+    } catch (e) {
+        body.replaceChildren(el('div', 'error', 'The history could not be read.'));
+        return;
+    }
+    // The operator may have closed it while the history was in flight.
+    if (!overlay.isConnected) return;
+    const charts = el('div', 'charts');
+    for (const [t, cls, pick, fmt, level] of gauge.charts) {
+        chart(charts, t, series(hist, pick, level), fmt, cls);
+    }
+    body.replaceChildren(charts);
+}
+
+function renderServerLive(box, d) {
     box.replaceChildren();
     const w = (d.live || {})[liveWindow]
         || { stamp: '--', in: 0, out: 0, db_writes: 0, wall_ms: 0, cpu_ms: 0, db: 0, top: null };
@@ -707,40 +726,40 @@ function renderServerLive(box, d, hist) {
     // Label, value and tip as shown; charts is what the click opens, each
     // entry [title, colour class, series, formatter, level?].
     const gauges = [
-        { key: 'relaying', label: 'Relaying', value: d.relaying,
+        { label: 'Relaying', value: d.relaying,
             tip: now + 'Duels whose game messages pass through the server. ' + day,
             charts: [['Relayed duels', 'chart-req', one('g:relaying'), fmtNum, true]] },
-        { key: 'msgs', label: 'Msgs in | out' + per, value: fmtNum(w.in) + ' | ' + fmtNum(w.out),
+        { label: 'Msgs in | out' + per, value: fmtNum(w.in) + ' | ' + fmtNum(w.out),
             tip: win + 'Requests answered, and hub messages handed out. ' + day,
             charts: [['Requests', 'chart-req', total(''), fmtNum],
                 ['Messages out', 'chart-req', one('n:msg_out'), fmtNum]] },
-        { key: 'db_w', label: 'DB writes' + per, value: w.db_writes,
+        { label: 'DB writes' + per, value: w.db_writes,
             tip: win + 'Writes through the single SQLite writer. ' + day,
             charts: [['DB writes', 'chart-db', one('n:db_w'), fmtNum]] },
-        { key: 'db_rows', label: 'DB entries', value: d.db_rows,
+        { label: 'DB entries', value: d.db_rows,
             tip: now + 'Rows over every table. ' + day,
             charts: [['DB entries', 'chart-req', one('g:db_rows'), fmtNum, true]] },
-        { key: 'db_size', label: 'DB size', value: fmtBytes(d.db_size),
+        { label: 'DB size', value: fmtBytes(d.db_size),
             tip: now + 'The database file on disk. ' + day,
             charts: [['DB size', 'chart-req', one('g:db_size'), fmtBytes, true]] },
-        { key: 'apcu', label: 'APCu memory', value: m.total === 0 ? '-' : fmtBytes(m.used),
+        { label: 'APCu memory', value: m.total === 0 ? '-' : fmtBytes(m.used),
             tip: m.total === 0 ? 'Shared memory is not usable on this host'
                 : 'Shared memory in use of ' + fmtBytes(m.total) + ' ('
                     + Math.round(m.used / m.total * 100) + '%). Signaling, relayed'
                     + ' duels and tournaments live here and fail when it fills. ' + day,
             charts: m.total === 0 ? null
                 : [['APCu memory', 'chart-cpu', one('g:apcu'), fmtBytes, true]] },
-        { key: 'wall', label: 'PHP time' + per, value: fmtMs(w.wall_ms),
+        { label: 'PHP time' + per, value: fmtMs(w.wall_ms),
             tip: win + 'Worker time held, the slot other clients queue for. ' + day,
             charts: [['PHP worker time', 'chart-wall', total('.ms'), fmtMs]] },
-        { key: 'cpu', label: 'CPU time' + per, value: fmtMs(w.cpu_ms),
+        { label: 'CPU time' + per, value: fmtMs(w.cpu_ms),
             tip: win + 'Processor time actually burned. ' + day,
             charts: [['CPU time', 'chart-cpu', total('.cpu'), fmtMs]] },
-        { key: 'db', label: 'DB calls' + per, value: w.db,
+        { label: 'DB calls' + per, value: w.db,
             tip: win + 'Queries the endpoints caused - opening the connection is '
                 + 'not one of them (see Load::openDone). ' + day,
             charts: [['DB queries', 'chart-db', total('.db'), fmtNum]] },
-        { key: 'top', label: 'Busiest script', value: w.top === null ? '-' : w.top, wide: true,
+        { label: 'Busiest script', value: w.top === null ? '-' : w.top, wide: true,
             tip: win + 'Held the most worker time. ' + (w.top === null ? '' : day),
             charts: w.top === null ? null
                 : [[w.top + ' requests', 'chart-req', one(w.top), fmtNum],
@@ -749,30 +768,8 @@ function renderServerLive(box, d, hist) {
 
     bubbles(box, gauges.map((g) => ({
         label: g.label, value: g.value, tip: g.tip, wide: g.wide,
-        on: pickedGauge === g.key,
-        open: g.charts === null ? null : () => {
-            pickedGauge = pickedGauge === g.key ? null : g.key;
-            // The history is fetched only while a graph is open (see the
-            // card's Live tab), so reopening one has to go and get it.
-            refreshModule('server');
-        },
+        open: g.charts === null ? null : () => showGaugeCharts(g),
     })));
-
-    const picked = gauges.find((g) => g.key === pickedGauge && g.charts !== null);
-    if (picked === undefined) {
-        pickedGauge = null;
-        return;
-    }
-    // Nothing to draw until the history lands; the next tick brings it.
-    if (hist) {
-        const charts = el('div', 'charts');
-        for (const [title, cls, pick, fmt, level] of picked.charts) {
-            chart(charts, title, series(hist, pick, level), fmt, cls);
-        }
-        // In a .pane, so the graphs take what the grid leaves and scroll
-        // inside it rather than growing the tile (see the height model).
-        box.append(pane('', charts));
-    }
 }
 
 // The 24 hour buckets ending with the running one, as the UTC stamps the
@@ -1250,15 +1247,10 @@ const MODULES = [
                 {
                     key: 'live',
                     label: 'Live',
-                    // Both reads are asked for in the same turn, so they
-                    // travel as one request (see api()). The 24 h history is
-                    // asked for at all only while a gauge has its graph open.
-                    render: async (p) => {
-                        const [live, hist] = await Promise.all(
-                            [api('stats'), pickedGauge === null ? null : api('load')]
-                        );
-                        renderServerLive(p, live, hist);
-                    },
+                    // The 24 h history is not read here at all: a gauge
+                    // draws its own in a popup, which fetches it once when
+                    // it opens (see showGaugeCharts).
+                    render: async (p) => renderServerLive(p, await api('stats')),
                 },
                 {
                     // The 24 h history is the one payload that grows with the
