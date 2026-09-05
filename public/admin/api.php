@@ -18,6 +18,14 @@ require_once __DIR__ . '/../src/Ledger.php';
 require_once __DIR__ . '/../src/Tournament.php';
 
 Auth::requireLogin();
+// The session is read once, for that check, and never written here: hold its
+// lock any longer and the dashboard's own polls queue behind each other,
+// every waiting one sitting in a PHP worker that a client cannot have.
+session_write_close();
+// The dashboard is a client like any other - three polls a second, each
+// holding a worker - so it is counted like any other, under its own name in
+// the per-script view rather than hidden from it (see Counters::cost).
+Util::bump('admin');
 
 $action = $_GET['action'] ?? '';
 $db = Db::get();

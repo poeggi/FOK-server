@@ -1425,12 +1425,34 @@ function schedule(name, secs, fn) {
     if (secs > 0) timers[name] = setInterval(fn, secs * 1000);
 }
 
+function stopIntervals() {
+    for (const name of Object.keys(timers)) {
+        clearInterval(timers[name]);
+        delete timers[name];
+    }
+}
+
 function applyIntervals() {
+    stopIntervals();
+    // Nobody is reading a background tab, and a poll nobody reads still costs
+    // a PHP worker that a client is queueing for. The browser tells us when
+    // the page is hidden: while it is, the dashboard asks for nothing and
+    // catches up in one pass when it comes back.
+    if (document.hidden) {
+        return;
+    }
     schedule('live', settings.admin_refresh_secs, () => LIVE.forEach(refreshModule));
     for (const m of MODULES) {
         if (m.every) schedule(m.id, settings[m.every], () => refreshModule(m.id));
     }
 }
+
+document.addEventListener('visibilitychange', () => {
+    applyIntervals();
+    if (!document.hidden) {
+        refreshAll();
+    }
+});
 
 function intervalControl(key, title, slim) {
     const wrap = el('label', 'interval' + (slim ? ' slim' : ''));

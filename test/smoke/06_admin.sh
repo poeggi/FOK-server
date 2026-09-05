@@ -25,6 +25,8 @@ else
 
     # Fetch each static asset ONCE and run every assertion against the saved
     # copy (they are byte-identical at both check sites; ?v= is the version).
+    JS_ASSET=$(curl -s "$BASE/assets/admin.js?v=$VER")
+    expect "the dashboard stops polling while nobody looks" 'visibilitychange' "$JS_ASSET"
     CSS_ASSET=$(curl -s "$BASE/assets/admin.css?v=$VER")
     expect "hidden class wins the cascade" 'display: none !important' "$CSS_ASSET"
     # The global td rule is nowrap; the popup value cell must override it or
