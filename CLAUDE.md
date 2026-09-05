@@ -42,9 +42,15 @@ endpoint - it is the contract the FOK-snake client is built against.
 - The clock source (api/t.txt) is a STATIC file whose timestamp comes
   from mod_headers %t in public/.htaccess - deliberately not PHP, so it
   never queues for an FPM worker (that wait is invisible to PHP and would
-  land in the client's clock offset). It must stay no-store, and its
-  header must stay in Access-Control-Expose-Headers or browsers cannot
-  read it. php -S ignores .htaccess, so only staging/live can verify it.
+  land in the client's clock offset). It protects the STAMP, not the round
+  trip: a t.txt request still shares an HTTP/2 connection with everything
+  else the client has in flight, and live measurement shows tens of ms of
+  wait on ALREADY WARM workers, i.e. contention above the pool, in the
+  layer a static file also sits in. Hence the 4.4 rule that a client
+  anchors its clock when the wire is quiet, never beside the ICE
+  handshake. It must stay no-store, and its header must stay in
+  Access-Control-Expose-Headers or browsers cannot read it. php -S
+  ignores .htaccess, so only staging/live can verify it.
 - The same mod_headers block stamps the receive time into a REQUEST
   header (RequestHeader set X-Request-Start "%t"), which PHP subtracts
   from REQUEST_TIME_FLOAT to get the time the request spent queued for a

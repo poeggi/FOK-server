@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.3", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.4", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -31,8 +31,9 @@ server's MAJOR is newer than what they were built against, rather than
 misbehave against an incompatible server. A newer MINOR on the same MAJOR
 is safe to talk to; a client may read the MINOR to tell whether an
 optional feature (e.g. the peer-net hint, added in 3.1, tournament mode,
-added in 4.1, self-reported networks, added in 4.2, or the tournament round
-ladder and its round breaks, added in 4.3) is available.
+added in 4.1, self-reported networks, added in 4.2, the tournament round
+ladder and its round breaks, added in 4.3, or batched ICE candidates, the
+queue-wait figure and server-set pacing, added in 4.4) is available.
 
 ## Conventions
 
@@ -105,6 +106,15 @@ PHP-FPM worker. That queue wait happens before PHP starts, so PHP can
 neither see nor subtract it, and it would otherwise land in the offset
 as if it were network delay - exactly when the server is busiest.
 
+Know what that does NOT buy. Bypassing the PHP pool does not bypass the
+connection: a t.txt request still shares an HTTP/2 connection, and a web
+server, with everything else the client has in flight. Measurement on live
+shows waits of tens of milliseconds served by workers that were already
+warm, which places that contention ABOVE the PHP pool - in the same layer a
+static file sits in. The file protects the STAMP; it does not protect the
+round trip taken around it. That is why WHERE a client measures matters -
+see "Anchor the clock when the wire is quiet" below.
+
 `GET /api/time.php -> {"ok":true, "t": <ms>}` remains as the FALLBACK,
 in milliseconds, for clients that cannot read the header (and for a
 `now` re-check). Prefer t.txt; fall back if the header is absent.
@@ -124,6 +134,41 @@ fastest sample is the least polluted one. SPREAD the samples out (a few
 hundred ms apart) rather than firing them back to back - consecutive
 requests hit the same server load and can all be slow together, leaving
 no clean sample to pick.
+
+#### Anchor the clock when the wire is quiet (4.4)
+
+The offset is the client's ONE binding onto the shared clock, and every
+simultaneous moment in a duel is derived from it. Where it is measured
+therefore matters as much as how.
+
+Do NOT measure it during the connection handshake. Trickled ICE candidates
+open several signal.php requests inside the same second over one
+connection, and a clock sample taken alongside them inherits their wait.
+Half of any such delay lands straight in the offset: a 50 ms wait is a
+25 ms error, and on a 60 Hz timeline that is one and a half ticks of
+disagreement between two peers about when a server-issued start actually
+is - established at the moment the match begins and carried for the rest
+of it.
+
+Min-RTT does not rescue this by itself. Samples fired into one congested
+moment are all slow together, so the lowest of them is the least-bad of a
+bad set, and nothing in the reading says so.
+
+The rule:
+
+- CONNECT FIRST, ANCHOR SECOND. Take the offset once the DataChannel is
+  open and candidate traffic has stopped, never in parallel with the
+  handshake. Nothing needs it earlier - the first start request comes
+  after the channel opens anyway.
+- Do not sample while the client has requests of its own in flight.
+  Quiet means quiet.
+- Re-sync before every start as required below. Those moments are quiet
+  by construction and make good samples.
+- When a response reports a non-trivial `q_ms` (see hello.php and
+  start.php), the host is busy right now: defer the sync rather than bake
+  that congestion into the offset.
+- When start.php answers `resync: true`, the server has seen this pair's
+  two clocks disagree. Re-anchor before the next start.
 
 Both clients now share a PTS base accurate to roughly rtt/2 (a few ms
 on typical connections) - enough for frame- and audio-level sync. The
@@ -192,7 +237,10 @@ Measurement procedure:
        (reuse the clock-sync samples - same requests).
     2. If the FIRST value is an extreme outlier (cold connection: DNS,
        TCP and TLS setup make it much larger), discard it.
-    3. Report the AVERAGE of the remaining samples, rounded to ms -
+    3. Discard any sample taken while the client had other requests
+       of its own in flight, or whose response reported a non-trivial
+       `q_ms`: it measured the client's own queue, not the network.
+    4. Report the AVERAGE of the remaining samples, rounded to ms -
        a stable value, not a single noisy reading.
 
 Report with the next hello after measuring; re-measure at least when
@@ -200,12 +248,16 @@ entering the multiplayer screen and every few minutes while online.
 Valid range 0..60000; omit the field between measurements (the server
 keeps the last value).
 
+An inflated reading is not harmless: start.php scales its lead time by the
+pair's worst reported latency, so one sample polluted by queuing widens the
+lead on every start that pair takes afterwards.
+
 ### POST /api/start.php - server-issued start of play
 
     POST {"id": "c0ffee42", "peer": "deadbeef", "epoch": 3,
           "reason": "respawn", "pts": 1784190295120}
       -> {"ok":true, "start_pts": 1784190295323, "epoch": 3,
-          "now": 1784190295123,
+          "now": 1784190295123, "q_ms": 0, "resync": false,
           "mid": "<32-hex>", "secret": "<32-hex>"}
 
 The server owns the clock, so it owns EVERY moment play begins or
@@ -249,6 +301,14 @@ asked only for its timing.
 - `start_pts`: absolute, on the shared clock. Trigger everything
   (music, READY/GO, first tick) exactly then, via the local offset.
 - `now`: a free clock re-check.
+- `q_ms` (4.4, ADDITIVE): how long THIS request waited for a PHP worker
+  before any PHP ran, in ms; normally 0. A non-trivial figure says the host
+  was busy serving this very request, so the round trip around it is not a
+  clean sample - see the clock-anchor rule above.
+- `resync` (4.4, ADDITIVE): true when the server has seen this pair's two
+  clocks disagree by more than it can account for (see the pair cross-check
+  below). Re-anchor before the next start. It is a HINT, never a rejection,
+  and a client that ignores it works exactly as before.
 - `mid`, `secret` (contract 4.0, ADDITIVE): the pair's match id and the
   CALLER'S OWN per-match secret - never the peer's, each side gets only
   its own. They exist so a client can attest item transfers to
@@ -299,6 +359,24 @@ gate is deliberately GROSS and generous: it catches a client that never
 synced (a raw device clock is off by seconds to minutes) and passes any
 client that did (min-RTT sampling bounds the error to a few ms). Passing
 it is not a licence to skip the sync; the procedure above is the contract.
+
+##### The pair cross-check (4.4)
+
+There is one thing the server can see that neither client can. Both peers
+prove their clock against the SAME start, so their two proofs are
+comparable even though neither is interpretable alone. For each caller the
+server forms `server receive time - reported pts` - one-way delay plus
+signed clock error, still inseparable - and compares the pair's two
+figures. Their DIFFERENCE bounds how far apart the two anchors are, and
+past a tolerance (`start_pair_skew_ms`) the answer carries
+`resync: true`.
+
+It is as gross as the gate above and for the same reason, and it is a hint
+rather than a refusal: a genuinely healthy pair on very asymmetric paths
+would otherwise be locked out of its own match. The second caller learns it
+in its own response; the first has already been answered and picks it up on
+its next start or hello, which is soon enough, because a re-anchor precedes
+every start anyway.
 
 ### Server-side PTS validation
 
@@ -358,9 +436,19 @@ Response:
 
     {
       "ok": true,
-      "api": "4.3",               contract version, see Versioning
+      "api": "4.4",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
+      "q_ms": 0,                  4.4: ms THIS request waited for a PHP
+                                  worker before any PHP ran; normally 0.
+                                  Non-trivial means the host is busy NOW -
+                                  do not anchor the clock against it
+      "pace": {                   4.4: how the server wants this client to
+        "hello_ms": 30000,        pace itself. Additive and ignorable, but
+        "poll_ms": 9000,          only the server knows its own load.
+        "hold": true,             See Pacing below.
+        "spread_ms": 4000
+      },
       "debug": false,             the server's instruction: the client MUST
                                   honour it (see Debug mode below)
       "online": 3,                players seen in the last 60 s
@@ -412,6 +500,30 @@ The announce window is deliberately wider than the 60 s presence window: a
 host waiting in a lobby is a background tab or a phone with the screen off
 as often as not, and browsers throttle background timers to about one a
 minute.
+
+### Pacing (`pace`, 4.4)
+
+The server sets the beat, because only the server knows its own load. The
+object is additive - a client that ignores it behaves exactly as it does
+today - but a client that honours it lets the host carry more players.
+
+    hello_ms    how often to send this heartbeat
+    poll_ms     the long-poll wait to ask poll.php for
+    hold        whether this client may hold a long poll AT ALL. A held
+                poll occupies a PHP worker for its whole duration, which
+                makes this the real lever: when it is false, poll without
+                waiting and lean on the heartbeat. It is withdrawn by
+                tier - a client in a duel or reconnecting keeps it
+                longest, then a tournament screen with a match pending,
+                then one merely browsing the lobby.
+    spread_ms   a jitter budget. Draw an offset from it ONCE, keep that
+                offset for the session, and apply it to every periodic
+                request. It exists so clients that started together do
+                not stay together.
+
+Both intervals are clamped server-side at both ends: a floor, or the client
+looks offline, and a ceiling, or it floods. Read the values as advice about
+THIS moment rather than a setting - they move with load.
 
 ### Self-reported networks (`nets`)
 
@@ -642,6 +754,8 @@ Types (fixed set, anything else is rejected):
     answer    WebRTC SDP answer                   payload: JSON {"sdp": <RTCSessionDescription>,
                                                                  "profile": <profile>}
     ice       ICE candidate                       payload: JSON-encoded RTCIceCandidate
+    ices      SEVERAL ICE candidates (4.4)        payload: JSON ARRAY of RTCIceCandidate,
+              see "Batching ICE candidates"                max 24 entries
     bye       leave / abort the session           payload: ""
     chat      text message (max 120 bytes total)  payload: plain text
     watch     ask a peer to feed you a match      payload: JSON {"nid": <node id>,
@@ -698,6 +812,47 @@ pair already relaying), since those never attempt a direct connection.
 It is additive - a client that ignores the type is unaffected - and it
 bumps only the api MINOR (3.1). The major stays 3, so a v3 client stays
 compatible; a client reads the minor to know the hint is available.
+
+### Batching ICE candidates (`ices`, 4.4)
+
+A duel start trickles 4-10 ICE candidates per side, and one POST each puts
+them all on the wire inside the same second, over one HTTP/2 connection,
+where they queue behind each other. Measured on live: six such requests
+from a single client in one second, waiting up to 134 ms each, every one
+of them served by a worker that was ALREADY WARM. The cost on this host is
+paid per REQUEST, not per byte, so the remedy is fewer requests. `ices` is
+that - one message whose payload is a JSON array of candidates:
+
+    payload: a JSON array, e.g. [{"candidate": "...", "sdpMid": "0"},
+                                 {"candidate": "...", "sdpMid": "0"}]
+
+The rules matter more than the saving:
+
+- It is a SEPARATE TYPE. `ice` keeps its exact meaning and shape; never
+  send an array as an `ice` payload.
+- SEND THE FIRST CANDIDATE ALONE, as an ordinary `ice`, immediately. It
+  is usually the host candidate - the one that connects a LAN duel in
+  about a millisecond - and holding it back to fill a batch would trade a
+  real win for a theoretical one. Batch the TAIL, over a short gather
+  window.
+- GATE ON THE PEER'S VERSION, NOT THE SERVER'S. The server will mailbox
+  an `ices` to anybody. A peer built before 4.4 has no case for the type
+  and drops the WHOLE array in silence, narrowing ICE for the entire
+  match with no error raised anywhere. The answerer learns the peer's
+  version from the offer and may batch immediately; the offerer only
+  learns it from the answer and sends singles until then. That asymmetry
+  is expected and self-healing.
+- RETRY THE WHOLE ARRAY. Delivery is one-shot and a lost candidate
+  quietly narrows ICE, which is why even a single candidate is retried
+  once on 5xx. Batched, one lost POST costs every candidate in it, so the
+  retry must carry the batch and not just its last element.
+- The receiving side needs no ordering work it does not already do:
+  candidates are parked until the remote description is set and released
+  then, so a batch behaves exactly like the singles it replaces.
+
+At most 24 candidates per message, and the ordinary 16 KB payload limit
+still applies - ten candidates is roughly 2 KB, so in practice neither is
+a constraint. Batching also relieves the 64-message mailbox cap.
 
 ## The player profile object
 
@@ -865,9 +1020,14 @@ friend list; the hello `friends` field tells A whether B is online):
        accept) carrying each other's server-observed IP and family; a
        same-family pair SHOULD prefer the direct ICE path first.
     4. B sets the remote description, answers: B -> signal answer.
-    5. Both sides exchange ice messages as candidates arrive.
+    5. Both sides exchange candidates as they arrive: the FIRST as an
+       `ice` immediately, the rest batched into `ices` when the peer is
+       on 4.4 or newer and as further `ice` messages when it is not
+       (see "Batching ICE candidates").
     6. When the DataChannel opens on both ends, BOTH clients stop
-       polling poll.php, sync the clock (t.txt), and EACH calls
+       polling poll.php, sync the clock (t.txt) - HERE, with the
+       handshake finished and the wire quiet, never in parallel with
+       step 5 - and EACH calls
        POST /api/start.php {id, peer, epoch: 0, reason: "first", pts}:
        the server answers both with the identical absolute start_pts,
        and the level begins exactly then (music, READY/GO, first tick).
@@ -1055,8 +1215,8 @@ Notes:
   an idle client on the 30 s hello cadence can miss the window. When a
   connection-establishing message dies that way the sender is told - see
   the 'undelivered' receipt above - so an invite either goes through or
-  fails loudly. Everything else (ice, chat, bye) expires silently: those
-  belong to a handshake the client is already timing out on its own.
+  fails loudly. Everything else (ice, ices, chat, bye) expires silently:
+  those belong to a handshake the client is already timing out on its own.
 - Use a public STUN server (e.g. stun:stun.l.google.com:19302) in the
   RTCPeerConnection config. There is NO TURN server: this server forwards
   the signaling (SDP/ICE) and nothing else, and sees no game traffic once
@@ -1064,8 +1224,10 @@ Notes:
   rather than relayed - the duel falls back to relay.php and plain HTTP
   messages (see "Relay fallback"). "P2P failed" is the switch to the hub,
   not the end of the match; only a failing relay ends it.
-- Signaling payloads fit the 16 KB limit; send one signal per ICE
-  candidate rather than batching.
+- Signaling payloads fit the 16 KB limit. Send the FIRST ICE candidate
+  as its own `ice` signal and batch the rest into `ices` (4.4): the cost
+  on this host is per request, not per byte. See "Batching ICE
+  candidates".
 
 ## Stats backup / restore
 
@@ -1865,6 +2027,14 @@ payload carries `tid`.
                  there is no third-place match. The podium is empty when
                  the final itself was voided - both finalists gone.
 
+Every pushed event may carry `after_ms` (4.4, ADDITIVE): a small
+per-recipient delay in milliseconds to wait before making any follow-up
+REQUEST the event prompts. A round board wakes eight clients in the same
+instant and they all call back together - the same pile-up the ICE burst
+makes, eight-handed - so the server spreads them by seat. Render the
+event itself immediately and delay only the calls it provokes. A client
+that ignores the field behaves exactly as before.
+
 A client MUST NOT act on a `tourney` signal it did not expect to the
 extent of playing a match it cannot see in `state` - when in doubt, call
 `state` and render that.
@@ -1922,6 +2092,12 @@ requests are the ones a client already makes: hello every ~30 s (a
 polls during a signaling window, which answer 204 in about 196 bytes of
 headers when nothing is pending. `orphan` is separately capped at one
 every 3 s per player.
+
+What the rate DOES have is a BURST term, and 4.4 addresses it in both
+places it appears: `after_ms` spreads the follow-up calls a pushed event
+provokes, and `pace` spreads the periodic ones. Neither saves bytes. Both
+cut how many requests land in the same instant, which on this host is the
+thing that actually costs - see Pacing.
 
 None of this includes the match itself or the spectator feeds: those are
 peer-to-peer and never reach the server (see Spectating).

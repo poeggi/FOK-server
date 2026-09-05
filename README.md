@@ -277,11 +277,17 @@ script, and the endpoints that book no counters of their own (poll.php
 above all, which holds a worker for nine seconds and deliberately counts
 nothing) are exactly the ones whose wait matters most. The Server
 performance card shows it as mean and worst per window: close to zero is
-healthy, tens of milliseconds is the pool running warm, hundreds means it
-is saturated. `RequestHeader set` overwrites, so a client cannot forge
-its own wait, and an absent header is ordinary rather than an error - the
-built-in PHP server used by the smoke tests ignores .htaccess entirely,
-and the measurement then simply records nothing.
+healthy, tens of milliseconds mean requests are waiting, hundreds mean it
+is saturated. Waiting is not the same as the pool being short of workers:
+measured on live, every wait above a millisecond was served by a worker
+that was already WARM, which puts the contention above the FPM pool - at
+the connection and stream-scheduling layer, where the cost is paid per
+REQUEST rather than per byte. That is why 4.4 spends its effort on making
+clients send FEWER SIMULTANEOUS requests (`ices`, `pace`, `after_ms`)
+rather than smaller ones. `RequestHeader set` overwrites, so a client
+cannot forge its own wait, and an absent header is ordinary rather than
+an error - the built-in PHP server used by the smoke tests ignores
+.htaccess entirely, and the measurement then simply records nothing.
 
 A mean and a worst say how bad it got, not what was standing in the
 queue, so the gauge's popup also lists the ten worst waits of the last 24
@@ -448,8 +454,10 @@ host-level. If this outgrows shared hosting, fix workers first.
                           "platform"?,"pts"?}
       -> {"ok":true,"rank":n,"top":bool}   (no name -> ANONYMOUS; completed =
          cleared the final level; platform = pc|mobile|tv|console, optional)
-    POST /api/signal.php {"id","to","type":"invite|invite-relay|accept|accept-relay|decline|offer|answer|ice|bye|chat","payload"}
-         (the -relay types set the no-P2P bit: honored when either side sends it)
+    POST /api/signal.php {"id","to","type":"invite|invite-relay|accept|accept-relay|decline|offer|answer|ice|ices|bye|chat","payload"}
+         (the -relay types set the no-P2P bit: honored when either side sends it;
+          'ices' (4.4) carries a JSON ARRAY of candidates - one request instead
+          of the trickle burst, see docs/API.md)
       -> {"ok":true}   (chat payloads capped at 120 bytes; matchmaking
                         payloads carry the player profile - see docs/API.md)
 
