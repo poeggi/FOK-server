@@ -87,6 +87,18 @@ header h1 .version { font-weight: normal; }
 header a { color: var(--muted); }
 header nav { display: flex; align-items: center; gap: 20px; }
 
+/* Portrait phones: the bar has room for the title OR the version line, not
+   both, and left alone the name breaks mid-word to make room. So the
+   version takes the line under the title (aligned to it, past the logo)
+   and the controls keep the right edge, dropping to a row of their own
+   only when even that does not fit. */
+@media (max-width: 560px) {
+    header { flex-wrap: wrap; row-gap: 4px; padding: 8px 12px; }
+    header h1 { flex-wrap: wrap; white-space: nowrap; font-size: 16px; }
+    header h1 .version { flex-basis: 100%; margin-left: 30px; }
+    header nav { gap: 12px; }
+}
+
 #viewtoggle {
     font-size: 18px;
     line-height: 1;

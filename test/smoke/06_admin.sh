@@ -31,6 +31,7 @@ else
     expect "a bubble shortens a count that would not fit" 'function fmtNum' "$JS_ASSET"
     CSS_ASSET=$(curl -s "$BASE/assets/admin.css?v=$VER")
     expect "hidden class wins the cascade" 'display: none !important' "$CSS_ASSET"
+    expect "the header stacks instead of breaking on a phone" '@media (max-width: 560px)' "$CSS_ASSET"
     # The global td rule is nowrap; the popup value cell must override it or
     # a long alert message runs off the side instead of growing the popup.
     expect "popup values wrap instead of overflowing" 'overflow-wrap: anywhere' "$CSS_ASSET"
