@@ -1689,8 +1689,8 @@ toggle.onclick = () => {
 (async () => {
     await loadSettings();
     buildCards();
-    document.querySelector('header nav')
-        .prepend(intervalControl('admin_refresh_secs', 'Dashboard refresh interval'));
+    document.querySelector('header .hrefresh')
+        .append(intervalControl('admin_refresh_secs', 'Dashboard refresh interval'));
     refreshAll();
     applyIntervals();
 })();

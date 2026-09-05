@@ -75,7 +75,7 @@ body {
 header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 8px;
     padding: 8px 16px;
     border-bottom: 1px solid var(--border);
 }
@@ -83,23 +83,29 @@ header {
 header h1 { font-size: 17px; margin: 0; display: flex; align-items: center; gap: 8px; }
 header .logo { image-rendering: pixelated; }
 header h1 span { color: var(--accent); font-weight: normal; }
-header h1 .version { font-weight: normal; }
+/* Everything after the version line sits at the right edge. */
+header .version { margin-right: auto; }
+/* Keeps the 20px the nav sets between its own controls. */
+header .hrefresh { margin-right: 12px; }
 header a { color: var(--muted); }
 header nav { display: flex; align-items: center; gap: 20px; }
 
-/* Portrait phones: the bar has room for the title OR the version line, not
-   both, and left alone the name breaks mid-word to make room. So the
-   version takes the line under the title (aligned to it, past the logo)
-   and the controls keep the right edge, dropping to a row of their own
-   only when even that does not fit. */
+/* Portrait phones: the bar fits the title or the version line, not both, and
+   left alone the name breaks mid-word to make room. Two rows then, each
+   holding its own right-hand control: the title row carries the gear and the
+   way out, the version row the refresh interval. */
 @media (max-width: 560px) {
-    header { flex-wrap: wrap; row-gap: 4px; padding: 8px 12px; }
-    header h1 { flex-wrap: wrap; white-space: nowrap; font-size: 16px; }
-    header h1 .version { flex-basis: 100%; margin-left: 30px; }
-    /* The controls hold the right edge whether they still fit beside the
-       title or have wrapped to a line of their own - space-between leaves a
-       lone wrapped item at the start, an auto margin does not. */
-    header nav { gap: 12px; margin-left: auto; }
+    header {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        grid-template-areas: 'title actions' 'version refresh';
+        row-gap: 4px;
+        padding: 8px 12px;
+    }
+    header h1 { grid-area: title; white-space: nowrap; font-size: 16px; }
+    header .version { grid-area: version; margin-right: 0; align-self: center; }
+    header .hrefresh { grid-area: refresh; justify-self: end; margin-right: 0; }
+    header nav { grid-area: actions; justify-self: end; gap: 14px; }
 }
 
 #viewtoggle {

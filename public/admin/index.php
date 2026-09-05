@@ -34,8 +34,10 @@ $verline = 'v' . FOK_SERVER_VERSION . ' (API v' . FOK_API_VERSION . ')';
 </head>
 <body>
 <header>
-  <h1><img class="logo" src="../assets/logo.svg" alt="" width="22" height="22"> FOK-server <span>admin<?= FOK_ENV === 'staging' ? ' (STAGING)' : '' ?></span><small class="version muted"><?= $verline ?></small></h1>
+  <h1><img class="logo" src="../assets/logo.svg" alt="" width="22" height="22"> FOK-server <span>admin<?= FOK_ENV === 'staging' ? ' (STAGING)' : '' ?></span></h1>
+  <small class="version muted"><?= $verline ?></small>
   <?php if ($loggedIn): ?>
+  <div class="hrefresh"></div>
   <nav>
     <button id="viewtoggle" type="button" title="Settings">&#9881;</button>
     <a href="index.php?do=logout">Logout</a>
