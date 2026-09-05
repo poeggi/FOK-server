@@ -78,6 +78,16 @@ function fmtDate(unix) {
     return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.';
 }
 
+// A worst-case stamp: fmtTime's clock with the seconds kept. These rows are
+// read against something that happened at a known moment - a duel was
+// started, a deploy landed - and a minute is too coarse to line up with it.
+function fmtSec(unix) {
+    const d = new Date(unix * 1000);
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '. '
+        + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
 // A plain count, kept short enough for a bubble: four digits still fit and
 // stay exact, past that the tile has to squeeze and thousands read better.
 // The exact figure is in the bubble's tooltip either way.
@@ -718,6 +728,39 @@ const total = (suffix) => (m) => {
     return n;
 };
 
+// The worst queue waits on record, under the graphs of the same gauge (see
+// Counters::worst). A graph says the pool stalled; this says which requests
+// were standing in it, which is the half the graph cannot show.
+//
+// Not a .pane: one of those inside a modal takes the body's scroll for
+// itself and squeezes the charts above it (see admin.css). The popup
+// scrolls as a whole instead.
+function worstQueue(rows) {
+    const box = el('div');
+    box.append(el('div', 'subhead', 'Worst waits, last 24 h'));
+    if (!rows || !rows.length) {
+        box.append(el('div', 'muted', 'Nothing has waited as long as a '
+            + 'millisecond. Shorter waits are not recorded - there is nothing '
+            + 'in them to diagnose.'));
+        return box;
+    }
+    const t = el('table');
+    t.append(row(['When', 'Waited', 'Script', 'Player', 'Address'], 'th'));
+    for (const r of rows) {
+        const tr = el('tr');
+        tr.append(el('td', '', fmtSec(r.t)));
+        tr.append(el('td', 'num', fmtQms(r.v / 1000)));
+        tr.append(el('td', '', r.s || '-'));
+        // Only the endpoints that take an id in the query string can name a
+        // player here; a POST is identified by its address (Util::queueWho).
+        tr.append(r.id ? idCell(r.id) : el('td', 'muted', '-'));
+        tr.append(ipCell(r.ip));
+        t.append(tr);
+    }
+    box.append(t);
+    return box;
+}
+
 // A gauge's last 24 h, in the same overlay a player's details open in.
 // Under the grid the graphs had to share the tile's height budget with the
 // bubbles, which on a narrow screen left them scrolled out of sight.
@@ -765,6 +808,7 @@ async function showGaugeCharts(gauge) {
             (flat || byMin) ? data : partHour(data, hist.now), fmt, cls, ax);
     }
     body.replaceChildren(charts);
+    if (gauge.extra) body.append(gauge.extra());
 }
 
 function renderServerLive(box, d) {
@@ -815,9 +859,11 @@ function renderServerLive(box, d) {
                 + 'it started. This should be close to zero: the pool has about '
                 + 'twenty workers, and once they are all busy new requests queue '
                 + 'behind them. Tens of milliseconds is the pool running warm, '
-                + 'hundreds is saturation. ' + graph,
+                + 'hundreds is saturation. ' + graph
+                + ' The worst cases of the last 24 h are listed under the graphs.',
             charts: [['Queue wait, mean', 'chart-wall', qMeanMs, fmtQms],
-                ['Queue wait, worst', 'chart-cpu', qMaxMs, fmtQms]] },
+                ['Queue wait, worst', 'chart-cpu', qMaxMs, fmtQms]],
+            extra: () => worstQueue(d.q_worst) },
         { label: 'Msgs in | out' + per, value: fmtNum(w.in) + ' | ' + fmtNum(w.out),
             tip: win + 'Requests answered, and hub messages handed out. ' + graph,
             charts: [['Requests', 'chart-req', total(''), fmtNum],

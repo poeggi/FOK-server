@@ -320,7 +320,32 @@ final class Util
             Counters::add('n:q_us', $us);
             Counters::add('n:q_n', 1);
             Counters::max('q_us', $us);
+            Counters::worst('q_us', $us, self::queueWho());
         });
+    }
+
+    /**
+     * Who a queued request was, for the worst-case list under the queue
+     * gauge. Only what is already to hand at this point: the script is in
+     * the environment, and the player id is in the query string of the
+     * endpoints that carry one there - poll.php above all, which is the one
+     * that holds a worker longest and books no counter of its own.
+     *
+     * A POST body is deliberately NOT read. jsonBody() consumes
+     * php://input, the endpoint has already had it, and a second read
+     * yields nothing on FPM - so a POST is identified by its address alone.
+     */
+    private static function queueWho(): array
+    {
+        $who = [
+            's' => basename((string)($_SERVER['SCRIPT_NAME'] ?? '')),
+            'ip' => self::clientIp(),
+        ];
+        $id = (string)($_GET['id'] ?? '');
+        if (preg_match('/^[0-9a-f]{8}$/', $id) === 1) {
+            $who['id'] = $id;
+        }
+        return $who;
     }
 
     private static function bumpNow(string $metric): void

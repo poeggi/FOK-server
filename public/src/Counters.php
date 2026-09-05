@@ -34,6 +34,10 @@ require_once __DIR__ . '/Load.php';
  * accumulate at all (see gauge), and "x:" is a maximum - the worst single
  * reading the window saw, which is the one shape the fold must not add up
  * (see max).
+ *
+ * One thing in the buffer is not a metric at all: worst() keeps a short
+ * list of the worst readings a metric saw and who caused them, under its
+ * own key. It shares the prefix so that clearing the history clears it too.
  */
 final class Counters
 {
@@ -46,6 +50,17 @@ final class Counters
     // How often a request may go looking for closed minutes to fold.
     private const SCAN_EVERY = 2;
 
+    // The worst-case list beside the "x:" maximum: how many cases it keeps
+    // and how far back it looks. The graph the list is read under covers
+    // 24 hours, so a case that has aged out of the graph ages out here too.
+    private const WORST_KEEP = 10;
+    private const WORST_AGE = 86400;
+
+    // Under a millisecond there is nothing to diagnose - the worker was
+    // there for the taking - and without a floor an idle server would
+    // rewrite the whole list on almost every request.
+    private const WORST_FLOOR_US = 1000;
+
     private static function reqKey(string $minute): string
     {
         return self::PREFIX . "m:$minute:req";
@@ -54,6 +69,11 @@ final class Counters
     private static function metricKey(string $minute, string $metric): string
     {
         return self::PREFIX . "m:$minute:e:$metric";
+    }
+
+    private static function worstKey(string $metric): string
+    {
+        return self::PREFIX . "worst:$metric";
     }
 
     /**
@@ -129,6 +149,64 @@ final class Counters
                 return;
             }
         }
+    }
+
+    /**
+     * Files one reading against a standing list of the worst the last
+     * WORST_AGE saw, each with whatever identified the request that
+     * produced it. The "x:" maximum beside it says how bad the worst case
+     * was; this says which requests they were, which is the difference
+     * between knowing the pool stalled and knowing what stalled it.
+     *
+     * $who is stored as given and shown as given - see Util::queueWho for
+     * what a queue reading puts in it.
+     *
+     * Deliberately not a bucket metric: it is one key holding a short list,
+     * not a number per minute, so it neither folds into the database nor
+     * survives a restart. It is a diagnostic, and the moment it would be
+     * worth reading again is a moment that has already been and gone.
+     */
+    public static function worst(string $metric, int $n, array $who): void
+    {
+        if ($n < self::WORST_FLOOR_US) {
+            return;
+        }
+        // Shared memory unasked, exactly like max() above it.
+        $key = self::worstKey($metric);
+        $cur = apcu_fetch($key, $ok);
+        $list = ($ok && is_array($cur)) ? self::worstFresh($cur) : [];
+        // Nothing to do for the overwhelming majority of readings: the list
+        // is full and this one is not among them.
+        if (count($list) >= self::WORST_KEEP
+            && $n <= (int)($list[count($list) - 1]['v'] ?? 0)) {
+            return;
+        }
+        $list[] = ['v' => $n, 't' => time()] + $who;
+        usort($list, static fn(array $a, array $b): int => $b['v'] <=> $a['v']);
+        // Read-modify-write rather than the compare-and-swap max() uses,
+        // because apcu_cas only works on integers. Two workers writing in
+        // the same instant cost one entry of a top ten, which is a fair
+        // price for keeping a diagnostic off any kind of lock.
+        apcu_store($key, array_slice($list, 0, self::WORST_KEEP),
+            self::WORST_AGE + 900);
+    }
+
+    /** The entries of a stored list that are still inside the window. */
+    private static function worstFresh(array $list): array
+    {
+        $cut = time() - self::WORST_AGE;
+        return array_values(array_filter($list, static fn($e): bool => is_array($e)
+            && isset($e['v'], $e['t']) && (int)$e['t'] >= $cut));
+    }
+
+    /** The worst cases on record, worst first. Admin-only, hence Caps. */
+    public static function worstList(string $metric): array
+    {
+        if (Caps::apcu() !== true) {
+            return [];
+        }
+        $cur = apcu_fetch(self::worstKey($metric), $ok);
+        return ($ok && is_array($cur)) ? self::worstFresh($cur) : [];
     }
 
     /**

@@ -53,6 +53,14 @@ endpoint - it is the contract the FOK-snake client is built against.
   stay ordinary rather than an error - php -S ignores .htaccess, so the
   smoke tests never see it. This is the only saturation signal PHP can
   have: while a request waits for a worker, no PHP is running to time it.
+- apcu_inc does NOT refresh the TTL of a key it increments - its ttl
+  argument applies only to the key it creates - while apcu_store resets
+  the TTL on every write. A pair of counters written the two different
+  ways therefore expires UNEVENLY, however busy it is: Signals and
+  RelayStore keep a sequence (inc) beside an ack (store), so the sequence
+  goes first and the survivor reads as "impossible". Ordinary expiry is a
+  MISSING key, an eviction is a key that is present and wrong; alert only
+  on the second, or a routine daily event pages somebody (Signals::any).
 - Server-issued starts are keyed on (pair, epoch), never on the pair
   alone: both peers name the epoch so the answer cannot depend on when
   either asks. A pair-only key silently handed a late peer a different

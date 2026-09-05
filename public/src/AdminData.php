@@ -47,6 +47,10 @@ final class AdminData
             'tourneys' => TourneyStore::usable() ? count(TourneyStore::all()) : 0,
             'db_size' => is_file(FOK_DB_FILE) ? filesize(FOK_DB_FILE) : 0,
             'apcu_mem' => self::apcuMem(),
+            // The worst queue waits on record, with what caused them. Read
+            // here rather than off the history payload so the gauge's popup
+            // has them the moment it opens (see Counters::worst).
+            'q_worst' => Counters::worstList('q_us'),
             'php' => PHP_VERSION,
             'server_version' => FOK_SERVER_VERSION,
             'env' => FOK_ENV,

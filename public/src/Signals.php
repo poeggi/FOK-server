@@ -164,12 +164,26 @@ final class Signals
         $hi = (int)apcu_fetch(self::seqKey($to));
         $lo = (int)apcu_fetch(self::ackKey($to));
         if ($hi < $lo) {
-            // Impossible in normal running: the sequence was evicted and
-            // re-seeded low under memory pressure while the ack survived,
-            // which this gate would otherwise read as "nothing pending"
-            // forever and strand a live mailbox.
-            Alerts::raise('perf', 'Signal seq/ack desync: APCu evicted a mailbox '
-                . 'counter under memory pressure. Raise the APCu size if this recurs.');
+            // Two different things reach here and only one of them is a
+            // fault, so only one of them is worth waking anybody for.
+            //
+            // The sequence is created by apcu_inc, whose TTL argument
+            // applies to the key it CREATES and not to the ones it goes on
+            // to increment; the ack is written with apcu_store, which
+            // resets the TTL on every write. A mailbox in use for longer
+            // than SEQ_TTL therefore loses its sequence on schedule while
+            // its ack keeps being pushed forward - ordinary expiry, with
+            // nothing pending behind it (a signal outlives its own
+            // signal_ttl by hours less than this), and re-seeding the ack
+            // is the whole of the repair.
+            //
+            // A sequence that is present and still below the ack is the
+            // other thing. That one cannot happen without an eviction, and
+            // it is what the alert is for.
+            if ($hi > 0) {
+                Alerts::raise('perf', 'Signal seq/ack desync: APCu evicted a mailbox '
+                    . 'counter under memory pressure. Raise the APCu size if this recurs.');
+            }
             apcu_store(self::ackKey($to), $hi, self::SEQ_TTL);
             return false;
         }

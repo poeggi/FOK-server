@@ -283,6 +283,18 @@ its own wait, and an absent header is ordinary rather than an error - the
 built-in PHP server used by the smoke tests ignores .htaccess entirely,
 and the measurement then simply records nothing.
 
+A mean and a worst say how bad it got, not what was standing in the
+queue, so the gauge's popup also lists the ten worst waits of the last 24
+hours with what caused each one: the script, the player where the
+endpoint takes an id in its query string, and the address otherwise
+(Counters::worst, Util::queueWho). The list lives in shared memory beside
+the counter buffer rather than in a table - it is a diagnostic, and the
+moment worth re-reading it has already passed - so it is cleared by
+Clear statistics along with the rest of the traffic history, and lost on
+a restart. Waits under a millisecond are not recorded at all: there is
+nothing in them to diagnose, and without a floor an idle server would
+rewrite the whole list on nearly every request.
+
 Counter history is kept for 30 days as hour buckets and 2 hours as minute
 buckets, pruned by the same inline sweep as everything else, so the
 per-script "Total" window means "everything the table still holds", not

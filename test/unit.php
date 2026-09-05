@@ -539,6 +539,35 @@ Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'ice', 'old', FOK_SIGNAL_TTL + 1);
 ok(!Signals::any('bbbbbbbb'), 'expired signal does not count as pending');
 Signals::take('bbbbbbbb');
 
+// Signals: a sequence that has simply EXPIRED is not an eviction and must
+// not be reported as one. apcu_inc applies its TTL to the key it CREATES
+// and not to the ones it goes on to increment, while the ack is rewritten -
+// TTL and all - every time the mailbox is read. So a mailbox in use for
+// longer than the sequence TTL outlives its own sequence as a matter of
+// routine, and the repair is simply to re-seed the ack.
+$desyncs = static fn(): int => count(array_filter(
+    Alerts::recent(),
+    static fn(array $a): bool => str_contains($a['message'], 'Signal seq/ack desync')
+));
+Signals::send('aaaaaaaa', 'bbbbbbbb', 'ice', 'one');
+Signals::take('bbbbbbbb');                          // the ack now stands at 1
+$wasDesync = $desyncs();
+apcu_delete('fok:sg:bbbbbbbb:seq');                 // ...and the sequence times out
+ok(!Signals::any('bbbbbbbb'), 'an expired sequence reads as an empty mailbox');
+ok($desyncs() === $wasDesync, 'and routine expiry raises no alert');
+Signals::send('aaaaaaaa', 'bbbbbbbb', 'ice', 'two');
+ok(Signals::any('bbbbbbbb'), 'the re-seeded mailbox sees the next signal');
+ok(count(Signals::take('bbbbbbbb')) === 1, 'and delivers it');
+
+// The other half: a sequence still PRESENT and below the ack cannot happen
+// without an eviction, and that one is worth waking somebody for.
+Signals::send('aaaaaaaa', 'bbbbbbbb', 'ice', 'three');
+apcu_store('fok:sg:bbbbbbbb:ack', 99, 3600);
+$wasDesync = $desyncs();
+ok(!Signals::any('bbbbbbbb'), 'an evicted sequence reads as empty too');
+ok($desyncs() === $wasDesync + 1, 'but a real eviction is alerted');
+apcu_delete(new APCUIterator('/^fok:sg:bbbbbbbb:/'));
+
 // ConnTrack: the duel state both peers are in, inferred from the
 // signaling traffic the server relays anyway. A client shows on the Duels
 // card only while it is in a duel phase (listDuels); presence - every
@@ -1893,6 +1922,30 @@ ok($rep['items']['loose'] >= 1 && $rep['items']['policy'] === 'kept',
 ok($rep['player_nets']['loose'] === 0 && $rep['friends']['loose'] === 0,
     'and finds no orphans, because there is only one removal path');
 ok($hk['db_size'] > 0, 'alongside the size of the file it is all in');
+
+// Counters: the worst-case list the queue gauge shows under its graphs. It
+// keeps the worst of a window rather than the last of it, and ignores
+// anything too small to diagnose - without that floor an idle server would
+// rewrite the whole list on nearly every request.
+apcu_delete(new APCUIterator('/^fok:ct:worst:/'));
+Counters::worst('t_us', 500, ['s' => 'poll.php']);
+ok(Counters::worstList('t_us') === [], 'a wait under a millisecond is not filed');
+for ($i = 1; $i <= 12; $i++) {
+    Counters::worst('t_us', 1000 * $i, ['s' => "s$i.php"]);
+}
+$worst = Counters::worstList('t_us');
+ok(count($worst) === 10, 'the list is bounded');
+ok($worst[0]['v'] === 12000 && $worst[0]['s'] === 's12.php',
+    'worst first, carrying what caused it');
+ok($worst[9]['v'] === 3000, 'and the two SMALLEST fell out, not the two oldest');
+Counters::worst('t_us', 2000, ['s' => 'late.php']);
+ok(Counters::worstList('t_us')[9]['v'] === 3000,
+    'a reading that beats nothing in a full list is dropped');
+// The Clear statistics button empties this too: it is traffic history like
+// the rest, and leaving it behind would leave rows pointing at players the
+// cleared graphs no longer show (Counters::clearHistory).
+Counters::clearHistory();
+ok(Counters::worstList('t_us') === [], 'clearing the statistics clears it as well');
 
 // Cleanup
 Db::close();

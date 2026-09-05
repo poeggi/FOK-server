@@ -206,16 +206,25 @@ final class RelayStore
         $seq = (int)apcu_fetch(self::seqKey($to, $from));
         $ack = (int)apcu_fetch(self::ackKey($to, $from));
         if ($seq < $ack) {
-            // seq below ack is impossible in normal running: the counter
-            // was evicted (and re-seeded low) under shared-memory pressure
-            // while the ack survived, which this cheap gate would read as
-            // "nothing pending" forever - stranding any live messages.
-            // Fall back to the authoritative scan: if a key is stranded,
-            // say so and let drain() deliver it and realign the ack (it
-            // detects the same desync); if none survives, realign here so
-            // the gate stops re-scanning on every poll.
-            Alerts::raise('perf', 'Relay seq/ack desync: APCu evicted a relay '
-                . 'counter under memory pressure. Raise the APCu size if this recurs.');
+            // Either way this cheap gate would read as "nothing pending"
+            // forever and strand any live message, so either way fall back
+            // to the authoritative scan: if a key is stranded, say so and
+            // let drain() deliver it and realign the ack (it detects the
+            // same desync); if none survives, realign here so the gate
+            // stops re-scanning on every poll.
+            //
+            // Only one of the two is a fault, though. A MISSING sequence is
+            // ordinary expiry: apcu_inc applies its TTL to the key it
+            // creates and not to the ones it increments, while the ack is
+            // written with apcu_store, which resets the TTL every time - so
+            // a pair relaying for longer than a day loses its sequence on
+            // schedule while its ack is pushed forward. A sequence that is
+            // present and still below the ack is the eviction the alert is
+            // for (Signals::any has the same split).
+            if ($seq > 0) {
+                Alerts::raise('perf', 'Relay seq/ack desync: APCu evicted a relay '
+                    . 'counter under memory pressure. Raise the APCu size if this recurs.');
+            }
             if (self::anyKey($to, $from)) {
                 return true;
             }
