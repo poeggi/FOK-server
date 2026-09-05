@@ -730,10 +730,16 @@ async function showGaugeCharts(gauge) {
     const charts = el('div', 'charts');
     const keys = byMin ? minuteKeys(hist.now) : hourKeys(hist.now);
     const buckets = (byMin ? hist.minutes : hist.hours) || {};
-    for (const [t, cls, pick, fmt, level] of gauge.charts) {
+    for (const [t, cls, pick, fmt, level, reading] of gauge.charts) {
+        const data = series(buckets, keys, pick, level);
+        // A level is sampled once an hour (see Counters::sampleGauges), so
+        // the newest sample the history holds can be most of an hour old and
+        // the graph would end on a figure the bubble beside it disagrees
+        // with. The bubble is right - it is read on the spot - so the last
+        // point is that reading, and the axis label "now" is true.
+        if (level && reading !== undefined) data[data.length - 1] = reading;
         // A level reads the same however long the bucket was; a total is a
         // total OF its bucket, so the title has to say which.
-        const data = series(buckets, keys, pick, level);
         chart(charts, level ? t : t + (byMin ? '/min' : '/h'),
             (level || byMin) ? data : partHour(data, hist.now), fmt, cls, ax);
     }
@@ -774,11 +780,15 @@ function renderServerLive(box, d) {
     box.append(bar);
 
     // Label, value and tip as shown; charts is what the click opens, each
-    // entry [title, colour class, series, formatter, level?].
+    // entry [title, colour class, series, formatter, level?, reading now?].
+    // A LEVEL carries that last field: its newest sample can be most of an
+    // hour old, and the graph ends where the bubble is read (see
+    // showGaugeCharts).
     const gauges = [
         { label: 'Relaying', value: d.relaying,
             tip: now + 'Duels whose game messages pass through the server. ' + day,
-            charts: [['Relayed duels', 'chart-req', one('g:relaying'), fmtNum, true]] },
+            charts: [['Relayed duels', 'chart-req', one('g:relaying'), fmtNum, true,
+                d.relaying]] },
         { label: 'Msgs in | out' + per, value: fmtNum(w.in) + ' | ' + fmtNum(w.out),
             tip: win + 'Requests answered, and hub messages handed out. ' + graph,
             charts: [['Requests', 'chart-req', total(''), fmtNum],
@@ -788,17 +798,20 @@ function renderServerLive(box, d) {
             charts: [['DB writes', 'chart-db', one('n:db_w'), fmtNum]] },
         { label: 'DB entries', value: d.db_rows,
             tip: now + 'Rows over every table. ' + day,
-            charts: [['DB entries', 'chart-req', one('g:db_rows'), fmtNum, true]] },
+            charts: [['DB entries', 'chart-req', one('g:db_rows'), fmtNum, true,
+                d.db_rows]] },
         { label: 'DB size', value: fmtBytes(d.db_size),
             tip: now + 'The database file on disk. ' + day,
-            charts: [['DB size', 'chart-req', one('g:db_size'), fmtBytes, true]] },
+            charts: [['DB size', 'chart-req', one('g:db_size'), fmtBytes, true,
+                d.db_size]] },
         { label: 'APCu memory', value: m.total === 0 ? '-' : fmtBytes(m.used),
             tip: m.total === 0 ? 'Shared memory is not usable on this host'
                 : 'Shared memory in use of ' + fmtBytes(m.total) + ' ('
                     + Math.round(m.used / m.total * 100) + '%). Signaling, relayed'
                     + ' duels and tournaments live here and fail when it fills. ' + day,
             charts: m.total === 0 ? null
-                : [['APCu memory', 'chart-cpu', one('g:apcu'), fmtBytes, true]] },
+                : [['APCu memory', 'chart-cpu', one('g:apcu'), fmtBytes, true,
+                    m.used]] },
         { label: 'PHP time' + per, value: fmtMs(w.wall_ms),
             tip: win + 'Worker time held, the slot other clients queue for. ' + graph,
             charts: [['PHP worker time', 'chart-wall', total('.ms'), fmtMs]] },

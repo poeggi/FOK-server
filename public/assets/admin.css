@@ -444,18 +444,22 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
    either side of it rather than two chips. It is the shortest row on the
    card on purpose: the height budget belongs to the bubbles below it, and a
    chip row cost enough of it to cut the last one off. Either name is also a
-   target, so the switch never has to be hit precisely. */
-.switchrow { gap: 8px; margin-bottom: 6px; font-size: 12px; }
+   target, so the switch never has to be hit precisely.
+   Every dimension here is the smallest one that still reads: the row is
+   pulled tight against the tabs above it and the switch is no taller than
+   the names beside it, because the pixels it gives up are the ones the last
+   bubble needs to fit on the card. */
+.switchrow { gap: 8px; margin: -2px 0 2px; font-size: 12px; }
 .swname { color: var(--muted); cursor: pointer; }
 .swname.on { color: var(--accent); }
 .switch {
     flex: 0 0 auto;
-    width: 34px; height: 18px; padding: 0;
+    width: 32px; height: 16px; padding: 0;
     border-radius: var(--r-pill);
     display: inline-flex; align-items: center;
 }
 .switch .knob {
-    width: 12px; height: 12px; margin-left: 2px;
+    width: 10px; height: 10px; margin-left: 2px;
     border-radius: 50%; background: var(--accent);
     transition: transform 0.12s ease;
 }
