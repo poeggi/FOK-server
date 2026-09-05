@@ -20,6 +20,13 @@ final class Load
     // While the flush runs, its OWN writes must not count themselves.
     private static bool $flushing = false;
 
+    // What THIS request has cost, for the per-script view: every query it
+    // issued and the CPU it burned. Read once, after the response, by
+    // Counters::cost - these two measure the request itself rather than
+    // gauge the server, so they never go through the pending/flush path.
+    private static int $queries = 0;
+    private static ?float $cpu0 = null;
+
     public static function tick(string $metric, int $n = 1): void
     {
         if ($n <= 0 || self::$flushing) {
@@ -37,17 +44,63 @@ final class Load
         }
     }
 
-    /** A query taken off the PDO wrapper: only writes count as db load. */
+    /**
+     * A query taken off the PDO wrapper. Every one of them counts towards
+     * what this request cost the database (the per-script DB column); only
+     * writes count towards the db_w gauge, which is about the single writer
+     * and not about reads.
+     */
     public static function noteQuery(string $sql): void
     {
         if (self::$flushing) {
             return;
         }
+        self::$queries++;
         $verb = strtoupper(substr(ltrim($sql), 0, 3));
         if ($verb === 'INS' || $verb === 'UPD' || $verb === 'DEL' || $verb === 'REP'
             || $verb === 'CRE' || $verb === 'ALT' || $verb === 'DRO') {
             self::tick('db_w');
         }
+    }
+
+    /** Database queries this request has issued so far (see noteQuery). */
+    public static function queries(): int
+    {
+        return self::$queries;
+    }
+
+    /**
+     * Baseline for cpuMs(). getrusage() reports the whole PROCESS, and one
+     * FPM worker serves thousands of requests, so a per-request figure can
+     * only be a delta - taken when the database is opened (Db::get), which
+     * is the first shared work of every request.
+     */
+    public static function markStart(): void
+    {
+        self::$cpu0 ??= self::cpu();
+    }
+
+    /**
+     * CPU milliseconds burned since markStart(): what the request actually
+     * spent on a core, as opposed to how long it held its worker. A parked
+     * long poll holds a slot for seconds and burns a millisecond, and only
+     * the two numbers together say which kind a script is. 0 on a host that
+     * will not report usage.
+     */
+    public static function cpuMs(): int
+    {
+        return self::$cpu0 === null ? 0 : (int)round((self::cpu() - self::$cpu0) * 1000);
+    }
+
+    /** User plus system time of this process, in seconds. */
+    private static function cpu(): float
+    {
+        if (!function_exists('getrusage')) {
+            return 0.0;
+        }
+        $r = getrusage();
+        return (float)($r['ru_utime.tv_sec'] ?? 0) + (float)($r['ru_utime.tv_usec'] ?? 0) / 1e6
+            + (float)($r['ru_stime.tv_sec'] ?? 0) + (float)($r['ru_stime.tv_usec'] ?? 0) / 1e6;
     }
 
     /** One statement per aggregation for the minute; a rare prune keeps the
@@ -134,6 +187,13 @@ final class LoadPDO extends PDO
     {
         Load::noteQuery($statement);
         return parent::exec($statement);
+    }
+
+    /** The other direct path: a one-shot read that skips prepare(). */
+    public function query(string $query, ?int $fetchMode = null, mixed ...$args): PDOStatement|false
+    {
+        Load::noteQuery($query);
+        return parent::query($query, $fetchMode, ...$args);
     }
 }
 

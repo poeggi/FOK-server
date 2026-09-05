@@ -37,6 +37,10 @@ main { max-width: 640px; margin: 0 auto; padding: 20px; }
 table { border-collapse: collapse; width: 100%; }
 th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: normal; }
+/* A player name is a single token, but a browser may still break it after
+   punctuation - which costs a line and, because the column widths are then
+   solved differently, moves every column beside it. */
+table.scores td:nth-child(2) { white-space: nowrap; }
 tr:first-child + tr td { color: var(--accent); }
 .win { color: #ffcb3d; }
 

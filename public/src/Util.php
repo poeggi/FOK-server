@@ -400,6 +400,16 @@ final class Util
             // its write lock) off the other ~24 in 25 watch() calls.
             $db->prepare("DELETE FROM counters WHERE metric = 'req_min' AND bucket < ?")
                 ->execute([gmdate('YmdHi', time() - 7200)]);
+            // Same cadence for the traffic history. An hour bucket is ten
+            // digits (GLOB matches the whole string, so the lifetime totals
+            // and the meta rows, whose buckets are not numeric, are never
+            // touched), and every endpoint books four of them an hour now
+            // that it also carries its cost - a month of that is already far
+            // more than anything reads back.
+            $db->prepare(
+                "DELETE FROM counters
+                 WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' AND bucket < ?"
+            )->execute([gmdate('YmdH', time() - 30 * 86400)]);
         }
     }
 

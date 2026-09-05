@@ -12,6 +12,7 @@ require_once __DIR__ . '/PStats.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Ledger.php';
 require_once __DIR__ . '/Signals.php';
+require_once __DIR__ . '/TourneyStore.php';
 
 /**
  * Read-only aggregation for the admin dashboard's two heaviest views - the
@@ -29,21 +30,10 @@ final class AdminData
         'counters', 'alerts', 'settings', 'admin_fails', 'ipcount', 'friends',
         'starts', 'conn', 'pstats', 'items', 'matches', 'ledger'];
 
-    /** The Statistics card: live counts, stored totals and the load gauges. */
+    /** The Game Statistics card: live counts, stored totals and the gauges. */
     public static function stats(): array
     {
         $db = Db::get();
-        // The bucket of a traffic counter is a YmdH stamp, and this is a
-        // STRING comparison - so a non-numeric bucket sharing the table
-        // (Stats keeps the lifetime totals in one) sorts above every stamp
-        // and would be drawn as an hour that never existed.
-        $st = $db->prepare("SELECT bucket, metric, value FROM counters
-                            WHERE bucket >= ? AND bucket GLOB '[0-9]*' ORDER BY bucket");
-        $st->execute([gmdate('YmdH', time() - 24 * 3600)]);
-        $load = [];
-        foreach ($st->fetchAll() as $r) {
-            $load[$r['bucket']][$r['metric']] = (int)$r['value'];
-        }
         // One statement sums every table's rows (TABLES is a fixed allowlist,
         // never user input) instead of a COUNT query per table.
         $dbRows = (int)$db->query(
@@ -65,14 +55,83 @@ final class AdminData
             // and trimmed, which would make a ledger count drop over time.
             'item_transfers' => (int)$db->query('SELECT COALESCE(SUM(seq), 0) FROM items')->fetchColumn(),
             'db_rows' => $dbRows,
-            'load' => $load,
             'load_live' => Load::lastMinute(),   // totals over the last complete minute
+            'cost_hour' => self::costHour(),     // totals over the last complete hour
+            // Live tournaments are held in shared memory, not in a table.
+            'tourneys' => TourneyStore::usable() ? count(TourneyStore::all()) : 0,
             'db_size' => is_file(FOK_DB_FILE) ? filesize(FOK_DB_FILE) : 0,
             'php' => PHP_VERSION,
             'server_version' => FOK_SERVER_VERSION,
             'env' => FOK_ENV,
             'now' => time(),
         ];
+    }
+
+    /**
+     * The last 24 hours of traffic, one row per UTC hour: what each endpoint
+     * was asked for and what it cost (see Counters::cost). The Server
+     * performance card reads this, and only while one of its two history
+     * tabs is open - it is the one payload here that grows with the number
+     * of endpoints.
+     *
+     * Hour buckets only. The same table also holds the per-minute request
+     * totals until they are pruned, and a minute stamp is not an hour: it is
+     * two digits longer, and drawn as an hour it is a row of zeroes for an
+     * hour that never existed. Non-numeric buckets (the lifetime totals, the
+     * meta rows) sort above every stamp in a string comparison, hence GLOB
+     * as well.
+     */
+    public static function hours(): array
+    {
+        $st = Db::get()->prepare("SELECT bucket, metric, value FROM counters
+                                  WHERE bucket >= ? AND bucket GLOB '[0-9]*'
+                                    AND length(bucket) = 10
+                                    AND metric NOT GLOB 'mint_*'
+                                  ORDER BY bucket");
+        $st->execute([gmdate('YmdH', time() - 24 * 3600)]);
+        $hours = [];
+        foreach ($st->fetchAll() as $r) {
+            $hours[$r['bucket']][$r['metric']] = (int)$r['value'];
+        }
+        return ['now' => time(), 'hours' => $hours];
+    }
+
+    /**
+     * What the last COMPLETE hour cost, summed over the endpoints: the
+     * worker time they held, the CPU they burned, the queries they caused,
+     * and which one held the most. The complete hour rather than the running
+     * one, so the figure is a full hour every time it is read instead of
+     * climbing from zero on the hour.
+     */
+    private static function costHour(): array
+    {
+        $st = Db::get()->prepare('SELECT metric, value FROM counters WHERE bucket = ?');
+        $st->execute([gmdate('YmdH', time() - 3600)]);
+        $out = ['hour' => gmdate('H', time() - 3600), 'wall_ms' => 0, 'cpu_ms' => 0,
+            'db' => 0, 'top' => null, 'top_ms' => 0];
+        foreach ($st->fetchAll() as $r) {
+            $dot = strrpos((string)$r['metric'], '.');
+            if ($dot === false) {
+                continue;   // a plain request count, or a mint bucket
+            }
+            $v = (int)$r['value'];
+            switch (substr((string)$r['metric'], $dot + 1)) {
+                case 'ms':
+                    $out['wall_ms'] += $v;
+                    if ($v > $out['top_ms']) {
+                        $out['top_ms'] = $v;
+                        $out['top'] = substr((string)$r['metric'], 0, $dot);
+                    }
+                    break;
+                case 'cpu':
+                    $out['cpu_ms'] += $v;
+                    break;
+                case 'db':
+                    $out['db'] += $v;
+                    break;
+            }
+        }
+        return $out;
     }
 
     /**

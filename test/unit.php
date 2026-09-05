@@ -1721,12 +1721,14 @@ ok(($totals['tourney_created'] ?? 0) > 0, 'every created tournament is counted')
 ok(($totals['tourney_finished'] ?? 0) > 0, 'and so is every one that played out');
 ok(($totals['tourney_matches'] ?? 0) > 0, 'with the matches it actually played');
 ok(($totals['duel_started'] ?? 0) > 0, 'a 1:1 is counted where play begins');
-// The lifetime bucket shares the counters table with the hourly traffic
-// buckets, and that lookup is a STRING comparison - so a bucket that is not
-// a YmdH stamp must never be drawn as an hour on the load graph.
-$load = AdminData::stats()['load'];
-$odd = array_filter(array_keys($load), static fn($b): bool => !ctype_digit((string)$b));
-ok($odd === [], 'the load graph sees only real hour buckets, never the lifetime totals');
+// The lifetime bucket shares the counters table with the per-minute request
+// counts and the hourly traffic buckets, and that lookup is a STRING
+// comparison - so anything that is not a YmdH stamp, whether a name or a
+// twelve-digit minute, must never be drawn as an hour on the load graph.
+$load = AdminData::hours()['hours'];
+$odd = array_filter(array_keys($load), static fn($b): bool =>
+    !ctype_digit((string)$b) || strlen((string)$b) !== 10);
+ok($odd === [], 'the load graph sees only real hour buckets, never a total or a minute');
 
 // ---- The store's claims ----------------------------------------------
 // A host may run one tournament at a time, and a join code is unique among

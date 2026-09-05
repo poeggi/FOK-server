@@ -87,6 +87,20 @@ else
     expect "admin stats pending friendships" '"friendships_pending":' "$R"
     expect "admin stats carry the live load gauges" '"load_live":' "$R"
     expect "live load gauges include db writes" '"db_writes":' "$R"
+    # The tournament count belongs to the game statistics tile, not the
+    # server one, so it rides the stats payload.
+    expect "admin stats count the tournaments" '"tourneys":' "$R"
+    # What the last complete hour cost in worker time, folded from the
+    # per-metric .ms/.cpu/.db counters the deferred bookkeeping writes.
+    expect "admin stats carry the hourly cost" '"cost_hour":' "$R"
+    expect "the hourly cost has a wall-time total" '"wall_ms":' "$R"
+    # The 24 h history moved out of stats (which refreshes every second)
+    # into its own action, read only while the perf card's tab is open.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=load")
+    expect "admin load history" '"ok":true' "$R"
+    # Envelope only: a bucket is folded from APCu when a minute closes, so
+    # a short smoke run is not guaranteed to have produced one yet.
+    expect "the 24 h history is keyed by hour bucket" '"hours":' "$R"
 
     # Item registry card, over the data 05_items.sh left behind. The matches
     # table is only ever COUNTed here: a per-duel attestation secret must

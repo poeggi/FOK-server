@@ -54,6 +54,10 @@ final class Counters
     public static function hit(string $metric): int
     {
         $minute = gmdate('YmdHi');
+        // What this request cost, filed before the fold below: that fold
+        // writes to the database, and its write must not be booked against
+        // whichever request happens to carry it.
+        self::cost($minute, $metric);
         // Finding closed minutes costs a keyspace scan, so it is rate-gated
         // rather than run on every request: apcu_add() succeeds for one
         // caller per window across the whole pool. A minute folded a couple
@@ -63,6 +67,34 @@ final class Counters
         }
         apcu_inc(self::metricKey($minute, $metric), 1, $ok, self::BUCKET_TTL);
         return (int)apcu_inc(self::reqKey($minute), 1, $ok, self::BUCKET_TTL);
+    }
+
+    /**
+     * What one request cost, under the same minute bucket as its hit and
+     * with the endpoint's own name in the metric: how long it held its
+     * worker (.ms), what it burned on a core (.cpu), and how many database
+     * queries it caused (.db). The admin per-script view is then a read of
+     * the same hour buckets everything else already folds into - no second
+     * store and no second write.
+     *
+     * Wall time is measured here because here IS the end: bump() is
+     * deferred, so this runs after the response was flushed (see
+     * Util::runDeferred), and the span it measures is the whole time the
+     * worker was unavailable to anyone else.
+     */
+    private static function cost(string $minute, string $metric): void
+    {
+        $start = (float)($_SERVER['REQUEST_TIME_FLOAT'] ?? 0);
+        $cost = [
+            'ms' => $start > 0.0 ? (int)round((microtime(true) - $start) * 1000) : 0,
+            'cpu' => Load::cpuMs(),
+            'db' => Load::queries(),
+        ];
+        foreach ($cost as $suffix => $n) {
+            if ($n > 0) {
+                apcu_inc(self::metricKey($minute, "$metric.$suffix"), $n, $ok, self::BUCKET_TTL);
+            }
+        }
     }
 
     /**

@@ -102,6 +102,9 @@ switch ($action) {
     case 'stats':
         Util::jsonOut(['ok' => true] + AdminData::stats());
 
+    case 'load':
+        Util::jsonOut(['ok' => true] + AdminData::hours());
+
     case 'props':
         $ms = Util::nowMs();
         Util::jsonOut([

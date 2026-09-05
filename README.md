@@ -89,13 +89,15 @@ additive.
   relays anyway (invite handshake, ICE exchange, duel heartbeat, relay
   messages), so clients report nothing for it; the admin dashboard lists
   it for every online client.
-- Admin interface at /admin/: a one-screen dashboard - statistics,
-  connection state of every online client, server properties (PTS anchor,
-  versions), alerts & diagnostics (alert feed, server log, host
-  capabilities, per-hour load), registered users, top-100
-  management, item registry (frozen instances, players by disputed-claim
-  count, recent ledger entries and an on-demand chain verify) - plus a
-  settings view behind the gear with the runtime
+- Admin interface at /admin/: a one-screen dashboard - game statistics,
+  players (registered users, top-100 management), connection state of
+  every online client, matches, item registry (frozen instances, players
+  by disputed-claim count, recent ledger entries and an on-demand chain
+  verify), server performance and diagnostics (live gauges, what each
+  script costs in worker time, CPU and queries with its last 24 hours
+  graphed, host capabilities, per-hour load), alerts and logs (alert
+  feed, server log), debug reports - plus a settings view behind the gear
+  with server properties (PTS anchor, versions), the runtime
   configuration (incl. JSON export/import) and database backup (SQLite
   online backup, download) and restore (upload). Cards refresh on a
   global interval (default 30 s, control in the top bar); Connections has

@@ -46,6 +46,15 @@ function fmtBytes(n) {
     return n + ' B';
 }
 
+// A duration in milliseconds, at the scale it is read at: an hour of worker
+// time over the whole server is hours, one script's share of it is seconds.
+function fmtMs(ms) {
+    if (ms >= 3600000) return (ms / 3600000).toFixed(1) + ' h';
+    if (ms >= 60000) return (ms / 60000).toFixed(1) + ' min';
+    if (ms >= 1000) return (ms / 1000).toFixed(1) + ' s';
+    return Math.round(ms) + ' ms';
+}
+
 // Inline SVG icons (ASCII source, inherit currentColor) for icon-only
 // buttons, so there are no glyph fonts or external assets to load.
 const ICON = {
@@ -73,6 +82,21 @@ function toolbar(...kids) {
     const b = el('div', 'toolbar');
     b.append(...kids);
     return b;
+}
+
+// The gauge grid every card with small figures builds: {label, value} plus
+// an optional wide (two cells, for a bubble holding a pair of numbers) and
+// tip (the one line of explanation that would otherwise be prose under the
+// grid). One definition, so a bubble is the same object wherever it shows.
+function bubbles(box, items) {
+    const grid = el('div', 'statgrid');
+    for (const b of items) {
+        const s = el('div', 'stat' + (b.wide ? ' wide' : ''));
+        if (b.tip) s.title = b.tip;
+        s.append(el('div', 'stat-value', String(b.value)), el('div', 'stat-label', b.label));
+        grid.append(s);
+    }
+    box.append(grid);
 }
 
 function iconBtn(svg, title) {
@@ -513,13 +537,173 @@ function renderPerf(box, d) {
     box.append(pane('', table));
 }
 
-// Requests per UTC hour, from the same 'stats' payload the Statistics tile
-// reads. A diagnostics tab rather than a tile of its own: it is read when
-// something looks wrong, next to the alerts and the log that say so.
+// One 24 h series, drawn to one scale: max and baseline labelled, an area
+// fill under the line, the newest point emphasized and repeated in the
+// head. The colour comes from a class so it stays on the palette (see
+// admin.css), and the viewBox carries the label gutters so nothing is
+// clipped at any card width.
+function chart(box, title, data, fmt, cls) {
+    const wrap = el('div', 'chartbox ' + cls);
+    const head = el('div', 'chart-head');
+    head.append(el('span', 'chart-title', title),
+        el('span', 'chart-now', fmt(data[data.length - 1])));
+    wrap.append(head);
+
+    const W = 240, H = 62, L = 40, R = 4, T = 6, B = 13;
+    const max = Math.max(...data, 1);
+    const x = (i) => L + (i / (data.length - 1)) * (W - L - R);
+    const y = (v) => T + (1 - v / max) * (H - T - B);
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', title + ', last 24 hours');
+    const add = (tag, attrs, text) => {
+        const n = document.createElementNS(NS, tag);
+        for (const k in attrs) n.setAttribute(k, String(attrs[k]));
+        if (text !== undefined) n.textContent = text;
+        svg.append(n);
+    };
+    for (const [v, dash] of [[max, '2 3'], [0, '']]) {
+        add('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), class: 'grid',
+            'stroke-dasharray': dash });
+        add('text', { x: L - 5, y: y(v) + 3, 'text-anchor': 'end', class: 'tick' }, fmt(v));
+    }
+    const pts = data.map((v, i) => x(i) + ',' + y(v)).join(' ');
+    add('polygon', { points: L + ',' + y(0) + ' ' + pts + ' ' + (W - R) + ',' + y(0), class: 'area' });
+    add('polyline', { points: pts, class: 'line' });
+    add('circle', { cx: x(data.length - 1), cy: y(data[data.length - 1]), r: 2.2, class: 'dot' });
+    for (const [px, lab, anchor] of [[L, '-24h', 'start'], [x(12), '-12h', 'middle'],
+        [W - R, 'now', 'end']]) {
+        add('text', { x: px, y: H - 3, 'text-anchor': anchor, class: 'tick' }, lab);
+    }
+    wrap.append(svg);
+    box.append(wrap);
+}
+
+// Live: the server's own gauges. The per-minute figures are the last
+// COMPLETE minute and the per-hour ones the last COMPLETE hour, so each one
+// is a full window instead of a number climbing from zero - every tooltip
+// says which window it is.
+function renderServerLive(box, d) {
+    box.replaceChildren();
+    const L = d.load_live || { in: 0, out: 0, db_writes: 0 };
+    const c = d.cost_hour || { hour: '--', wall_ms: 0, cpu_ms: 0, db: 0, top: null };
+    const minute = 'Last full minute';
+    const hour = 'Last full hour (' + c.hour + ':00 UTC), over all endpoints';
+    bubbles(box, [
+        { label: 'Relaying', value: d.relaying },
+        { label: 'Msgs in | out /min', value: L.in + ' | ' + L.out, tip: minute },
+        { label: 'DB writes/min', value: L.db_writes, tip: minute },
+        { label: 'DB entries', value: d.db_rows },
+        { label: 'DB size', value: fmtBytes(d.db_size) },
+        { label: 'PHP time/h', value: fmtMs(c.wall_ms),
+            tip: 'Worker time held, the slot other clients queue for. ' + hour },
+        { label: 'CPU time/h', value: fmtMs(c.cpu_ms),
+            tip: 'Processor time actually burned. ' + hour },
+        { label: 'DB calls/h', value: c.db, tip: 'Database queries caused. ' + hour },
+        { label: 'Busiest script', value: c.top === null ? '-' : c.top, wide: true,
+            tip: 'Held the most worker time. ' + hour },
+    ]);
+}
+
+// The 24 hour buckets ending with the running one, as the UTC stamps the
+// counters are keyed by. Built from the axis rather than from the data, so
+// an hour with no traffic is a zero in its own place instead of a gap that
+// shifts the line.
+function hourKeys(now) {
+    const p = (n) => String(n).padStart(2, '0');
+    const keys = [];
+    for (let i = 23; i >= 0; i--) {
+        const t = new Date((now - i * 3600) * 1000);
+        keys.push(String(t.getUTCFullYear()) + p(t.getUTCMonth() + 1)
+            + p(t.getUTCDate()) + p(t.getUTCHours()));
+    }
+    return keys;
+}
+
+// One row per endpoint, summed over the 24 hours: the requests it served
+// (the metric as counted) and what they cost - the same metric with .ms,
+// .cpu and .db, written by Counters::cost.
+function scriptRows(d) {
+    const by = {};
+    for (const bucket in d.hours) {
+        for (const metric in d.hours[bucket]) {
+            const dot = metric.lastIndexOf('.');
+            const name = dot < 0 ? metric : metric.slice(0, dot);
+            const key = dot < 0 ? 'req' : metric.slice(dot + 1);
+            if (key !== 'req' && key !== 'ms' && key !== 'cpu' && key !== 'db') continue;
+            const s = by[name] || (by[name] = { name: name, req: 0, ms: 0, cpu: 0, db: 0 });
+            s[key] += d.hours[bucket][metric];
+        }
+    }
+    // Ranked by worker time held: on a server whose ceiling is its worker
+    // pool, that is the cost deciding whether anyone else gets served.
+    return Object.values(by).sort((a, b) => b.ms - a.ms);
+}
+
+// Per script: the ranking, and one script's 24 h graphs behind a click. The
+// choice is kept in the module so the card's live refresh redraws the same
+// view instead of throwing the operator back to the list.
+let pickedScript = null;
+
+function renderScripts(box, d) {
+    box.replaceChildren();
+    const rows = scriptRows(d);
+    if (pickedScript !== null && !rows.some((s) => s.name === pickedScript)) {
+        pickedScript = null;   // it fell out of the 24 h window
+    }
+    if (pickedScript !== null) {
+        const back = el('button', 'small', 'All scripts');
+        back.onclick = () => { pickedScript = null; renderScripts(box, d); };
+        box.append(toolbar(el('span', 'grow'), back));
+        const view = pane('');
+        const head = el('div', 'detail-head');
+        head.append(el('span', 'detail-name', pickedScript),
+            el('span', 'detail-sub', 'per UTC hour, last 24 h'));
+        view.append(head);
+        const keys = hourKeys(d.now);
+        const at = (suffix) => keys.map((k) => (d.hours[k] || {})[pickedScript + suffix] || 0);
+        const charts = el('div', 'charts');
+        chart(charts, 'Requests', at(''), String, 'chart-req');
+        chart(charts, 'PHP worker time', at('.ms'), fmtMs, 'chart-wall');
+        chart(charts, 'CPU time', at('.cpu'), fmtMs, 'chart-cpu');
+        chart(charts, 'DB queries', at('.db'), String, 'chart-db');
+        view.append(charts);
+        box.append(view);
+        return;
+    }
+    if (!rows.length) { box.append(el('p', 'muted', 'No traffic recorded yet.')); return; }
+    const t = el('table');
+    const th = (label, cls, tip) => {
+        const h = el('th', cls, label);
+        h.title = tip;
+        return h;
+    };
+    const hr = el('tr');
+    hr.append(th('Script', '', 'The counter every request to this script is booked under'),
+        th('Req', 'num', 'Requests served in the last 24 h'),
+        th('PHP', 'num', 'Worker time held - the slot other clients queue for'),
+        th('CPU', 'num', 'Processor time actually burned; a parked long poll holds a '
+            + 'worker without burning any'),
+        th('DB', 'num', 'Database queries caused'));
+    t.append(hr);
+    for (const s of rows) {
+        const r = row([s.name, s.req, fmtMs(s.ms), fmtMs(s.cpu), s.db]);
+        for (let i = 1; i < 5; i++) r.children[i].className = 'num';
+        r.className = 'pick';
+        r.children[0].classList.add('id-link');
+        r.onclick = () => { pickedScript = s.name; renderScripts(box, d); };
+        t.append(r);
+    }
+    box.append(pane('', t));
+}
+
+// Load: requests per UTC hour, the plain history behind the graphs.
 function renderLoad(box, d) {
     box.replaceChildren();
     box.append(toolbar(el('span', 'muted', 'Requests per hour, UTC, last 24 h.')));
-    const buckets = Object.keys(d.load).sort();
+    const buckets = Object.keys(d.hours).sort();
     if (!buckets.length) {
         box.append(el('p', 'muted', 'No traffic recorded yet.'));
         return;
@@ -527,7 +711,7 @@ function renderLoad(box, d) {
     const table = el('table');
     table.append(row(['Hour', 'hello', 'score', 'signal'], 'th'));
     for (const b of buckets) {
-        const m = d.load[b];
+        const m = d.hours[b];
         table.append(row([
             b.slice(6, 8) + '.' + b.slice(4, 6) + '. ' + b.slice(8) + 'h',
             m.hello || 0, m.score_submit || 0, m.signal || 0,
@@ -543,18 +727,13 @@ function renderLoad(box, d) {
 function renderItemStatus(box, d) {
     box.replaceChildren();
 
-    const grid = el('div', 'statgrid');
-    const stat = (label, value, wide) => {
-        const s = el('div', 'stat' + (wide ? ' wide' : ''));
-        s.append(el('div', 'stat-value', String(value)), el('div', 'stat-label', label));
-        grid.append(s);
-    };
-    stat('Items', d.items_total);
-    stat('Frozen', d.items_frozen);
-    stat('Open matches', d.matches_open);
-    // Two cells wide: the only bubble holding a pair of numbers.
-    stat('Ledger rows', d.ledger_rows + ' / ' + d.ledger_max, true);
-    box.append(grid);
+    bubbles(box, [
+        { label: 'Items', value: d.items_total },
+        { label: 'Frozen', value: d.items_frozen },
+        { label: 'Open matches', value: d.matches_open },
+        // Two cells wide: the only bubble here holding a pair of numbers.
+        { label: 'Ledger rows', value: d.ledger_rows + ' / ' + d.ledger_max, wide: true },
+    ]);
 
     // Chain-verify: walks the hash chain from the newest checkpoint forward
     // and reports whether it is intact. A deliberate click.
@@ -639,42 +818,150 @@ function renderItemLedger(box, d) {
         + 'Status tab walks it. Newest first.'));
 }
 
+// ---- Players, over its two tabs ---------------------------------------
+// Registered: every player the server knows, filtered live by id or
+// name. Top 100 is the global score table, the other end of the same
+// population - one card, two tabs, one fetch each and only while open.
+function renderUsers(box, d) {
+    box.replaceChildren();
+    // Live filter over id and name; the last known IP moved to the
+    // per-client details popup (click an id), so it is off the list.
+    const search = el('input', 'usearch');
+    search.type = 'search';
+    search.placeholder = 'Filter by ID or name...';
+    search.value = usersFilter;
+    box.append(search);
+    const table = el('table');
+    table.append(row(['ID', 'Name', 'First', 'Last', 'N', 'Lat', 'Debug', ''], 'th'));
+    for (const u of d.users) {
+        const online = d.now - u.last_seen <= d.online_window;
+        const r = el('tr');
+        if (online) r.classList.add('online');
+        r.append(idCell(u.id), el('td', '', u.name === null ? '-' : u.name),
+            el('td', '', fmtTime(u.first_seen)), el('td', '', fmtTime(u.last_seen)),
+            el('td', '', u.hello_count), el('td', '', u.latency === null ? '-' : u.latency + ' ms'));
+
+        // Debug can be set on an OFFLINE client too: it is a wish
+        // stored on the player and applied on its next connect, so
+        // it belongs here per registered user, not only per conn.
+        const label = debugLabel(u);
+        const dbg = el('td', 'debug-cell');
+        dbg.append(el('span', 'badge dbg-' + label, label));
+        const toggle = el('button', 'small', u.debug ? 'off' : 'on');
+        toggle.onclick = async () => {
+            toggle.disabled = true;
+            await api('set_debug', { method: 'POST', body: form({ id: u.id, on: u.debug ? '0' : '1' }) });
+            refreshModule('players');
+        };
+        dbg.append(toggle);
+        r.append(dbg);
+
+        const btn = el('button', 'small', 'delete');
+        btn.onclick = async () => {
+            if (!confirm('Delete player ' + u.id + '?')) return;
+            await api('delete_player', { method: 'POST', body: form({ id: u.id }) });
+            refreshModule('players');
+        };
+        const td = el('td');
+        td.append(btn);
+        r.append(td);
+        r._search = (u.id + ' ' + (u.name || '')).toLowerCase();
+        table.append(r);
+    }
+    // The filter field above must not scroll away from the list it
+    // filters, so the list is the .pane and the field stays put.
+    const view = el('div', 'pane');
+    view.append(table);
+    box.append(view);
+    sortable(table, 'users');
+    const applyFilter = () => {
+        usersFilter = search.value.trim().toLowerCase();
+        for (const r of table.querySelectorAll('tr')) {
+            if (r._search === undefined) continue;
+            r.classList.toggle('hidden', !!usersFilter && !r._search.includes(usersFilter));
+        }
+    };
+    search.oninput = applyFilter;
+    applyFilter();
+    const legend = el('p', 'muted', 'Debug: pending = set, applies on client connect;');
+    legend.append(el('br'), ' self = the client turned it on.');
+    box.append(legend);
+}
+
+function renderScores(box, d) {
+    box.replaceChildren();
+    if (!d.scores.length) { box.append(el('p', 'muted', 'No scores yet.')); return; }
+    const table = el('table');
+    table.append(row(['#', 'Name', 'Score', 'Diff', 'Lvl', 'Player', 'Valid', 'Date', ''], 'th'));
+    for (const s of d.scores) {
+        const diff = ['E', 'N', 'H'][s.diff] || 'N';
+        const r = row([s.rank, s.name, s.score, diff, s.level, s.player_id,
+            s.validated ? 'yes' : '-', s.date]);
+        if (s.completed) {
+            const lvl = r.children[4];
+            lvl.append(' ');
+            const star = el('span', 'win', '\u2605');
+            star.title = 'Completed the final level';
+            lvl.append(star);
+        }
+        const btn = el('button', 'small', 'delete');
+        btn.onclick = async () => {
+            if (!confirm('Delete score by ' + s.name + '?')) return;
+            await api('delete_score', { method: 'POST', body: form({ id: s.id }) });
+            refreshModule('players');
+        };
+        const td = el('td');
+        td.append(btn);
+        r.append(td);
+        table.append(r);
+    }
+    box.append(table);
+}
+
 const MODULES = [
     {
         id: 'stats',
-        title: 'Statistics',
-        // Own fast interval like Connections: the online counts and the live
-        // gauges (and the footer server clock) change second to second.
+        title: 'Game Statistics',
+        // Own fast interval like Connections: the online counts (and the
+        // footer server clock) change second to second. What the SERVER is
+        // doing has its own card - this one is about the game.
         every: 'admin_stats_refresh_secs',
         async refresh(box) {
             const d = await api('stats');
             box.replaceChildren();
-            const grid = el('div', 'statgrid');
-            const stat = (label, value, cls) => {
-                const s = el('div', 'stat' + (cls ? ' ' + cls : ''));
-                s.append(el('div', 'stat-value', String(value)), el('div', 'stat-label', label));
-                grid.append(s);
-            };
-            stat('Users online', d.counts.online);
-            stat('Playing 1:1', d.counts.playing);
-            stat('Relaying', d.relaying);
-            stat('Users registered', d.counts.registered);
-            stat('FS act. | pend.', d.friendships + ' | ' + d.friendships_pending);
-            stat('Scores stored', d.scores_total);
-            stat('Items owned', d.items_total);
-            stat('Item transfers', d.item_transfers);
-            stat('DB entries', d.db_rows);
-            stat('DB size', fmtBytes(d.db_size));
-            // Live gauges: totals over the last complete minute.
-            const L = d.load_live || { in: 0, out: 0, db_writes: 0 };
-            stat('Msgs in | out /min', L.in + ' | ' + L.out);
-            stat('DB writes/min', L.db_writes);
-            box.append(grid);
-            box.append(el('p', 'muted', 'Server v' + d.server_version +
-                '. Live gauges: last full minute.'));
+            bubbles(box, [
+                { label: 'Users online', value: d.counts.online },
+                { label: 'Playing 1:1', value: d.counts.playing },
+                { label: 'Tournaments', value: d.tourneys },
+                { label: 'Users registered', value: d.counts.registered },
+                { label: 'Friendships active | pending',
+                    value: d.friendships + ' | ' + d.friendships_pending, wide: true },
+                { label: 'Scores stored', value: d.scores_total },
+                { label: 'Items owned', value: d.items_total },
+                { label: 'Item transfers', value: d.item_transfers },
+            ]);
+            box.append(el('p', 'muted', 'Server v' + d.server_version + '.'));
             // Server clock lives in the page footer, refreshed with the stats.
             const srvtime = document.getElementById('srvtime');
             if (srvtime) srvtime.textContent = ' - ' + fmtTime(d.now);
+        },
+    },
+    {
+        id: 'players',
+        title: 'Players',
+        refresh(box) {
+            return tabs(box, 'players', [
+                {
+                    key: 'users',
+                    label: 'Registered users',
+                    render: async (p) => renderUsers(p, await api('users')),
+                },
+                {
+                    key: 'scores',
+                    label: 'Global top 100',
+                    render: async (p) => renderScores(p, await api('scores')),
+                },
+            ]);
         },
     },
     {
@@ -761,203 +1048,6 @@ const MODULES = [
         },
     },
     {
-        id: 'alerts',
-        title: 'Alerts & diagnostics',
-        refresh(box) {
-            return tabs(box, 'alerts', [
-                {
-                    key: 'alerts',
-                    label: 'Alerts',
-                    render: async (p) => renderAlerts(p, await api('alerts')),
-                },
-                {
-                    // The log file is read ONLY while this tab is open:
-                    // populated on select, then live-followed by the card's
-                    // own refresh. The default Alerts tab never pays for it.
-                    key: 'logs',
-                    label: 'Logs',
-                    render: async (p) => { lastLog = await api('log'); renderLogs(p); },
-                },
-                {
-                    // Read ONCE and kept: the assessment only changes on a
-                    // new release or an explicit Update, so the live refresh
-                    // must not keep asking for it.
-                    key: 'perf',
-                    label: 'Performance',
-                    render: async (p) => {
-                        if (lastCaps === null) lastCaps = await api('caps');
-                        renderPerf(p, lastCaps);
-                    },
-                },
-                {
-                    key: 'load',
-                    label: 'Load',
-                    render: async (p) => renderLoad(p, await api('stats')),
-                },
-            ]);
-        },
-    },
-    {
-        id: 'config',
-        title: 'Configuration',
-        view: 'settings',
-        async refresh(box) {
-            const d = await api('settings');
-            box.replaceChildren();
-            const form = el('form');
-            const table = el('table');
-            for (const s of d.settings) {
-                const r = el('tr');
-                const label = el('td', '', s.label);
-                const input = el('input');
-                input.type = 'number';
-                input.name = s.key;
-                input.min = '0';
-                input.value = s.value;
-                const val = el('td');
-                val.append(input);
-                r.append(label, val, el('td', 'muted', 'default ' + s.default));
-                table.append(r);
-            }
-            form.append(table);
-            // "Apply and Save": these settings take effect on the next
-            // request, not on a restart - the button says so.
-            const save = el('button', '', 'Apply and Save');
-            save.type = 'submit';
-            form.append(save);
-            form.onsubmit = async (ev) => {
-                ev.preventDefault();
-                const res = await api('settings_save', { method: 'POST', body: new FormData(form) });
-                alert(res.ok ? 'Saved.' : 'Failed: ' + res.error);
-                refreshModule('config');
-            };
-            box.append(form);
-
-            const row2 = el('div', 'exportrow');
-            const exp = el('a', '', 'Export config');
-            exp.href = API + '?action=config_export';
-            const impLabel = el('label', '', 'Import config: ');
-            const impFile = el('input');
-            impFile.type = 'file';
-            impFile.accept = '.json';
-            impLabel.append(impFile);
-            impFile.onchange = async () => {
-                if (!impFile.files.length) return;
-                if (!confirm('Apply this configuration to the server?')) { impFile.value = ''; return; }
-                const body = form({ config: await impFile.files[0].text() });
-                const res = await api('config_import', { method: 'POST', body });
-                alert(res.ok ? 'Config imported.' : 'Failed: ' + res.error);
-                refreshModule('config');
-            };
-            row2.append(exp, impLabel);
-            box.append(row2);
-        },
-    },
-    {
-        id: 'users',
-        title: 'Registered users',
-        async refresh(box) {
-            const d = await api('users');
-            box.replaceChildren();
-            // Live filter over id and name; the last known IP moved to the
-            // per-client details popup (click an id), so it is off the list.
-            const search = el('input', 'usearch');
-            search.type = 'search';
-            search.placeholder = 'Filter by ID or name...';
-            search.value = usersFilter;
-            box.append(search);
-            const table = el('table');
-            table.append(row(['ID', 'Name', 'First', 'Last', 'N', 'Lat', 'Debug', ''], 'th'));
-            for (const u of d.users) {
-                const online = d.now - u.last_seen <= d.online_window;
-                const r = el('tr');
-                if (online) r.classList.add('online');
-                r.append(idCell(u.id), el('td', '', u.name === null ? '-' : u.name),
-                    el('td', '', fmtTime(u.first_seen)), el('td', '', fmtTime(u.last_seen)),
-                    el('td', '', u.hello_count), el('td', '', u.latency === null ? '-' : u.latency + ' ms'));
-
-                // Debug can be set on an OFFLINE client too: it is a wish
-                // stored on the player and applied on its next connect, so
-                // it belongs here per registered user, not only per conn.
-                const label = debugLabel(u);
-                const dbg = el('td', 'debug-cell');
-                dbg.append(el('span', 'badge dbg-' + label, label));
-                const toggle = el('button', 'small', u.debug ? 'off' : 'on');
-                toggle.onclick = async () => {
-                    toggle.disabled = true;
-                    await api('set_debug', { method: 'POST', body: form({ id: u.id, on: u.debug ? '0' : '1' }) });
-                    refreshModule('users');
-                };
-                dbg.append(toggle);
-                r.append(dbg);
-
-                const btn = el('button', 'small', 'delete');
-                btn.onclick = async () => {
-                    if (!confirm('Delete player ' + u.id + '?')) return;
-                    await api('delete_player', { method: 'POST', body: form({ id: u.id }) });
-                    refreshModule('users');
-                };
-                const td = el('td');
-                td.append(btn);
-                r.append(td);
-                r._search = (u.id + ' ' + (u.name || '')).toLowerCase();
-                table.append(r);
-            }
-            // The filter field above must not scroll away from the list it
-            // filters, so the list is the .pane and the field stays put.
-            const view = el('div', 'pane');
-            view.append(table);
-            box.append(view);
-            sortable(table, 'users');
-            const applyFilter = () => {
-                usersFilter = search.value.trim().toLowerCase();
-                for (const r of table.querySelectorAll('tr')) {
-                    if (r._search === undefined) continue;
-                    r.classList.toggle('hidden', !!usersFilter && !r._search.includes(usersFilter));
-                }
-            };
-            search.oninput = applyFilter;
-            applyFilter();
-            const legend = el('p', 'muted', 'Debug: pending = set, applies on client connect;');
-            legend.append(el('br'), ' self = the client turned it on.');
-            box.append(legend);
-        },
-    },
-    {
-        id: 'scores',
-        title: 'Global top 100',
-        async refresh(box) {
-            const d = await api('scores');
-            box.replaceChildren();
-            if (!d.scores.length) { box.append(el('p', 'muted', 'No scores yet.')); return; }
-            const table = el('table');
-            table.append(row(['#', 'Name', 'Score', 'Diff', 'Lvl', 'Player', 'Valid', 'Date', ''], 'th'));
-            for (const s of d.scores) {
-                const diff = ['E', 'N', 'H'][s.diff] || 'N';
-                const r = row([s.rank, s.name, s.score, diff, s.level, s.player_id,
-                    s.validated ? 'yes' : '-', s.date]);
-                if (s.completed) {
-                    const lvl = r.children[4];
-                    lvl.append(' ');
-                    const star = el('span', 'win', '\u2605');
-                    star.title = 'Completed the final level';
-                    lvl.append(star);
-                }
-                const btn = el('button', 'small', 'delete');
-                btn.onclick = async () => {
-                    if (!confirm('Delete score by ' + s.name + '?')) return;
-                    await api('delete_score', { method: 'POST', body: form({ id: s.id }) });
-                    refreshModule('scores');
-                };
-                const td = el('td');
-                td.append(btn);
-                r.append(td);
-                table.append(r);
-            }
-            box.append(table);
-        },
-    },
-    {
         id: 'items',
         title: 'Item registry',
         // No own interval: ownership changes slowly and chain-verify is a
@@ -978,72 +1068,65 @@ const MODULES = [
         },
     },
     {
-        id: 'props',
-        title: 'Properties',
-        view: 'settings',
-        async refresh(box) {
-            const t0 = Date.now();
-            const d = await api('props');
-            box.replaceChildren();
-            const table = el('table');
-            const prop = (k, v) => {
-                const r = el('tr');
-                r.append(el('td', 'muted', k), el('td', '', String(v)));
-                table.append(r);
-            };
-            prop('PTS anchor', d.pts_anchor);
-            prop('UTC now', d.utc_now);
-            prop('PTS now', d.pts_now + ' ms');
-            prop('Clock delta', (t0 - d.pts_now) + ' ms approx.');
-            prop('Server', 'v' + d.server_version + ' (API v' + d.api_version + ', ' + d.env + ')');
-            prop('PHP', d.php + ' (' + d.sapi + ')');
-            prop('CPU cores', d.cores === 1 ? '1 (or the host will not say)' : d.cores);
-            const yn = (v) => (v ? 'yes' : 'no');
-            prop('opcache', yn(d.opcache));
-            prop('APCu', yn(d.apcu) + (d.apcu ? '' : ' - counters stay on the DB writer'));
-            prop('Deferred flush', yn(d.deferred_flush)
-                + (d.deferred_flush ? '' : ' - bookkeeping runs before the client is answered'));
-            // What every request pays before any work; the first one after a
-            // deploy also carries the migration, so read it twice.
-            prop('DB open', d.db_boot_us + ' us this request');
-            box.append(table);
+        id: 'perf',
+        title: 'Server Perf. & Diag.',
+        // Its own, slower interval: the gauges here step once a minute and
+        // the history once an hour, so refreshing per second would only cost
+        // queries.
+        every: 'admin_perf_refresh_secs',
+        refresh(box) {
+            return tabs(box, 'perf', [
+                {
+                    key: 'live',
+                    label: 'Live',
+                    render: async (p) => renderServerLive(p, await api('stats')),
+                },
+                {
+                    // The 24 h history is the one payload that grows with the
+                    // number of endpoints, so it is fetched only while a tab
+                    // that draws it is open (see tabs()).
+                    key: 'scripts',
+                    label: 'Per script',
+                    render: async (p) => renderScripts(p, await api('load')),
+                },
+                {
+                    // Read ONCE and kept: the assessment only changes on a
+                    // new release or an explicit Update, so the live refresh
+                    // must not keep asking for it.
+                    key: 'perf',
+                    label: 'Performance',
+                    render: async (p) => {
+                        if (lastCaps === null) lastCaps = await api('caps');
+                        renderPerf(p, lastCaps);
+                    },
+                },
+                {
+                    key: 'load',
+                    label: 'Load',
+                    render: async (p) => renderLoad(p, await api('load')),
+                },
+            ]);
         },
     },
     {
-        id: 'backup',
-        title: 'Backup and restore (database incl. config)',
-        view: 'settings',
-        async refresh(box) {
-            const d = await api('backup_list');
-            box.replaceChildren();
-            const create = el('button', '', 'Create backup now');
-            create.onclick = async () => { await api('backup_create', { method: 'POST' }); refreshModule('backup'); };
-            box.append(create);
-            const table = el('table');
-            for (const b of d.backups) {
-                const r = row([b.name, fmtBytes(b.size)]);
-                const a = el('a', '', 'download');
-                a.href = API + '?action=backup_download&file=' + encodeURIComponent(b.name);
-                const td = el('td');
-                td.append(a);
-                r.append(td);
-                table.append(r);
-            }
-            if (d.backups.length) box.append(table);
-            const restore = el('form', 'restore');
-            restore.innerHTML = '<label>Restore from file: <input type="file" name="db" accept=".db" required></label> ';
-            const rbtn = el('button', '', 'Restore');
-            rbtn.type = 'submit';
-            restore.append(rbtn);
-            restore.onsubmit = async (ev) => {
-                ev.preventDefault();
-                if (!confirm('Replace the LIVE database with this file?')) return;
-                const body = new FormData(restore);
-                const res = await api('backup_restore', { method: 'POST', body });
-                alert(res.ok ? 'Restored.' : 'Failed: ' + res.error);
-                refreshAll();
-            };
-            box.append(restore);
+        id: 'alerts',
+        title: 'Alerts and logs',
+        refresh(box) {
+            return tabs(box, 'alerts', [
+                {
+                    key: 'alerts',
+                    label: 'Alerts',
+                    render: async (p) => renderAlerts(p, await api('alerts')),
+                },
+                {
+                    // The log file is read ONLY while this tab is open:
+                    // populated on select, then live-followed by the card's
+                    // own refresh. The default Alerts tab never pays for it.
+                    key: 'logs',
+                    label: 'Logs',
+                    render: async (p) => { lastLog = await api('log'); renderLogs(p); },
+                },
+            ]);
         },
     },
     {
@@ -1116,6 +1199,131 @@ const MODULES = [
             mth.classList.remove('sortable');
             box.append(el('p', 'muted', 'A client submits logs + up to two snapshots and reads out '
                 + 'the PIN; datasets self-purge after ' + Math.round(d.ttl / 3600) + ' h.'));
+        },
+    },
+    {
+        id: 'config',
+        title: 'Configuration',
+        view: 'settings',
+        async refresh(box) {
+            const d = await api('settings');
+            box.replaceChildren();
+            const form = el('form');
+            const table = el('table');
+            for (const s of d.settings) {
+                const r = el('tr');
+                const label = el('td', '', s.label);
+                const input = el('input');
+                input.type = 'number';
+                input.name = s.key;
+                input.min = '0';
+                input.value = s.value;
+                const val = el('td');
+                val.append(input);
+                r.append(label, val, el('td', 'muted', 'default ' + s.default));
+                table.append(r);
+            }
+            form.append(table);
+            // "Apply and Save": these settings take effect on the next
+            // request, not on a restart - the button says so.
+            const save = el('button', '', 'Apply and Save');
+            save.type = 'submit';
+            form.append(save);
+            form.onsubmit = async (ev) => {
+                ev.preventDefault();
+                const res = await api('settings_save', { method: 'POST', body: new FormData(form) });
+                alert(res.ok ? 'Saved.' : 'Failed: ' + res.error);
+                refreshModule('config');
+            };
+            box.append(form);
+
+            const row2 = el('div', 'exportrow');
+            const exp = el('a', '', 'Export config');
+            exp.href = API + '?action=config_export';
+            const impLabel = el('label', '', 'Import config: ');
+            const impFile = el('input');
+            impFile.type = 'file';
+            impFile.accept = '.json';
+            impLabel.append(impFile);
+            impFile.onchange = async () => {
+                if (!impFile.files.length) return;
+                if (!confirm('Apply this configuration to the server?')) { impFile.value = ''; return; }
+                const body = form({ config: await impFile.files[0].text() });
+                const res = await api('config_import', { method: 'POST', body });
+                alert(res.ok ? 'Config imported.' : 'Failed: ' + res.error);
+                refreshModule('config');
+            };
+            row2.append(exp, impLabel);
+            box.append(row2);
+        },
+    },
+    {
+        id: 'props',
+        title: 'Properties',
+        view: 'settings',
+        async refresh(box) {
+            const t0 = Date.now();
+            const d = await api('props');
+            box.replaceChildren();
+            const table = el('table');
+            const prop = (k, v) => {
+                const r = el('tr');
+                r.append(el('td', 'muted', k), el('td', '', String(v)));
+                table.append(r);
+            };
+            prop('PTS anchor', d.pts_anchor);
+            prop('UTC now', d.utc_now);
+            prop('PTS now', d.pts_now + ' ms');
+            prop('Clock delta', (t0 - d.pts_now) + ' ms approx.');
+            prop('Server', 'v' + d.server_version + ' (API v' + d.api_version + ', ' + d.env + ')');
+            prop('PHP', d.php + ' (' + d.sapi + ')');
+            prop('CPU cores', d.cores === 1 ? '1 (or the host will not say)' : d.cores);
+            const yn = (v) => (v ? 'yes' : 'no');
+            prop('opcache', yn(d.opcache));
+            prop('APCu', yn(d.apcu) + (d.apcu ? '' : ' - counters stay on the DB writer'));
+            prop('Deferred flush', yn(d.deferred_flush)
+                + (d.deferred_flush ? '' : ' - bookkeeping runs before the client is answered'));
+            // What every request pays before any work; the first one after a
+            // deploy also carries the migration, so read it twice.
+            prop('DB open', d.db_boot_us + ' us this request');
+            box.append(table);
+        },
+    },
+    {
+        id: 'backup',
+        title: 'Backup and restore (database incl. config)',
+        view: 'settings',
+        async refresh(box) {
+            const d = await api('backup_list');
+            box.replaceChildren();
+            const create = el('button', '', 'Create backup now');
+            create.onclick = async () => { await api('backup_create', { method: 'POST' }); refreshModule('backup'); };
+            box.append(create);
+            const table = el('table');
+            for (const b of d.backups) {
+                const r = row([b.name, fmtBytes(b.size)]);
+                const a = el('a', '', 'download');
+                a.href = API + '?action=backup_download&file=' + encodeURIComponent(b.name);
+                const td = el('td');
+                td.append(a);
+                r.append(td);
+                table.append(r);
+            }
+            if (d.backups.length) box.append(table);
+            const restore = el('form', 'restore');
+            restore.innerHTML = '<label>Restore from file: <input type="file" name="db" accept=".db" required></label> ';
+            const rbtn = el('button', '', 'Restore');
+            rbtn.type = 'submit';
+            restore.append(rbtn);
+            restore.onsubmit = async (ev) => {
+                ev.preventDefault();
+                if (!confirm('Replace the LIVE database with this file?')) return;
+                const body = new FormData(restore);
+                const res = await api('backup_restore', { method: 'POST', body });
+                alert(res.ok ? 'Restored.' : 'Failed: ' + res.error);
+                refreshAll();
+            };
+            box.append(restore);
         },
     },
 ];

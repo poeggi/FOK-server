@@ -303,7 +303,7 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 .debug-cell .badge { margin-right: 6px; }
 
 
-/* ---------------------------------------------- statistics card, gauges */
+/* ----------------------------------------------- gauge bubbles (bubbles) */
 
 .statgrid {
     display: grid;
@@ -323,6 +323,56 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 .stat.wide { grid-column: span 2; }
 .stat-value { font-size: 16px; color: var(--accent); }
 .stat-label { font-size: 10px; color: var(--muted); }
+/* A gauge carrying its one line of explanation as a tooltip instead of as
+   prose under the grid (the tip of a bubble, see admin.js). */
+.stat[title] { cursor: help; }
+
+
+/* ------------------------------------ per-script ranking and 24 h charts */
+
+/* A row that opens something - one script's graphs - hovers like the alert
+   row, the other clickable row in the UI. */
+tr.pick { cursor: pointer; }
+tr.pick:hover td { background: rgba(255, 255, 255, 0.03); }
+
+/* Counted columns line up on their last digit. */
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* The graphs of ONE script, as many per row as fit. Nothing sets a height:
+   each chart carries its own aspect ratio in its viewBox (see the height
+   model at the top of this file). */
+.charts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 8px;
+}
+.chartbox {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-ctl);
+    padding: 5px 8px 2px;
+}
+.chart-head { display: flex; align-items: baseline; gap: 6px; }
+.chart-title { font-size: 11px; color: var(--muted); }
+/* The newest value of the series, in the colour of the series. */
+.chart-now { margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; }
+.chartbox svg { display: block; width: 100%; height: auto; }
+/* The line takes the colour off the box, so one class picks a series and
+   every colour stays a token of the palette. */
+.chartbox svg .line { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; }
+.chartbox svg .area { fill: currentColor; fill-opacity: 0.13; stroke: none; }
+.chartbox svg .dot { fill: currentColor; }
+.chartbox svg .grid { fill: none; stroke: var(--border); stroke-width: 1; }
+.chartbox svg .tick { fill: var(--muted); font-size: 8px; }
+.chart-req { color: var(--accent); }
+.chart-wall { color: var(--warn); }
+.chart-cpu { color: var(--danger); }
+.chart-db { color: var(--info); }
+
+/* Which script the graphs below belong to. */
+.detail-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.detail-name { font-size: 13px; color: var(--accent); }
+.detail-sub { font-size: 11.5px; color: var(--muted); }
 
 
 /* ------------------------------------------------------- tabbed cards */

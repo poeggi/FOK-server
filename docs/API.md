@@ -1787,6 +1787,12 @@ the whole picture.
       "roles": <the caller's own roles sheet, or null>
     }
 
+There is no `podium` field: `over` is the only place the server names one
+(see Events). A client that missed that event reads the finished tournament
+back and derives the podium from the bracket the same way the server does -
+winner and runner-up from the `final` node, third place from the better
+`standings` rank of the two players the round below it knocked out.
+
 A node is:
 
     {"nid": "r1.4", "round": 1, "hm": 2, "lvl": 1,
@@ -1946,8 +1952,8 @@ lobby expires after `tournament_join_ttl`, a running tournament after
 `tournament_run_ttl` UNTOUCHED - every transition starts that clock again,
 so it never expires under players who are still playing - and a finished or
 abandoned one after `tournament_done_ttl`, which is the window in which its
-podium can still be read back. After that the tid is simply unknown, and
-`state` answers 404.
+finished bracket can still be read back. After that the tid is simply
+unknown, and `state` answers 404.
 
 ## Debug reports
 

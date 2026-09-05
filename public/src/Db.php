@@ -33,6 +33,11 @@ final class Db
     {
         if (self::$pdo === null) {
             $t = microtime(true);
+            // The CPU baseline for this request: opening the database is the
+            // first shared work every endpoint does, so what is measured
+            // from here is the request's own burn and not the worker's whole
+            // life (see Load::markStart).
+            Load::markStart();
             if (!is_dir(FOK_DATA_DIR)) {
                 mkdir(FOK_DATA_DIR, 0770, true);
             }
