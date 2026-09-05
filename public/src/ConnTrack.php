@@ -87,18 +87,27 @@ final class ConnTrack
 
     private static function markEnded(string $id, string $peer): void
     {
-        Db::get()->prepare(
+        $st = Db::get()->prepare(
             "UPDATE conn SET state = 'ended', updated = ?, relay_seen = 0
                WHERE id = ? AND peer = ?"
-        )->execute([time(), $id, $peer]);
+        );
+        $st->execute([time(), $id, $peer]);
+        if ($st->rowCount() > 0) {
+            // A row of this pairing really did end, so the slot it held is
+            // gone - and the throttle that guards the column must go with it,
+            // or the pair's next relayed duel would not re-mark the row and
+            // would hold no slot at all (see Relay::slotFreed).
+            Relay::slotFreed($id, $peer);
+        }
     }
 
     // The relay slot accounting lives on the Relay facade, not here, so the
     // whole relay fallback deletes with that file (docs/DEPRECATED-relay.md).
     // The only relay references left in this class, each a one-token removal:
-    // markEnded zeroes relay_seen inside the bye UPDATE (freeing a byed duel's
-    // slot at once, marked above), stateOf reads the column for the admin
-    // popup, and set()/BY_TYPE understand the 'relay' connection mode.
+    // markEnded zeroes relay_seen inside the bye UPDATE and tells the facade
+    // the slot is gone (freeing a byed duel's slot at once, marked above),
+    // stateOf reads the column for the admin popup, and set()/BY_TYPE
+    // understand the 'relay' connection mode.
 
     /**
      * The raw tracked-connection row for one client (admin detail view), or

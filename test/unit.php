@@ -690,6 +690,24 @@ ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'bye');
 ok(duelOf('aaaaaaaa')['state'] === 'ended', "the real peer's bye ends it (it lingers)");
 ok(!Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'and frees the relay slot at once');
 ok(Relay::peerLeft('aaaaaaaa', 'bbbbbbbb'), "the real peer's bye reads as gone");
+
+// A rematch INSIDE the write throttle. The conn row is rewritten at most
+// once per pair per FOK_RELAY_TRACK_THROTTLE (RelayStore::shouldTrackRelay),
+// so a bye that zeroed the row and left that marker standing would leave the
+// pair's next relayed duel unmarked for the rest of the window: it would
+// hold no slot at all, uncounted by the duel cap and absent from the admin
+// cards, while running.
+Db::get()->exec('DELETE FROM conn');
+ok(RelayStore::shouldTrackRelay('aaaaaaaa', 'bbbbbbbb', time()),
+    'the first relayed message of a duel marks the pair');
+Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
+ok(Relay::activePairs() === 1, 'which is how it holds its slot');
+ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'bye');
+ok(Relay::activePairs() === 0, 'the bye hands the slot straight back');
+ok(RelayStore::shouldTrackRelay('aaaaaaaa', 'bbbbbbbb', time()),
+    'and takes the throttle with it, so a rematch re-marks the row at once');
+Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
+ok(Relay::activePairs() === 1, 'so the rematch holds a slot of its own');
 Db::get()->exec('DELETE FROM conn');
 
 // An early fetch - fetchColumn(), fetch() - that leaves its statement open

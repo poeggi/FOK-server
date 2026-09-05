@@ -52,6 +52,16 @@ final class Relay
     }
 
     /**
+     * The pair gave its slot up (a bye, see ConnTrack::end). The row is
+     * already zeroed by the caller; what is left is the write throttle that
+     * guards it, which must go with it - see RelayStore::clearTrack.
+     */
+    public static function slotFreed(string $from, string $to): void
+    {
+        RelayStore::clearTrack($from, $to);
+    }
+
+    /**
      * Does this pair already hold a relay admission slot? Asked before the
      * relay-duel cap, so an admitted duel is never rejected mid-game.
      */

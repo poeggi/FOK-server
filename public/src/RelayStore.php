@@ -90,6 +90,21 @@ final class RelayStore
     }
 
     /**
+     * Forget that throttle for a pair whose slot has just been given up (a
+     * bye zeroes relay_seen, see ConnTrack). The row and this marker are one
+     * mechanism: left standing, it would suppress the re-marking of the
+     * pair's NEXT relayed duel for the rest of the window - which would then
+     * hold no slot in the authoritative record, so the duel cap would not
+     * count it and the admin cards would not show it.
+     */
+    public static function clearTrack(string $from, string $to): void
+    {
+        if (self::apcuOk()) {
+            apcu_delete(self::PREFIX . "track:$from:$to");
+        }
+    }
+
+    /**
      * The cheap per-pair "this duel already holds a relay slot" marker, in the
      * pair's own APCu namespace. Present means admitted: the relay POST can
      * skip the real concurrent-duel cap check (a conn read, plus a COUNT for a
