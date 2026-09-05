@@ -733,8 +733,9 @@ async function showGaugeCharts(gauge) {
     for (const [t, cls, pick, fmt, level] of gauge.charts) {
         // A level reads the same however long the bucket was; a total is a
         // total OF its bucket, so the title has to say which.
+        const data = series(buckets, keys, pick, level);
         chart(charts, level ? t : t + (byMin ? '/min' : '/h'),
-            series(buckets, keys, pick, level), fmt, cls, ax);
+            (level || byMin) ? data : partHour(data, hist.now), fmt, cls, ax);
     }
     body.replaceChildren(charts);
 }
@@ -827,13 +828,37 @@ function renderServerLive(box, d) {
 // shifts the line.
 function hourKeys(now) {
     const p = (n) => String(n).padStart(2, '0');
+    // The running hour is only in the table once a minute of it has closed
+    // and been folded into it (see Counters::flushMinute). In the first
+    // minute of an hour there is nothing in it to draw and nothing to scale,
+    // so the graph ends on the hour before (see partHour).
+    const last = Math.floor((now % 3600) / 60) >= 1 ? 0 : 1;
     const keys = [];
-    for (let i = 23; i >= 0; i--) {
+    for (let i = 23; i >= last; i--) {
         const t = new Date((now - i * 3600) * 1000);
         keys.push(String(t.getUTCFullYear()) + p(t.getUTCMonth() + 1)
             + p(t.getUTCDate()) + p(t.getUTCHours()));
     }
     return keys;
+}
+
+// A totals series over hourKeys, with its running hour read pro rata. That
+// bucket holds only the minutes of the hour that have closed so far, so
+// plotted raw beside 23 whole hours it is a nosedive at the right edge - a
+// fraction of an hour drawn as if it were a whole one. Scaled up, the last
+// point is the rate the hour is running at, which is what every other point
+// on the graph already is.
+//
+// Totals only: a LEVEL is what the server is holding right now, not
+// something that accumulates over its bucket, so there is no fraction to
+// undo. The minute window needs none of this either - it ends on the last
+// CLOSED minute (see minuteKeys).
+function partHour(data, now) {
+    const done = Math.floor((now % 3600) / 60);
+    if (done < 1) return data;
+    const out = data.slice();
+    out[out.length - 1] = Math.round(out[out.length - 1] * 60 / done);
+    return out;
 }
 
 // The 60 minute buckets ending with the last complete one, as the UTC
@@ -896,7 +921,8 @@ function renderScripts(box, d) {
             el('span', 'detail-sub', 'per UTC hour, last 24 h'));
         view.append(head);
         const keys = hourKeys(d.now);
-        const at = (suffix) => keys.map((k) => (d.hours[k] || {})[pickedScript + suffix] || 0);
+        const at = (suffix) => partHour(
+            keys.map((k) => (d.hours[k] || {})[pickedScript + suffix] || 0), d.now);
         const charts = el('div', 'charts');
         chart(charts, 'Requests', at(''), String, 'chart-req');
         chart(charts, 'PHP worker time', at('.ms'), fmtMs, 'chart-wall');
