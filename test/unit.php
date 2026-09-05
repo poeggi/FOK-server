@@ -126,6 +126,13 @@ $c = Presence::counts();
 ok($c['registered'] === 2, 'touch twice registers once');
 ok($c['online'] === 2, 'both players online');
 ok($c['playing'] === 0, 'no duels yet');
+Presence::touch('cccccccc', '2a01:db8:1:2::7');
+Presence::flushCounts();
+$f = Presence::families();
+ok($f['v6'] === 1, 'a client that came in over v6 is counted as v6');
+ok($f['v4'] === 2, 'and the rest of the online clients are v4');
+Db::get()->exec("DELETE FROM players WHERE id = 'cccccccc'");
+Presence::flushCounts();
 
 // Presence: the counters are CACHED - every hello returns them, so they
 // must never be counted per request. Staleness up to FOK_COUNTS_TTL is

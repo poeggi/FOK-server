@@ -333,17 +333,18 @@ final class Presence
     }
 
     /**
-     * Presence counters, cached in shared memory for FOK_COUNTS_TTL seconds.
-     * Every hello returns these, so counting rows here would make a heartbeat
-     * cost more as the player base grows - the one thing that must not
-     * happen. Nobody needs an exact count (online is a 60 s window anyway).
+     * Every presence figure the server publishes, cached in shared memory for
+     * FOK_COUNTS_TTL seconds and served through counts() and families().
+     * Every hello returns some of these, so counting rows here would make a
+     * heartbeat cost more as the player base grows - the one thing that must
+     * not happen. Nobody needs an exact count (online is a 60 s window).
      * The recompute is unlocked: racing requests write the same numbers.
      *
      * The cache lives in shared memory because a five-second cache has no
      * business in a durable single-writer database: it used to be a row that
      * every hello read and every registration deleted.
      */
-    public static function counts(): array
+    private static function population(): array
     {
         $db = Db::get();
         $now = time();
@@ -351,12 +352,17 @@ final class Presence
         if ($ok && is_array($hit)) {
             return $hit;
         }
-        // Online and registered are the same table, so one pass yields both.
+        // Online, registered and the family split are the same table, so one
+        // pass yields all of them. The family test is a string one because
+        // the column holds REMOTE_ADDR as it arrived: a colon is what tells
+        // the two apart, bar the v4-mapped form, which is a v4 client.
         $players = $db->prepare(
-            'SELECT SUM(CASE WHEN last_seen > ? THEN 1 ELSE 0 END) AS online,
-                    COUNT(*) AS registered FROM players'
+            "SELECT SUM(CASE WHEN last_seen > ? THEN 1 ELSE 0 END) AS online,
+                    SUM(CASE WHEN last_seen > ? AND ip LIKE '%:%'
+                              AND ip NOT LIKE '::ffff:%' THEN 1 ELSE 0 END) AS online6,
+                    COUNT(*) AS registered FROM players"
         );
-        $players->execute([$now - FOK_ONLINE_WINDOW]);
+        $players->execute([$now - FOK_ONLINE_WINDOW, $now - FOK_ONLINE_WINDOW]);
         $prow = $players->fetch();
         $players->closeCursor();
         $duels = $db->prepare('SELECT COUNT(*) FROM duels WHERE last_seen > ?');
@@ -367,10 +373,35 @@ final class Presence
             'online' => (int)$prow['online'],
             'playing' => 2 * $duelsN,
             'registered' => (int)$prow['registered'],
+            'online_v6' => (int)$prow['online6'],
         ];
         // The TTL is the cache's own, so there is no stored timestamp to
         // compare against and no sweep to run.
         apcu_store(self::COUNTS_KEY, $out, FOK_COUNTS_TTL);
         return $out;
+    }
+
+    /**
+     * The three figures the landing page shows and every hello carries (see
+     * docs/API.md). Named explicitly rather than passed through, so what the
+     * cache holds for the dashboard cannot leak into the client contract.
+     */
+    public static function counts(): array
+    {
+        $p = self::population();
+        return ['online' => $p['online'], 'playing' => $p['playing'], 'registered' => $p['registered']];
+    }
+
+    /**
+     * Which address family the online clients actually reached us over -
+     * the one thing the server can say for certain about a browser's
+     * connectivity (see seenOn). Admin-only: it says nothing a client
+     * could act on, and the pair always adds up to online.
+     */
+    public static function families(): array
+    {
+        $p = self::population();
+        $v6 = (int)($p['online_v6'] ?? 0);
+        return ['v4' => $p['online'] - $v6, 'v6' => $v6];
     }
 }

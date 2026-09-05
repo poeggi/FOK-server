@@ -30,6 +30,7 @@ final class AdminData
         $db = Db::get();
         return [
             'counts' => Presence::counts(),
+            'families' => Presence::families(),
             'relaying' => Relay::activePairs(),
             'friendships' => (int)$db->query("SELECT COUNT(*) FROM friends WHERE state = 'accepted'")->fetchColumn(),
             'friendships_pending' => (int)$db->query("SELECT COUNT(*) FROM friends WHERE state = 'pending'")->fetchColumn(),

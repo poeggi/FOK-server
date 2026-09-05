@@ -83,6 +83,7 @@ else
     expect "admin stats" '"ok":true' "$R"
     expect "admin stats registered" "$(strict '"registered":2')" "$R"
     expect "admin stats db rows" '"db_rows":' "$R"
+    expect "admin stats split the online clients by address family" '"families":{"v4":' "$R"
     # The items module ran before this one, so on a fresh local DB both tiles
     # have exact known values; against a persistent remote DB only the field
     # itself can be asserted.
@@ -267,7 +268,7 @@ else
     expect "global refresh interval defaults to 30 s" '"key":"admin_refresh_secs","value":30' "$R"
     expect "connections refresh interval defaults to 1 s" '"key":"admin_conns_refresh_secs","value":1' "$R"
     expect "duels refresh interval defaults to 1 s" '"key":"admin_duels_refresh_secs","value":1' "$R"
-    expect "statistics refresh interval defaults to 1 s" '"key":"admin_stats_refresh_secs","value":1' "$R"
+    expect "statistics refresh interval defaults to 5 s" '"key":"admin_stats_refresh_secs","value":5' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
     expect "backup via GET rejected" '"error":"POST only"' "$R"

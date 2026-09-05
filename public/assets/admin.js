@@ -1099,6 +1099,8 @@ const MODULES = [
             box.replaceChildren();
             bubbles(box, [
                 { label: 'Users online', value: d.counts.online },
+                { label: 'Online v4 | v6', value: d.families.v4 + ' | ' + d.families.v6,
+                    tip: 'Online clients by the address family their last request came in over.' },
                 { label: 'Playing 1:1', value: d.counts.playing },
                 { label: 'Tournaments', value: d.tourneys },
                 { label: 'Users registered', value: d.counts.registered },

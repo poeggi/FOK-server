@@ -88,7 +88,7 @@ final class Settings
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)'],
         'admin_duels_refresh_secs' => [1, 'Duels card refresh interval (seconds, 0 = off)'],
         'admin_perf_refresh_secs' => [5, 'Server performance card refresh interval (seconds, 0 = off)'],
-        'admin_stats_refresh_secs' => [1, 'Statistics card refresh interval (seconds, 0 = off)'],
+        'admin_stats_refresh_secs' => [5, 'Statistics card refresh interval (seconds, 0 = off)'],
     ];
 
     private static ?array $cache = null;
