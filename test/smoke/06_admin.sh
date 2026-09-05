@@ -265,10 +265,14 @@ else
     expect "header controls share one architecture-wide size" "--ctl-w" "$CSS_ASSET"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
-    expect "global refresh interval defaults to 30 s" '"key":"admin_refresh_secs","value":30' "$R"
-    expect "connections refresh interval defaults to 1 s" '"key":"admin_conns_refresh_secs","value":1' "$R"
-    expect "duels refresh interval defaults to 1 s" '"key":"admin_duels_refresh_secs","value":1' "$R"
-    expect "statistics refresh interval defaults to 5 s" '"key":"admin_stats_refresh_secs","value":5' "$R"
+    # The DEFAULT, not the effective value: this also runs against a deployment
+    # whose operator may have stored a row for any of these keys, and a stored
+    # row shadows the default silently. What is asserted here is the shipped
+    # default, which is the only part of the pair this repo decides.
+    expect "global refresh interval defaults to 30 s" '"default":30,"label":"Admin dashboard refresh interval' "$R"
+    expect "connections refresh interval defaults to 1 s" '"default":1,"label":"Connections card refresh interval' "$R"
+    expect "duels refresh interval defaults to 1 s" '"default":1,"label":"Duels card refresh interval' "$R"
+    expect "statistics refresh interval defaults to 5 s" '"default":5,"label":"Statistics card refresh interval' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
     expect "backup via GET rejected" '"error":"POST only"' "$R"
