@@ -753,12 +753,23 @@ function renderServerLive(box, d) {
     const day = 'Click for the last 24 h.';
     const graph = liveWindow === 'min' ? 'Click for the last 60 min.' : day;
 
+    // The window is a choice between two, so it is one switch with the two
+    // named either side of it (see admin.css .switchrow) - the chip row it
+    // replaces was tall enough to cut the last bubble off the card.
     const bar = toolbar();
-    for (const [key, label] of [['min', 'Per minute'], ['hour', 'Per hour']]) {
-        const c = el('button', 'chip' + (liveWindow === key ? ' active' : ''), label);
-        c.onclick = () => { liveWindow = key; renderServerLive(box, d); };
-        bar.append(c);
-    }
+    bar.classList.add('switchrow');
+    const pick = (key) => () => { liveWindow = key; renderServerLive(box, d); };
+    const sw = el('button', 'switch');
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', liveWindow === 'hour' ? 'true' : 'false');
+    sw.setAttribute('aria-label', 'Read the gauges per hour instead of per minute');
+    sw.append(el('span', 'knob'));
+    sw.onclick = pick(liveWindow === 'min' ? 'hour' : 'min');
+    const left = el('span', 'swname' + (liveWindow === 'min' ? ' on' : ''), 'Per minute');
+    const right = el('span', 'swname' + (liveWindow === 'hour' ? ' on' : ''), 'Per hour');
+    left.onclick = pick('min');
+    right.onclick = pick('hour');
+    bar.append(left, sw, right);
     box.append(bar);
 
     // Label, value and tip as shown; charts is what the click opens, each

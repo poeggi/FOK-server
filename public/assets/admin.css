@@ -368,12 +368,18 @@ tr.pick:hover td { background: rgba(255, 255, 255, 0.03); }
 /* Counted columns line up on their last digit. */
 th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
-/* The graphs of ONE script, as many per row as fit. Nothing sets a height:
-   each chart carries its own aspect ratio in its viewBox (see the height
-   model at the top of this file). */
+/* Every graph in the UI, in a card or in a popup, is one of these: ONE
+   standard box, so a graph is the same size wherever it is drawn. Nothing
+   sets a height - each chart carries its own aspect ratio in its viewBox
+   (see the height model at the top of this file) - so the width is the whole
+   size, and the width must not depend on how many graphs happen to be shown.
+   Hence auto-FILL rather than auto-fit: an empty track keeps its width, so
+   two graphs are drawn at the size one would be. The track floor is a whole
+   standard graph, so a surface splits into columns only where two of them
+   genuinely fit, and min() lets it shrink on a surface narrower than one. */
 .charts {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
     gap: 8px;
 }
 .chartbox {
@@ -433,6 +439,28 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
     background: transparent; color: var(--muted);
 }
 .chip.active { border-color: var(--accent); color: var(--accent); }
+
+/* A choice between exactly two windows, as one switch with the two named
+   either side of it rather than two chips. It is the shortest row on the
+   card on purpose: the height budget belongs to the bubbles below it, and a
+   chip row cost enough of it to cut the last one off. Either name is also a
+   target, so the switch never has to be hit precisely. */
+.switchrow { gap: 8px; margin-bottom: 6px; font-size: 12px; }
+.swname { color: var(--muted); cursor: pointer; }
+.swname.on { color: var(--accent); }
+.switch {
+    flex: 0 0 auto;
+    width: 34px; height: 18px; padding: 0;
+    border-radius: var(--r-pill);
+    display: inline-flex; align-items: center;
+}
+.switch .knob {
+    width: 12px; height: 12px; margin-left: 2px;
+    border-radius: 50%; background: var(--accent);
+    transition: transform 0.12s ease;
+}
+.switch[aria-checked="true"] .knob { transform: translateX(16px); }
+@media (prefers-reduced-motion: reduce) { .switch .knob { transition: none; } }
 
 /* An alert is exactly one row: time and type keep their natural (nowrap)
    width, and the message column takes the rest and is cut with an ellipsis -
