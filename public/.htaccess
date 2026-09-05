@@ -14,6 +14,25 @@
     Header always set Strict-Transport-Security "max-age=31536000"
 </IfModule>
 
+# What each request waited for a free PHP-FPM worker, measured where the
+# waiting actually happens. Apache stamps the moment it RECEIVED the request
+# into a request header, in MICROseconds, and PHP subtracts it from its own
+# start time (see Load::queueUs): the difference is the time the request
+# spent queued for a worker.
+#
+# That is the one saturation signal PHP cannot produce for itself. A worker
+# count says how close to the pool's ceiling we run; this says whether we hit
+# it - and while a request is waiting there is no PHP running to notice.
+#
+# "set" overwrites, so a client cannot forge its own wait. Same module and
+# same AllowOverride class as the Header rules above, which are verified on
+# live. An absent header stays ordinary rather than an error: php -S ignores
+# .htaccess entirely, so the smoke tests never see this, and Load::queueUs
+# answers null and counts nothing.
+<IfModule mod_headers.c>
+    RequestHeader set X-Request-Start "%t"
+</IfModule>
+
 # THE clock source clients sync against (docs/API.md, "Time
 # synchronization and PTS"). Apache stamps the moment it RECEIVED the
 # request into the header, in MICROseconds, and serves the file without

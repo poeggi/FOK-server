@@ -125,6 +125,44 @@ final class Load
         return self::$cpu0 === null ? 0 : (int)round((self::cpu() - self::$cpu0) * 1000);
     }
 
+    /**
+     * How long this request waited for a free PHP-FPM worker, in
+     * microseconds, or null where that wait cannot be seen.
+     *
+     * PHP cannot time this itself: the waiting is over before the first line
+     * of it runs, and nothing in $_SERVER remembers it. Apache does - it
+     * stamps the arrival time into X-Request-Start (see public/.htaccess) -
+     * and REQUEST_TIME_FLOAT is when a worker finally picked the request up,
+     * so the difference between them is the queue.
+     *
+     * It is THE saturation signal. Worker occupancy says how close to the
+     * pool's ceiling the server runs; this says whether it hit it. Close to
+     * zero is healthy, and a sustained reading in the hundreds of
+     * milliseconds means requests are lining up behind workers that are all
+     * busy - which no endpoint's own timings can show, because a request
+     * that is still queued is not yet running any of them.
+     *
+     * Null rather than zero when the header is absent: php -S ignores
+     * .htaccess and a host without mod_headers sets nothing, and a run of
+     * zeroes would read as a server with no queue instead of one that is not
+     * measuring the queue at all.
+     */
+    public static function queueUs(): ?int
+    {
+        // Apache writes it as "t=<microseconds>"; take the digits, nothing else.
+        if (preg_match('/(\d{10,})/', (string)($_SERVER['HTTP_X_REQUEST_START'] ?? ''), $m) !== 1) {
+            return null;
+        }
+        $start = (float)($_SERVER['REQUEST_TIME_FLOAT'] ?? 0);
+        if ($start <= 0.0) {
+            return null;
+        }
+        // Never negative. Both stamps come off the same machine's clock, but
+        // rounding one against the other must not read as a worker that
+        // started before the request arrived.
+        return max(0, (int)round($start * 1e6 - (float)$m[1]));
+    }
+
     /** User plus system time of this process, in seconds. */
     private static function cpu(): float
     {

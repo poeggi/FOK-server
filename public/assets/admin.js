@@ -113,6 +113,14 @@ function fmtMs(ms, scale) {
     return Math.round(ms) + ' ms';
 }
 
+// A queue wait, which lives below a millisecond until the worker pool starts
+// to saturate. fmtMs rounds that whole healthy range to a flat "0 ms" and
+// would hide the climb this is read for, so under 10 ms it keeps a decimal
+// and above it the ordinary scale takes over.
+function fmtQms(ms) {
+    return ms < 10 ? ms.toFixed(1) + ' ms' : fmtMs(ms);
+}
+
 // Inline SVG icons (ASCII source, inherit currentColor) for icon-only
 // buttons, so there are no glyph fonts or external assets to load.
 const ICON = {
@@ -688,6 +696,14 @@ function series(buckets, keys, pick, level) {
 // One named metric, absent meaning "not recorded" rather than zero.
 const one = (name) => (m) => (m[name] === undefined ? null : m[name]);
 
+// The queue, in milliseconds, off the two shapes Util::noteQueue books it as:
+// a sum with a count to divide it by, and a per-bucket maximum. Absent means
+// the bucket recorded no wait at all - not a wait of zero - so the graph
+// leaves a true zero there rather than carrying a reading forward.
+const qMeanMs = (m) => (m['n:q_n'] === undefined ? null
+    : (m['n:q_n'] > 0 ? (m['n:q_us'] || 0) / m['n:q_n'] / 1000 : 0));
+const qMaxMs = (m) => (m['x:q_us'] === undefined ? null : m['x:q_us'] / 1000);
+
 // Summed over the endpoints, by the same metric shapes AdminData::window
 // sorts by: '' is the request counts, '.ms' / '.cpu' / '.db' what they cost.
 // A namespaced metric is not an endpoint, and req_min is the requests counted
@@ -738,10 +754,15 @@ async function showGaugeCharts(gauge) {
         // with. The bubble is right - it is read on the spot - so the last
         // point is that reading, and the axis label "now" is true.
         if (level && reading !== undefined) data[data.length - 1] = reading;
-        // A level reads the same however long the bucket was; a total is a
-        // total OF its bucket, so the title has to say which.
-        chart(charts, level ? t : t + (byMin ? '/min' : '/h'),
-            (level || byMin) ? data : partHour(data, hist.now), fmt, cls, ax);
+        // A level reads the same however long the bucket was, and so does a
+        // per-request figure - it is an average or a worst case OVER the
+        // bucket, not an amount OF it. Only a true total carries the window
+        // in its title and only a true total is scaled pro rata: a mean queue
+        // wait multiplied up because the hour is half over would be an
+        // invention.
+        const flat = level || gauge.perRequest === true;
+        chart(charts, flat ? t : t + (byMin ? '/min' : '/h'),
+            (flat || byMin) ? data : partHour(data, hist.now), fmt, cls, ax);
     }
     body.replaceChildren(charts);
 }
@@ -749,7 +770,8 @@ async function showGaugeCharts(gauge) {
 function renderServerLive(box, d) {
     box.replaceChildren();
     const w = (d.live || {})[liveWindow]
-        || { stamp: '--', in: 0, out: 0, db_writes: 0, wall_ms: 0, cpu_ms: 0, db: 0, top: null };
+        || { stamp: '--', in: 0, out: 0, db_writes: 0, wall_ms: 0, cpu_ms: 0, db: 0, top: null,
+            q_mean_us: 0, q_max_us: 0 };
     const m = d.apcu_mem || { used: 0, total: 0 };
     const per = liveWindow === 'min' ? '/min' : '/h';
     const win = (liveWindow === 'min' ? 'Last full minute (' : 'Last full hour (')
@@ -785,10 +807,17 @@ function renderServerLive(box, d) {
     // hour old, and the graph ends where the bubble is read (see
     // showGaugeCharts).
     const gauges = [
-        { label: 'Relaying', value: d.relaying,
-            tip: now + 'Duels whose game messages pass through the server. ' + day,
-            charts: [['Relayed duels', 'chart-req', one('g:relaying'), fmtNum, true,
-                d.relaying]] },
+        // Queue first: it is the only gauge here that says whether the server
+        // is KEEPING UP, and everything below it says how hard it is working.
+        { label: 'Queue mean | worst', wide: true, perRequest: true,
+            value: fmtQms(w.q_mean_us / 1000) + ' | ' + fmtQms(w.q_max_us / 1000),
+            tip: win + 'How long a request waited for a free PHP worker before '
+                + 'it started. This should be close to zero: the pool has about '
+                + 'twenty workers, and once they are all busy new requests queue '
+                + 'behind them. Tens of milliseconds is the pool running warm, '
+                + 'hundreds is saturation. ' + graph,
+            charts: [['Queue wait, mean', 'chart-wall', qMeanMs, fmtQms],
+                ['Queue wait, worst', 'chart-cpu', qMaxMs, fmtQms]] },
         { label: 'Msgs in | out' + per, value: fmtNum(w.in) + ' | ' + fmtNum(w.out),
             tip: win + 'Requests answered, and hub messages handed out. ' + graph,
             charts: [['Requests', 'chart-req', total(''), fmtNum],
@@ -835,12 +864,20 @@ function renderServerLive(box, d) {
     })));
 }
 
+// A UTC instant as the stamp the counters are keyed by: ten digits for an
+// hour bucket, twelve for a minute one (see Counters).
+function utcKey(unix, toMinute) {
+    const p = (n) => String(n).padStart(2, '0');
+    const t = new Date(unix * 1000);
+    return String(t.getUTCFullYear()) + p(t.getUTCMonth() + 1) + p(t.getUTCDate())
+        + p(t.getUTCHours()) + (toMinute ? p(t.getUTCMinutes()) : '');
+}
+
 // The 24 hour buckets ending with the running one, as the UTC stamps the
 // counters are keyed by. Built from the axis rather than from the data, so
 // an hour with no traffic is a zero in its own place instead of a gap that
 // shifts the line.
 function hourKeys(now) {
-    const p = (n) => String(n).padStart(2, '0');
     // The running hour is only in the table once a minute of it has closed
     // and been folded into it (see Counters::flushMinute). In the first
     // minute of an hour there is nothing in it to draw and nothing to scale,
@@ -848,9 +885,7 @@ function hourKeys(now) {
     const last = Math.floor((now % 3600) / 60) >= 1 ? 0 : 1;
     const keys = [];
     for (let i = 23; i >= last; i--) {
-        const t = new Date((now - i * 3600) * 1000);
-        keys.push(String(t.getUTCFullYear()) + p(t.getUTCMonth() + 1)
-            + p(t.getUTCDate()) + p(t.getUTCHours()));
+        keys.push(utcKey(now - i * 3600, false));
     }
     return keys;
 }
@@ -880,49 +915,71 @@ function partHour(data, now) {
 // minute is still being counted - drawn, it would be a dip to nearly zero
 // at the right edge of every graph.
 function minuteKeys(now) {
-    const p = (n) => String(n).padStart(2, '0');
     const keys = [];
     for (let i = 60; i >= 1; i--) {
-        const t = new Date((now - i * 60) * 1000);
-        keys.push(String(t.getUTCFullYear()) + p(t.getUTCMonth() + 1)
-            + p(t.getUTCDate()) + p(t.getUTCHours()) + p(t.getUTCMinutes()));
+        keys.push(utcKey(now - i * 60, true));
     }
     return keys;
 }
 
-// One row per endpoint, summed over the 24 hours: the requests it served
+// One row per endpoint out of one window's counters: the requests it served
 // (the metric as counted) and what they cost - the same metric with .ms,
 // .cpu and .db, written by Counters::cost.
-function scriptRows(d) {
+function scriptRows(counts) {
     const by = {};
-    for (const bucket in d.hours) {
-        for (const metric in d.hours[bucket]) {
-            // "n:" totals and "g:" levels are the server's own gauges, not
-            // endpoints that served anything (see Counters).
-            if (metric.indexOf(':') >= 0) continue;
-            const dot = metric.lastIndexOf('.');
-            const name = dot < 0 ? metric : metric.slice(0, dot);
-            const key = dot < 0 ? 'req' : metric.slice(dot + 1);
-            if (key !== 'req' && key !== 'ms' && key !== 'cpu' && key !== 'db') continue;
-            const s = by[name] || (by[name] = { name: name, req: 0, ms: 0, cpu: 0, db: 0 });
-            s[key] += d.hours[bucket][metric];
-        }
+    for (const metric in counts) {
+        // "n:" totals, "g:" levels and "x:" maxima are the server's own
+        // gauges, not endpoints that served anything (see Counters).
+        if (metric.indexOf(':') >= 0) continue;
+        const dot = metric.lastIndexOf('.');
+        const name = dot < 0 ? metric : metric.slice(0, dot);
+        const key = dot < 0 ? 'req' : metric.slice(dot + 1);
+        if (key !== 'req' && key !== 'ms' && key !== 'cpu' && key !== 'db') continue;
+        const s = by[name] || (by[name] = { name: name, req: 0, ms: 0, cpu: 0, db: 0 });
+        s[key] += counts[metric];
     }
     // Ranked by worker time held: on a server whose ceiling is its worker
     // pool, that is the cost deciding whether anyone else gets served.
     return Object.values(by).sort((a, b) => b.ms - a.ms);
 }
 
+// The three windows the table can be read over, all three already in the one
+// payload (see AdminData::hours) so switching costs no request. "Total" is
+// honest about its horizon: it is everything the counters still hold, and
+// hour buckets are pruned at 30 days.
+const SCRIPT_WINDOWS = {
+    total: ['Total', 'Everything the counters still hold - hour buckets are kept for 30 days'],
+    hour: ['Last hour', 'The last complete UTC hour'],
+    min: ['Last minute', 'The last complete UTC minute'],
+};
+
+// The counted metrics of the selected window, in the one shape scriptRows
+// reads. The last COMPLETE hour, not the running one: a partial hour would
+// read as a slump that is only the clock.
+function scriptCounts(d) {
+    if (scriptWindow === 'hour') {
+        return (d.hours || {})[utcKey(d.now - 3600, false)] || {};
+    }
+    if (scriptWindow === 'min') {
+        return d.minute || {};
+    }
+    return d.totals || {};
+}
+
 // Per script: the ranking, and one script's 24 h graphs behind a click. The
 // choice is kept in the module so the card's live refresh redraws the same
 // view instead of throwing the operator back to the list.
 let pickedScript = null;
+let scriptWindow = 'total';   // which of SCRIPT_WINDOWS the table is read over
 
 function renderScripts(box, d) {
     box.replaceChildren();
-    const rows = scriptRows(d);
-    if (pickedScript !== null && !rows.some((s) => s.name === pickedScript)) {
-        pickedScript = null;   // it fell out of the 24 h window
+    const rows = scriptRows(scriptCounts(d));
+    // Judged against the whole history, not the selected window: the detail
+    // view below is always the 24 h series, so a script that merely served
+    // nothing this minute must not throw you out of it.
+    if (pickedScript !== null && !(pickedScript in (d.totals || {}))) {
+        pickedScript = null;   // it fell out of the history entirely
     }
     if (pickedScript !== null) {
         const back = el('button', 'small', 'All scripts');
@@ -945,7 +1002,36 @@ function renderScripts(box, d) {
         box.append(view);
         return;
     }
-    if (!rows.length) { box.append(el('p', 'muted', 'No traffic recorded yet.')); return; }
+    const bar = toolbar();
+    const chip = (key) => {
+        const c = el('button', 'chip' + (scriptWindow === key ? ' active' : ''),
+            SCRIPT_WINDOWS[key][0]);
+        c.title = SCRIPT_WINDOWS[key][1];
+        c.onclick = () => { scriptWindow = key; renderScripts(box, d); };
+        return c;
+    };
+    bar.append(chip('total'), chip('hour'), chip('min'), el('span', 'grow'));
+    const clear = el('button', 'small', 'Clear statistics');
+    clear.onclick = async () => {
+        // Two prompts, because this is the one button on the card that
+        // destroys history rather than a view of it, and there is no undo.
+        if (!confirm('Clear the traffic statistics?\n\n'
+            + 'This erases every per-script figure and every graph on this card, '
+            + 'for all three windows.')) return;
+        if (!confirm('Last chance. The traffic history cannot be recovered.\n\n'
+            + 'Players, scores and the item registry are NOT touched. Clear?')) return;
+        await api('clear_stats', { method: 'POST' });
+        pickedScript = null;
+        refreshModule('perf');
+        refreshModule('alerts');
+    };
+    bar.append(clear);
+    box.append(bar);
+    if (!rows.length) {
+        box.append(el('p', 'muted', scriptWindow === 'total'
+            ? 'No traffic recorded yet.' : 'Nothing was served in that window.'));
+        return;
+    }
     const t = el('table');
     const th = (label, cls, tip) => {
         const h = el('th', cls, label);
@@ -954,7 +1040,7 @@ function renderScripts(box, d) {
     };
     const hr = el('tr');
     hr.append(th('Script', '', 'The counter every request to this script is booked under'),
-        th('Req', 'num', 'Requests served in the last 24 h'),
+        th('Req', 'num', 'Requests served in the selected window'),
         th('PHP', 'num', 'Worker time held - the slot other clients queue for'),
         th('CPU', 'num', 'Processor time actually burned; a parked long poll holds a '
             + 'worker without burning any'),
@@ -1208,6 +1294,19 @@ const MODULES = [
                 { label: 'Playing 1:1', value: d.counts.playing },
                 { label: 'Tournaments', value: d.tourneys },
                 { label: 'Users registered', value: d.counts.registered },
+                // A game reading, not a server one: it says how many duels
+                // failed to find a peer-to-peer path, which is about the
+                // players' networks. Its history is a sampled LEVEL, so the
+                // popup is the same 24 h graph whichever window the server
+                // card happens to be set to (see showGaugeCharts).
+                { label: 'Relaying', value: d.relaying,
+                    tip: 'Right now. Duels whose game messages pass through the '
+                        + 'server instead of going peer to peer. Click for the last 24 h.',
+                    open: () => showGaugeCharts({
+                        label: 'Relaying',
+                        charts: [['Relayed duels', 'chart-req', one('g:relaying'),
+                            fmtNum, true, d.relaying]],
+                    }) },
                 { label: 'Friendships active | pending',
                     value: fmtNum(d.friendships) + ' | ' + fmtNum(d.friendships_pending), wide: true },
                 { label: 'Scores stored', value: d.scores_total },

@@ -298,6 +298,31 @@ final class Util
         self::defer(static fn() => self::bumpNow($metric));
     }
 
+    /**
+     * Books what this request waited for a worker before it started (see
+     * Load::queueUs). Deferred, so the client never pays for the bookkeeping.
+     *
+     * Three metrics, because a mean and a peak answer different questions:
+     * the sum and the count divide into the average wait over the bucket, and
+     * the maximum is the stall that average would otherwise hide. The count
+     * is its own metric rather than the request total, because only requests
+     * that could be measured belong in the divisor.
+     */
+    public static function noteQueue(): void
+    {
+        self::defer(static function (): void {
+            require_once __DIR__ . '/Load.php';
+            $us = Load::queueUs();
+            if ($us === null) {
+                return;
+            }
+            require_once __DIR__ . '/Counters.php';
+            Counters::add('n:q_us', $us);
+            Counters::add('n:q_n', 1);
+            Counters::max('q_us', $us);
+        });
+    }
+
     private static function bumpNow(string $metric): void
     {
         // Counting is a shared-memory increment; the database sees one
@@ -461,3 +486,9 @@ Util::installFaultHandler();
 // Every request reaches PHP through Util. Refuse pre-1.2 TLS (fail-open when
 // the version is not visible, e.g. CLI tests or upstream termination).
 Util::requireModernTls();
+// And, from the same place, record what the request waited to get here. This
+// measurement cannot live in an endpoint: the queue is a property of the
+// worker pool rather than of any script, and the endpoints that do not count
+// themselves are exactly the ones whose wait matters most - poll.php holds a
+// worker for nine seconds and deliberately books nothing (see its header).
+Util::noteQueue();

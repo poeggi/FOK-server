@@ -77,15 +77,22 @@ final class AdminData
      * tabs is open - it is the one payload here that grows with the number
      * of endpoints.
      *
-     * Hour buckets only. The same table also holds the per-minute request
-     * totals until they are pruned, and a minute stamp is not an hour: it is
-     * two digits longer, and drawn as an hour it is a row of zeroes for an
-     * hour that never existed. Non-numeric buckets (the lifetime totals, the
-     * meta rows) sort above every stamp in a string comparison, hence GLOB
-     * as well.
+     * Hour buckets only in "hours". The same table also holds the per-minute
+     * request totals until they are pruned, and a minute stamp is not an
+     * hour: it is two digits longer, and drawn as an hour it is a row of
+     * zeroes for an hour that never existed. Non-numeric buckets (the
+     * lifetime totals, the meta rows) sort above every stamp in a string
+     * comparison, hence GLOB as well.
+     *
+     * "totals" and "minute" ride along beside it for the per-script view's
+     * window selector, which is why one payload answers all three.
      */
     public static function hours(): array
     {
+        // The per-script view offers a last-minute window off this same
+        // payload, and the newest closed minute may still be buffered in
+        // shared memory (see minutes()).
+        Counters::flushDue();
         $st = Db::get()->prepare("SELECT bucket, metric, value FROM counters
                                   WHERE bucket >= ? AND bucket GLOB '[0-9]*'
                                     AND length(bucket) = 10
@@ -96,7 +103,13 @@ final class AdminData
         foreach ($st->fetchAll() as $r) {
             $hours[$r['bucket']][$r['metric']] = (int)$r['value'];
         }
-        return ['now' => time(), 'hours' => $hours];
+        // The three windows the per-script view offers, in one payload: the
+        // running totals, the 24 h of hour buckets the graphs are drawn from
+        // (the last complete hour is one of them), and the last complete
+        // minute. The minute is a single bucket, so carrying it here costs
+        // one small query and saves a second round trip per refresh.
+        return ['now' => time(), 'hours' => $hours, 'totals' => self::scriptTotals(),
+            'minute' => self::bucket(gmdate('YmdHi', time() - 60))];
     }
 
     /**
@@ -163,19 +176,31 @@ final class AdminData
      */
     private static function window(string $bucket): array
     {
-        $st = Db::get()->prepare('SELECT metric, value FROM counters WHERE bucket = ?');
-        $st->execute([$bucket]);
         $out = ['in' => 0, 'out' => 0, 'db_writes' => 0, 'wall_ms' => 0, 'cpu_ms' => 0,
-            'db' => 0, 'top' => null, 'top_ms' => 0];
-        foreach ($st->fetchAll() as $r) {
-            $metric = (string)$r['metric'];
-            $v = (int)$r['value'];
+            'db' => 0, 'top' => null, 'top_ms' => 0, 'q_n' => 0, 'q_us' => 0, 'q_max_us' => 0];
+        foreach (self::bucket($bucket) as $metric => $v) {
             if ($metric === 'n:msg_out') {
                 $out['out'] = $v;
                 continue;
             }
             if ($metric === 'n:db_w') {
                 $out['db_writes'] = $v;
+                continue;
+            }
+            // The queue: how long requests waited for a worker before they
+            // started (see Load::queueUs). The sum and the count are only
+            // useful divided into each other, so the average is worked out
+            // here and the pair does not travel to the browser.
+            if ($metric === 'n:q_us') {
+                $out['q_us'] = $v;
+                continue;
+            }
+            if ($metric === 'n:q_n') {
+                $out['q_n'] = $v;
+                continue;
+            }
+            if ($metric === 'x:q_us') {
+                $out['q_max_us'] = $v;
                 continue;
             }
             // req_min is the same requests counted once more, as a total; the
@@ -204,6 +229,45 @@ final class AdminData
                     $out['db'] += $v;
                     break;
             }
+        }
+        $out['q_mean_us'] = $out['q_n'] > 0 ? (int)round($out['q_us'] / $out['q_n']) : 0;
+        return $out;
+    }
+
+    /** One bucket's metrics, in the metric => value shape hours() keys by. */
+    private static function bucket(string $bucket): array
+    {
+        $st = Db::get()->prepare('SELECT metric, value FROM counters WHERE bucket = ?');
+        $st->execute([$bucket]);
+        $out = [];
+        foreach ($st->fetchAll() as $r) {
+            $out[(string)$r['metric']] = (int)$r['value'];
+        }
+        return $out;
+    }
+
+    /**
+     * Per-endpoint totals over every hour bucket the table still holds - the
+     * "Total" window of the per-script view. Honest horizon rather than a
+     * lifetime: thirty days, because that is when Util::watch drops an hour
+     * bucket, and the view says so rather than implying all time.
+     *
+     * Summed in SQLite rather than in the browser: the alternative is
+     * shipping a month of buckets across to add up four numbers per endpoint.
+     * Only the endpoint counters travel - a "g:" level and an "x:" maximum
+     * would both be nonsense once added up, and the view discards them
+     * anyway (see Counters).
+     */
+    private static function scriptTotals(): array
+    {
+        $st = Db::get()->query("SELECT metric, SUM(value) AS v FROM counters
+                                WHERE bucket GLOB '[0-9]*' AND length(bucket) = 10
+                                  AND metric NOT GLOB 'mint_*'
+                                  AND metric NOT GLOB '*:*'
+                                GROUP BY metric");
+        $out = [];
+        foreach ($st->fetchAll() as $r) {
+            $out[(string)$r['metric']] = (int)$r['v'];
         }
         return $out;
     }

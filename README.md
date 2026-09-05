@@ -93,11 +93,14 @@ additive.
   players (registered users, top-100 management), connection state of
   every online client, matches, item registry (frozen instances, players
   by disputed-claim count, recent ledger entries and an on-demand chain
-  verify), server performance and diagnostics (live gauges, what each
-  script costs in worker time, CPU and queries with its last 24 hours
-  graphed, host capabilities, per-hour load), alerts and logs (alert
-  feed, server log), debug reports - plus a settings view behind the gear
-  with server properties (PTS anchor, versions), the runtime
+  verify), server performance and diagnostics - live gauges including
+  what requests waited for a free PHP worker, what each script costs in
+  worker time, CPU and queries read over everything kept or the last hour
+  or the last minute, each script's last 24 hours graphed, host
+  capabilities and per-hour load, and a button that clears the traffic
+  history without touching players, scores or the item registry - alerts
+  and logs (alert feed, server log), debug reports - plus a settings view
+  behind the gear with server properties (PTS anchor, versions), the runtime
   configuration (incl. JSON export/import) and database backup (SQLite
   online backup, download) and restore (upload). Cards refresh on a
   global interval (default 30 s, control in the top bar); Connections has
@@ -260,6 +263,32 @@ What limits this server, in order:
    the honest "busy". It is deliberately a small share of the pool: the
    relay is deprecated and is the P2P fallback, so it may not price out
    the traffic it exists beside.
+
+Whether that ceiling is actually being reached is measured rather than
+inferred. Apache stamps the moment it RECEIVED the request into a request
+header (mod_headers, `%t`, in microseconds) and PHP subtracts it from
+REQUEST_TIME_FLOAT, the moment an FPM worker picked the request up: the
+difference is the time that request spent QUEUED for a worker
+(Load::queueUs). It is the one saturation signal PHP cannot produce for
+itself, because while a request is waiting there is no PHP running to
+notice. It is recorded for every request from Util.php module scope, not
+per endpoint - the queue is a property of the pool rather than of any
+script, and the endpoints that book no counters of their own (poll.php
+above all, which holds a worker for nine seconds and deliberately counts
+nothing) are exactly the ones whose wait matters most. The Server
+performance card shows it as mean and worst per window: close to zero is
+healthy, tens of milliseconds is the pool running warm, hundreds means it
+is saturated. `RequestHeader set` overwrites, so a client cannot forge
+its own wait, and an absent header is ordinary rather than an error - the
+built-in PHP server used by the smoke tests ignores .htaccess entirely,
+and the measurement then simply records nothing.
+
+Counter history is kept for 30 days as hour buckets and 2 hours as minute
+buckets, pruned by the same inline sweep as everything else, so the
+per-script "Total" window means "everything the table still holds", not
+"since the server was installed". A maximum is folded differently from a
+total, since an hour's worst reading is the worst of its minutes and not
+their sum (metric prefix "x:", see Counters).
 
 The server's own bookkeeping does not sit in the client's latency:
 Util::defer runs the counters, the threshold sweep and the hourly player

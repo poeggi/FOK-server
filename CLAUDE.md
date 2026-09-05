@@ -45,6 +45,14 @@ endpoint - it is the contract the FOK-snake client is built against.
   land in the client's clock offset). It must stay no-store, and its
   header must stay in Access-Control-Expose-Headers or browsers cannot
   read it. php -S ignores .htaccess, so only staging/live can verify it.
+- The same mod_headers block stamps the receive time into a REQUEST
+  header (RequestHeader set X-Request-Start "%t"), which PHP subtracts
+  from REQUEST_TIME_FLOAT to get the time the request spent queued for a
+  worker (Load::queueUs). It must stay "set", which overwrites, so a
+  client cannot forge its own wait, and the absence of the header must
+  stay ordinary rather than an error - php -S ignores .htaccess, so the
+  smoke tests never see it. This is the only saturation signal PHP can
+  have: while a request waits for a worker, no PHP is running to time it.
 - Server-issued starts are keyed on (pair, epoch), never on the pair
   alone: both peers name the epoch so the answer cannot depend on when
   either asks. A pair-only key silently handed a late peer a different

@@ -105,6 +105,7 @@ const AUDIT = [
     'alerts_seen' => 'marked the alerts seen',
     'caps_refresh' => 're-assessed the host capabilities',
     'log_clear' => 'cleared the server log',
+    'clear_stats' => 'cleared the traffic statistics',
     'settings_save' => 'saved the settings',
     'config_import' => 'imported a settings file',
     'backup_create' => 'created a database backup',
@@ -325,6 +326,15 @@ switch ($action) {
     case 'log_clear':
         requirePost();
         Logs::clear();
+        Util::jsonOut(['ok' => true]);
+
+    // Empties the traffic history the Server performance card is drawn from.
+    // The item-registry buckets and the lifetime game totals share the table
+    // and are deliberately not touched (see Counters::clearHistory).
+    case 'clear_stats':
+        requirePost();
+        require_once __DIR__ . '/../src/Counters.php';
+        Counters::clearHistory();
         Util::jsonOut(['ok' => true]);
 
     // ---- settings ----

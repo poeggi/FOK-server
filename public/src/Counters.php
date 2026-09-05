@@ -27,11 +27,13 @@ require_once __DIR__ . '/Load.php';
  * whoever asks next - the admin dashboard calls flushDue() before reading
  * (see AdminData::window), so a quiet server still reports the truth.
  *
- * Three kinds of thing share the buffer, told apart by the metric name so a
+ * Four kinds of thing share the buffer, told apart by the metric name so a
  * reader never has to guess which it has: a bare name is an endpoint's
  * request count, "n:" is a counted total that accumulates over the window
- * (messages out, database writes), and "g:" is a sampled level that does not
- * accumulate at all (see gauge).
+ * (messages out, database writes), "g:" is a sampled level that does not
+ * accumulate at all (see gauge), and "x:" is a maximum - the worst single
+ * reading the window saw, which is the one shape the fold must not add up
+ * (see max).
  */
 final class Counters
 {
@@ -86,6 +88,46 @@ final class Counters
     {
         if ($n > 0) {
             apcu_inc(self::metricKey(gmdate('YmdHi'), $metric), $n, $ok, self::BUCKET_TTL);
+        }
+    }
+
+    /**
+     * Records the WORST reading of $metric this minute - a maximum, not a
+     * total. Some measurements only mean anything at their peak: a mean
+     * queue wait of one millisecond over a minute that contained a single
+     * two-second stall describes a healthy server, and the stall was the
+     * whole point (see Load::queueUs).
+     *
+     * "x:" is the name shape that says so, and it is the one the fold has to
+     * treat differently: an hour's worst reading is the worst of its sixty
+     * minutes, never their sum (see flushMinute).
+     */
+    public static function max(string $metric, int $n): void
+    {
+        if ($n <= 0) {
+            return;
+        }
+        // Shared memory unasked, exactly like add() and hit() beside it: this
+        // runs on every request, and a Caps lookup to decide whether APCu is
+        // there would put a database read on the path that is here to prove
+        // the server is not already overloaded.
+        $key = self::metricKey(gmdate('YmdHi'), 'x:' . $metric);
+        // A maximum cannot be an increment, so it is a compare-and-swap - and
+        // a bounded number of tries rather than a loop until it wins. Losing
+        // the race means another worker has just written a value of its own,
+        // and a reading that keeps being outrun is by definition not the
+        // biggest one this minute saw.
+        for ($i = 0; $i < 3; $i++) {
+            $cur = apcu_fetch($key, $ok);
+            if (!$ok) {
+                if (apcu_add($key, $n, self::BUCKET_TTL) === true) {
+                    return;
+                }
+                continue;
+            }
+            if ((int)$cur >= $n || apcu_cas($key, (int)$cur, $n) === true) {
+                return;
+            }
         }
     }
 
@@ -209,6 +251,8 @@ final class Counters
             $rows[] = '(?, ?, ?)';
             array_push($args, $minute, 'req_min', $req);
         }
+        $peaks = [];
+        $peakArgs = [];
         $prefix = self::PREFIX . "m:$minute:e:";
         foreach (new APCUIterator('/^' . preg_quote($prefix, '/') . '/') as $e) {
             $n = self::claim((string)$e['key']);
@@ -216,20 +260,36 @@ final class Counters
                 continue;
             }
             $metric = substr((string)$e['key'], strlen($prefix));
+            // A maximum goes in the other statement; everything else adds up
+            // (see max).
+            if (str_starts_with($metric, 'x:')) {
+                $peaks[] = '(?, ?, ?)';
+                array_push($peakArgs, $hour, $metric, $n);
+                $peaks[] = '(?, ?, ?)';
+                array_push($peakArgs, $minute, $metric, $n);
+                continue;
+            }
             $rows[] = '(?, ?, ?)';
             array_push($args, $hour, $metric, $n);
             $rows[] = '(?, ?, ?)';
             array_push($args, $minute, $metric, $n);
         }
-        if ($rows === []) {
-            return;
-        }
+        $write = static function (array $rows, array $args, string $merge): void {
+            if ($rows === []) {
+                return;
+            }
+            Load::untracked(static fn() => Db::retry(static fn() => Db::get()->prepare(
+                'INSERT INTO counters (bucket, metric, value) VALUES ' . implode(', ', $rows) .
+                ' ON CONFLICT (bucket, metric) DO UPDATE SET value = ' . $merge
+            )->execute($args)));
+        };
         // Adding, not replacing: an hour bucket collects sixty of these, and
         // a minute bucket must survive a late count arriving after its fold.
-        Load::untracked(static fn() => Db::retry(static fn() => Db::get()->prepare(
-            'INSERT INTO counters (bucket, metric, value) VALUES ' . implode(', ', $rows) .
-            ' ON CONFLICT (bucket, metric) DO UPDATE SET value = value + excluded.value'
-        )->execute($args)));
+        $write($rows, $args, 'value + excluded.value');
+        // The exception, and the reason there are two statements: an hour's
+        // worst reading is the worst of the minutes in it, and summing them
+        // would turn sixty ordinary waits into one impossible outlier.
+        $write($peaks, $peakArgs, 'MAX(value, excluded.value)');
     }
 
     /**
@@ -245,5 +305,35 @@ final class Counters
             return 0;
         }
         return (int)$v;
+    }
+
+    /**
+     * Empties the traffic history: every hour and minute bucket in the table,
+     * and the shared-memory buffer with them.
+     *
+     * The buffer is not an afterthought here. Whatever it still holds would
+     * fold in moments later and put a minute of traffic back into a history
+     * the operator had just emptied, which reads as a clear that did not
+     * work.
+     *
+     * Numeric buckets only, so the lifetime game totals and the meta rows -
+     * whose buckets are words and not stamps (see Stats) - are left alone.
+     * "mint_" is spared with them: those rows sit in hour buckets, but they
+     * are the item registry's accounting rather than traffic, and clearing a
+     * statistics view is not an invitation to lose them.
+     */
+    public static function clearHistory(): void
+    {
+        if (Caps::apcu() === true) {
+            foreach (new APCUIterator('/^' . preg_quote(self::PREFIX, '/') . '/') as $e) {
+                apcu_delete((string)$e['key']);
+            }
+        }
+        Load::untracked(static fn() => Db::retry(static fn() => Db::get()->prepare(
+            "DELETE FROM counters
+             WHERE bucket GLOB '[0-9]*'
+               AND (length(bucket) = 10 OR length(bucket) = 12)
+               AND metric NOT GLOB 'mint_*'"
+        )->execute()));
     }
 }
