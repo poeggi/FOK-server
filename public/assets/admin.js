@@ -12,10 +12,48 @@
 
 const API = 'api.php';
 
-async function api(action, opts) {
-    const res = await fetch(API + '?action=' + action, opts);
+async function call(query, opts) {
+    const res = await fetch(API + '?action=' + query, opts);
     if (res.status === 401) { location.reload(); throw new Error('session expired'); }
     return res.json();
+}
+
+// The cards that poll. An admin request costs far more in fixed overhead
+// than in the work it does (see admin/api.php), and a dashboard tick brings
+// several of these due at once - so the reads of one turn go out as ONE
+// request, and two cards asking for the same card share the one answer.
+const POLLED = new Set(['stats', 'conns', 'duels', 'alerts', 'load']);
+let due = null;
+
+async function api(action, opts) {
+    if (opts || !POLLED.has(action)) {
+        return call(action, opts);
+    }
+    if (due === null) {
+        due = new Map();
+        setTimeout(sendBatch, 0);
+    }
+    if (!due.has(action)) {
+        due.set(action, []);
+    }
+    return new Promise((resolve, reject) => due.get(action).push({ resolve, reject }));
+}
+
+async function sendBatch() {
+    const asked = due;
+    due = null;
+    try {
+        const r = await call('batch&of=' + [...asked.keys()].join(','));
+        for (const [card, waiting] of asked) {
+            // Each caller gets exactly the payload its own action returns.
+            const one = r.ok ? Object.assign({ ok: true }, r[card]) : r;
+            for (const w of waiting) w.resolve(one);
+        }
+    } catch (e) {
+        for (const waiting of asked.values()) {
+            for (const w of waiting) w.reject(e);
+        }
+    }
 }
 
 function el(tag, cls, text) {

@@ -99,6 +99,13 @@ else
     expect "the hourly cost has a wall-time total" '"wall_ms":' "$R"
     # The 24 h history moved out of stats (which refreshes every second)
     # into its own action, read only while the perf card's tab is open.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=batch&of=stats,conns,duels")
+    expect "one request answers a whole dashboard tick" '"ok":true' "$R"
+    expect "the tick carries the statistics card" '"stats":{' "$R"
+    expect "the tick carries the connections card" '"conns":{' "$R"
+    expect "the tick carries the duels card" '"duels":{' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=batch&of=stats,settings_save")
+    expect "a tick can ask for cards and nothing else" '"ok":false' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=load")
     expect "admin load history" '"ok":true' "$R"
     # Envelope only: a bucket is folded from APCu when a minute closes, so

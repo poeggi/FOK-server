@@ -49,6 +49,34 @@ function requireId(string $src = 'GET'): string
     }
     return $id;
 }
+/**
+ * The read-only payloads the dashboard polls, as data rather than as a
+ * response. Several cards come due on the same tick, and an admin request
+ * costs far more in fixed overhead than in the work it does - the includes,
+ * the session, the database open - so 'batch' answers a whole tick in one
+ * request. It reads them from here, out of the same function the single-card
+ * cases use, so the two can never drift apart.
+ */
+function poll(string $action): ?array
+{
+    switch ($action) {
+        case 'stats':
+            return AdminData::stats();
+        case 'conns':
+            return ['now' => time(), 'online_window' => FOK_ONLINE_WINDOW,
+                'conns' => ConnTrack::listPresence()];
+        case 'duels':
+            return ['now' => time(), 'duels' => ConnTrack::listDuels(),
+                'tourneys' => Tournament::listLive()];
+        case 'alerts':
+            return ['unseen' => Alerts::unseenCount(), 'alerts' => Alerts::recent()];
+        case 'load':
+            return AdminData::hours();
+        default:
+            return null;
+    }
+}
+
 /** Send an inline text/JSON body as a named download and stop. */
 function download(string $filename, string $body, string $type = 'application/json'): never
 {
@@ -108,10 +136,23 @@ if (isset(AUDIT[$action])) {
 switch ($action) {
     // ---- dashboard cards (read-only) ----
     case 'stats':
-        Util::jsonOut(['ok' => true] + AdminData::stats());
-
     case 'load':
-        Util::jsonOut(['ok' => true] + AdminData::hours());
+        Util::jsonOut(['ok' => true] + poll($action));
+
+    // A whole dashboard tick in one request: the cards that came due
+    // together are named in 'of' and answered side by side, so the fixed
+    // cost of an admin request is paid once instead of per card. Read-only
+    // by construction - poll() knows the cards and nothing else.
+    case 'batch':
+        $out = ['ok' => true];
+        foreach (array_slice(explode(',', (string)($_GET['of'] ?? '')), 0, 8) as $card) {
+            $one = poll($card);
+            if ($one === null) {
+                Util::fail('not a pollable card');
+            }
+            $out[$card] = $one;
+        }
+        Util::jsonOut($out);
 
     case 'props':
         $ms = Util::nowMs();
@@ -144,12 +185,8 @@ switch ($action) {
         ]);
 
     case 'conns':
-        Util::jsonOut(['ok' => true, 'now' => time(),
-            'online_window' => FOK_ONLINE_WINDOW, 'conns' => ConnTrack::listPresence()]);
-
     case 'duels':
-        Util::jsonOut(['ok' => true, 'now' => time(), 'duels' => ConnTrack::listDuels(),
-            'tourneys' => Tournament::listLive()]);
+        Util::jsonOut(['ok' => true] + poll($action));
 
     // ---- clients ----
     case 'client':
@@ -253,11 +290,7 @@ switch ($action) {
 
     // ---- alerts ----
     case 'alerts':
-        Util::jsonOut([
-            'ok' => true,
-            'unseen' => Alerts::unseenCount(),
-            'alerts' => Alerts::recent(),
-        ]);
+        Util::jsonOut(['ok' => true] + poll($action));
 
     case 'alerts_seen':
         requirePost();
