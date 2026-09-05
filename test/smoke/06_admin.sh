@@ -87,6 +87,7 @@ else
     expect "admin stats pending friendships" '"friendships_pending":' "$R"
     expect "admin stats carry the live load gauges" '"load_live":' "$R"
     expect "live load gauges include db writes" '"db_writes":' "$R"
+    expect "admin stats carry the shared memory gauge" '"apcu_mem":' "$R"
     # The tournament count belongs to the game statistics tile, not the
     # server one, so it rides the stats payload.
     expect "admin stats count the tournaments" '"tourneys":' "$R"

@@ -589,6 +589,7 @@ function renderServerLive(box, d) {
     box.replaceChildren();
     const L = d.load_live || { in: 0, out: 0, db_writes: 0 };
     const c = d.cost_hour || { hour: '--', wall_ms: 0, cpu_ms: 0, db: 0, top: null };
+    const m = d.apcu_mem || { used: 0, total: 0 };
     const minute = 'Last full minute';
     const hour = 'Last full hour (' + c.hour + ':00 UTC), over all endpoints';
     bubbles(box, [
@@ -597,6 +598,11 @@ function renderServerLive(box, d) {
         { label: 'DB writes/min', value: L.db_writes, tip: minute },
         { label: 'DB entries', value: d.db_rows },
         { label: 'DB size', value: fmtBytes(d.db_size) },
+        { label: 'APCu memory', value: m.total === 0 ? '-' : fmtBytes(m.used),
+            tip: m.total === 0 ? 'Shared memory is not usable on this host'
+                : 'Shared memory in use of ' + fmtBytes(m.total) + ' ('
+                    + Math.round(m.used / m.total * 100) + '%). Signaling, relayed'
+                    + ' duels and tournaments live here and fail when it fills.' },
         { label: 'PHP time/h', value: fmtMs(c.wall_ms),
             tip: 'Worker time held, the slot other clients queue for. ' + hour },
         { label: 'CPU time/h', value: fmtMs(c.cpu_ms),

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/Caps.php';
 require_once __DIR__ . '/Presence.php';
 require_once __DIR__ . '/ConnTrack.php';
 require_once __DIR__ . '/Relay.php';
@@ -60,11 +61,28 @@ final class AdminData
             // Live tournaments are held in shared memory, not in a table.
             'tourneys' => TourneyStore::usable() ? count(TourneyStore::all()) : 0,
             'db_size' => is_file(FOK_DB_FILE) ? filesize(FOK_DB_FILE) : 0,
+            'apcu_mem' => self::apcuMem(),
             'php' => PHP_VERSION,
             'server_version' => FOK_SERVER_VERSION,
             'env' => FOK_ENV,
             'now' => time(),
         ];
+    }
+
+    /**
+     * How full the shared memory segment is. Not an optimization gauge: the
+     * signal mailbox, the relay hub and the presence cache live there and
+     * have no database transport, so a full segment is an outage rather
+     * than a slowdown (see Caps::apcu).
+     */
+    private static function apcuMem(): array
+    {
+        $sma = Caps::apcu() ? apcu_sma_info(true) : false;
+        if (!is_array($sma)) {
+            return ['used' => 0, 'total' => 0];
+        }
+        $total = (int)($sma['num_seg'] ?? 0) * (int)($sma['seg_size'] ?? 0);
+        return ['used' => $total - (int)($sma['avail_mem'] ?? 0), 'total' => $total];
     }
 
     /**
