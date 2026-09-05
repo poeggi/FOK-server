@@ -293,7 +293,23 @@ moment worth re-reading it has already passed - so it is cleared by
 Clear statistics along with the rest of the traffic history, and lost on
 a restart. Waits under a millisecond are not recorded at all: there is
 nothing in them to diagnose, and without a floor an idle server would
-rewrite the whole list on nearly every request.
+rewrite the whole list on nearly every request. Each row also says whether
+the worker was one PHP had just started (Util::claimWorker): a fresh
+worker pays for its own startup before it can answer, which lands in the
+reading looking exactly like a busy pool, and "new" on every row means the
+pool keeps going cold rather than running short of workers.
+
+The admin dashboard's own requests are excluded from all of it. The
+dashboard polls only while somebody is watching the very gauge these
+numbers feed, so leaving them in has the observer measuring itself - on
+the day the list was built it was the whole of the top ten. The test is
+the script path (Util::isAdminScript), which is the one thing here a
+client cannot choose. The dashboard also keeps its own request count
+down rather than relying on being filtered out: one clock decides which
+cards are due so that everything due goes out in a single batched
+request, one-off reads join whatever batch is forming, and coming back to
+a backgrounded tab wakes only the cards that keep themselves current
+instead of all of them.
 
 Counter history is kept for 30 days as hour buckets and 2 hours as minute
 buckets, pruned by the same inline sweep as everything else, so the

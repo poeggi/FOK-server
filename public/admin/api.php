@@ -75,6 +75,8 @@ function poll(string $action): ?array
             return AdminData::hours();
         case 'load_min':
             return AdminData::minutes();
+        case 'caps':
+            return ['now' => time()] + Caps::get();
         default:
             return null;
     }
@@ -313,7 +315,7 @@ switch ($action) {
 
     // ---- host capabilities ----
     case 'caps':
-        Util::jsonOut(['ok' => true, 'now' => time()] + Caps::get());
+        Util::jsonOut(['ok' => true] + poll('caps'));
 
     case 'caps_refresh':
         requirePost();   // re-assessment is a write

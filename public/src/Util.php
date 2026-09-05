@@ -8,6 +8,12 @@ require_once __DIR__ . '/Settings.php';
 
 final class Util
 {
+    // One key per worker process, marking that it has answered before, and
+    // how long that mark stands (see claimWorker). Its own prefix, because
+    // clearing the traffic statistics must not make a warm pool look cold.
+    private const WORKER_KEY = 'fok:pid:';
+    private const WORKER_TTL = 3600;
+
     /**
      * Keeps the "every response is JSON with ok" contract when something
      * fails: with display_errors=0 an uncaught exception (locked database,
@@ -311,6 +317,13 @@ final class Util
     public static function noteQueue(): void
     {
         self::defer(static function (): void {
+            // Claimed before anything below can return early: the mark says
+            // this worker has answered before, so EVERY request it serves
+            // has to set it - including the admin ones dropped next.
+            $fresh = self::claimWorker();
+            if (self::isAdminScript()) {
+                return;
+            }
             require_once __DIR__ . '/Load.php';
             $us = Load::queueUs();
             if ($us === null) {
@@ -320,8 +333,41 @@ final class Util
             Counters::add('n:q_us', $us);
             Counters::add('n:q_n', 1);
             Counters::max('q_us', $us);
-            Counters::worst('q_us', $us, self::queueWho());
+            Counters::worst('q_us', $us, self::queueWho($fresh));
         });
+    }
+
+    /**
+     * Whether this is the admin dashboard asking. Its polling is not game
+     * traffic, and it runs only while somebody is watching the very gauge
+     * these metrics feed: left in, the observer fills its own measurement,
+     * which is precisely what it did on the day the list was built. Judged
+     * by the script, the one thing here that a client cannot choose.
+     */
+    private static function isAdminScript(): bool
+    {
+        return str_contains((string)($_SERVER['SCRIPT_NAME'] ?? ''), '/admin/');
+    }
+
+    /**
+     * Marks this worker as having answered something, and reports whether
+     * it had not. A worker that PHP has just started pays for its own
+     * startup before it can answer, and that cost lands in the queue
+     * reading as though the pool had been busy - so a list of the worst
+     * readings has to be able to tell the two apart.
+     *
+     * The mark is per process id and it expires, which makes this a proxy
+     * and not a fact: a child recycled onto a process id whose mark is
+     * still standing reads as warm. It is accurate enough for the only
+     * question being asked of it, which is whether a pool is forever
+     * spawning or never does.
+     */
+    private static function claimWorker(): bool
+    {
+        if (!function_exists('apcu_add')) {
+            return false;
+        }
+        return apcu_add(self::WORKER_KEY . getmypid(), 1, self::WORKER_TTL) === true;
     }
 
     /**
@@ -335,11 +381,12 @@ final class Util
      * php://input, the endpoint has already had it, and a second read
      * yields nothing on FPM - so a POST is identified by its address alone.
      */
-    private static function queueWho(): array
+    private static function queueWho(bool $fresh): array
     {
         $who = [
             's' => basename((string)($_SERVER['SCRIPT_NAME'] ?? '')),
             'ip' => self::clientIp(),
+            'w' => $fresh ? 1 : 0,
         ];
         $id = (string)($_GET['id'] ?? '');
         if (preg_match('/^[0-9a-f]{8}$/', $id) === 1) {

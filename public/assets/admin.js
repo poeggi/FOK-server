@@ -22,7 +22,11 @@ async function call(query, opts) {
 // than in the work it does (see admin/api.php), and a dashboard tick brings
 // several of these due at once - so the reads of one turn go out as ONE
 // request, and two cards asking for the same card share the one answer.
-const POLLED = new Set(['stats', 'conns', 'duels', 'alerts', 'load']);
+// load_min is the gauge popup's own read and caps is the perf card's one-off:
+// neither is on a timer, but both land beside a tick often enough to be worth
+// carrying in its request rather than opening a second one.
+const POLLED = new Set(['stats', 'conns', 'duels', 'alerts', 'load',
+    'load_min', 'caps']);
 let due = null;
 
 async function api(action, opts) {
@@ -745,11 +749,16 @@ function worstQueue(rows) {
         return box;
     }
     const t = el('table');
-    t.append(row(['When', 'Waited', 'Script', 'Player', 'Address'], 'th'));
+    t.append(row(['When', 'Waited', 'Worker', 'Script', 'Player', 'Address'], 'th'));
     for (const r of rows) {
         const tr = el('tr');
         tr.append(el('td', '', fmtSec(r.t)));
         tr.append(el('td', 'num', fmtQms(r.v / 1000)));
+        // A worker PHP had just started pays for its own startup before it
+        // can answer, and that lands here looking exactly like a busy pool
+        // (see Util::claimWorker). "new" on every row means the pool keeps
+        // going cold, not that it is short of workers.
+        tr.append(r.w ? el('td', '', 'new') : el('td', 'muted', 'warm'));
         tr.append(el('td', '', r.s || '-'));
         // Only the endpoints that take an id in the query string can name a
         // player here; a POST is identified by its address (Util::queueWho).
@@ -860,7 +869,10 @@ function renderServerLive(box, d) {
                 + 'twenty workers, and once they are all busy new requests queue '
                 + 'behind them. Tens of milliseconds is the pool running warm, '
                 + 'hundreds is saturation. ' + graph
-                + ' The worst cases of the last 24 h are listed under the graphs.',
+                + ' The worst cases of the last 24 h are listed under the graphs. '
+                + 'Requests from this dashboard are left out of all of it: the '
+                + 'dashboard polls only while somebody is watching this gauge, and '
+                + 'it would otherwise be measuring itself.',
             charts: [['Queue wait, mean', 'chart-wall', qMeanMs, fmtQms],
                 ['Queue wait, worst', 'chart-cpu', qMaxMs, fmtQms]],
             extra: () => worstQueue(d.q_worst) },
@@ -1866,11 +1878,35 @@ async function loadSettings() {
     for (const s of (await api('settings')).settings) settings[s.key] = s.value;
 }
 
-// Intervals live in the server settings: they survive a reload and are
-// editable in the settings view like everything else. 0 is off.
-function schedule(name, secs, fn) {
-    if (timers[name]) clearInterval(timers[name]);
-    if (secs > 0) timers[name] = setInterval(fn, secs * 1000);
+// ONE clock for the whole dashboard. Every card used to carry its own
+// setInterval, and two cards shared a request only when their timers happened
+// to fall in the same turn of the event loop - which stops being true as soon
+// as their intervals differ or a timer drifts. A single tick decides who is
+// due, so everything due is asked for in one turn and the batcher has
+// something to batch (see api). Intervals still live in the server settings:
+// they survive a reload and are editable in the settings view. 0 is off.
+const CLOCK_MS = 1000;
+const nextDue = {};
+
+// A card's own interval, or the shared one for the cards that follow it.
+function period(m) {
+    const key = m.every || (LIVE.includes(m.id) ? 'admin_refresh_secs' : '');
+    return key ? (parseInt(settings[key], 10) || 0) : 0;
+}
+
+function tick() {
+    const now = Date.now();
+    for (const m of MODULES) {
+        const secs = period(m);
+        if (secs <= 0) {
+            delete nextDue[m.id];
+        } else if (nextDue[m.id] === undefined) {
+            nextDue[m.id] = now + secs * 1000;
+        } else if (nextDue[m.id] <= now) {
+            nextDue[m.id] = now + secs * 1000;
+            refreshModule(m.id);
+        }
+    }
 }
 
 function stopIntervals() {
@@ -1882,6 +1918,9 @@ function stopIntervals() {
 
 function applyIntervals() {
     stopIntervals();
+    for (const id of Object.keys(nextDue)) {
+        delete nextDue[id];
+    }
     // Nobody is reading a background tab, and a poll nobody reads still costs
     // a PHP worker that a client is queueing for. The browser tells us when
     // the page is hidden: while it is, the dashboard asks for nothing and
@@ -1889,16 +1928,21 @@ function applyIntervals() {
     if (document.hidden) {
         return;
     }
-    schedule('live', settings.admin_refresh_secs, () => LIVE.forEach(refreshModule));
-    for (const m of MODULES) {
-        if (m.every) schedule(m.id, settings[m.every], () => refreshModule(m.id));
-    }
+    timers.clock = setInterval(tick, CLOCK_MS);
 }
 
 document.addEventListener('visibilitychange', () => {
     applyIntervals();
     if (!document.hidden) {
-        refreshAll();
+        // Only the cards that keep themselves up to date. The others were
+        // read when the page was built and change only when somebody asks
+        // them to, so waking all of them here would answer a tab switch
+        // with a burst of requests that no card had any use for.
+        for (const m of MODULES) {
+            if (period(m) > 0) {
+                refreshModule(m.id);
+            }
+        }
     }
 });
 

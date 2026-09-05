@@ -53,6 +53,13 @@ endpoint - it is the contract the FOK-snake client is built against.
   stay ordinary rather than an error - php -S ignores .htaccess, so the
   smoke tests never see it. This is the only saturation signal PHP can
   have: while a request waits for a worker, no PHP is running to time it.
+- The admin dashboard is EXCLUDED from that measurement (Util::noteQueue
+  via isAdminScript) and must stay excluded. It polls only while somebody
+  is watching the gauge it feeds, so counting it makes the observer the
+  measurement - it filled the entire worst-case list the day that list
+  shipped. Excluding it is not a licence to let it be expensive: it
+  batches a whole tick into one request and runs on ONE clock so that the
+  cards due together actually land in the same turn of the event loop.
 - apcu_inc does NOT refresh the TTL of a key it increments - its ttl
   argument applies only to the key it creates - while apcu_store resets
   the TTL on every write. A pair of counters written the two different
