@@ -78,6 +78,15 @@ function fmtDate(unix) {
     return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.';
 }
 
+// A plain count, kept short enough for a bubble: four digits still fit and
+// stay exact, past that the tile has to squeeze and thousands read better.
+// The exact figure is in the bubble's tooltip either way.
+function fmtNum(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 10000) return Math.round(n / 1000) + 'k';
+    return String(n);
+}
+
 function fmtBytes(n) {
     if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
     if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
@@ -132,8 +141,12 @@ function bubbles(box, items) {
     const grid = el('div', 'statgrid');
     for (const b of items) {
         const s = el('div', 'stat' + (b.wide ? ' wide' : '') + (b.on ? ' on' : ''));
-        if (b.tip) s.title = b.tip;
-        s.append(el('div', 'stat-value', String(b.value)), el('div', 'stat-label', b.label));
+        // A count is shortened to fit the bubble, so the tooltip carries the
+        // figure it stands for - otherwise "107k" is all anyone can read.
+        const shown = typeof b.value === 'number' ? fmtNum(b.value) : String(b.value);
+        const exact = shown === String(b.value) ? '' : String(b.value) + '. ';
+        if (b.tip || exact) s.title = exact + (b.tip || '');
+        s.append(el('div', 'stat-value', shown), el('div', 'stat-label', b.label));
         if (b.open) {
             s.classList.add('pick');
             s.onclick = b.open;
@@ -696,17 +709,17 @@ function renderServerLive(box, d, hist) {
     const gauges = [
         { key: 'relaying', label: 'Relaying', value: d.relaying,
             tip: now + 'Duels whose game messages pass through the server. ' + day,
-            charts: [['Relayed duels', 'chart-req', one('g:relaying'), String, true]] },
-        { key: 'msgs', label: 'Msgs in | out' + per, value: w.in + ' | ' + w.out,
+            charts: [['Relayed duels', 'chart-req', one('g:relaying'), fmtNum, true]] },
+        { key: 'msgs', label: 'Msgs in | out' + per, value: fmtNum(w.in) + ' | ' + fmtNum(w.out),
             tip: win + 'Requests answered, and hub messages handed out. ' + day,
-            charts: [['Requests', 'chart-req', total(''), String],
-                ['Messages out', 'chart-req', one('n:msg_out'), String]] },
+            charts: [['Requests', 'chart-req', total(''), fmtNum],
+                ['Messages out', 'chart-req', one('n:msg_out'), fmtNum]] },
         { key: 'db_w', label: 'DB writes' + per, value: w.db_writes,
             tip: win + 'Writes through the single SQLite writer. ' + day,
-            charts: [['DB writes', 'chart-db', one('n:db_w'), String]] },
+            charts: [['DB writes', 'chart-db', one('n:db_w'), fmtNum]] },
         { key: 'db_rows', label: 'DB entries', value: d.db_rows,
             tip: now + 'Rows over every table. ' + day,
-            charts: [['DB entries', 'chart-req', one('g:db_rows'), String, true]] },
+            charts: [['DB entries', 'chart-req', one('g:db_rows'), fmtNum, true]] },
         { key: 'db_size', label: 'DB size', value: fmtBytes(d.db_size),
             tip: now + 'The database file on disk. ' + day,
             charts: [['DB size', 'chart-req', one('g:db_size'), fmtBytes, true]] },
@@ -726,11 +739,11 @@ function renderServerLive(box, d, hist) {
         { key: 'db', label: 'DB calls' + per, value: w.db,
             tip: win + 'Queries the endpoints caused - opening the connection is '
                 + 'not one of them (see Load::openDone). ' + day,
-            charts: [['DB queries', 'chart-db', total('.db'), String]] },
+            charts: [['DB queries', 'chart-db', total('.db'), fmtNum]] },
         { key: 'top', label: 'Busiest script', value: w.top === null ? '-' : w.top, wide: true,
             tip: win + 'Held the most worker time. ' + (w.top === null ? '' : day),
             charts: w.top === null ? null
-                : [[w.top + ' requests', 'chart-req', one(w.top), String],
+                : [[w.top + ' requests', 'chart-req', one(w.top), fmtNum],
                     [w.top + ' worker time', 'chart-wall', one(w.top + '.ms'), fmtMs]] },
     ];
 
@@ -890,7 +903,7 @@ function renderItemStatus(box, d) {
         { label: 'Frozen', value: d.items_frozen },
         { label: 'Open matches', value: d.matches_open },
         // Two cells wide: the only bubble here holding a pair of numbers.
-        { label: 'Ledger rows', value: d.ledger_rows + ' / ' + d.ledger_max, wide: true },
+        { label: 'Ledger rows', value: fmtNum(d.ledger_rows) + ' / ' + fmtNum(d.ledger_max), wide: true },
     ]);
 
     // Chain-verify: walks the hash chain from the newest checkpoint forward
@@ -1093,7 +1106,7 @@ const MODULES = [
                 { label: 'Tournaments', value: d.tourneys },
                 { label: 'Users registered', value: d.counts.registered },
                 { label: 'Friendships active | pending',
-                    value: d.friendships + ' | ' + d.friendships_pending, wide: true },
+                    value: fmtNum(d.friendships) + ' | ' + fmtNum(d.friendships_pending), wide: true },
                 { label: 'Scores stored', value: d.scores_total },
                 { label: 'Items owned', value: d.items_total },
                 { label: 'Item transfers', value: d.item_transfers },
