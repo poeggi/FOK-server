@@ -123,15 +123,21 @@ function toolbar(...kids) {
 }
 
 // The gauge grid every card with small figures builds: {label, value} plus
-// an optional wide (two cells, for a bubble holding a pair of numbers) and
-// tip (the one line of explanation that would otherwise be prose under the
-// grid). One definition, so a bubble is the same object wherever it shows.
+// an optional wide (two cells, for a bubble holding a pair of numbers), tip
+// (the one line of explanation that would otherwise be prose under the grid)
+// and open (what the bubble shows when clicked, with on marking the one that
+// is showing it). One definition, so a bubble is the same object wherever it
+// shows.
 function bubbles(box, items) {
     const grid = el('div', 'statgrid');
     for (const b of items) {
-        const s = el('div', 'stat' + (b.wide ? ' wide' : ''));
+        const s = el('div', 'stat' + (b.wide ? ' wide' : '') + (b.on ? ' on' : ''));
         if (b.tip) s.title = b.tip;
         s.append(el('div', 'stat-value', String(b.value)), el('div', 'stat-label', b.label));
+        if (b.open) {
+            s.classList.add('pick');
+            s.onclick = b.open;
+        }
         grid.append(s);
     }
     box.append(grid);
@@ -619,36 +625,141 @@ function chart(box, title, data, fmt, cls) {
     box.append(wrap);
 }
 
-// Live: the server's own gauges. The per-minute figures are the last
-// COMPLETE minute and the per-hour ones the last COMPLETE hour, so each one
-// is a full window instead of a number climbing from zero - every tooltip
-// says which window it is.
-function renderServerLive(box, d) {
+// Live: the server's own gauges, over ONE window - the last complete minute
+// or the last complete hour, whichever the selector says. One window for the
+// whole tile: a tile reading "/min" on one bubble and "/h" on the next leaves
+// the conversion to whoever reads it, and the two never line up anyway. Both
+// windows are complete ones, so a figure is a whole window every time it is
+// read instead of a number climbing from zero.
+//
+// Levels - what the server IS holding rather than what passed through it -
+// carry no window and read the same either way.
+let liveWindow = 'min';
+
+// Which gauge is showing its last 24 h under the grid, by key. Kept in the
+// module so the card's live refresh redraws the same view instead of closing
+// the graph under the operator (see pickedScript).
+let pickedGauge = null;
+
+// One 24 h series off the hour buckets. A counted total is a true zero in an
+// hour that counted none; a LEVEL is not - it was simply not sampled that
+// hour - so the last known reading carries forward instead (see
+// Counters::sampleGauges).
+function series(hist, pick, level) {
+    let last = 0;
+    return hourKeys(hist.now).map((k) => {
+        const v = pick(hist.hours[k] || {});
+        if (v === null) return level ? last : 0;
+        last = v;
+        return v;
+    });
+}
+
+// One named metric, absent meaning "not recorded" rather than zero.
+const one = (name) => (m) => (m[name] === undefined ? null : m[name]);
+
+// Summed over the endpoints, by the same metric shapes AdminData::window
+// sorts by: '' is the request counts, '.ms' / '.cpu' / '.db' what they cost.
+// A namespaced metric is not an endpoint, and req_min is the requests counted
+// a second time, as a total.
+const total = (suffix) => (m) => {
+    let n = 0;
+    for (const k in m) {
+        if (k.indexOf(':') >= 0 || k.indexOf('mint_') === 0 || k === 'req_min') continue;
+        const dot = k.lastIndexOf('.');
+        if ((dot < 0 ? '' : k.slice(dot)) === suffix) n += m[k];
+    }
+    return n;
+};
+
+function renderServerLive(box, d, hist) {
     box.replaceChildren();
-    const L = d.load_live || { in: 0, out: 0, db_writes: 0 };
-    const c = d.cost_hour || { hour: '--', wall_ms: 0, cpu_ms: 0, db: 0, top: null };
+    const w = (d.live || {})[liveWindow]
+        || { stamp: '--', in: 0, out: 0, db_writes: 0, wall_ms: 0, cpu_ms: 0, db: 0, top: null };
     const m = d.apcu_mem || { used: 0, total: 0 };
-    const minute = 'Last full minute';
-    const hour = 'Last full hour (' + c.hour + ':00 UTC), over all endpoints';
-    bubbles(box, [
-        { label: 'Relaying', value: d.relaying },
-        { label: 'Msgs in | out /min', value: L.in + ' | ' + L.out, tip: minute },
-        { label: 'DB writes/min', value: L.db_writes, tip: minute },
-        { label: 'DB entries', value: d.db_rows },
-        { label: 'DB size', value: fmtBytes(d.db_size) },
-        { label: 'APCu memory', value: m.total === 0 ? '-' : fmtBytes(m.used),
+    const per = liveWindow === 'min' ? '/min' : '/h';
+    const win = (liveWindow === 'min' ? 'Last full minute (' : 'Last full hour (')
+        + w.stamp + ' UTC), over all endpoints. ';
+    const now = 'Right now. ';
+    const day = 'Click for the last 24 h.';
+
+    const bar = toolbar();
+    for (const [key, label] of [['min', 'Per minute'], ['hour', 'Per hour']]) {
+        const c = el('button', 'chip' + (liveWindow === key ? ' active' : ''), label);
+        c.onclick = () => { liveWindow = key; renderServerLive(box, d, hist); };
+        bar.append(c);
+    }
+    box.append(bar);
+
+    // Label, value and tip as shown; charts is what the click opens, each
+    // entry [title, colour class, series, formatter, level?].
+    const gauges = [
+        { key: 'relaying', label: 'Relaying', value: d.relaying,
+            tip: now + 'Duels whose game messages pass through the server. ' + day,
+            charts: [['Relayed duels', 'chart-req', one('g:relaying'), String, true]] },
+        { key: 'msgs', label: 'Msgs in | out' + per, value: w.in + ' | ' + w.out,
+            tip: win + 'Requests answered, and hub messages handed out. ' + day,
+            charts: [['Requests', 'chart-req', total(''), String],
+                ['Messages out', 'chart-req', one('n:msg_out'), String]] },
+        { key: 'db_w', label: 'DB writes' + per, value: w.db_writes,
+            tip: win + 'Writes through the single SQLite writer. ' + day,
+            charts: [['DB writes', 'chart-db', one('n:db_w'), String]] },
+        { key: 'db_rows', label: 'DB entries', value: d.db_rows,
+            tip: now + 'Rows over every table. ' + day,
+            charts: [['DB entries', 'chart-req', one('g:db_rows'), String, true]] },
+        { key: 'db_size', label: 'DB size', value: fmtBytes(d.db_size),
+            tip: now + 'The database file on disk. ' + day,
+            charts: [['DB size', 'chart-req', one('g:db_size'), fmtBytes, true]] },
+        { key: 'apcu', label: 'APCu memory', value: m.total === 0 ? '-' : fmtBytes(m.used),
             tip: m.total === 0 ? 'Shared memory is not usable on this host'
                 : 'Shared memory in use of ' + fmtBytes(m.total) + ' ('
                     + Math.round(m.used / m.total * 100) + '%). Signaling, relayed'
-                    + ' duels and tournaments live here and fail when it fills.' },
-        { label: 'PHP time/h', value: fmtMs(c.wall_ms),
-            tip: 'Worker time held, the slot other clients queue for. ' + hour },
-        { label: 'CPU time/h', value: fmtMs(c.cpu_ms),
-            tip: 'Processor time actually burned. ' + hour },
-        { label: 'DB calls/h', value: c.db, tip: 'Database queries caused. ' + hour },
-        { label: 'Busiest script', value: c.top === null ? '-' : c.top, wide: true,
-            tip: 'Held the most worker time. ' + hour },
-    ]);
+                    + ' duels and tournaments live here and fail when it fills. ' + day,
+            charts: m.total === 0 ? null
+                : [['APCu memory', 'chart-cpu', one('g:apcu'), fmtBytes, true]] },
+        { key: 'wall', label: 'PHP time' + per, value: fmtMs(w.wall_ms),
+            tip: win + 'Worker time held, the slot other clients queue for. ' + day,
+            charts: [['PHP worker time', 'chart-wall', total('.ms'), fmtMs]] },
+        { key: 'cpu', label: 'CPU time' + per, value: fmtMs(w.cpu_ms),
+            tip: win + 'Processor time actually burned. ' + day,
+            charts: [['CPU time', 'chart-cpu', total('.cpu'), fmtMs]] },
+        { key: 'db', label: 'DB calls' + per, value: w.db,
+            tip: win + 'Queries the endpoints caused - opening the connection is '
+                + 'not one of them (see Load::openDone). ' + day,
+            charts: [['DB queries', 'chart-db', total('.db'), String]] },
+        { key: 'top', label: 'Busiest script', value: w.top === null ? '-' : w.top, wide: true,
+            tip: win + 'Held the most worker time. ' + (w.top === null ? '' : day),
+            charts: w.top === null ? null
+                : [[w.top + ' requests', 'chart-req', one(w.top), String],
+                    [w.top + ' worker time', 'chart-wall', one(w.top + '.ms'), fmtMs]] },
+    ];
+
+    bubbles(box, gauges.map((g) => ({
+        label: g.label, value: g.value, tip: g.tip, wide: g.wide,
+        on: pickedGauge === g.key,
+        open: g.charts === null ? null : () => {
+            pickedGauge = pickedGauge === g.key ? null : g.key;
+            // The history is fetched only while a graph is open (see the
+            // card's Live tab), so reopening one has to go and get it.
+            refreshModule('server');
+        },
+    })));
+
+    const picked = gauges.find((g) => g.key === pickedGauge && g.charts !== null);
+    if (picked === undefined) {
+        pickedGauge = null;
+        return;
+    }
+    // Nothing to draw until the history lands; the next tick brings it.
+    if (hist) {
+        const charts = el('div', 'charts');
+        for (const [title, cls, pick, fmt, level] of picked.charts) {
+            chart(charts, title, series(hist, pick, level), fmt, cls);
+        }
+        // In a .pane, so the graphs take what the grid leaves and scroll
+        // inside it rather than growing the tile (see the height model).
+        box.append(pane('', charts));
+    }
 }
 
 // The 24 hour buckets ending with the running one, as the UTC stamps the
@@ -673,6 +784,9 @@ function scriptRows(d) {
     const by = {};
     for (const bucket in d.hours) {
         for (const metric in d.hours[bucket]) {
+            // "n:" totals and "g:" levels are the server's own gauges, not
+            // endpoints that served anything (see Counters).
+            if (metric.indexOf(':') >= 0) continue;
             const dot = metric.lastIndexOf('.');
             const name = dot < 0 ? metric : metric.slice(0, dot);
             const key = dot < 0 ? 'req' : metric.slice(dot + 1);
@@ -1123,7 +1237,15 @@ const MODULES = [
                 {
                     key: 'live',
                     label: 'Live',
-                    render: async (p) => renderServerLive(p, await api('stats')),
+                    // Both reads are asked for in the same turn, so they
+                    // travel as one request (see api()). The 24 h history is
+                    // asked for at all only while a gauge has its graph open.
+                    render: async (p) => {
+                        const [live, hist] = await Promise.all(
+                            [api('stats'), pickedGauge === null ? null : api('load')]
+                        );
+                        renderServerLive(p, live, hist);
+                    },
                 },
                 {
                     // The 24 h history is the one payload that grows with the

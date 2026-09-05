@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/Caps.php';
+require_once __DIR__ . '/Load.php';
 
 /**
  * Request counters, accumulated in shared memory and written to the
@@ -23,7 +25,13 @@ require_once __DIR__ . '/Db.php';
  *
  * A minute closed by the last request before an idle patch is flushed by
  * whoever asks next - the admin dashboard calls flushDue() before reading
- * (see Load::lastMinute), so a quiet server still reports the truth.
+ * (see AdminData::window), so a quiet server still reports the truth.
+ *
+ * Three kinds of thing share the buffer, told apart by the metric name so a
+ * reader never has to guess which it has: a bare name is an endpoint's
+ * request count, "n:" is a counted total that accumulates over the window
+ * (messages out, database writes), and "g:" is a sampled level that does not
+ * accumulate at all (see gauge).
  */
 final class Counters
 {
@@ -67,6 +75,61 @@ final class Counters
         }
         apcu_inc(self::metricKey($minute, $metric), 1, $ok, self::BUCKET_TTL);
         return (int)apcu_inc(self::reqKey($minute), 1, $ok, self::BUCKET_TTL);
+    }
+
+    /**
+     * Adds to a counted total for the current minute - a gauge the request
+     * accumulated rather than a request of its own (see Load::flush). It
+     * folds with everything else, so it costs no database write here.
+     */
+    public static function add(string $metric, int $n): void
+    {
+        if ($n > 0) {
+            apcu_inc(self::metricKey(gmdate('YmdHi'), $metric), $n, $ok, self::BUCKET_TTL);
+        }
+    }
+
+    /**
+     * Records the server's LEVELS for the current hour: how full shared
+     * memory is, how big the database has grown, how many rows it holds, how
+     * many duels are being relayed. These do not accumulate - two samples an
+     * hour apart are the same reading taken twice, not twice as much of
+     * anything - so the newest sample of an hour replaces the one before it,
+     * and an hour that got no sample keeps the last known value when it is
+     * drawn (see the Live tab's graphs).
+     *
+     * Called on the hourly maintenance cadence, off the same gate as the
+     * player sweep (see Util::watch): one statement an hour.
+     */
+    public static function sampleGauges(): void
+    {
+        require_once __DIR__ . '/Relay.php';
+        $sma = Caps::apcu() ? apcu_sma_info(true) : false;
+        $used = is_array($sma)
+            ? (int)($sma['num_seg'] ?? 0) * (int)($sma['seg_size'] ?? 0) - (int)($sma['avail_mem'] ?? 0)
+            : 0;
+        self::gauge([
+            'relaying' => Relay::activePairs(),
+            'db_rows' => Db::rowCount(),
+            'db_size' => is_file(FOK_DB_FILE) ? (int)filesize(FOK_DB_FILE) : 0,
+            'apcu' => $used,
+        ]);
+    }
+
+    /** @param array<string,int> $levels metric name (without the g:) => reading */
+    private static function gauge(array $levels): void
+    {
+        $hour = gmdate('YmdH');
+        $rows = [];
+        $args = [];
+        foreach ($levels as $name => $value) {
+            $rows[] = '(?, ?, ?)';
+            array_push($args, $hour, "g:$name", $value);
+        }
+        Load::untracked(static fn() => Db::retry(static fn() => Db::get()->prepare(
+            'INSERT INTO counters (bucket, metric, value) VALUES ' . implode(', ', $rows) .
+            ' ON CONFLICT (bucket, metric) DO UPDATE SET value = excluded.value'
+        )->execute($args)));
     }
 
     /**
@@ -128,11 +191,13 @@ final class Counters
     }
 
     /**
-     * Writes one closed minute: its request total under its own minute
-     * bucket (what Load::lastMinute reads back), and each endpoint's share
-     * added to the hour bucket the minute belongs to. One statement, so the
-     * single writer is taken once for the whole minute however many requests
-     * it held.
+     * Writes one closed minute: every buffered total into the hour bucket it
+     * belongs to AND into its own minute bucket, plus the request count under
+     * req_min. Both windows because the dashboard offers both and neither can
+     * be derived from the other - an hour is not a minute times sixty. One
+     * statement, so the single writer is taken once for the whole minute
+     * however many requests it held; the minute rows are dropped again after
+     * two hours (see Util::watch).
      */
     private static function flushMinute(string $minute): void
     {
@@ -150,18 +215,21 @@ final class Counters
             if ($n <= 0) {
                 continue;
             }
+            $metric = substr((string)$e['key'], strlen($prefix));
             $rows[] = '(?, ?, ?)';
-            array_push($args, $hour, substr((string)$e['key'], strlen($prefix)), $n);
+            array_push($args, $hour, $metric, $n);
+            $rows[] = '(?, ?, ?)';
+            array_push($args, $minute, $metric, $n);
         }
         if ($rows === []) {
             return;
         }
         // Adding, not replacing: an hour bucket collects sixty of these, and
         // a minute bucket must survive a late count arriving after its fold.
-        Db::retry(static fn() => Db::get()->prepare(
+        Load::untracked(static fn() => Db::retry(static fn() => Db::get()->prepare(
             'INSERT INTO counters (bucket, metric, value) VALUES ' . implode(', ', $rows) .
             ' ON CONFLICT (bucket, metric) DO UPDATE SET value = value + excluded.value'
-        )->execute($args));
+        )->execute($args)));
     }
 
     /**

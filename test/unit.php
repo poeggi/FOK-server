@@ -743,48 +743,43 @@ ok(!$writeWorks(false), 'an in-scope open read cursor blocks the next write');
 ok($writeWorks(true), 'closeCursor releases the snapshot and the write goes through');
 $other = null;   // no live handle may outlive this (see the restore test)
 
-// Load: per-minute gauges accumulate in memory and flush in one write.
-// (Keep no statement handle alive across the run - a live PDOStatement
-// pins its connection open and breaks the later restore test on Windows.)
-// Summed over the buckets rather than read out of the current one: every
-// assertion below starts from an empty table, so the total IS the value, and
-// a minute turning mid-test can no longer hide half of it in the next bucket.
+// Load: the gauges accumulate in memory during the request and hand off to
+// the counter buffer once, after it - no write of their own (see Load::flush).
+// (Keep no statement handle alive across the run - a live PDOStatement pins
+// its connection open and breaks the later restore test on Windows.)
+$dropGauges = static function (): void {
+    Db::get()->exec("DELETE FROM counters WHERE metric IN ('n:msg_out', 'n:db_w')");
+};
+// Folds the RUNNING minute too, so the value is in the table instead of still
+// buffered; summed over the minute buckets because every assertion below starts
+// from an empty one, so the total IS the value, and a minute turning mid-test
+// can no longer hide half of it in the next bucket. Minute buckets only: a fold
+// files the same count into the hour as well, and both would count it twice.
 $loadVal = static function (string $metric): int {
-    $st = Db::get()->prepare('SELECT COALESCE(SUM(value), 0) FROM loadmin WHERE metric = ?');
-    $st->execute([$metric]);
+    Counters::flushDue(gmdate('YmdHi', time() + 60));
+    $st = Db::get()->prepare('SELECT COALESCE(SUM(value), 0) FROM counters
+                              WHERE metric = ? AND length(bucket) = 12');
+    $st->execute(["n:$metric"]);
     $n = (int)$st->fetchColumn();
     $st->closeCursor();
     return $n;
 };
-// Exact gauges for the assertions below: in production one request in
-// load_sample flushes and stands in for the rest (see Load::flush).
-Settings::set('load_sample', 1);
-Load::flush();                            // drain anything pending from above
-Db::get()->exec('DELETE FROM loadmin');   // one write: counted as db load
+Load::flush();      // drain anything pending from above
+$dropGauges();      // one write: counted as db load
 Load::tick('msg_out', 3);
 Load::tick('msg_out', 2);
 Load::flush();
-ok($loadVal('msg_out') === 5, 'msg_out accumulates then flushes in one write');
+ok($loadVal('msg_out') === 5, 'msg_out accumulates then folds as one total');
 
-// The PDO wrapper counts a write query as db load, a read as none.
+// The PDO wrapper counts a write query as db load, a read as none - and the
+// fold's own write is none of it, or the monitoring would book itself to
+// whichever request happened to carry it (see Load::untracked).
 Load::flush();
-Db::get()->exec('DELETE FROM loadmin');   // exactly one write since the flush
-Db::get()->query('SELECT 1');             // a read: must not count
+$dropGauges();                     // exactly one write since the flush
+Db::get()->query('SELECT 1');      // a read: must not count
 Load::flush();
-ok($loadVal('db_w') === 1, 'the wrapper counts one write and no reads');
-
-// lastMinute reports the previous COMPLETE minute's totals.
-$lm = inOneMinute(static function (): array {
-    Db::get()->exec('DELETE FROM loadmin');
-    $prevMin = gmdate('YmdHi', time() - 60);
-    Db::get()->prepare('INSERT INTO loadmin (bucket, metric, value) VALUES (?, ?, ?), (?, ?, ?)')
-        ->execute([$prevMin, 'msg_out', 7, $prevMin, 'db_w', 4]);
-    return Load::lastMinute();
-});
-ok($lm['out'] === 7, 'lastMinute reports the previous minute messages out');
-ok($lm['db_writes'] === 4, 'lastMinute reports the previous minute db writes');
-ok(array_key_exists('in', $lm), 'lastMinute carries messages-in from the req_min counter');
-Db::get()->exec('DELETE FROM loadmin');
+ok($loadVal('db_w') === 1, 'the wrapper counts one write, no reads and no fold');
+$dropGauges();
 
 // Vault: token-secured per-player config backup, one row per id.
 ok(Vault::restore('aaaaaaaa', 'x') === null, 'restore of a fresh id is null (no backup)');
@@ -977,13 +972,24 @@ Util::runDeferred();
 ok($ran === ['a', 'b', 'c'], 'a failing deferred job does not stop the rest');
 
 // The point of all of it: the counter writes leave the caller's latency.
-$countOf = function (string $metric): int {
-    $st = Db::get()->prepare('SELECT COALESCE(SUM(value), 0) FROM counters WHERE metric = ?');
-    $st->execute([$metric]);
-    $n = (int)$st->fetchColumn();
-    $st->closeCursor();
-    return $n;
+// A fold writes each metric twice - into the hour bucket and into its own
+// minute bucket, the two windows the dashboard offers - so a reader has to
+// say which of them it means. Ten digits is an hour, twelve is a minute.
+// (The length goes into the statement, not into a parameter: PDO binds a
+// parameter as text, and SQLite never equates text with the integer length()
+// hands back, so the bound form matches nothing.)
+$countIn = function (int $digits): callable {
+    return function (string $metric) use ($digits): int {
+        $st = Db::get()->prepare('SELECT COALESCE(SUM(value), 0) FROM counters
+                                  WHERE metric = ? AND length(bucket) = ' . $digits);
+        $st->execute([$metric]);
+        $n = (int)$st->fetchColumn();
+        $st->closeCursor();
+        return $n;
+    };
 };
+$countOf = $countIn(10);
+$minuteOf = $countIn(12);
 $before = $countOf('unittest');
 Util::bump('unittest');
 ok($countOf('unittest') === $before, 'bump writes nothing before the answer is out');
@@ -995,6 +1001,9 @@ Counters::flushDue(gmdate('YmdHi', time() + 60));
 ok($countOf('unittest') === $before + 1, 'a closed minute is folded into the database');
 Counters::flushDue(gmdate('YmdHi', time() + 60));
 ok($countOf('unittest') === $before + 1, 'and folding it again does not double-count');
+// The same fold, in the same statement, also files the minute on its own:
+// the Live tab offers both windows and an hour is not a minute times sixty.
+ok($minuteOf('unittest') > 0, 'the fold files the minute bucket as well as the hour');
 
 // The endpoint metric and the shared request counter are folded in ONE
 // statement per closed minute, so prove the second row is still written.

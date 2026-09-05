@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 33;
+    private const SCHEMA_VERSION = 34;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -64,10 +64,36 @@ final class Db
             $pdo->exec('PRAGMA busy_timeout = 4000');
             $pdo->exec('PRAGMA foreign_keys = ON');
             self::migrate($pdo);
+            // Everything above is the price of having a connection at all,
+            // paid identically by every request; the query count starts from
+            // a working one (see Load::openDone).
+            Load::openDone();
             self::$pdo = $pdo;
             self::$bootUs = (microtime(true) - $t) * 1e6;
         }
         return self::$pdo;
+    }
+
+    // Every table the "DB entries" gauge sums. The signal mailbox, the relay
+    // hub and the presence-counter cache are not here: they live in shared
+    // memory, not in any table (see Signals and RelayStore).
+    private const COUNTED = ['players', 'scores', 'duels', 'mm_queue',
+        'counters', 'alerts', 'settings', 'admin_fails', 'ipcount', 'friends',
+        'starts', 'conn', 'pstats', 'items', 'matches', 'ledger'];
+
+    /**
+     * How many rows the database holds, over every table above. One statement
+     * rather than a COUNT per table; COUNTED is a fixed allowlist and never
+     * user input.
+     */
+    public static function rowCount(): int
+    {
+        return (int)self::get()->query(
+            'SELECT ' . implode(' + ', array_map(
+                static fn($t) => "(SELECT COUNT(*) FROM $t)",
+                self::COUNTED
+            ))
+        )->fetchColumn();
     }
 
     // Restore replaces the database file, so the handle must be droppable.
@@ -510,6 +536,17 @@ final class Db
             // release knows (config export/import rejects unknown keys), so
             // it goes with them.
             $pdo->exec("DELETE FROM settings WHERE key = 'relay_apcu'");
+        }
+        if ($v < 34) {
+            // The per-minute load gauges moved onto the shared-memory counter
+            // buffer every request total already rides (see Load::flush), so
+            // this table backs nothing: it held at most the last three
+            // minutes, and those minutes are in the counters table now.
+            $pdo->exec('DROP TABLE IF EXISTS loadmin');
+            // load_sample sampled the writes this table cost. There are no
+            // writes left to sample, and a stored row would linger as a key
+            // no release knows (config export/import rejects unknown keys).
+            $pdo->exec("DELETE FROM settings WHERE key = 'load_sample'");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

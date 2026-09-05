@@ -395,11 +395,22 @@ final class Util
                 Alerts::raise('expiry', "Expired $n player(s) not seen for "
                     . Settings::int('player_ttl_days') . ' days; friendships cancelled');
             }
-            // On the same hourly cadence: drop req_min buckets older than 2h.
-            // They are pure bloat once counted, so this keeps the DELETE (and
-            // its write lock) off the other ~24 in 25 watch() calls.
-            $db->prepare("DELETE FROM counters WHERE metric = 'req_min' AND bucket < ?")
-                ->execute([gmdate('YmdHi', time() - 7200)]);
+            // On the same hourly cadence: a reading of the levels the
+            // dashboard graphs, which no counter accumulates (see
+            // Counters::sampleGauges).
+            require_once __DIR__ . '/Counters.php';
+            Counters::sampleGauges();
+            // And drop minute buckets older than 2h. A minute stamp is twelve
+            // digits where an hour stamp is ten, so this leaves the history
+            // and the lifetime totals alone. They are pure bloat once the
+            // Live tab has moved past them, and doing it here keeps the
+            // DELETE (and its write lock) off the other ~24 in 25 watch()
+            // calls.
+            $db->prepare(
+                "DELETE FROM counters
+                 WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
+                   AND bucket < ?"
+            )->execute([gmdate('YmdHi', time() - 7200)]);
             // Same cadence for the traffic history. An hour bucket is ten
             // digits (GLOB matches the whole string, so the lifetime totals
             // and the meta rows, whose buckets are not numeric, are never

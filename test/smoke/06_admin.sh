@@ -27,6 +27,7 @@ else
     # copy (they are byte-identical at both check sites; ?v= is the version).
     JS_ASSET=$(curl -s "$BASE/assets/admin.js?v=$VER")
     expect "the dashboard stops polling while nobody looks" 'visibilitychange' "$JS_ASSET"
+    expect "a gauge opens its own last 24 h" 'pickedGauge' "$JS_ASSET"
     CSS_ASSET=$(curl -s "$BASE/assets/admin.css?v=$VER")
     expect "hidden class wins the cascade" 'display: none !important' "$CSS_ASSET"
     # The global td rule is nowrap; the popup value cell must override it or
@@ -87,16 +88,19 @@ else
     expect "admin stats count the item transfers" "$(strict '"item_transfers":2')" "$R"
     expect "admin stats friendships" '"friendships":' "$R"
     expect "admin stats pending friendships" '"friendships_pending":' "$R"
-    expect "admin stats carry the live load gauges" '"load_live":' "$R"
+    # The live gauges come in BOTH windows the tile offers, with the same
+    # measurements in each - the tile picks one, it never mixes them.
+    expect "admin stats carry the live load gauges" '"live":' "$R"
+    expect "the gauges cover the last full minute" '"min":' "$R"
+    expect "the gauges cover the last full hour" '"hour":' "$R"
     expect "live load gauges include db writes" '"db_writes":' "$R"
+    # What the window cost in worker time, folded from the per-metric
+    # .ms/.cpu/.db counters the deferred bookkeeping writes.
+    expect "the gauges have a wall-time total" '"wall_ms":' "$R"
     expect "admin stats carry the shared memory gauge" '"apcu_mem":' "$R"
     # The tournament count belongs to the game statistics tile, not the
     # server one, so it rides the stats payload.
     expect "admin stats count the tournaments" '"tourneys":' "$R"
-    # What the last complete hour cost in worker time, folded from the
-    # per-metric .ms/.cpu/.db counters the deferred bookkeeping writes.
-    expect "admin stats carry the hourly cost" '"cost_hour":' "$R"
-    expect "the hourly cost has a wall-time total" '"wall_ms":' "$R"
     # The 24 h history moved out of stats (which refreshes every second)
     # into its own action, read only while the perf card's tab is open.
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=batch&of=stats,conns,duels")

@@ -13,6 +13,7 @@ require_once __DIR__ . '/PStats.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Ledger.php';
 require_once __DIR__ . '/Signals.php';
+require_once __DIR__ . '/Counters.php';
 require_once __DIR__ . '/TourneyStore.php';
 
 /**
@@ -23,26 +24,10 @@ require_once __DIR__ . '/TourneyStore.php';
  */
 final class AdminData
 {
-    // Every table the "DB entries" tile sums (see the Statistics card).
-    // The signal mailbox, the relay hub and the presence-counter cache are
-    // not here: they live in shared memory, not in any table (see Signals
-    // and RelayStore).
-    private const TABLES = ['players', 'scores', 'duels', 'mm_queue',
-        'counters', 'alerts', 'settings', 'admin_fails', 'ipcount', 'friends',
-        'starts', 'conn', 'pstats', 'items', 'matches', 'ledger'];
-
     /** The Game Statistics card: live counts, stored totals and the gauges. */
     public static function stats(): array
     {
         $db = Db::get();
-        // One statement sums every table's rows (TABLES is a fixed allowlist,
-        // never user input) instead of a COUNT query per table.
-        $dbRows = (int)$db->query(
-            'SELECT ' . implode(' + ', array_map(
-                static fn($t) => "(SELECT COUNT(*) FROM $t)",
-                self::TABLES
-            ))
-        )->fetchColumn();
         return [
             'counts' => Presence::counts(),
             'relaying' => Relay::activePairs(),
@@ -55,9 +40,8 @@ final class AdminData
             // items rather than the ledger because the ledger is checkpointed
             // and trimmed, which would make a ledger count drop over time.
             'item_transfers' => (int)$db->query('SELECT COALESCE(SUM(seq), 0) FROM items')->fetchColumn(),
-            'db_rows' => $dbRows,
-            'load_live' => Load::lastMinute(),   // totals over the last complete minute
-            'cost_hour' => self::costHour(),     // totals over the last complete hour
+            'db_rows' => Db::rowCount(),
+            'live' => self::live(),
             // Live tournaments are held in shared memory, not in a table.
             'tourneys' => TourneyStore::usable() ? count(TourneyStore::all()) : 0,
             'db_size' => is_file(FOK_DB_FILE) ? filesize(FOK_DB_FILE) : 0,
@@ -115,30 +99,69 @@ final class AdminData
     }
 
     /**
-     * What the last COMPLETE hour cost, summed over the endpoints: the
-     * worker time they held, the CPU they burned, the queries they caused,
-     * and which one held the most. The complete hour rather than the running
-     * one, so the figure is a full hour every time it is read instead of
-     * climbing from zero on the hour.
+     * The two windows the Live tab offers, each a COMPLETE one so the figure
+     * is a whole window every time it is read instead of a number climbing
+     * from zero: the last full minute and the last full hour. The same
+     * measurements in both, because a tile that mixes them - some per minute,
+     * some per hour - makes the operator do the conversion in their head.
      */
-    private static function costHour(): array
+    private static function live(): array
+    {
+        // A closed minute is buffered in shared memory until some request
+        // folds it in (see Counters). On a quiet server that request may not
+        // have come yet, so ask for the fold here - otherwise the dashboard
+        // would read a minute that is still in APCu.
+        Counters::flushDue();
+        return [
+            'min' => ['stamp' => gmdate('H:i', time() - 60)]
+                + self::window(gmdate('YmdHi', time() - 60)),
+            'hour' => ['stamp' => gmdate('H', time() - 3600) . ':00']
+                + self::window(gmdate('YmdH', time() - 3600)),
+        ];
+    }
+
+    /**
+     * One counter bucket, summed over the endpoints: the requests served, the
+     * gauges they accumulated, the worker time they held, the CPU they burned,
+     * the queries they caused, and which endpoint held the most worker time.
+     * Metric shapes are laid out in Counters: a bare name is an endpoint's
+     * request count, "n:" a counted total, "g:" a sampled level, and a dotted
+     * suffix the cost of the endpoint before the dot.
+     */
+    private static function window(string $bucket): array
     {
         $st = Db::get()->prepare('SELECT metric, value FROM counters WHERE bucket = ?');
-        $st->execute([gmdate('YmdH', time() - 3600)]);
-        $out = ['hour' => gmdate('H', time() - 3600), 'wall_ms' => 0, 'cpu_ms' => 0,
+        $st->execute([$bucket]);
+        $out = ['in' => 0, 'out' => 0, 'db_writes' => 0, 'wall_ms' => 0, 'cpu_ms' => 0,
             'db' => 0, 'top' => null, 'top_ms' => 0];
         foreach ($st->fetchAll() as $r) {
-            $dot = strrpos((string)$r['metric'], '.');
-            if ($dot === false) {
-                continue;   // a plain request count, or a mint bucket
-            }
+            $metric = (string)$r['metric'];
             $v = (int)$r['value'];
-            switch (substr((string)$r['metric'], $dot + 1)) {
+            if ($metric === 'n:msg_out') {
+                $out['out'] = $v;
+                continue;
+            }
+            if ($metric === 'n:db_w') {
+                $out['db_writes'] = $v;
+                continue;
+            }
+            // req_min is the same requests counted once more, as a total; the
+            // levels and the mint buckets are not requests at all.
+            if (str_contains($metric, ':') || str_starts_with($metric, 'mint_')
+                || $metric === 'req_min') {
+                continue;
+            }
+            $dot = strrpos($metric, '.');
+            if ($dot === false) {
+                $out['in'] += $v;
+                continue;
+            }
+            switch (substr($metric, $dot + 1)) {
                 case 'ms':
                     $out['wall_ms'] += $v;
                     if ($v > $out['top_ms']) {
                         $out['top_ms'] = $v;
-                        $out['top'] = substr((string)$r['metric'], 0, $dot);
+                        $out['top'] = substr($metric, 0, $dot);
                     }
                     break;
                 case 'cpu':

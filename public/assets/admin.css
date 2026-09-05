@@ -327,6 +327,13 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
    prose under the grid (the tip of a bubble, see admin.js). */
 .stat[title] { cursor: help; }
 
+/* A gauge that opens its own last 24 h. After .stat[title], which every one
+   of them also is: same specificity, so the later rule is the one that
+   applies. */
+.stat.pick { cursor: pointer; }
+.stat.pick:hover { border-color: var(--accent); }
+.stat.on { border-color: var(--accent); }
+
 
 /* ------------------------------------ per-script ranking and 24 h charts */
 

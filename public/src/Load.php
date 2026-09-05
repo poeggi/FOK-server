@@ -5,20 +5,21 @@ require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Util.php';
 
 /**
- * Live load gauges for the admin dashboard: per-minute counters in a small
- * self-pruning table (loadmin), accumulated in memory and written ONCE after
- * the response, in one statement. "messages in" reuses the req_min counter
- * (Util::bump); this adds "messages out" (hub deliveries) and "db writes"
- * (counted by the thin PDO wrapper below). Deliberately approximate - a load
- * meter only shows the trend.
+ * Live load gauges for the admin dashboard: "messages out" (hub deliveries)
+ * and "db writes" (counted by the thin PDO wrapper below), accumulated in
+ * memory during the request and handed to the shared-memory counter buffer
+ * once, after the response. They ride the same fold every request counter
+ * uses (see Counters), so a gauge costs no database write of its own and is
+ * exact rather than sampled. "messages in" needs nothing here: it is the
+ * request count the same buffer already keeps.
  */
 final class Load
 {
     /** @var array<string,int> metric => count accumulated this request (summed) */
     private static array $pending = [];
     private static bool $registered = false;
-    // While the flush runs, its OWN writes must not count themselves.
-    private static bool $flushing = false;
+    // While the monitoring writes ITSELF down, nothing it does is counted.
+    private static bool $untracked = false;
 
     // What THIS request has cost, for the per-script view: every query it
     // issued and the CPU it burned. Read once, after the response, by
@@ -29,7 +30,7 @@ final class Load
 
     public static function tick(string $metric, int $n = 1): void
     {
-        if ($n <= 0 || self::$flushing) {
+        if ($n <= 0 || self::$untracked) {
             return;
         }
         self::$pending[$metric] = (self::$pending[$metric] ?? 0) + $n;
@@ -52,7 +53,7 @@ final class Load
      */
     public static function noteQuery(string $sql): void
     {
-        if (self::$flushing) {
+        if (self::$untracked) {
             return;
         }
         self::$queries++;
@@ -67,6 +68,38 @@ final class Load
     public static function queries(): int
     {
         return self::$queries;
+    }
+
+    /**
+     * Runs the monitoring's own database write without counting it. Once a
+     * minute the counter buffer folds itself into the database (see
+     * Counters::flushMinute), and whichever request happens to carry that
+     * fold did not cause it: counted, it would show up as one random request
+     * an endpoint made expensive, and the db-writes gauge would be partly a
+     * count of itself.
+     */
+    public static function untracked(callable $fn): void
+    {
+        self::$untracked = true;
+        try {
+            $fn();
+        } finally {
+            self::$untracked = false;
+        }
+    }
+
+    /**
+     * The connection is up: what the request costs the database starts here.
+     * Opening it issues four PRAGMAs and reads the schema version, and a
+     * migration step issues however many it takes - none of which any
+     * endpoint asked for, all of which every endpoint pays identically. Left
+     * in the count they would be five sixths of what a cheap request appears
+     * to cost the database, and the per-script DB column would be a request
+     * count wearing another name (see Db::get).
+     */
+    public static function openDone(): void
+    {
+        self::$queries = 0;
     }
 
     /**
@@ -103,8 +136,15 @@ final class Load
             + (float)($r['ru_stime.tv_sec'] ?? 0) + (float)($r['ru_stime.tv_usec'] ?? 0) / 1e6;
     }
 
-    /** One statement per aggregation for the minute; a rare prune keeps the
-     *  table tiny. */
+    /**
+     * Hands this request's gauge counts to the shared-memory buffer, once,
+     * after the response. Writing a row per request to record that the
+     * request wrote rows made the monitoring itself a leading source of load
+     * on the single SQLite writer - on the relay path it doubled the write
+     * transactions a game message costs. Now it costs no write at all: the
+     * buffer folds a whole minute into one statement whoever it is that
+     * carries it (see Counters::flushMinute).
+     */
     public static function flush(): void
     {
         if (self::$pending === []) {
@@ -112,71 +152,10 @@ final class Load
         }
         $pending = self::$pending;
         self::$pending = [];
-        self::$flushing = true;
-        try {
-            $db = Db::get();
-            $bucket = gmdate('YmdHi');
-            // Sum counters: writing a row per request to record that the
-            // request wrote rows made the monitoring itself a leading source of
-            // load on the single SQLite writer - on the relay path it doubled
-            // the write transactions a game message costs. One request in
-            // load_sample flushes and counts for all of them, so the trend
-            // survives at a fraction of the lock traffic; these gauges are
-            // explicitly approximate. Set load_sample to 1 for exact figures.
-            $sample = max(1, Settings::int('load_sample'));
-            if ($sample === 1 || random_int(1, $sample) === 1) {
-                $rows = [];
-                $args = [];
-                foreach ($pending as $metric => $n) {
-                    $rows[] = '(?, ?, ?)';
-                    $args[] = $bucket;
-                    $args[] = $metric;
-                    $args[] = $n * $sample;   // stands in for $sample requests
-                }
-                $db->prepare(
-                    'INSERT INTO loadmin (bucket, metric, value) VALUES ' . implode(', ', $rows) .
-                    ' ON CONFLICT (bucket, metric) DO UPDATE SET value = value + excluded.value'
-                )->execute($args);
-            }
-            // A couple of minutes is all a live gauge needs. Prune only in the
-            // first seconds of a minute so almost every flush stays one write.
-            if (time() % 60 < 3) {
-                $db->prepare('DELETE FROM loadmin WHERE bucket < ?')
-                    ->execute([gmdate('YmdHi', time() - 180)]);
-            }
-        } finally {
-            self::$flushing = false;
-        }
-    }
-
-    /**
-     * The last COMPLETE minute's totals - a true 60 s figure that steps once
-     * a minute. "in" comes from the shared req_min request counter.
-     * @return array{in:int,out:int,db_writes:int}
-     */
-    public static function lastMinute(): array
-    {
-        // The request total for a closed minute is buffered in shared memory
-        // until some request folds it in (see Counters). On a quiet server
-        // that request may not have come yet, so ask for the fold here -
-        // otherwise the dashboard would read a minute that is still in APCu.
         require_once __DIR__ . '/Counters.php';
-        Counters::flushDue();
-        $prev = gmdate('YmdHi', time() - 60);
-        $db = Db::get();
-        $st = $db->prepare('SELECT metric, value FROM loadmin WHERE bucket = ?');
-        $st->execute([$prev]);
-        $m = [];
-        foreach ($st->fetchAll() as $r) {
-            $m[$r['metric']] = (int)$r['value'];
+        foreach ($pending as $metric => $n) {
+            Counters::add('n:' . $metric, $n);
         }
-        $rq = $db->prepare("SELECT value FROM counters WHERE bucket = ? AND metric = 'req_min'");
-        $rq->execute([$prev]);
-        return [
-            'in' => (int)$rq->fetchColumn(),
-            'out' => $m['msg_out'] ?? 0,
-            'db_writes' => $m['db_w'] ?? 0,
-        ];
     }
 }
 
