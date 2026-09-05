@@ -399,19 +399,42 @@ final class Counters
      * "mint_" is spared with them: those rows sit in hour buckets, but they
      * are the item registry's accounting rather than traffic, and clearing a
      * statistics view is not an invitation to lose them.
+     *
+     * Reports what it removed - stored rows and buffered counters - because
+     * the operator has no other way to tell an empty history from a clear
+     * that never ran (see the admin per-script view).
+     *
+     * @return array{rows:int, keys:int}
      */
-    public static function clearHistory(): void
+    public static function clearHistory(): array
     {
-        if (Caps::apcu() === true) {
+        // Guarded on the function, not on the stored capability verdict
+        // (Caps): every count in this class is written with a bare apcu_inc,
+        // so a verdict that says no while the writes go through anyway would
+        // leave the buffer standing to fold straight back into the history
+        // this just emptied.
+        $keys = 0;
+        if (function_exists('apcu_delete') && class_exists('APCUIterator')) {
             foreach (new APCUIterator('/^' . preg_quote(self::PREFIX, '/') . '/') as $e) {
-                apcu_delete((string)$e['key']);
+                if (apcu_delete((string)$e['key'])) {
+                    $keys++;
+                }
             }
         }
-        Load::untracked(static fn() => Db::retry(static fn() => Db::get()->prepare(
-            "DELETE FROM counters
-             WHERE bucket GLOB '[0-9]*'
-               AND (length(bucket) = 10 OR length(bucket) = 12)
-               AND metric NOT GLOB 'mint_*'"
-        )->execute()));
+        $rows = 0;
+        Load::untracked(static function () use (&$rows): void {
+            $st = Db::retry(static function () {
+                $st = Db::get()->prepare(
+                    "DELETE FROM counters
+                     WHERE bucket GLOB '[0-9]*'
+                       AND (length(bucket) = 10 OR length(bucket) = 12)
+                       AND metric NOT GLOB 'mint_*'"
+                );
+                $st->execute();
+                return $st;
+            });
+            $rows = $st->rowCount();
+        });
+        return ['rows' => $rows, 'keys' => $keys];
     }
 }

@@ -1029,6 +1029,13 @@ function scriptCounts(d) {
 // view instead of throwing the operator back to the list.
 let pickedScript = null;
 let scriptWindow = 'total';   // which of SCRIPT_WINDOWS the table is read over
+// The Clear statistics button is armed by one click and fires on the next,
+// and both live here rather than on the button: the card redraws itself on
+// its own interval, and state held in the DOM would be disarmed under the
+// operator's hand between the two clicks. clearNote is what the last attempt
+// did, kept on screen until something else happens.
+let clearArmed = false;
+let clearNote = '';
 
 function renderScripts(box, d) {
     box.replaceChildren();
@@ -1065,20 +1072,47 @@ function renderScripts(box, d) {
         const c = el('button', 'chip' + (scriptWindow === key ? ' active' : ''),
             SCRIPT_WINDOWS[key][0]);
         c.title = SCRIPT_WINDOWS[key][1];
-        c.onclick = () => { scriptWindow = key; renderScripts(box, d); };
+        c.onclick = () => {
+            scriptWindow = key;
+            clearArmed = false;
+            clearNote = '';
+            renderScripts(box, d);
+        };
         return c;
     };
-    bar.append(chip('total'), chip('hour'), chip('min'), el('span', 'grow'));
-    const clear = el('button', 'small', 'Clear statistics');
+    bar.append(chip('total'), chip('hour'), chip('min'));
+    if (clearNote) {
+        bar.append(el('span', clearArmed ? 'error' : 'muted', clearNote));
+    }
+    bar.append(el('span', 'grow'));
+    // Two steps, and deliberately NOT two confirm() dialogs. A browser may
+    // suppress a second dialog opened from the same gesture - Chrome offers
+    // the operator exactly that - and a suppressed confirm() answers cancel,
+    // so the button did nothing and had nothing to say about it. This asks
+    // in the card, where nothing can answer for the operator, and says
+    // afterwards what the server actually removed.
+    const clear = el('button', 'small', clearArmed
+        ? 'Confirm: erase the traffic history' : 'Clear statistics');
+    clear.title = 'Erases every per-script figure and every graph on this card, for all '
+        + 'three windows. Players, scores and the item registry are not touched.';
     clear.onclick = async () => {
-        // Two prompts, because this is the one button on the card that
-        // destroys history rather than a view of it, and there is no undo.
-        if (!confirm('Clear the traffic statistics?\n\n'
-            + 'This erases every per-script figure and every graph on this card, '
-            + 'for all three windows.')) return;
-        if (!confirm('Last chance. The traffic history cannot be recovered.\n\n'
-            + 'Players, scores and the item registry are NOT touched. Clear?')) return;
-        await api('clear_stats', { method: 'POST' });
+        if (!clearArmed) {
+            clearArmed = true;
+            clearNote = 'No undo. Click again to erase, or pick a window to cancel.';
+            renderScripts(box, d);
+            return;
+        }
+        clearArmed = false;
+        clearNote = 'Clearing...';
+        renderScripts(box, d);
+        try {
+            const r = await api('clear_stats', { method: 'POST' });
+            clearNote = r.ok
+                ? 'Cleared ' + r.rows + ' stored rows and ' + r.keys + ' buffered counters.'
+                : 'NOT cleared: ' + (r.error || 'the server refused');
+        } catch (e) {
+            clearNote = 'NOT cleared: ' + e.message;
+        }
         pickedScript = null;
         refreshModule('perf');
         refreshModule('alerts');

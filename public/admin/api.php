@@ -336,8 +336,7 @@ switch ($action) {
     case 'clear_stats':
         requirePost();
         require_once __DIR__ . '/../src/Counters.php';
-        Counters::clearHistory();
-        Util::jsonOut(['ok' => true]);
+        Util::jsonOut(['ok' => true] + Counters::clearHistory());
 
     // ---- settings ----
     case 'settings':
