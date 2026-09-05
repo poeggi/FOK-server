@@ -1359,7 +1359,7 @@ Failures are `{"ok":false,"error":"..."}` with a 4xx status:
 |--------|-------|---------|
 | 400 | `invalid claim` | malformed body (bad mid, uid, tag, tick or seq shape) |
 | 400 | `invalid peer_tag` | `peer_tag` was present but is not 16 hex. Omit it entirely when you have none |
-| 400 | `item_out_of_match` | no open match names both parties, or it aged out (`match_open_max_ms`, default 2 h). Alerts the operator |
+| 400 | `item_out_of_match` | no open match names both parties (alerts the operator), or the match's window has closed. A match accepts claims while its duel still reports in, plus `match_open_max_ms` (default 1 min) after it goes quiet |
 | 403 | `bad self tag` | `my_tag` does not verify: not a proven participant. Nothing changes |
 | 409 | `stale seq, re-read` | your `seq` is behind the server's. Re-`list` and retry |
 | 409 | `lost race, re-read` | another claim moved the item first. Re-`list` and retry |

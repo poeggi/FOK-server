@@ -16,6 +16,7 @@ require_once __DIR__ . '/../src/Debug.php';
 require_once __DIR__ . '/../src/AdminData.php';
 require_once __DIR__ . '/../src/Ledger.php';
 require_once __DIR__ . '/../src/Tournament.php';
+require_once __DIR__ . '/../src/Housekeeping.php';
 
 Auth::requireLogin();
 // The session is read once, for that check, and never written here: hold its
@@ -220,17 +221,15 @@ switch ($action) {
         // Reads $_POST['id'], so a GET (no such field) fails as 'invalid id'
         // rather than deleting - that empty-id path is the guard here.
         $id = requireId('POST');
-        $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
-        // Its item instances go with it - ownership is a row naming a player,
-        // so leaving them behind strands them with an owner that no longer
-        // exists. The ledger is append-only audit and deliberately stays: it
-        // records that the instances existed and where they went.
+        // The player, their friendships and their presence go through the one
+        // removal path the TTL sweep uses, so the two cannot disagree.
+        Presence::forget($id);
+        // Their item instances go too, which is where this path parts from the
+        // sweep on purpose: expiry only says a player has been away, and their
+        // property waits for them (see Presence::forget), while an operator
+        // removing a client is taking it away. The ledger is append-only audit
+        // and stays: it records that the instances existed and where they went.
         $db->prepare('DELETE FROM items WHERE owner = ?')->execute([$id]);
-        ConnTrack::forget($id);
-        // registered/online are derived from the players table and cached
-        // (see Presence::counts); drop the cache so the dashboard reflects the
-        // removal at once instead of lingering until the counts TTL lapses.
-        Presence::flushCounts();
         Util::jsonOut(['ok' => true]);
 
     // ---- config vault (per-client backup) ----
@@ -328,6 +327,9 @@ switch ($action) {
     // ---- settings ----
     case 'settings':
         Util::jsonOut(['ok' => true, 'settings' => Settings::all()]);
+
+    case 'housekeeping':
+        Util::jsonOut(['ok' => true] + Housekeeping::report());
 
     case 'config_export':
         $map = [];

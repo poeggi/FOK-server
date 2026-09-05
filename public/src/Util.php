@@ -395,6 +395,11 @@ final class Util
                 Alerts::raise('expiry', "Expired $n player(s) not seen for "
                     . Settings::int('player_ttl_days') . ' days; friendships cancelled');
             }
+            // Same cadence for the rows no reader can reach any more: the
+            // pair a finished duel leaves behind, alerts that have been read
+            // and settings keys no release knows (see Housekeeping).
+            require_once __DIR__ . '/Housekeeping.php';
+            Housekeeping::sweep();
             // On the same hourly cadence: a reading of the levels the
             // dashboard graphs, which no counter accumulates (see
             // Counters::sampleGauges).

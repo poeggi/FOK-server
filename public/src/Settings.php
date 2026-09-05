@@ -42,20 +42,33 @@ final class Settings
         'friend_rate_cooldown' => [60, 'Friend-request cooldown after a burst (seconds)'],
         'friend_rate_repeat_window' => [600, 'Re-offense window: a second burst within this escalates the cooldown (seconds)'],
         'friend_rate_cooldown_hard' => [3600, 'Escalated friend-request cooldown after a repeat burst (seconds)'],
+        // Housekeeping (see Housekeeping::sweep, run hourly). All three are
+        // in DAYS on purpose: every reader of these rows works in seconds or
+        // minutes, so no value an operator can enter here comes close to one
+        // of those windows. player_ttl_days removes the player (and their
+        // friendships, not their property); duel_ttl_days the pair row a
+        // finished duel leaves behind; alert_ttl_days the alerts that have
+        // been read.
         'player_ttl_days' => [180, 'Remove players not seen for N days (0 = never)'],
+        'duel_ttl_days' => [7, 'Forget a duel pair not seen for N days (0 = never)'],
         'alert_req_per_min' => [600, 'Alert: total requests per minute above'],
         'alert_load_per_core' => [2, 'Alert: 1-minute load per CPU core above'],
         'alert_online' => [200, 'Alert: concurrent online players above'],
         'alert_invalid_per_min' => [30, 'Alert: invalid requests per IP per minute above'],
         'alert_cooldown' => [900, 'Alert de-duplication window (seconds)'],
-        // Item registry (see Items, Ledger). match_open_max_ms is generous on
-        // purpose: the server never learns a match ended, so a late but honest
-        // claim must still land. claim_grace_ms is how long an unconfirmed gain
-        // claim waits for the peer's tag before it settles. The ledger keeps
-        // itself bounded by checkpointing above ledger_max_rows, checked on a
-        // sampled one-in-ledger_sample fraction of requests. mint_max_per_hour
-        // caps client-driven minting (still client-trusted; see docs/API.md).
-        'match_open_max_ms' => [7200000, 'How long a match keeps accepting item claims (ms)'],
+        'alert_ttl_days' => [30, 'Remove alerts that have been read after N days (0 = never)'],
+        // Item registry (see Items, Ledger). match_open_max_ms is the grace a
+        // claim gets AFTER its duel stops reporting in - the window while the
+        // duel is running is FOK_DUEL_WINDOW and is not part of it (see
+        // Items::matchDeadline). Short on purpose: it is also how long one
+        // side can move the other's items unwitnessed while the other is
+        // offline to contradict it. claim_grace_ms is how long an unconfirmed
+        // gain claim waits for the peer's tag before it settles. The ledger
+        // keeps itself bounded by checkpointing above ledger_max_rows, checked
+        // on a sampled one-in-ledger_sample fraction of requests.
+        // mint_max_per_hour caps client-driven minting (still client-trusted;
+        // see docs/API.md).
+        'match_open_max_ms' => [60000, 'Grace a claim gets after its duel goes quiet (ms)'],
         'claim_grace_ms' => [60000, 'Unconfirmed gain claim waits this long for the peer tag before settling (ms)'],
         'ledger_max_rows' => [200000, 'Checkpoint and truncate the item ledger above this many rows'],
         'ledger_sample' => [200, 'One request in N may run the item-ledger truncation check'],

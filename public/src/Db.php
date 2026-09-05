@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 34;
+    private const SCHEMA_VERSION = 35;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -547,6 +547,23 @@ final class Db
             // writes left to sample, and a stored row would linger as a key
             // no release knows (config export/import rejects unknown keys).
             $pdo->exec("DELETE FROM settings WHERE key = 'load_sample'");
+        }
+        if ($v < 35) {
+            // What the two player-removal paths left behind while they each
+            // cleaned up a different half of a player (there is one path
+            // now, Presence::forget). Nothing can reach these rows: a
+            // friendship needs both sides to exist, and a network row is
+            // rewritten by its owner's next hello. The friend on the
+            // surviving side is not signalled - the mailbox is seconds deep
+            // and this is a one-time catch-up - but a client reconciles its
+            // list against friend.php on the next start, which is the path
+            // an offline friend has always taken.
+            $pdo->exec('DELETE FROM player_nets WHERE id NOT IN (SELECT id FROM players)');
+            $pdo->exec('DELETE FROM friends WHERE a NOT IN (SELECT id FROM players)
+                           OR b NOT IN (SELECT id FROM players)');
+            // No VACUUM: this is a handful of rows on any real deployment,
+            // and rewriting the whole file under the single writer is only
+            // worth it when whole tables go (see step 31).
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

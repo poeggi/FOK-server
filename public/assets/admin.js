@@ -1463,6 +1463,38 @@ const MODULES = [
         },
     },
     {
+        id: 'housekeeping',
+        title: 'Housekeeping',
+        view: 'settings',
+        async refresh(box) {
+            const d = await api('housekeeping');
+            box.replaceChildren();
+            const table = el('table');
+            table.append(row(['Database file', fmtBytes(d.db_size), '']));
+            const NOTE = {
+                reaped: 'reaped on the next sweep',
+                kept: 'kept for a player that comes back',
+                orphan: 'left behind by a removal',
+                off: 'no TTL set - never reaped',
+            };
+            for (const t of d.tables) {
+                const r = row([t.name, t.rows + ' rows']);
+                // A loose row that should not exist is the only thing on this
+                // card worth colouring: everything else is the design working.
+                const bad = t.policy === 'orphan' && t.loose > 0;
+                const txt = t.policy === 'off' ? NOTE.off
+                    : (t.loose > 0 ? t.loose + ' ' + NOTE[t.policy] : 'nothing loose');
+                r.append(el('td', bad ? 'error' : 'muted', txt));
+                table.append(r);
+            }
+            box.append(table);
+            box.append(el('p', 'muted', 'Runs by itself, once an hour; the ages are in '
+                + 'Configuration. Items, config backups and career stats are never swept, even '
+                + 'when the player row has expired: an id comes back with its client and so does '
+                + 'everything it owns. Anything "left behind by a removal" should read zero.'));
+        },
+    },
+    {
         id: 'backup',
         title: 'Backup and restore (database incl. config)',
         view: 'settings',

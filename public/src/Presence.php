@@ -302,10 +302,43 @@ final class Presence
     }
 
     /**
-     * Removes players not seen for player_ttl_days (0 disables expiry):
-     * their friendships are cancelled and each friend gets a best-effort
-     * 'friend' {event:"expired"} signal (offline friends reconcile their
-     * list against friend.php on next start). Scores remain as history.
+     * Removes a player and everything about them that is only PRESENCE: the
+     * friendships (each friend gets a best-effort 'friend' {event:"expired"}
+     * signal, and one that is offline reconciles its list against friend.php
+     * on next start), the networks they were seen on, the connection state,
+     * and the player row itself.
+     *
+     * What it deliberately leaves is property and history - items, the
+     * config vault, the career stats, the scores. An id belongs to the
+     * client and comes back with it (touch() re-registers an unknown id in
+     * silence), so a player returning after the TTL finds them again. A
+     * caller that means to confiscate as well says so where it can be read
+     * as a decision (see delete_player in admin/api.php).
+     *
+     * The single removal path: the TTL sweep and the admin button both come
+     * through here, so the two cannot clean up different halves of a player.
+     */
+    public static function forget(string $id): void
+    {
+        $db = Db::get();
+        $st = $db->prepare('SELECT a, b FROM friends WHERE a = ? OR b = ?');
+        $st->execute([$id, $id]);
+        foreach ($st->fetchAll() as $row) {
+            $other = $row['a'] === $id ? $row['b'] : $row['a'];
+            Signals::send($id, $other, 'friend', json_encode(['event' => 'expired', 'from' => $id]));
+        }
+        $db->prepare('DELETE FROM friends WHERE a = ? OR b = ?')->execute([$id, $id]);
+        $db->prepare('DELETE FROM player_nets WHERE id = ?')->execute([$id]);
+        $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
+        ConnTrack::forget($id);
+        // registered and online are derived from the players table and
+        // cached (see counts), so the dashboard must not keep showing a
+        // player that is gone until the TTL lapses.
+        self::flushCounts();
+    }
+
+    /**
+     * Removes players not seen for player_ttl_days (0 disables expiry).
      * @return int number of players removed
      */
     public static function expireStale(): int
@@ -314,20 +347,11 @@ final class Presence
         if ($days < 1) {
             return 0;
         }
-        $db = Db::get();
-        $st = $db->prepare('SELECT id FROM players WHERE last_seen < ?');
+        $st = Db::get()->prepare('SELECT id FROM players WHERE last_seen < ?');
         $st->execute([time() - $days * 86400]);
         $expired = array_column($st->fetchAll(), 'id');
         foreach ($expired as $id) {
-            $st = $db->prepare('SELECT a, b FROM friends WHERE a = ? OR b = ?');
-            $st->execute([$id, $id]);
-            foreach ($st->fetchAll() as $row) {
-                $other = $row['a'] === $id ? $row['b'] : $row['a'];
-                Signals::send($id, $other, 'friend', json_encode(['event' => 'expired', 'from' => $id]));
-            }
-            $db->prepare('DELETE FROM friends WHERE a = ? OR b = ?')->execute([$id, $id]);
-            $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
-            ConnTrack::forget($id);
+            self::forget($id);
         }
         return count($expired);
     }

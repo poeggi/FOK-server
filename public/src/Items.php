@@ -77,8 +77,17 @@ final class Items
      */
     public static function openMatch(PDO $db, string $a, string $b, int $now): array
     {
-        $db->prepare('DELETE FROM matches WHERE opened < ?')
-            ->execute([$now - Settings::int('match_open_max_ms')]);
+        // Prunes what no claim could reach any more (see matchDeadline): past
+        // the mint window AND with no duel still alive to extend it. A running
+        // duel is what holds its own match row here.
+        $cut = $now - self::windowMs();
+        $db->prepare(
+            'DELETE FROM matches WHERE opened < ?
+              AND NOT EXISTS (SELECT 1 FROM duels d
+                              WHERE ((d.a = matches.a AND d.b = matches.b)
+                                  OR (d.a = matches.b AND d.b = matches.a))
+                                AND d.last_seen > ?)'
+        )->execute([$cut, intdiv($cut, 1000)]);
         $mid = self::newId();
         $secA = self::newId();
         $secB = self::newId();
@@ -87,6 +96,42 @@ final class Items
              VALUES (?, ?, ?, ?, 0, ?, ?)'
         )->execute([$mid, $a, $b, $now, $secA, $secB]);
         return ['mid' => $mid, 'sec_a' => $secA, 'sec_b' => $secB];
+    }
+
+    /**
+     * How long a match outlives the last sign of life from its duel: the
+     * window in which the duel still counts as running (FOK_DUEL_WINDOW, the
+     * same one the Duels card and the online counts use) plus the operator's
+     * grace on top. Both peers heartbeat this pair every 30 s, so the grace
+     * is what a claim gets AFTER the duel is over, not a budget the duel
+     * itself has to fit inside.
+     */
+    private static function windowMs(): int
+    {
+        return FOK_DUEL_WINDOW * 1000 + Settings::int('match_open_max_ms');
+    }
+
+    /**
+     * The moment this match stops accepting claims, in ms.
+     *
+     * Measured from the DUEL, not from the mint: one match spans every level
+     * of a duel (see Starts::request), so a window measured from the mint is
+     * a cap on how long a duel may last before its items freeze. The duel
+     * heartbeat is what says the game is still being played; the mint stands
+     * in until the first heartbeat carrying this pair arrives.
+     *
+     * The duel row is keyed on the ordered pair (see Presence::touchDuel);
+     * a match keeps the offerer/answerer order it was minted with.
+     */
+    private static function matchDeadline(PDO $db, string $a, string $b, int $opened): int
+    {
+        [$da, $db2] = $a < $b ? [$a, $b] : [$b, $a];
+        $st = $db->prepare('SELECT last_seen FROM duels WHERE a = ? AND b = ?');
+        $st->execute([$da, $db2]);
+        $seen = $st->fetchColumn();
+        $st->closeCursor();
+        $alive = $seen === false ? $opened : max($opened, (int)$seen * 1000);
+        return $alive + self::windowMs();
     }
 
     // The caller's own match secret, or '' if the match is gone. Never
@@ -265,14 +310,14 @@ final class Items
         $db = Db::get();
         $now = Util::nowMs();
 
-        // 2. Match exists, is fresh, and names both parties of the claim.
+        // 2. Match exists, names both parties of the claim, and its duel has
+        // not been over long enough for the window to close.
         $st = $db->prepare('SELECT a, b, sec_a, sec_b, opened FROM matches WHERE mid = ?');
         $st->execute([$mid]);
         $m = $st->fetch();
         $st->closeCursor();
         $pair = $m === false ? [] : [$m['a'], $m['b']];
         if ($m === false
-            || (int)$m['opened'] <= $now - Settings::int('match_open_max_ms')
             || $from === $to
             || !in_array($id, $pair, true)
             || !in_array($from, $pair, true)
@@ -280,6 +325,12 @@ final class Items
             || ($id !== $from && $id !== $to)
         ) {
             Alerts::raise('item_out_of_match', "Claim with no open match: uid $uid from player $id");
+            return ['ok' => false, 'code' => 400, 'error' => 'item_out_of_match'];
+        }
+        // A closed window is the ordinary end of a match, not an anomaly, so
+        // it answers the same way but raises nothing: the operator is told
+        // about claims that name no match of theirs, not about late ones.
+        if (self::matchDeadline($db, (string)$m['a'], (string)$m['b'], (int)$m['opened']) <= $now) {
             return ['ok' => false, 'code' => 400, 'error' => 'item_out_of_match'];
         }
 

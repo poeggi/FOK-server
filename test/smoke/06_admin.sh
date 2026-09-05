@@ -317,6 +317,17 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
     expect "settings listed" '"key":"admin_max_fails"' "$R"
 
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=housekeeping")
+    expect "housekeeping reports the size of the database file" '"db_size":' "$R"
+    expect "it reports the duel rows a sweep would reap" '"name":"duels","rows":' "$R"
+    # The card exists to prove there are none of these, and a deployment with
+    # real players has a row count nothing can predict - so the assertion is
+    # that both orphan lines read zero, not what stands beside them. Anything
+    # else means a removal path skipped Presence::forget.
+    ORPH=$(grep -o '"loose":0,"policy":"orphan"' <<< "$R" | wc -l | tr -d ' ')
+    expect "and nothing orphaned by a player removal" "2" "$ORPH"
+    expect "while what a returning player owns is kept, not swept" '"policy":"kept"' "$R"
+
     R=$(curl -s -b "$COOKIES" -X POST -d 'chat_max_len=10' "$BASE/admin/api.php?action=settings_save")
     expect "settings saved" '"ok":true' "$R"
     R=$(curl -s -X POST -H 'Content-Type: application/json' \

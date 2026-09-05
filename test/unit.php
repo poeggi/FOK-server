@@ -42,6 +42,7 @@ require_once __DIR__ . '/../public/src/Tournament.php';
 require_once __DIR__ . '/../public/src/TourneyStore.php';
 require_once __DIR__ . '/../public/src/Stats.php';
 require_once __DIR__ . '/../public/src/AdminData.php';
+require_once __DIR__ . '/../public/src/Housekeeping.php';
 
 // Util installs a fault handler that answers 500 and exits 0 - right for a
 // request, fatal for a test run, where it would swallow a throwable (a
@@ -131,7 +132,7 @@ Presence::flushCounts();
 $f = Presence::families();
 ok($f['v6'] === 1, 'a client that came in over v6 is counted as v6');
 ok($f['v4'] === 2, 'and the rest of the online clients are v4');
-Db::get()->exec("DELETE FROM players WHERE id = 'cccccccc'");
+Presence::forget('cccccccc');
 Presence::flushCounts();
 
 // Presence: the counters are CACHED - every hello returns them, so they
@@ -152,8 +153,8 @@ ok(freshCounts()['registered'] === 3, 'counters recount once the cache goes stal
 // own first hello report zero online.
 Presence::touch('dddddddd', '9.9.9.9');
 ok(Presence::counts()['registered'] === 4, 'a new registration refreshes the counters at once');
-Db::get()->exec("DELETE FROM players WHERE id IN ('eeee0001', 'dddddddd')");
-Presence::flushCounts();
+Presence::forget('eeee0001');
+Presence::forget('dddddddd');
 
 // Presence: duel pair is normalized, refresh from either side
 Presence::touchDuel('bbbbbbbb', 'aaaaaaaa');
@@ -1128,6 +1129,26 @@ $res = Items::claim('bb22bb22', $m2['mid'], $u2, 'aa11aa11', 'bb22bb22', 9, 0, '
 ok($res['ok'] && $res['state'] === 'settled', 'the same claim settles once the grace has passed');
 Settings::set('claim_grace_ms', 60000);
 
+// The window a match accepts claims in runs from its DUEL, not from the mint.
+$m3 = Items::openMatch($idb, 'aa11aa11', 'bb22bb22', Util::nowMs());
+$u3 = Items::mint('aa11aa11', 'boots', 'box')['uid'];
+$idb->prepare('UPDATE matches SET opened = ? WHERE mid = ?')
+    ->execute([Util::nowMs() - 3600000, $m3['mid']]);
+$res = Items::claim('aa11aa11', $m3['mid'], $u3, 'aa11aa11', 'bb22bb22', 11, 0, 'ws3',
+    Ledger::mac($m3['sec_a'], $m3['mid'], 11, 'ws3'), null);
+ok(!$res['ok'] && $res['error'] === 'item_out_of_match',
+    'a claim arriving after the window closed is refused');
+Presence::touchDuel('aa11aa11', 'bb22bb22');
+$res = Items::claim('aa11aa11', $m3['mid'], $u3, 'aa11aa11', 'bb22bb22', 12, 0, 'ws3',
+    Ledger::mac($m3['sec_a'], $m3['mid'], 12, 'ws3'), null);
+ok($res['ok'] && $res['state'] === 'settled',
+    'while a duel still reporting in keeps its match claimable however long it has run');
+Items::openMatch($idb, 'cc33cc33', 'dd44dd44', Util::nowMs());
+$st = $idb->prepare('SELECT COUNT(*) FROM matches WHERE mid = ?');
+$st->execute([$m3['mid']]);
+ok((int)$st->fetchColumn() === 1, 'and the prune spares a match whose duel is alive');
+$st->closeCursor();
+
 // The legacy amnesty: one-time, idempotent, and the server's own list wins.
 Presence::touch('cc33cc33', '1.2.3.4');
 ok(count(Items::seed('cc33cc33', ['cap', 'cap', 'NOT AN ID', 'scarf'], null)) === 2,
@@ -1820,6 +1841,58 @@ Settings::set('hold_max_workers', 0);
 ok(Holds::claim() === true && Holds::inUse() === 0,
     'and the budget switched off holds nothing at all');
 Settings::set('hold_max_workers', FOK_HOLD_MAX_WORKERS);
+
+// Housekeeping: one removal path, and only rows no reader can reach go.
+Presence::touch('hk110001', '9.9.9.11');
+Presence::touch('hk220002', '9.9.9.12');
+Friends::request('hk110001', 'hk220002');
+Friends::accept('hk220002', 'hk110001');
+Vault::backup('hk110001', '{"cfg":1}', null);
+PStats::submit('hk110001', ['games' => 3]);
+Items::mint('hk110001', 'crown', 'box');
+Presence::forget('hk110001');
+ok(Presence::infoOf(['hk110001']) === [], 'forget removes the player row');
+ok(!Friends::isFriend('hk110001', 'hk220002'), 'and the friendships with it');
+$st = Db::get()->prepare('SELECT COUNT(*) FROM player_nets WHERE id = ?');
+$st->execute(['hk110001']);
+ok((int)$st->fetchColumn() === 0, 'and the networks it was seen on');
+$st->closeCursor();
+ok(Vault::peek('hk110001') !== null, 'but the config backup outlives the player row');
+ok(PStats::get('hk110001')['games'] === 3, 'and so do the career stats');
+ok(count(Items::owned('hk110001')) === 1, 'and the wardrobe: an id comes back with its client');
+
+Presence::touchDuel('hk220002', 'hk330003');
+Db::get()->exec("INSERT INTO duels (a, b, started, last_seen) VALUES ('hk440004', 'hk550005', 0, 0)");
+Db::get()->exec("INSERT INTO alerts (type, message, created, seen) VALUES ('hk', 'read', 0, 1)");
+Db::get()->exec("INSERT INTO alerts (type, message, created, seen) VALUES ('hk', 'unread', 0, 0)");
+Db::get()->exec("INSERT INTO settings (key, value) VALUES ('retired_last_release', 7)");
+$swept = Housekeeping::sweep();
+ok(($swept['duels'] ?? 0) === 1, 'the sweep forgets a duel pair past the TTL');
+$st = Db::get()->prepare('SELECT COUNT(*) FROM duels WHERE a = ?');
+$st->execute(['hk220002']);
+ok((int)$st->fetchColumn() === 1, 'and leaves the pair that played just now');
+$st->closeCursor();
+ok(($swept['alerts'] ?? 0) === 1, 'it removes an alert that was read long ago');
+$st = Db::get()->prepare('SELECT COUNT(*) FROM alerts WHERE type = ?');
+$st->execute(['hk']);
+ok((int)$st->fetchColumn() === 1, 'but never one nobody has read');
+$st->closeCursor();
+ok(($swept['settings'] ?? 0) === 1, 'and a settings row whose key no release knows');
+$st = Db::get()->prepare('SELECT COUNT(*) FROM settings WHERE key = ?');
+$st->execute(['player_ttl_days']);
+ok((int)$st->fetchColumn() === 1, 'while the keys a release does know stay');
+$st->closeCursor();
+
+$rep = [];
+$hk = Housekeeping::report();
+foreach ($hk['tables'] as $t) {
+    $rep[$t['name']] = $t;
+}
+ok($rep['items']['loose'] >= 1 && $rep['items']['policy'] === 'kept',
+    'the report calls the wardrobe of a departed player kept, not stale');
+ok($rep['player_nets']['loose'] === 0 && $rep['friends']['loose'] === 0,
+    'and finds no orphans, because there is only one removal path');
+ok($hk['db_size'] > 0, 'alongside the size of the file it is all in');
 
 // Cleanup
 Db::close();
