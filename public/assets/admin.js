@@ -112,7 +112,9 @@ function fmtBytes(n, scale) {
     if (scale !== undefined && n === 0) return '0';
     const s = scale === undefined ? n : scale;
     if (s >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
-    if (s >= 1024) return (n / 1024).toFixed(1) + ' KB';
+    // A tenth of a kilobyte is 102 bytes: below what any of these figures
+    // is read to a hundred bytes of, so the decimal is only noise here.
+    if (s >= 1024) return Math.round(n / 1024) + ' KB';
     return n + ' B';
 }
 
@@ -1204,6 +1206,31 @@ function renderLoad(box, d) {
 }
 
 // ---- Item registry, over its two tabs ---------------------------------
+// The verdict that took an instance out of play, in the operator's words -
+// the stored value is the server's own code (see Items::freezeInTx), and the
+// reasoning behind it is the tooltip.
+const FREEZE_WHY = {
+    tag_invalid: ['forged peer tag',
+        'A claim carried an attestation tag for the other player that does not verify. '
+        + 'A packet that arrived cannot have been corrupted into a valid-shaped wrong '
+        + 'tag, so the tag was made up.'],
+    contradiction: ['contradictory claims',
+        'Two claims for the same match, item and tick asserting opposite directions. '
+        + 'One simulation moment has one outcome, so one of the two is a lie.'],
+};
+
+// A verdict cell. An instance frozen before the reason was recorded has none,
+// and an unknown code is shown as it was stored rather than guessed at.
+function whyCell(why) {
+    const e = FREEZE_WHY[why];
+    if (!e) return el('td', 'muted', why || '-');
+    const td = el('td');
+    const s = el('span', 'trunc', e[0]);
+    s.title = e[1];
+    td.append(s);
+    return td;
+}
+
 // Status: what the registry HOLDS - the counters, the chain verify, and the
 // two exception lists (a frozen instance, a player whose claims keep being
 // disputed). The ledger itself is the other tab.
@@ -1246,12 +1273,16 @@ function renderItemStatus(box, d) {
     if (d.frozen.length) {
         view.append(el('h3', 'subhead', 'Frozen items (' + d.frozen.length + ')'));
         const t = el('table');
-        t.append(row(['UID', 'Item', 'Owner', 'Seq'], 'th'));
+        // Newest verdict first, so the review queue reads like the alert list:
+        // when it happened and what was found, then which instance and whose.
+        t.append(row(['When', 'Why', 'UID', 'Item', 'Owner', 'Name', 'Seq'], 'th'));
         for (const f of d.frozen) {
             const r = el('tr');
             r.classList.add('gone');
-            r.append(hexCell(f.uid, 'muted'), el('td', '', f.item_id),
-                idCell(f.owner), el('td', 'muted', f.seq));
+            r.append(el('td', 'muted', f.at ? fmtTime(f.at) : '-'), whyCell(f.why),
+                hexCell(f.uid, 'muted'), el('td', '', f.item_id),
+                idCell(f.owner), el('td', '', f.name === null ? '-' : f.name),
+                el('td', 'muted tight', f.seq));
             t.append(r);
         }
         view.append(t);

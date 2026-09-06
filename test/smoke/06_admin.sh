@@ -134,6 +134,7 @@ else
     expect "registry card sizes the ledger against its cap" '"ledger_max":' "$R"
     expect "registry card shows recent ledger rows" '"kind":"transfer"' "$R"
     expect "registry card names the frozen instances" '"frozen":[{' "$R"
+    expect "and the verdict that froze each one" '"why":"tag_invalid"' "$R"
     expect "registry card tallies disputed claims per player" '"disputed":' "$R"
     if echo "$R" | grep -q '"sec_'; then
         echo "FAIL registry card exposed a match secret: $R"

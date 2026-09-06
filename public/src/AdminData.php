@@ -295,12 +295,19 @@ final class AdminData
                 'from' => $r['from_id'], 'to' => $r['to_id'], 'mid' => $r['mid'],
                 'tick' => (int)$r['tick'], 'at' => (int)$r['at']];
         }
+        // Newest verdict first, and the owner's name rides along: the registry
+        // is keyed on ids, but a review queue is read about people. The join
+        // is outer because an owner expired by Presence::forget keeps the
+        // item and loses the row, so the name can be null.
         $frozen = [];
         foreach ($db->query(
-            'SELECT uid, item_id, owner, seq FROM items WHERE frozen = 1 ORDER BY minted DESC LIMIT 30'
+            'SELECT i.uid, i.item_id, i.owner, i.seq, i.frozen_at, i.frozen_why, p.name
+               FROM items i LEFT JOIN players p ON p.id = i.owner
+              WHERE i.frozen = 1 ORDER BY i.frozen_at DESC, i.minted DESC LIMIT 30'
         ) as $r) {
             $frozen[] = ['uid' => $r['uid'], 'item_id' => $r['item_id'],
-                'owner' => $r['owner'], 'seq' => (int)$r['seq']];
+                'owner' => $r['owner'], 'name' => $r['name'], 'seq' => (int)$r['seq'],
+                'at' => (int)$r['frozen_at'], 'why' => (string)$r['frozen_why']];
         }
         $disputed = [];
         foreach ($db->query(

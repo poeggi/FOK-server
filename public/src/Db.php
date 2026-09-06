@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 38;
+    private const SCHEMA_VERSION = 39;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -594,6 +594,30 @@ final class Db
             // reader outlives. It lives in shared memory now (see
             // Matchmaking), so the table goes.
             $pdo->exec('DROP TABLE IF EXISTS mm_queue');
+        }
+        if ($v < 39) {
+            // A freeze is a verdict on tampering, and the flag alone recorded
+            // neither when it was reached nor which of the two paths reached
+            // it - so the registry could say an instance was out of play but
+            // not what an operator was looking at (see Items::freezeInTx).
+            $pdo->exec('ALTER TABLE items ADD COLUMN frozen_at INTEGER NOT NULL DEFAULT 0');
+            $pdo->exec("ALTER TABLE items ADD COLUMN frozen_why TEXT NOT NULL DEFAULT ''");
+            // The alert raised at the freeze is the only other record of it,
+            // so an instance already frozen takes its time and verdict from
+            // that alert - for as long as one is still in the table.
+            $pdo->exec("UPDATE items SET
+                    frozen_at = COALESCE((SELECT a.created FROM alerts a
+                        WHERE a.type IN ('item_tag_invalid', 'item_contradiction')
+                          AND a.message LIKE '%uid ' || items.uid || ' %'
+                        ORDER BY a.created LIMIT 1), 0),
+                    frozen_why = COALESCE((SELECT CASE a.type
+                            WHEN 'item_tag_invalid' THEN 'tag_invalid'
+                            ELSE 'contradiction' END
+                        FROM alerts a
+                        WHERE a.type IN ('item_tag_invalid', 'item_contradiction')
+                          AND a.message LIKE '%uid ' || items.uid || ' %'
+                        ORDER BY a.created LIMIT 1), '')
+                WHERE frozen = 1");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

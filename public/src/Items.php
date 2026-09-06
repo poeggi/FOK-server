@@ -404,7 +404,7 @@ final class Items
             if (Ledger::verifyTag($peerSecret, $mid, $tick, $wsDigest, $peerTag)) {
                 $peerConfirmed = true;
             } else {
-                self::freezeDisputed($db, $uid, $id);
+                self::freezeDisputed($db, $uid, $id, 'tag_invalid');
                 Alerts::raise('item_tag_invalid', "Invalid attestation tag: uid $uid from player $id");
                 return ['ok' => false, 'code' => 409, 'error' => 'tag invalid'];
             }
@@ -457,14 +457,21 @@ final class Items
         // asserts a DIFFERENT direction. Impossible in an honest game -
         // one simulation moment has one outcome - so it is tampering.
         if (self::contradicted($db, $mid, $uid, $tick, $from, $to)) {
-            self::freezeDisputed($db, $uid, $id);
+            self::freezeDisputed($db, $uid, $id, 'contradiction');
             Alerts::raise('item_contradiction', "Contradictory claims: uid $uid from player $id");
             return ['ok' => false, 'code' => 409, 'error' => 'contradiction'];
         }
 
-        // 5. The item must be owned by `from` at the claimed seq.
+        // 5. The item must be owned by `from` at the claimed seq. An instance
+        // that EXISTS and is registered to somebody else is a STALE wardrobe -
+        // a restored config backup, or an item lost in a duel the client has
+        // not synced since - and not an attempt to forge one: the population
+        // is conserved, this claim moves nothing, and the client drops the
+        // instance at its next list. So it is logged and not raised. The alert
+        // stays on the uid that was never minted, which is the shape that
+        // would be making an item out of nothing.
         if ((string)$it['owner'] !== $from) {
-            Alerts::raise('item_counterfeit', "Claim names a non-owner: uid $uid from player $id");
+            Alerts::note('item', "Stale claim: uid $uid is not owned by $from (player $id)");
             return ['ok' => false, 'code' => 409, 'error' => 'counterfeit'];
         }
         if ((int)$it['seq'] !== $seq) {
@@ -519,7 +526,7 @@ final class Items
             // is the whole point of the check. One indexed lookup, on a path
             // that is about to write anyway.
             if (self::contradicted($db, $mid, $uid, $tick, $from, $to)) {
-                self::freezeInTx($db, $uid);
+                self::freezeInTx($db, $uid, 'contradiction');
                 // The tally rides the same transaction as the freeze it
                 // records: a verdict and its accounting are one fact, and
                 // taking the writer a second time for one column is a lock the
@@ -563,12 +570,21 @@ final class Items
 
     // ---- small helpers ---------------------------------------------------
 
-    // Freezes an instance. Every caller holds a transaction: a freeze is a
-    // verdict on tampering, and the tally that records it has to land with it
-    // or not at all.
-    private static function freezeInTx(PDO $db, string $uid): void
+    // Freezes an instance, and records which verdict did it and when - the
+    // registry is a forensic queue, and "out of play" without the finding
+    // behind it is not something an operator can act on. Every caller holds a
+    // transaction: a freeze is a verdict on tampering, and the tally that
+    // records it has to land with it or not at all.
+    //
+    // The first verdict stands: a later claim on an instance already out of
+    // play (a bad peer tag is judged before the frozen flag is read) must not
+    // rewrite the finding that took it out.
+    private static function freezeInTx(PDO $db, string $uid, string $why): void
     {
-        $db->prepare('UPDATE items SET frozen = 1 WHERE uid = ?')->execute([$uid]);
+        $db->prepare(
+            'UPDATE items SET frozen = 1, frozen_at = ?, frozen_why = ?
+             WHERE uid = ? AND frozen = 0'
+        )->execute([time(), $why, $uid]);
     }
 
     /**
@@ -583,12 +599,12 @@ final class Items
      * belongs AFTER the commit - it is a report of what happened, not part
      * of it.
      */
-    private static function freezeDisputed(PDO $db, string $uid, string $id): void
+    private static function freezeDisputed(PDO $db, string $uid, string $id, string $why): void
     {
-        Db::retry(static function () use ($db, $uid, $id): void {
+        Db::retry(static function () use ($db, $uid, $id, $why): void {
             $db->exec('BEGIN IMMEDIATE');
             try {
-                self::freezeInTx($db, $uid);
+                self::freezeInTx($db, $uid, $why);
                 self::bumpClaim($id, 'claims_disputed');
                 $db->exec('COMMIT');
             } catch (Throwable $e) {

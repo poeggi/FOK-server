@@ -1327,6 +1327,14 @@ ok($tally('aa11aa11') === $countedBefore, 'and is counted once, not once per ret
 $res = Items::claim('aa11aa11', $m['mid'], $uid, 'aa11aa11', 'bb22bb22', 6, 0, 'ws',
     Ledger::mac($m['sec_a'], $m['mid'], 6, 'ws'), null);
 ok(!$res['ok'] && $res['error'] === 'counterfeit', 'claiming an item you no longer own is counterfeit');
+// And that is a stale wardrobe - a restored config backup, or an item lost in
+// a duel this client has not synced since - so it is logged rather than
+// raised. Nothing moved, and an unseen alert count has to keep meaning that
+// somebody has to look.
+$st = Db::get()->query("SELECT COUNT(*) FROM alerts WHERE type = 'item_counterfeit'");
+$raised = (int)$st->fetchColumn();
+$st->closeCursor();
+ok($raised === 0, 'and a claim the registry has moved past alerts nobody');
 
 // A held gain settles only once the grace has passed with no contradiction.
 $m2 = Items::openMatch($idb, 'aa11aa11', 'bb22bb22', Util::nowMs());
@@ -1359,6 +1367,31 @@ $st = $idb->prepare('SELECT COUNT(*) FROM matches WHERE mid = ?');
 $st->execute([$m3['mid']]);
 ok((int)$st->fetchColumn() === 1, 'and the prune spares a match whose duel is alive');
 $st->closeCursor();
+
+// A freeze is a verdict, and the registry has to be able to say which one and
+// when: an operator reviewing an instance that is out of play reads the
+// finding, not the flag.
+$m4 = Items::openMatch($idb, 'aa11aa11', 'bb22bb22', Util::nowMs());
+$u4 = Items::mint('aa11aa11', 'halo', 'box')['uid'];
+$res = Items::claim('bb22bb22', $m4['mid'], $u4, 'aa11aa11', 'bb22bb22', 20, 0, 'ws4',
+    Ledger::mac($m4['sec_b'], $m4['mid'], 20, 'ws4'), '0123456789abcdef');
+ok(!$res['ok'] && $res['error'] === 'tag invalid', 'a forged peer attestation is tampering');
+$st = $idb->prepare('SELECT frozen, frozen_at, frozen_why FROM items WHERE uid = ?');
+$st->execute([$u4]);
+$froze = $st->fetch();
+$st->closeCursor();
+ok((int)$froze['frozen'] === 1 && $froze['frozen_why'] === 'tag_invalid'
+    && (int)$froze['frozen_at'] > 0,
+    'and the freeze records the verdict that reached it and the moment it did');
+$was = (int)$froze['frozen_at'] - 3600;
+$idb->prepare('UPDATE items SET frozen_at = ? WHERE uid = ?')->execute([$was, $u4]);
+Items::claim('bb22bb22', $m4['mid'], $u4, 'aa11aa11', 'bb22bb22', 21, 0, 'ws5',
+    Ledger::mac($m4['sec_b'], $m4['mid'], 21, 'ws5'), 'fedcba9876543210');
+$st->execute([$u4]);
+$again = $st->fetch();
+$st->closeCursor();
+ok((int)$again['frozen_at'] === $was,
+    'a later claim on an instance already out of play cannot rewrite that finding');
 
 // The legacy amnesty: one-time, idempotent, and the server's own list wins.
 Presence::touch('cc33cc33', '1.2.3.4');

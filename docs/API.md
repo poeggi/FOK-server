@@ -1621,7 +1621,7 @@ Failures are `{"ok":false,"error":"..."}` with a 4xx status:
 | 403 | `bad self tag` | `my_tag` does not verify: not a proven participant. Nothing changes |
 | 409 | `stale seq, re-read` | your `seq` is behind the server's. Re-`list` and retry |
 | 409 | `lost race, re-read` | another claim moved the item first. Re-`list` and retry |
-| 409 | `counterfeit` | the claim names a non-owner as `from`. Alerts the operator |
+| 409 | `counterfeit` | the claim names a non-owner as `from`: a stale wardrobe, typically a restored backup or an item lost in a duel the client has not synced since. Nothing moves, the instance stays where the registry has it and is never frozen, and the client drops it at its next `list`. Logged, not alerted |
 | 409 | `no such item` | a uid the server never minted. Alerts the operator |
 | 409 | `tag invalid` | a well-formed `peer_tag` that does NOT verify: provable tampering. The instance is FROZEN and the operator alerted |
 | 409 | `contradiction` | another claim for the same (mid, uid, tick) asserts a DIFFERENT direction. Impossible honestly - one moment has one outcome - so the instance is FROZEN and the operator alerted |
@@ -1635,7 +1635,9 @@ same mid, uid, tick, from, to - rather than rebuilding it.
 A FROZEN instance is out of play until an operator resolves it from the
 admin dashboard. Freezing is deliberately blunt: it is reached only from
 the two provable-tampering paths, where the alternative is letting a
-contested item keep moving.
+contested item keep moving. The registry records which of the two
+verdicts froze it and when, and the first verdict stands: a later claim
+on an instance already out of play cannot rewrite the finding.
 
 #### Client rules
 
