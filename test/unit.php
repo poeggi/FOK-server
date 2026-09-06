@@ -361,7 +361,7 @@ ok(count($got) === 1 && $got[0]['type'] === 'friend' && str_contains($got[0]['pa
     'friend notified of the expiry');
 Settings::set('player_ttl_days', 0);
 ok(Presence::expireStale() === 0, 'ttl 0 disables expiry');
-Settings::set('player_ttl_days', 180);
+Settings::set('player_ttl_days', 365);
 
 // The quick-match queue lives in shared memory, so a test that needs a
 // stale seeker or an empty queue edits the entries directly.

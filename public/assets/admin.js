@@ -771,8 +771,21 @@ function worstQueue(rows) {
         return box;
     }
     const t = el('table');
-    t.append(row(['When', 'Waited', 'Deep', 'Worker', 'Script', 'Player', 'Address'],
-        'th'));
+    // The depth column holds one digit, so its header is one letter and the
+    // explanation moves into a tooltip: spelled out, the word was setting the
+    // width of the narrowest column in the table.
+    const th = (label, cls, tip) => {
+        const h = el('th', cls, label);
+        if (tip) h.title = tip;
+        return h;
+    };
+    const hr = el('tr');
+    hr.append(th('When'), th('Waited'),
+        th('D', 'tight', 'Depth: how many requests this player already had open '
+            + 'when this one started. A floor, not a count - a sibling that '
+            + 'finished during the wait is not in it.'),
+        th('Worker'), th('Script'), th('Player'), th('Address'));
+    t.append(hr);
     for (const r of rows) {
         const tr = el('tr');
         tr.append(el('td', '', fmtSec(r.t)));
@@ -784,7 +797,7 @@ function worstQueue(rows) {
         // before PHP ran, so a sibling that finished during the wait is not
         // in it, and a genuinely stacked request can still read 1. A dash is
         // a row recorded before this was kept.
-        tr.append(r.d ? el('td', 'num', String(r.d)) : el('td', 'muted', '-'));
+        tr.append(r.d ? el('td', 'num tight', String(r.d)) : el('td', 'muted tight', '-'));
         // A worker PHP had just started pays for its own startup before it
         // can answer, and that lands here looking exactly like a busy pool
         // (see Util::claimWorker). "new" on every row means the pool keeps

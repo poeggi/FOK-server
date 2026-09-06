@@ -264,6 +264,15 @@ table { border-collapse: collapse; width: 100%; font-size: 12px; }
 th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th { color: var(--muted); font-weight: normal; }
 
+/* A column that never holds more than one character. Without this the header
+   sets the width and the browser hands the column a share of the leftover
+   space, which is how a single digit ends up in a column as wide as a word. */
+th.tight, td.tight { width: 1%; }
+
+/* A header short enough to need explaining carries it as a tooltip, and says
+   so the same way the gauges do (see .stat[title]). */
+th[title] { cursor: help; }
+
 th.sortable { cursor: pointer; user-select: none; }
 th.sort-asc::after, th.sort-desc::after {
     content: ""; display: inline-block; margin-left: 5px;

@@ -63,7 +63,7 @@ final class Settings
         // friendships, not their property); duel_ttl_days the pair row a
         // finished duel leaves behind; alert_ttl_days the alerts that have
         // been read.
-        'player_ttl_days' => [180, 'Remove players not seen for N days (0 = never)'],
+        'player_ttl_days' => [365, 'Remove players not seen for N days (0 = never)'],
         'duel_ttl_days' => [7, 'Forget a duel pair not seen for N days (0 = never)'],
         'alert_req_per_min' => [600, 'Alert: total requests per minute above'],
         'alert_load_per_core' => [2, 'Alert: 1-minute load per CPU core above'],

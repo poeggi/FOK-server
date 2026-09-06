@@ -1025,7 +1025,7 @@ a confirmation dialog (auto-confirmed), the server notifies nobody, and
 no celebration effect (confetti etc.) accompanies it - celebrations are
 reserved for a completed handshake.
 
-Player expiry: a player not seen for player_ttl_days (default 180,
+Player expiry: a player not seen for player_ttl_days (default 365,
 admin-configurable, 0 disables) is automatically removed from the
 database and all of its friendships are cancelled. Each friend receives
 a best-effort 'friend' {event:"expired"} notification while online;
