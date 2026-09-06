@@ -1916,7 +1916,7 @@ ok($p['hold'] === true, 'an idle pool lets even a lobby hold a long poll');
 ok($p['hello_ms'] === Settings::int('pace_hello_ms'),
     'and asks for no more than the ordinary heartbeat');
 ok($p['poll_ms'] === FOK_POLL_WAIT_MAX * 1000, 'the poll wait is the one the server can serve');
-ok($p['spread_ms'] === Settings::int('pace_spread_ms'), 'and the jitter budget is handed out');
+ok(!array_key_exists('spread_ms', $p), 'and the retired jitter budget is gone from the block');
 ok($p['gap_ms'] === Settings::int('pace_gap_ms'),
     'and the plain gap between the client\'s own background requests');
 // Half the budget spent: the client that is only browsing gives way first.

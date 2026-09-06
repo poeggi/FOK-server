@@ -436,14 +436,14 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .toolbar .grow { margin-left: auto; }
 /* A control keeps its label on one line and its natural width. As flex items
    they would otherwise be squeezed by whatever sits beside them and break
-   mid-label - "Last hour" over two lines is taller than the row and taller
-   than the fixed height of button.small. Notes and status text are left out
-   of this on purpose: a verify error in the registry's bar must still wrap.
+   mid-label - "Clear statistics" over two lines is taller than the row and
+   taller than the fixed height of button.small. Notes and status text are
+   left out of this on purpose: a verify error in the registry's bar must wrap.
    The row wraps for the same reason: controls that cannot shrink have to fall
    to a second line on a narrow card, or the last one is pushed out of it. */
 .toolbar button { flex: none; white-space: nowrap; }
 .chip {
-    padding: 2px 10px; font-size: 12px; border-radius: var(--r-pill);
+    padding: 2px 8px; font-size: 12px; border-radius: var(--r-pill);
     background: transparent; color: var(--muted);
 }
 .chip.active { border-color: var(--accent); color: var(--accent); }

@@ -1038,8 +1038,8 @@ function scriptRows(counts) {
 // hour buckets are pruned at 30 days.
 const SCRIPT_WINDOWS = {
     total: ['Total', 'Everything the counters still hold - hour buckets are kept for 30 days'],
-    hour: ['Last hour', 'The last complete UTC hour'],
-    min: ['Last minute', 'The last complete UTC minute'],
+    hour: ['Hour', 'The last complete UTC hour'],
+    min: ['Minute', 'The last complete UTC minute'],
 };
 
 // The counted metrics of the selected window, in the one shape scriptRows

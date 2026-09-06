@@ -35,8 +35,11 @@ final class Settings
         // budget runs out, and Holds is what happens when it does.
         'pace_hello_ms' => [FOK_PACE_HELLO_MS, 'Heartbeat interval handed to an unpressured client (ms)'],
         'pace_hello_max_ms' => [FOK_PACE_HELLO_MAX_MS, 'Longest heartbeat interval pacing may ask for (ms)'],
-        'pace_spread_ms' => [FOK_PACE_SPREAD_MS, 'Jitter budget clients spread their periodic requests over (ms)'],
         'pace_gap_ms' => [FOK_PACE_GAP_MS, 'Minimum spacing asked between any two requests one client has in flight (ms, 0 = off)'],
+        // The same idea one step out: gap_ms spaces the requests a client
+        // decides to make, this spaces the ones a broadcast provokes from
+        // everyone at once (after_ms, see Tournament::flush).
+        'tourney_after_ms' => [FOK_TOURNEY_AFTER_MS, 'Budget a pushed event staggers its follow-up calls over (ms, 0 = off)'],
         'ices_max' => [FOK_ICES_MAX, 'Max ICE candidates in one batched signal'],
         // DEPRECATED: relay fallback (see docs/DEPRECATED-relay.md). These
         // seven relay_* settings are removed with the feature.

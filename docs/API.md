@@ -38,7 +38,11 @@ queue-wait figure and server-set pacing, added in 4.4) is available.
 A MINOR is also RE-RELEASED when a later server on the SAME `api` string
 gains an optional flag or field that an earlier server of that MINOR does
 not have. 4.4 carries one such re-release: `friends_list` on hello with its
-`friends` response, and `pace.gap_ms`. So the version says what the contract
+`friends` response, and `pace.gap_ms`. The same rule runs the other way: a
+later server may stop sending an optional field, as 4.4 dropped
+`pace.spread_ms` - a per-session jitter offset that bought nothing a client
+could not get from `gap_ms` and `after_ms`, both of which act where the
+requests actually stack. So the version says what the contract
 PERMITS, not what the server in front of you implements. FEATURE-DETECT
 every optional field - ask for it, use it when the answer carries it, fall
 back when it does not - and never gate an optional feature on the MINOR. The
@@ -487,8 +491,7 @@ Response:
         "hello_ms": 30000,        pace itself. Additive and ignorable, but
         "poll_ms": 9000,          only the server knows its own load.
         "hold": true,             See Pacing below.
-        "spread_ms": 4000,
-        "gap_ms": 250
+        "gap_ms": 100
       },
       "debug": false,             the server's instruction: the client MUST
                                   honour it (see Debug mode below)
@@ -574,33 +577,40 @@ today - but a client that honours it lets the host carry more players.
                 tier - a client in a duel or reconnecting keeps it
                 longest, then a tournament screen with a match pending,
                 then one merely browsing the lobby.
-    spread_ms   a jitter budget. Draw an offset from it ONCE, keep that
-                offset for the session, and apply it to every periodic
-                request. It exists so clients that started together do
-                not stay together.
     gap_ms      the minimum spacing the server wants between any two
                 requests THIS client has in flight, whichever endpoints
-                they are. Where spread_ms separates clients from each
-                other once per session, this separates a client's own
-                requests from each other continuously - a client that
-                fires a heartbeat and a roster read in the same tick
-                queues the second behind the first and pays the wait
-                twice. Serialise background traffic through ONE gate and
-                hold the gap there; let the duel handshake (signal,
-                start, poll) past it, because that is the latency a
-                player feels. Past the gate is not the same as together:
-                a parked poll is an open request, so one exempt call
-                already makes two in flight, and two exempt calls sent
-                in the same tick race each other - BOTH pay the full
-                queue wait rather than one of them paying it. Keep at
-                most ONE request in flight besides a parked poll, exempt
-                or not. 0 or absent means the client's own
-                default. It is a 4.4 re-release addition, so treat an
-                absent field as 0 rather than as an old server.
+                they are. It separates a client's own requests from each
+                other - a client that fires a heartbeat and a roster read
+                in the same tick queues the second behind the first and
+                pays the wait twice. It is SPACING, not a wait: it is
+                sized just above what a single request costs, so a
+                stacked burst drains in milliseconds and no one call is
+                ever held long enough for a player to feel it. Serialise
+                background traffic through ONE gate and hold the gap
+                there; let the duel handshake (signal, start, poll) past
+                it, because that is the latency a player feels. Past the
+                gate is not the same as together: a parked poll is an
+                open request, so one exempt call already makes two in
+                flight, and two exempt calls sent in the same tick race
+                each other - BOTH pay the full queue wait rather than one
+                of them paying it. Keep at most ONE request in flight
+                besides a parked poll, exempt or not. 0 or absent means
+                the client's own default. It is a 4.4 re-release
+                addition, so treat an absent field as 0 rather than as an
+                old server.
 
 Both intervals are clamped server-side at both ends: a floor, or the client
 looks offline, and a ceiling, or it floods. Read the values as advice about
 THIS moment rather than a setting - they move with load.
+
+None of this is enforced. The server never rate-limits, delays or refuses a
+request for arriving too close behind another one - a heartbeat is how a
+player stays online, and holding one back would occupy the very worker the
+pace exists to free. The one thing the server acts on itself is `hold`, which
+it withdraws by tier and Holds refuses outright when the budget is spent. So
+a client that ignores the gap is not punished; it pays its own queue wait, and
+pays it on the LAST request of a burst rather than the first. That is what
+`q_ms` reports, and it is the only symptom there is.
 
 ### Self-reported networks (`nets`)
 
@@ -2117,9 +2127,11 @@ Every pushed event may carry `after_ms` (4.4, ADDITIVE): a small
 per-recipient delay in milliseconds to wait before making any follow-up
 REQUEST the event prompts. A round board wakes eight clients in the same
 instant and they all call back together - the same pile-up the ICE burst
-makes, eight-handed - so the server spreads them by seat. Render the
-event itself immediately and delay only the calls it provokes. A client
-that ignores the field behaves exactly as before.
+makes, eight-handed - so the server staggers them by seat. Render the
+event itself immediately and delay only the calls it provokes. The value
+is bounded well under a second and the whole field is served inside that
+budget: it de-stacks the burst, it never makes the last seat wait for its
+data. A client that ignores the field behaves exactly as before.
 
 A client MUST NOT act on a `tourney` signal it did not expect to the
 extent of playing a match it cannot see in `state` - when in doubt, call
@@ -2186,8 +2198,8 @@ headers when nothing is pending. `orphan` is separately capped at one
 every 3 s per player.
 
 What the rate DOES have is a BURST term, and 4.4 addresses it in both
-places it appears: `after_ms` spreads the follow-up calls a pushed event
-provokes, and `pace` spreads the periodic ones. Neither saves bytes. Both
+places it appears: `after_ms` staggers the follow-up calls a pushed event
+provokes, and `pace.gap_ms` spaces a client's own. Neither saves bytes. Both
 cut how many requests land in the same instant, which on this host is the
 thing that actually costs - see Pacing.
 

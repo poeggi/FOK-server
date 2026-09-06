@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.4.2';
+const FOK_SERVER_VERSION = '1.4.3';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -105,9 +105,19 @@ const FOK_SERVER_VERSION = '1.4.2';
 // pull that lever: 'ices' collapses the duel-start ICE trickle into one
 // message, q_ms tells a client when its own round trip was queued (so it
 // does not anchor its clock against a busy moment), pace lets the server set
-// the beat it can actually serve, and after_ms spreads the callbacks a
+// the beat it can actually serve, and after_ms staggers the callbacks a
 // broadcast provokes. Major stays 4: every one of them is ignorable, and a
 // 4.3 client behaves exactly as it does today.
+// 4.4 re-release: pace.spread_ms is WITHDRAWN. It asked each client to draw a
+// one-time phase offset so a roomful that booted together would stop beating
+// together - a real effect, but one that only pays at a client count this
+// host will not see, while the burst that DOES cost here is a single client
+// stacking its own requests. gap_ms and after_ms both act on that, in
+// milliseconds, at the moment it happens. This removes a field and so reads
+// like a MAJOR break; it is not one. pace is optional, its members are
+// individually optional, and the contract already requires an absent one to
+// be treated as the client's own default - which for a jitter budget is no
+// jitter. A client that read it keeps working with nothing to draw from.
 const FOK_API_VERSION = '4.4';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
@@ -234,19 +244,25 @@ const FOK_POLL_CHECK_USEC_APCU = 2000;
 const FOK_HOLD_MAX_WORKERS = 12;
 
 // Client pacing (see Pace, hello.php `pace`). The base heartbeat is what the
-// client already does; the ceiling is how far pacing may stretch it when the
-// pool is under pressure, and the spread is the jitter budget that keeps
-// clients which started together from staying together. Advice, not a
-// setting - a client that ignores any of them behaves exactly as before.
+// client already does, and the ceiling is how far pacing may stretch it when
+// the pool is under pressure. Advice, not a setting - a client that ignores
+// either behaves exactly as before.
 const FOK_PACE_HELLO_MS = 30000;
 const FOK_PACE_HELLO_MAX_MS = 90000;
-const FOK_PACE_SPREAD_MS = 4000;
-// The spread turned inward: that one separates clients from each other, this
-// one separates a single client's OWN requests from each other. A client
+// What separates a single client's OWN requests from each other. A client
 // with several independent schedulers fires two of them into the same tick
 // and queues its second request behind its first - paying the wait twice,
-// for traffic that was never urgent in the first place.
-const FOK_PACE_GAP_MS = 250;
+// for traffic that was never urgent in the first place. Sized just above the
+// measured per-request cost, so a stacked burst drains in milliseconds: this
+// is spacing, never a wait a player can feel.
+const FOK_PACE_GAP_MS = 100;
+
+// The budget a pushed event's follow-up calls are staggered over (after_ms,
+// see Tournament::flush). A round board wakes every participant in the same
+// instant and they all call back together. Milliseconds and not seconds, on
+// purpose: the point is to de-stack the burst, not to make the last seat
+// wait for its data.
+const FOK_TOURNEY_AFTER_MS = 400;
 
 // The pair clock cross-check (see Skew, start.php `resync`). Both peers
 // prove their clock against the SAME start, so the difference between their

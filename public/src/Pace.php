@@ -52,8 +52,7 @@ final class Pace
     /**
      * The pacing advice for one client.
      *
-     * @return array{hello_ms:int, poll_ms:int, hold:bool, spread_ms:int,
-     *               gap_ms:int}
+     * @return array{hello_ms:int, poll_ms:int, hold:bool, gap_ms:int}
      */
     public static function forTier(int $tier): array
     {
@@ -83,11 +82,9 @@ final class Pace
             // The real lever. Withdrawn by tier as the pool fills, so a duel
             // handshake outlives a lobby's patience.
             'hold' => $pressure <= $tier,
-            // Drawn ONCE per session by the client, not per request - the
-            // point is to separate clients from each other permanently, not
-            // to smear each client's own requests.
-            'spread_ms' => Settings::int('pace_spread_ms'),
-            // Which is exactly what this one does instead.
+            // Spacing between one client's own requests, widened by pressure
+            // above. It is the only thing here that touches when a request
+            // goes out, and it is sized in milliseconds for that reason.
             'gap_ms' => $gap,
         ];
     }
