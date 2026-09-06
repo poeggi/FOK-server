@@ -363,106 +363,131 @@ final class Items
         $iAmLoser = ($from === $id);
         $settleNow = $peerConfirmed || $iAmLoser;
 
-        // Steps 5-8 are one transaction.
+        // Steps 5-8 decide from reads, and in WAL a reader never blocks and is
+        // never blocked - so they run HERE, outside the write lock. A replay,
+        // an unknown item, a frozen one, a counterfeit or a stale seq is
+        // answered without ever asking for a lock that spans the whole
+        // database and parks every other writer on the box behind it. Only a
+        // claim that has decided to WRITE opens the transaction below, and
+        // what it re-reads in there is the one check whose answer can change
+        // while the lock is being taken.
+        $st = $db->prepare(
+            "SELECT 1 FROM ledger WHERE mid = ? AND uid = ? AND tick = ?
+             AND from_id = ? AND to_id = ? AND kind = 'transfer' LIMIT 1"
+        );
+        $st->execute([$mid, $uid, $tick, $from, $to]);
+        $alreadyDone = $st->fetchColumn() !== false;
+        $st->closeCursor();
+
+        $st = $db->prepare('SELECT owner, seq, frozen FROM items WHERE uid = ?');
+        $st->execute([$uid]);
+        $it = $st->fetch();
+        $st->closeCursor();
+
+        // Idempotent replay: this exact transfer already settled. A client
+        // that re-sends after settling must not read as counterfeit.
+        if ($alreadyDone) {
+            self::bumpClaim($id, $peerConfirmed ? 'claims_ok' : 'claims_untagged');
+            return ['ok' => true, 'seq' => $it === false ? $seq : (int)$it['seq'], 'state' => 'confirmed'];
+        }
+        if ($it === false) {
+            Alerts::raise('item_counterfeit', "Claim on unknown item: uid $uid from player $id");
+            return ['ok' => false, 'code' => 409, 'error' => 'no such item'];
+        }
+        if ((int)$it['frozen'] === 1) {
+            return ['ok' => false, 'code' => 409, 'error' => 'item frozen'];
+        }
+
+        // 8. Contradiction: an entry for the same (mid, uid, tick) that
+        // asserts a DIFFERENT direction. Impossible in an honest game -
+        // one simulation moment has one outcome - so it is tampering.
+        if (self::contradicted($db, $mid, $uid, $tick, $from, $to)) {
+            self::freeze($db, $uid);
+            Alerts::raise('item_contradiction', "Contradictory claims: uid $uid from player $id");
+            self::bumpClaim($id, 'claims_disputed');
+            return ['ok' => false, 'code' => 409, 'error' => 'contradiction'];
+        }
+
+        // 5. The item must be owned by `from` at the claimed seq.
+        if ((string)$it['owner'] !== $from) {
+            Alerts::raise('item_counterfeit', "Claim names a non-owner: uid $uid from player $id");
+            return ['ok' => false, 'code' => 409, 'error' => 'counterfeit'];
+        }
+        if ((int)$it['seq'] !== $seq) {
+            return ['ok' => false, 'code' => 409, 'error' => 'stale seq, re-read'];
+        }
+
+        // The direction rule: a gain claim with no proof holds unconfirmed
+        // and settles only once claim_grace_ms has passed with no
+        // contradiction. The first hold's timestamp starts that clock.
+        if (!$settleNow) {
+            $firstHold = self::firstHold($db, $mid, $uid, $tick, $from, $to);
+            $aged = $firstHold !== null && $firstHold <= $now - Settings::int('claim_grace_ms');
+            if (!$aged) {
+                if ($firstHold === null) {
+                    // Opening the hold is the only write on this path, so it
+                    // is the only thing that takes the lock. It looks again
+                    // inside: two unconfirmed claims arriving together would
+                    // otherwise each open a hold of their own.
+                    $db->exec('BEGIN IMMEDIATE');
+                    try {
+                        if (self::firstHold($db, $mid, $uid, $tick, $from, $to) === null) {
+                            Ledger::append($db, 'dispute', $uid, $from, $to, $mid, $tick, $now);
+                        }
+                        self::bumpClaim($id, 'claims_untagged');
+                        $db->exec('COMMIT');
+                    } catch (Throwable $e) {
+                        if ($db->inTransaction()) {
+                            $db->exec('ROLLBACK');
+                        }
+                        throw $e;
+                    }
+                } else {
+                    self::bumpClaim($id, 'claims_untagged');
+                }
+                return ['ok' => true, 'seq' => (int)$it['seq'], 'state' => 'held'];
+            }
+            // aged past grace with no contradiction: fall through to settle.
+        }
+
+        // The write, and the only place a settling claim takes the lock.
         $db->exec('BEGIN IMMEDIATE');
         try {
-            // Idempotent replay: this exact transfer already settled. A client
-            // that re-sends after settling must not read as counterfeit.
+            // The contradiction check runs again here, and this is the run
+            // that decides: the look outside cannot see a contradicting claim
+            // that is committing at that very moment, and a serialised look
+            // is the whole point of the check. One indexed lookup, on a path
+            // that is about to write anyway.
+            if (self::contradicted($db, $mid, $uid, $tick, $from, $to)) {
+                self::freezeInTx($db, $uid);
+                $db->exec('COMMIT');
+                Alerts::raise('item_contradiction', "Contradictory claims: uid $uid from player $id");
+                self::bumpClaim($id, 'claims_disputed');
+                return ['ok' => false, 'code' => 409, 'error' => 'contradiction'];
+            }
+
+            // 6. Conservative move: compare-and-swap on seq, and on the owner
+            // and the freeze flag with it. Those three were read outside the
+            // lock, so this swap - not that read - is what arbitrates: a
+            // snapshot that went stale in between matches no row, and the
+            // client is told to re-read, which is the answer the loser of a
+            // race has always been given.
             $st = $db->prepare(
-                "SELECT 1 FROM ledger WHERE mid = ? AND uid = ? AND tick = ?
-                 AND from_id = ? AND to_id = ? AND kind = 'transfer' LIMIT 1"
+                'UPDATE items SET owner = ?, seq = seq + 1
+                 WHERE uid = ? AND seq = ? AND owner = ? AND frozen = 0'
             );
-            $st->execute([$mid, $uid, $tick, $from, $to]);
-            $alreadyDone = $st->fetchColumn() !== false;
-            $st->closeCursor();
-
-            $st = $db->prepare('SELECT owner, seq, frozen FROM items WHERE uid = ?');
-            $st->execute([$uid]);
-            $it = $st->fetch();
-            $st->closeCursor();
-
-            if ($alreadyDone) {
-                $db->exec('COMMIT');
-                self::bumpClaim($id, $peerConfirmed ? 'claims_ok' : 'claims_untagged');
-                return ['ok' => true, 'seq' => $it === false ? $seq : (int)$it['seq'], 'state' => 'confirmed'];
-            }
-            if ($it === false) {
-                $db->exec('COMMIT');
-                Alerts::raise('item_counterfeit', "Claim on unknown item: uid $uid from player $id");
-                return ['ok' => false, 'code' => 409, 'error' => 'no such item'];
-            }
-            if ((int)$it['frozen'] === 1) {
-                $db->exec('COMMIT');
-                return ['ok' => false, 'code' => 409, 'error' => 'item frozen'];
-            }
-
-            // 8. Contradiction: an entry for the same (mid, uid, tick) that
-            // asserts a DIFFERENT direction. Impossible in an honest game -
-            // one simulation moment has one outcome - so it is tampering.
-            $st = $db->prepare(
-                "SELECT from_id, to_id FROM ledger WHERE mid = ? AND uid = ? AND tick = ?
-                 AND kind IN ('transfer', 'dispute')"
-            );
-            $st->execute([$mid, $uid, $tick]);
-            $prior = $st->fetchAll();
-            $st->closeCursor();
-            foreach ($prior as $p) {
-                if ((string)$p['from_id'] !== $from || (string)$p['to_id'] !== $to) {
-                    self::freezeInTx($db, $uid);
-                    $db->exec('COMMIT');
-                    Alerts::raise('item_contradiction', "Contradictory claims: uid $uid from player $id");
-                    self::bumpClaim($id, 'claims_disputed');
-                    return ['ok' => false, 'code' => 409, 'error' => 'contradiction'];
-                }
-            }
-
-            // 5. The item must be owned by `from` at the claimed seq.
-            if ((string)$it['owner'] !== $from) {
-                $db->exec('COMMIT');
-                Alerts::raise('item_counterfeit', "Claim names a non-owner: uid $uid from player $id");
-                return ['ok' => false, 'code' => 409, 'error' => 'counterfeit'];
-            }
-            if ((int)$it['seq'] !== $seq) {
-                $db->exec('COMMIT');
-                return ['ok' => false, 'code' => 409, 'error' => 'stale seq, re-read'];
-            }
-
-            // The direction rule: a gain claim with no proof holds unconfirmed
-            // and settles only once claim_grace_ms has passed with no
-            // contradiction. The first hold's timestamp starts that clock.
-            if (!$settleNow) {
-                $grace = Settings::int('claim_grace_ms');
-                $st = $db->prepare(
-                    "SELECT MIN(at) FROM ledger WHERE mid = ? AND uid = ? AND tick = ?
-                     AND from_id = ? AND to_id = ? AND kind = 'dispute'"
-                );
-                $st->execute([$mid, $uid, $tick, $from, $to]);
-                $firstHold = $st->fetchColumn();
-                $st->closeCursor();
-                $aged = $firstHold !== false && $firstHold !== null && (int)$firstHold <= $now - $grace;
-                if (!$aged) {
-                    if ($firstHold === false || $firstHold === null) {
-                        Ledger::append($db, 'dispute', $uid, $from, $to, $mid, $tick, $now);
-                    }
-                    $db->exec('COMMIT');
-                    self::bumpClaim($id, 'claims_untagged');
-                    return ['ok' => true, 'seq' => (int)$it['seq'], 'state' => 'held'];
-                }
-                // aged past grace with no contradiction: fall through to settle.
-            }
-
-            // 6. Conservative move: compare-and-swap on seq. A rowcount of 0
-            // means another claim won the race; the client must re-read.
-            $st = $db->prepare('UPDATE items SET owner = ?, seq = seq + 1 WHERE uid = ? AND seq = ?');
-            $st->execute([$to, $uid, $seq]);
+            $st->execute([$to, $uid, $seq, $from]);
             if ($st->rowCount() === 0) {
                 $db->exec('COMMIT');
                 return ['ok' => false, 'code' => 409, 'error' => 'lost race, re-read'];
             }
             // 7. Chain the transfer into the ledger.
             Ledger::append($db, 'transfer', $uid, $from, $to, $mid, $tick, $now);
-            $db->exec('COMMIT');
+            // The claim tally rides the same transaction: adding one to a
+            // statistics column is not worth its own turn at a lock the whole
+            // database queues behind.
             self::bumpClaim($id, $peerConfirmed ? 'claims_ok' : 'claims_untagged');
+            $db->exec('COMMIT');
             return ['ok' => true, 'seq' => $seq + 1, 'state' => $peerConfirmed ? 'confirmed' : 'settled'];
         } catch (Throwable $e) {
             if ($db->inTransaction()) {
@@ -483,6 +508,53 @@ final class Items
     private static function freezeInTx(PDO $db, string $uid): void
     {
         $db->prepare('UPDATE items SET frozen = 1 WHERE uid = ?')->execute([$uid]);
+    }
+
+    // Is there a prior entry for this (mid, uid, tick) that asserts a
+    // DIFFERENT direction than the claim being judged? Index-backed on
+    // ledger_match. Called twice per settling claim on purpose: once outside
+    // the write lock, where it answers the ordinary case for free, and once
+    // inside, where it is the only look that can see a claim committing
+    // alongside this one.
+    private static function contradicted(
+        PDO $db,
+        string $mid,
+        string $uid,
+        int $tick,
+        string $from,
+        string $to
+    ): bool {
+        $st = $db->prepare(
+            "SELECT from_id, to_id FROM ledger WHERE mid = ? AND uid = ? AND tick = ?
+             AND kind IN ('transfer', 'dispute')"
+        );
+        $st->execute([$mid, $uid, $tick]);
+        foreach ($st->fetchAll() as $p) {
+            if ((string)$p['from_id'] !== $from || (string)$p['to_id'] !== $to) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // When the unconfirmed hold on this exact transfer was opened, or null if
+    // no hold has been. The earliest one is what starts the grace clock.
+    private static function firstHold(
+        PDO $db,
+        string $mid,
+        string $uid,
+        int $tick,
+        string $from,
+        string $to
+    ): ?int {
+        $st = $db->prepare(
+            "SELECT MIN(at) FROM ledger WHERE mid = ? AND uid = ? AND tick = ?
+             AND from_id = ? AND to_id = ? AND kind = 'dispute'"
+        );
+        $st->execute([$mid, $uid, $tick, $from, $to]);
+        $at = $st->fetchColumn();
+        $st->closeCursor();
+        return $at === false || $at === null ? null : (int)$at;
     }
 
     // A per-player claim tally, for statistical review on the admin card. The
