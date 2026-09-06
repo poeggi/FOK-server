@@ -57,6 +57,9 @@ final class Tournament
     // A node that reached one of these counts towards the advancer cut.
     private const DONE = ['settled', 'confirmed', 'void'];
 
+    /** @var list<callable> queued by afterUnlock(), drained by mutate() */
+    private static array $afterUnlock = [];
+
     // ---- Store ------------------------------------------------------------
 
     /** @return ?array the whole tournament, players and data included */
@@ -116,6 +119,8 @@ final class Tournament
      *
      * Events are queued inside and flushed only after the store: a signal
      * announcing a transition that then failed is a lie no client can undo.
+     * Database work is queued the same way and for a harder reason, see
+     * afterUnlock().
      */
     private static function mutate(string $tid, callable $fn): ?array
     {
@@ -140,9 +145,33 @@ final class Tournament
             $pending = [$t['host'], $t['events']];
         } finally {
             TourneyStore::unlock($tid);
+            // A transition that threw stored nothing, so what it queued
+            // describes something that never happened: dropped with it.
+            $due = self::$afterUnlock;
+            self::$afterUnlock = [];
         }
         self::flush($pending[0], $pending[1]);
+        foreach ($due as $fn) {
+            $fn();
+        }
         return $out;
+    }
+
+    /**
+     * Work a transition wants done but must not do while it holds the lock:
+     * anything that can WAIT. The SQLite writer parks a caller for up to
+     * busy_timeout, which is longer than the lock's own TTL - so a
+     * transition that writes under the lock can outlive its lease, and the
+     * next worker would take the tournament out from under it. Locks here
+     * are therefore held for shared memory only, and the counters and alerts
+     * a transition leaves behind run once it is released.
+     *
+     * Ordered, and run after the events flush: an operator's alert follows
+     * the clients being told, never precedes it.
+     */
+    private static function afterUnlock(callable $fn): void
+    {
+        self::$afterUnlock[] = $fn;
     }
 
     /**
@@ -688,7 +717,10 @@ final class Tournament
         $r['winner'] = null;
         $r['draw'] = false;
         $t['data']['results'][$nid] = $r;
-        Alerts::raise('tournament', "Tournament $nid frozen: $why (tournament {$t['tid']})");
+        $tid = (string)$t['tid'];
+        self::afterUnlock(static function () use ($nid, $why, $tid): void {
+            Alerts::raise('tournament', "Tournament $nid frozen: $why (tournament $tid)");
+        });
         self::event($t, ['event' => 'freeze', 'nid' => $nid]);
         // A freeze is closed enough for the cursor to move past it, so round 1
         // carries on: only the advancer cut waits, which nextNode() enforces.
@@ -1092,11 +1124,14 @@ final class Tournament
                 $played++;
             }
         }
-        Stats::bump([
-            'tourney_finished' => 1,
-            'tourney_matches' => $played,
-            'tourney_seats' => count($t['players']),
-        ]);
+        $seats = count($t['players']);
+        self::afterUnlock(static function () use ($played, $seats): void {
+            Stats::bump([
+                'tourney_finished' => 1,
+                'tourney_matches' => $played,
+                'tourney_seats' => $seats,
+            ]);
+        });
     }
 
     /**

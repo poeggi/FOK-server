@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.4.4';
+const FOK_SERVER_VERSION = '1.4.5';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -128,6 +128,16 @@ ini_set('log_errors', '1');
 // subdirectory of the live docroot; it runs against its own data dir.
 define('FOK_DOCROOT', dirname(__DIR__));
 define('FOK_ENV', basename(FOK_DOCROOT) === 'staging' ? 'staging' : 'live');
+
+// Prefix for every shared-memory key this release writes. Staging and live
+// are separate docroots against separate databases, but they can be served
+// by ONE FPM pool - and then they share one APCu segment. Anything cached
+// from the database (settings, capabilities) must therefore be namespaced by
+// environment, or the staging smoke lowering a setting would lower it for
+// live clients too. Keys that hold no database-derived state (the mailbox,
+// the hold slots) predate this and are left on the bare prefix: two
+// environments sharing them would only ever confuse their own test clients.
+define('FOK_APCU_NS', FOK_ENV === 'staging' ? 'fok:stg:' : 'fok:');
 
 // Data lives ABOVE the (live) docroot so it is never web-accessible.
 // FOK_DATA_DIR env var overrides the location (used by the test suite).

@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Settings.php';
+require_once __DIR__ . '/Starts.php';
+require_once __DIR__ . '/Items.php';
 
 /**
  * What the database keeps that nothing can read any more.
@@ -38,8 +40,20 @@ final class Housekeeping
      */
     public static function sweep(): array
     {
+        // Runs inline in whichever client request drew the hourly straw, so
+        // losing the writer lock here would turn that client's request into
+        // a 500. Every statement below is a DELETE, which makes the whole
+        // sweep safe to re-run: what a first attempt removed is simply not
+        // there for the second.
+        return Db::retry(static fn(): array => self::run());
+    }
+
+    /** @return array<string,int> */
+    private static function run(): array
+    {
         $db = Db::get();
         $now = time();
+        $nowMs = $now * 1000;
         $out = [];
         // One row per PAIR, written once and only stamped afterwards, so
         // the table grows by a row for every pair that ever played and
@@ -73,6 +87,13 @@ final class Housekeeping
         $st = $db->prepare("DELETE FROM settings WHERE key NOT IN ($ph)");
         $st->execute($known);
         $out['settings'] = $st->rowCount();
+        // Neither row is reachable past its window - a start older than its
+        // keep span reads as absent and a match past its deadline refuses
+        // every claim - so both belong here rather than on the duel paths
+        // that write them, where the delete would share the one transaction
+        // every duel waits on (see Starts::request).
+        $out['starts'] = Starts::prune($db, $nowMs);
+        $out['matches'] = Items::pruneMatches($db, $nowMs);
         return array_filter($out, static fn(int $n): bool => $n > 0);
     }
 
@@ -110,6 +131,10 @@ final class Housekeeping
                     [$now - $alertDays * 86400]),
                 self::line($db, 'settings', 'reaped',
                     "SELECT COUNT(*) FROM settings WHERE key NOT IN ($ph)", $known),
+                // Counted by the classes that own the rule, so the card and
+                // the sweep cannot describe different rows.
+                self::counted($db, 'starts', 'reaped', Starts::pruneable($db, $now * 1000)),
+                self::counted($db, 'matches', 'reaped', Items::pruneableMatches($db, $now * 1000)),
                 self::line($db, 'player_nets', 'orphan', $orphan('player_nets', 'id')),
                 self::line($db, 'friends', 'orphan',
                     'SELECT COUNT(*) FROM friends WHERE a NOT IN (SELECT id FROM players)
@@ -138,5 +163,15 @@ final class Housekeeping
         $n = (int)$st->fetchColumn();
         $st->closeCursor();
         return ['name' => $table, 'rows' => $rows, 'loose' => $n, 'policy' => $policy];
+    }
+
+    /**
+     * The same line, where the loose count comes from the class that owns
+     * the rule rather than from a WHERE clause repeated here.
+     */
+    private static function counted(PDO $db, string $table, string $policy, int $loose): array
+    {
+        $rows = (int)$db->query("SELECT COUNT(*) FROM $table")->fetchColumn();
+        return ['name' => $table, 'rows' => $rows, 'loose' => $loose, 'policy' => $policy];
     }
 }

@@ -53,21 +53,49 @@ final class Auth
             self::startSession();
             session_regenerate_id(true);
             $_SESSION['fok_admin'] = true;
-            $db->prepare('DELETE FROM admin_fails WHERE ip = ?')->execute([$ip]);
+            Db::retry(static function () use ($db, $ip): void {
+                $db->prepare('DELETE FROM admin_fails WHERE ip = ?')->execute([$ip]);
+            });
             // Who got in, and when - the opening line of the admin audit
             // trail that admin/api.php continues for every write.
             Alerts::note('admin', "login from $ip");
             return true;
         }
 
-        $fails = $row ? (int)$row['fails'] + 1 : 1;
         $maxFails = Settings::int('admin_max_fails');
         $lockSeconds = Settings::int('admin_lock_seconds');
-        $lock = $fails >= $maxFails ? $now + $lockSeconds : 0;
-        $db->prepare(
-            'INSERT INTO admin_fails (ip, fails, locked_until) VALUES (?, ?, ?)
-             ON CONFLICT (ip) DO UPDATE SET fails = excluded.fails, locked_until = excluded.locked_until'
-        )->execute([$ip, $fails, $lock]);
+        // The count is raised BY the database, not read out and written back.
+        // Guesses arrive in parallel, and a read-add-write lets every one of
+        // them read the same count and store the same successor - so a burst
+        // could spend far more than admin_max_fails attempts before any of
+        // them saw a number high enough to lock the address out. Here the
+        // increment and the lockout decision are one statement, and what it
+        // returns is what was actually stored.
+        //
+        // The threshold is CAST because PDO binds it as text and the count is
+        // an expression, not a column - so no column affinity converts it,
+        // and SQLite sorts every integer below every string. Uncast, the
+        // comparison is false at any number of failures and the lockout never
+        // arms.
+        $lockAt = $now + $lockSeconds;
+        $first = 1 >= $maxFails ? $lockAt : 0;
+        $state = Db::retry(static function () use ($db, $ip, $first, $maxFails, $lockAt): array {
+            $st = $db->prepare(
+                'INSERT INTO admin_fails (ip, fails, locked_until) VALUES (?, 1, ?)
+                 ON CONFLICT (ip) DO UPDATE SET fails = admin_fails.fails + 1,
+                     locked_until = CASE WHEN admin_fails.fails + 1 >= CAST(? AS INTEGER)
+                         THEN ? ELSE 0 END
+                 RETURNING fails, locked_until'
+            );
+            $st->execute([$ip, $first, $maxFails, $lockAt]);
+            $out = $st->fetch();
+            // An INSERT ... RETURNING is a write: finish it before anything
+            // else asks for the writer (see Db::retry).
+            $st->closeCursor();
+            return $out === false ? ['fails' => 1, 'locked_until' => 0] : $out;
+        });
+        $fails = (int)$state['fails'];
+        $lock = (int)$state['locked_until'];
         // A single miss is a typo far more often than an attack, so it is
         // only noted; the lockout is the escalation worth alerting on.
         if ($lock > 0) {

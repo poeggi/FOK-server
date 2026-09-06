@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 35;
+    private const SCHEMA_VERSION = 36;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -78,7 +78,7 @@ final class Db
     // hub and the presence-counter cache are not here: they live in shared
     // memory, not in any table (see Signals and RelayStore).
     private const COUNTED = ['players', 'scores', 'duels', 'mm_queue',
-        'counters', 'alerts', 'settings', 'admin_fails', 'ipcount', 'friends',
+        'counters', 'alerts', 'settings', 'admin_fails', 'friends',
         'starts', 'conn', 'pstats', 'items', 'matches', 'ledger'];
 
     /**
@@ -564,6 +564,18 @@ final class Db
             // No VACUUM: this is a handful of rows on any real deployment,
             // and rewriting the whole file under the single writer is only
             // worth it when whole tables go (see step 31).
+        }
+        if ($v < 36) {
+            // Counting invalid requests per IP took the single writer on
+            // every rejected request - the exact traffic a flood is made of,
+            // so the guard against it was also its amplifier. The count is a
+            // monitor with a one-minute horizon, which is what shared memory
+            // is for (see Util::noteInvalid).
+            $pdo->exec('DROP TABLE IF EXISTS ipcount');
+            // Alerts::raise asks "did this type fire recently" before every
+            // row it writes, and the table had no index for it.
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_alerts_type_created
+                            ON alerts (type, created)');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

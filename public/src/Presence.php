@@ -32,22 +32,30 @@ final class Presence
         $acceptUntil = $autoAccept === null ? null
             : ($autoAccept ? $now + FOK_AUTO_ACCEPT_WINDOW : 0);
         $active = $debugActive === null ? null : (int)$debugActive;
-        $st = Db::get()->prepare(
-            'INSERT INTO players (id, ip, ipnet, first_seen, last_seen, hello_count, latency, name, accept_until, debug_active)
-             VALUES (?, ?, ?, ?, ?, 1, ?, ?, COALESCE(?, 0), COALESCE(?, 0))
-             ON CONFLICT (id) DO UPDATE SET ip = excluded.ip, ipnet = excluded.ipnet, last_seen = excluded.last_seen,
-                 hello_count = hello_count + 1,
-                 latency = COALESCE(excluded.latency, players.latency),
-                 name = COALESCE(excluded.name, players.name),
-                 accept_until = COALESCE(?, players.accept_until),
-                 debug_active = COALESCE(?, players.debug_active)
-             RETURNING first_seen = last_seen AS registered, debug'
-        );
-        $st->execute([$id, $ip, Util::ipNet($ip), $now, $now, $latency, $name, $acceptUntil, $active, $acceptUntil, $active]);
-        $row = $st->fetch();
-        // An INSERT ... RETURNING is a write: finish it before anything else
-        // touches the database (see Db).
-        $st->closeCursor();
+        // Every request of every client lands here, which makes it the write
+        // most likely to be the one that finds the writer taken. The whole
+        // statement is re-runnable: every value it sets is absolute, and an
+        // attempt that lost the writer wrote nothing at all - so hello_count
+        // still moves by one per hello.
+        $row = Db::retry(static function () use ($id, $ip, $now, $latency, $name, $acceptUntil, $active): array {
+            $st = Db::get()->prepare(
+                'INSERT INTO players (id, ip, ipnet, first_seen, last_seen, hello_count, latency, name, accept_until, debug_active)
+                 VALUES (?, ?, ?, ?, ?, 1, ?, ?, COALESCE(?, 0), COALESCE(?, 0))
+                 ON CONFLICT (id) DO UPDATE SET ip = excluded.ip, ipnet = excluded.ipnet, last_seen = excluded.last_seen,
+                     hello_count = hello_count + 1,
+                     latency = COALESCE(excluded.latency, players.latency),
+                     name = COALESCE(excluded.name, players.name),
+                     accept_until = COALESCE(?, players.accept_until),
+                     debug_active = COALESCE(?, players.debug_active)
+                 RETURNING first_seen = last_seen AS registered, debug'
+            );
+            $st->execute([$id, $ip, Util::ipNet($ip), $now, $now, $latency, $name, $acceptUntil, $active, $acceptUntil, $active]);
+            $row = $st->fetch();
+            // An INSERT ... RETURNING is a write: finish it before anything
+            // else touches the database, this retry included (see Db).
+            $st->closeCursor();
+            return $row;
+        });
         self::seenOn($id, $ip);
         // Nobody may watch their own first hello report zero online, so a
         // registration drops the cache. The repeat heartbeats that are
@@ -199,15 +207,22 @@ final class Presence
     {
         [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
         $now = time();
-        $st = Db::get()->prepare(
-            'INSERT INTO duels (a, b, started, last_seen) VALUES (?, ?, ?, ?)
-             ON CONFLICT (a, b) DO UPDATE SET last_seen = excluded.last_seen
-             RETURNING started = last_seen'
-        );
-        $st->execute([$a, $b, $now, $now]);
-        // A duel starting is visible; the heartbeats keeping it alive are not.
-        $started = (int)$st->fetchColumn() === 1;
-        $st->closeCursor();
+        // Both peers of every duel write this on every heartbeat, so it is
+        // the second-most contended write there is. Re-running it is exact:
+        // last_seen is set, not accumulated.
+        $started = Db::retry(static function () use ($a, $b, $now): bool {
+            $st = Db::get()->prepare(
+                'INSERT INTO duels (a, b, started, last_seen) VALUES (?, ?, ?, ?)
+                 ON CONFLICT (a, b) DO UPDATE SET last_seen = excluded.last_seen
+                 RETURNING started = last_seen'
+            );
+            $st->execute([$a, $b, $now, $now]);
+            // A duel starting is visible; the heartbeats keeping it alive
+            // are not.
+            $begun = (int)$st->fetchColumn() === 1;
+            $st->closeCursor();
+            return $begun;
+        });
         if ($started) {
             self::flushCounts();
         }

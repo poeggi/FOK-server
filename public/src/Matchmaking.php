@@ -78,6 +78,12 @@ final class Matchmaking
 
     public static function cancel(string $id): void
     {
-        Db::get()->prepare('DELETE FROM mm_queue WHERE id = ? AND matched_with IS NULL')->execute([$id]);
+        // Collides with every seeker still pairing. Removing a row is
+        // re-runnable, so a lost race for the writer is worth another try
+        // rather than a 500 on a cancel the client cannot repeat.
+        Db::retry(static function () use ($id): void {
+            Db::get()->prepare('DELETE FROM mm_queue WHERE id = ? AND matched_with IS NULL')
+                ->execute([$id]);
+        });
     }
 }

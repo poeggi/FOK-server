@@ -579,18 +579,10 @@ final class Util
         if ($online > Settings::int('alert_online')) {
             Alerts::raise('connections', "Excessive connections: $online players online");
         }
-        // At most once per hour: expire players not seen for the TTL.
+        // At most once per hour, and in exactly one worker (see claimHourly).
         $db = Db::get();
-        $st = $db->prepare("SELECT value FROM counters WHERE bucket = 'meta' AND metric = 'player_sweep'");
-        $st->execute();
-        $last = (int)$st->fetchColumn();
-        $st->closeCursor();
-        if ($last < time() - 3600) {
-            $db->prepare(
-                "INSERT INTO counters (bucket, metric, value) VALUES ('meta', 'player_sweep', ?)
-                 ON CONFLICT (bucket, metric) DO UPDATE SET value = excluded.value"
-            )->execute([time()]);
-            $n = Presence::expireStale();
+        if (self::claimHourly()) {
+            $n = Db::retry(static fn(): int => Presence::expireStale());
             if ($n > 0) {
                 Alerts::raise('expiry', "Expired $n player(s) not seen for "
                     . Settings::int('player_ttl_days') . ' days; friendships cancelled');
@@ -611,22 +603,56 @@ final class Util
             // Live tab has moved past them, and doing it here keeps the
             // DELETE (and its write lock) off the other ~24 in 25 watch()
             // calls.
-            $db->prepare(
-                "DELETE FROM counters
-                 WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
-                   AND bucket < ?"
-            )->execute([gmdate('YmdHi', time() - 7200)]);
+            Db::retry(static function () use ($db): void {
+                $db->prepare(
+                    "DELETE FROM counters
+                     WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
+                       AND bucket < ?"
+                )->execute([gmdate('YmdHi', time() - 7200)]);
+            });
             // Same cadence for the traffic history. An hour bucket is ten
             // digits (GLOB matches the whole string, so the lifetime totals
             // and the meta rows, whose buckets are not numeric, are never
             // touched), and every endpoint books four of them an hour now
             // that it also carries its cost - a month of that is already far
             // more than anything reads back.
-            $db->prepare(
-                "DELETE FROM counters
-                 WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' AND bucket < ?"
-            )->execute([gmdate('YmdH', time() - 30 * 86400)]);
+            Db::retry(static function () use ($db): void {
+                $db->prepare(
+                    "DELETE FROM counters
+                     WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' AND bucket < ?"
+                )->execute([gmdate('YmdH', time() - 30 * 86400)]);
+            });
         }
+    }
+
+    /**
+     * Wins for exactly one worker per hour. The marker row is the horizon
+     * and stays the record - so a flushed cache cannot make the hourly work
+     * run twice in one hour - but reading it and writing it back is not
+     * atomic, and two workers that read the same value would both proceed.
+     * The shared-memory add settles that: it succeeds for one caller.
+     */
+    private static function claimHourly(): bool
+    {
+        $db = Db::get();
+        $st = $db->prepare("SELECT value FROM counters WHERE bucket = 'meta' AND metric = 'player_sweep'");
+        $st->execute();
+        $last = (int)$st->fetchColumn();
+        $st->closeCursor();
+        if ($last >= time() - 3600) {
+            return false;
+        }
+        require_once __DIR__ . '/Caps.php';
+        if (Caps::apcu() && !apcu_add(FOK_APCU_NS . 'sweep:hourly', 1, 3600)) {
+            return false;
+        }
+        Db::retry(static function () use ($db): void {
+            $db->prepare(
+                "INSERT INTO counters (bucket, metric, value) VALUES ('meta', 'player_sweep', ?)
+                 ON CONFLICT (bucket, metric) DO UPDATE SET value = excluded.value"
+            )->execute([time()]);
+        });
+        return true;
     }
 
     // Counts invalid (HTTP 400) requests per IP per minute and alerts on
@@ -634,22 +660,21 @@ final class Util
     private static function noteInvalid(): void
     {
         try {
-            $db = Db::get();
-            $st = $db->prepare(
-                'INSERT INTO ipcount (ip, bucket, value) VALUES (?, ?, 1)
-                 ON CONFLICT (ip, bucket) DO UPDATE SET value = value + 1
-                 RETURNING value'
-            );
+            require_once __DIR__ . '/Caps.php';
+            // A monitor with a one-minute horizon, so it lives in shared
+            // memory and nowhere else. Counting it in the database took the
+            // single writer on every REJECTED request - which is what a
+            // flood is made of, so the guard against one was also its
+            // amplifier. Without APCu there is nothing to count into, and
+            // the guard is simply off; the request is still rejected.
+            if (!Caps::apcu()) {
+                return;
+            }
             $ip = self::clientIp();
-            $st->execute([$ip, gmdate('YmdHi')]);
-            $n = (int)$st->fetchColumn();
-            $st->closeCursor();
+            $ok = false;
+            $n = apcu_inc(FOK_APCU_NS . 'inv:' . $ip . ':' . gmdate('YmdHi'), 1, $ok, 600);
             if ($n > Settings::int('alert_invalid_per_min')) {
                 Alerts::raise('spam', "Client spam: $n invalid requests this minute from $ip");
-            }
-            if ($n === 1) {
-                $db->prepare('DELETE FROM ipcount WHERE bucket < ?')
-                    ->execute([gmdate('YmdHi', time() - 600)]);
             }
         } catch (Throwable $e) {
             // Monitoring must never turn an invalid request into a 500.

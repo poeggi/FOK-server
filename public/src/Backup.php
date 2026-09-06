@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/Settings.php';
+require_once __DIR__ . '/Caps.php';
 
 final class Backup
 {
@@ -72,5 +74,10 @@ final class Backup
         // Any handle opened before this now holds a stale page cache; drop the
         // shared one so the next Db::get() reopens onto the restored data.
         Db::close();
+        // Same reasoning one level up: the settings and capability caches in
+        // shared memory describe the database that was just replaced, and
+        // every worker in the pool holds them, not only this one.
+        Settings::forget();
+        Caps::forget();
     }
 }

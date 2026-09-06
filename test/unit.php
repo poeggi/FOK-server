@@ -446,6 +446,24 @@ Starts::request('aaaaaaaa', 'bbbbbbbb', 1, 'level');
 Starts::forget('aaaaaaaa', 'cccccccc');
 ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'level') === null, "a stranger's bye leaves the pair's epoch alone");
 
+// A row past the keep window is one no stale-epoch guard can reach any more,
+// so request() answers as if it were not there - which is what lets the
+// deletion move off the start path onto the hour (see Starts::prune).
+Starts::forget('aaaaaaaa', 'bbbbbbbb');
+Starts::request('aaaaaaaa', 'bbbbbbbb', 3, 'first');
+Db::get()->prepare('UPDATE starts SET start_pts = ? WHERE a = ? AND b = ?')
+    ->execute([Util::nowMs() - 600000, 'aaaaaaaa', 'bbbbbbbb']);
+$aged = Starts::request('aaaaaaaa', 'bbbbbbbb', 3, 'first');
+ok(is_int($aged) && $aged > Util::nowMs(),
+    'a start past the keep window reads as absent, and a fresh one is issued');
+
+// One duel is one count: the second peer and every repeat are answered from
+// the stored row, so the tally counts duels rather than requests.
+$startedBefore = Stats::all()['duel_started'] ?? 0;
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 3, 'first') === $aged, 'the peer joins that same start');
+ok((Stats::all()['duel_started'] ?? 0) === $startedBefore,
+    'and a start already issued counts no second duel');
+
 // The relay hub and its rate guard live in APCu and have no database
 // transport at all (see RelayStore), so start from a clean keyspace: a
 // backlog left behind by an earlier run would make the counts below depend
@@ -994,6 +1012,28 @@ try {
 }
 ok($threw, 'unknown setting rejected');
 
+// The overrides are cached in shared memory: a settings read sits on nearly
+// every path, and the table behind it changes only when an operator saves.
+// The save is what drops the cache, so a stale value cannot outlive it.
+Settings::int('chat_max_len');
+ok(is_array(apcu_fetch(FOK_APCU_NS . 'cfg')), 'a settings read caches the overrides');
+Settings::set('chat_max_len', 77);
+ok(apcu_fetch(FOK_APCU_NS . 'cfg') === false, 'and a save drops that cache');
+ok(Settings::int('chat_max_len') === 77, 'so the next read answers with the saved value');
+
+// The capability assessment is cached the same way and keyed by release, so
+// a deploy re-probes a host that may have changed under it.
+apcu_delete(FOK_APCU_NS . 'caps:' . FOK_SERVER_VERSION);
+$caps = Caps::refresh();
+ok(is_array(apcu_fetch(FOK_APCU_NS . 'caps:' . FOK_SERVER_VERSION)),
+    'a capability assessment is cached in shared memory');
+ok(apcu_fetch(FOK_APCU_NS . 'caps:' . FOK_SERVER_VERSION)['version'] === FOK_SERVER_VERSION,
+    'under a key only this release reads');
+Caps::forget();
+ok(apcu_fetch(FOK_APCU_NS . 'caps:' . FOK_SERVER_VERSION) === false,
+    'and a restore drops it, so a foreign database cannot answer for this host');
+ok(Caps::get()['version'] === $caps['version'], 'after which the stored assessment answers again');
+
 // Alerts: the lockout above alerted, de-duplicated, seen-tracking. A single
 // failed login deliberately does NOT alert - it is noted (see Alerts).
 ok(Alerts::unseenCount() > 0, 'the admin lockout raised an alert');
@@ -1006,6 +1046,14 @@ Alerts::raise('test-x', 'first');
 Alerts::raise('test-x', 'second within cooldown');
 $testX = array_filter(Alerts::recent(), static fn(array $a) => $a['type'] === 'test-x');
 ok(count($testX) === 1, 'same alert type de-duplicated within cooldown');
+// Shared memory answers the repeat for free, but it is never the truth: a
+// flushed segment (a pool restart) must not turn one sustained condition
+// into a burst of rows.
+apcu_delete(FOK_APCU_NS . 'alert:test-x');
+ok(Alerts::raise('test-x', 'third with the gate flushed') === false,
+    'and still de-duplicated from the table when the shared-memory gate is gone');
+ok(count(array_filter(Alerts::recent(), static fn(array $a) => $a['type'] === 'test-x')) === 1,
+    'so a flush costs a query, never a duplicate row');
 Alerts::markSeen();
 ok(Alerts::unseenCount() === 0, 'mark seen clears unseen count');
 Alerts::raise('test-y', 'new after seen');
@@ -1178,6 +1226,23 @@ ok(Items::owned('aa11aa11') === [], 'the instance left the loser');
 ok(count(Items::owned('bb22bb22')) === 1, 'and arrived at the winner');
 ok((int)$idb->query('SELECT COUNT(*) FROM items')->fetchColumn() === 1,
     'a transfer moves the row and can never mint one');
+// A replay is answered from the ledger, and counted by nothing: the
+// transaction that settled the transfer already counted this claim, and a
+// client that re-sends must not be able to inflate its own tally.
+$tally = static function (string $id): array {
+    $st = Db::get()->prepare(
+        'SELECT claims_ok, claims_untagged, claims_disputed FROM players WHERE id = ?'
+    );
+    $st->execute([$id]);
+    $row = $st->fetch();
+    $st->closeCursor();
+    return $row === false ? [] : $row;
+};
+$countedBefore = $tally('aa11aa11');
+$res = Items::claim('aa11aa11', $m['mid'], $uid, 'aa11aa11', 'bb22bb22', 5, 0, 'ws',
+    Ledger::mac($m['sec_a'], $m['mid'], 5, 'ws'), null);
+ok($res['ok'] && $res['state'] === 'confirmed', 'the identical claim replayed reads as already done');
+ok($tally('aa11aa11') === $countedBefore, 'and is counted once, not once per retry');
 $res = Items::claim('aa11aa11', $m['mid'], $uid, 'aa11aa11', 'bb22bb22', 6, 0, 'ws',
     Ledger::mac($m['sec_a'], $m['mid'], 6, 'ws'), null);
 ok(!$res['ok'] && $res['error'] === 'counterfeit', 'claiming an item you no longer own is counterfeit');
@@ -1841,6 +1906,16 @@ ok(($totals['tourney_created'] ?? 0) > 0, 'every created tournament is counted')
 ok(($totals['tourney_finished'] ?? 0) > 0, 'and so is every one that played out');
 ok(($totals['tourney_matches'] ?? 0) > 0, 'with the matches it actually played');
 ok(($totals['duel_started'] ?? 0) > 0, 'a 1:1 is counted where play begins');
+// A tournament lock is released by the worker that took it and by nobody
+// else: the lease is short so a dead worker frees the tournament, which
+// means it can also expire under a live one - and the next holder must not
+// have the lock deleted out from under them.
+ok(TourneyStore::lock('hklocktest'), 'a tournament lock is taken');
+apcu_store('fok:tlock:hklocktest', 'another worker', 5);
+TourneyStore::unlock('hklocktest');
+ok(apcu_fetch('fok:tlock:hklocktest') === 'another worker',
+    'and an unlock that no longer holds it leaves it alone');
+apcu_delete('fok:tlock:hklocktest');
 // The lifetime bucket shares the counters table with the per-minute request
 // counts and the hourly traffic buckets, and that lookup is a STRING
 // comparison - so anything that is not a YmdH stamp, whether a name or a
@@ -2013,6 +2088,13 @@ Db::get()->exec("INSERT INTO duels (a, b, started, last_seen) VALUES ('hk440004'
 Db::get()->exec("INSERT INTO alerts (type, message, created, seen) VALUES ('hk', 'read', 0, 1)");
 Db::get()->exec("INSERT INTO alerts (type, message, created, seen) VALUES ('hk', 'unread', 0, 0)");
 Db::get()->exec("INSERT INTO settings (key, value) VALUES ('retired_last_release', 7)");
+// The two the duel paths hand over rather than delete under their own lock
+// (see Starts::prune and Items::pruneMatches): a start no epoch guard can
+// reach, and a match no claim could name. The live pair above keeps its own.
+Db::get()->exec("INSERT INTO starts (a, b, start_pts, created, epoch, reason, mid)
+                 VALUES ('hk440004', 'hk550005', 0, 0, 0, 'first', '')");
+$hkStale = Items::openMatch(Db::get(), 'hk660006', 'hk770007', 1);
+$hkLive = Items::openMatch(Db::get(), 'hk220002', 'hk330003', 1);
 $swept = Housekeeping::sweep();
 ok(($swept['duels'] ?? 0) === 1, 'the sweep forgets a duel pair past the TTL');
 $st = Db::get()->prepare('SELECT COUNT(*) FROM duels WHERE a = ?');
@@ -2029,6 +2111,20 @@ $st = Db::get()->prepare('SELECT COUNT(*) FROM settings WHERE key = ?');
 $st->execute(['player_ttl_days']);
 ok((int)$st->fetchColumn() === 1, 'while the keys a release does know stay');
 $st->closeCursor();
+$st = Db::get()->prepare('SELECT COUNT(*) FROM starts WHERE a = ?');
+$st->execute(['hk440004']);
+ok((int)$st->fetchColumn() === 0, 'it drops a start past its keep window');
+$st->closeCursor();
+$st = Db::get()->prepare('SELECT COUNT(*) FROM matches WHERE mid = ?');
+$st->execute([$hkStale['mid']]);
+ok((int)$st->fetchColumn() === 0, 'and a match no claim could name any more');
+$st->closeCursor();
+$st = Db::get()->prepare('SELECT COUNT(*) FROM matches WHERE mid = ?');
+$st->execute([$hkLive['mid']]);
+ok((int)$st->fetchColumn() === 1, 'while a match whose duel still reports in stays claimable');
+$st->closeCursor();
+ok(($swept['starts'] ?? 0) >= 1 && ($swept['matches'] ?? 0) >= 1,
+    'and reports both among the rows it removed');
 
 $rep = [];
 $hk = Housekeeping::report();
@@ -2039,6 +2135,8 @@ ok($rep['items']['loose'] >= 1 && $rep['items']['policy'] === 'kept',
     'the report calls the wardrobe of a departed player kept, not stale');
 ok($rep['player_nets']['loose'] === 0 && $rep['friends']['loose'] === 0,
     'and finds no orphans, because there is only one removal path');
+ok(isset($rep['starts']) && isset($rep['matches']),
+    'the card accounts for every table the sweep touches');
 ok($hk['db_size'] > 0, 'alongside the size of the file it is all in');
 
 // Counters: the worst-case list the queue gauge shows under its graphs. It

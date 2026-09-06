@@ -38,6 +38,28 @@ final class Stats
      */
     public static function bump(array $metrics): void
     {
+        try {
+            Db::retry(static function () use ($metrics): void {
+                self::bumpIn(Db::get(), $metrics);
+            });
+        } catch (Throwable $e) {
+            error_log('FOK stats: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * The same write, INSIDE a transaction the caller already holds. A
+     * counter that belongs to something being written anyway rides along
+     * with it instead of taking the single writer a second time right after
+     * it was released (see Starts::request).
+     *
+     * No retry and no catch here on purpose: both belong to the caller's
+     * transaction, and swallowing an error would leave it half-applied.
+     *
+     * @param array<string, int> $metrics metric name => amount to add
+     */
+    public static function bumpIn(PDO $db, array $metrics): void
+    {
         $metrics = array_filter($metrics, static fn(int $n): bool => $n > 0);
         if ($metrics === []) {
             return;
@@ -50,16 +72,10 @@ final class Stats
             $args[] = $metric;
             $args[] = $n;
         }
-        try {
-            Db::retry(static function () use ($rows, $args): void {
-                Db::get()->prepare(
-                    'INSERT INTO counters (bucket, metric, value) VALUES ' . implode(', ', $rows) .
-                    ' ON CONFLICT (bucket, metric) DO UPDATE SET value = value + excluded.value'
-                )->execute($args);
-            });
-        } catch (Throwable $e) {
-            error_log('FOK stats: ' . $e->getMessage());
-        }
+        $db->prepare(
+            'INSERT INTO counters (bucket, metric, value) VALUES ' . implode(', ', $rows) .
+            ' ON CONFLICT (bucket, metric) DO UPDATE SET value = value + excluded.value'
+        )->execute($args);
     }
 
     /**

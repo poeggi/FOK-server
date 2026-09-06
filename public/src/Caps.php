@@ -20,6 +20,12 @@ require_once __DIR__ . '/Db.php';
  */
 final class Caps
 {
+    // Keyed by release: a deploy misses and re-assesses, which is exactly
+    // when the answer can have changed. The TTL only bounds how long a
+    // stale segment could answer for a release that is no longer deployed.
+    private const CACHE_KEY = FOK_APCU_NS . 'caps:' . FOK_SERVER_VERSION;
+    private const CACHE_TTL = 3600;
+
     private static ?array $cache = null;
 
     /** Assessment for THIS release, probing only if missing or stale. */
@@ -27,6 +33,12 @@ final class Caps
     {
         if (self::$cache !== null) {
             return self::$cache;
+        }
+        if (self::available()) {
+            $hit = apcu_fetch(self::CACHE_KEY);
+            if (is_array($hit)) {
+                return self::$cache = $hit;
+            }
         }
         $st = Db::get()->prepare('SELECT version, checked, data FROM caps WHERE id = 1');
         $st->execute();
@@ -37,6 +49,7 @@ final class Caps
         if ($row !== false && $row['version'] === FOK_SERVER_VERSION) {
             $stored['version'] = (string)$row['version'];
             $stored['checked'] = (int)$row['checked'];
+            self::remember($stored);
             return self::$cache = $stored;
         }
         // Missing or from another release: assess once.
@@ -48,6 +61,29 @@ final class Caps
     {
         self::$cache = null;
         return self::$cache = self::assess();
+    }
+
+    /** Drop the caches; the next get() re-reads the stored assessment. */
+    public static function forget(): void
+    {
+        if (self::available()) {
+            apcu_delete(self::CACHE_KEY);
+        }
+        self::$cache = null;
+    }
+
+    // The raw probe, not apcu() below: that one answers FROM the assessment
+    // this is guarding, so asking it here would be a cycle.
+    private static function available(): bool
+    {
+        return function_exists('apcu_fetch') && apcu_enabled();
+    }
+
+    private static function remember(array $out): void
+    {
+        if (self::available()) {
+            apcu_store(self::CACHE_KEY, $out, self::CACHE_TTL);
+        }
     }
 
     /**
@@ -127,11 +163,17 @@ final class Caps
             'apcu' => $usable,
             'checks' => $checks,
         ];
-        Db::get()->prepare(
-            'INSERT INTO caps (id, version, checked, data) VALUES (1, ?, ?, ?)
-             ON CONFLICT (id) DO UPDATE SET version = excluded.version,
-                 checked = excluded.checked, data = excluded.data'
-        )->execute([$out['version'], $out['checked'], (string)json_encode($out)]);
+        // The first request after a deploy runs this, and on a busy server
+        // several of them run it at once: the write has to survive losing
+        // the writer lock, or one of them answers 500 for a probe.
+        Db::retry(static function () use ($out): void {
+            Db::get()->prepare(
+                'INSERT INTO caps (id, version, checked, data) VALUES (1, ?, ?, ?)
+                 ON CONFLICT (id) DO UPDATE SET version = excluded.version,
+                     checked = excluded.checked, data = excluded.data'
+            )->execute([$out['version'], $out['checked'], (string)json_encode($out)]);
+        });
+        self::remember($out);
         return $out;
     }
 }

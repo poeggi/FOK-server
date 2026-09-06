@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Settings.php';
+require_once __DIR__ . '/Caps.php';
 
 /**
  * Alert store for operational events, and the one place that decides what an
@@ -39,16 +40,35 @@ final class Alerts
      */
     public static function raise(string $type, string $message): bool
     {
+        $cooldown = Settings::int('alert_cooldown');
+        // The de-duplication gate, in shared memory. A sustained condition
+        // calls raise() from every request that observes it and all but one
+        // are suppressed - but learning that from the alerts table means a
+        // scan per suppressed call, on the hot path and, for a desync, from
+        // inside a held long poll. apcu_add IS the test: it succeeds
+        // for exactly one caller per window, so a suppressed repeat now
+        // costs no SQL at all. A cooldown of 0 means "do not de-duplicate",
+        // and a zero TTL would mean the opposite here, so it skips the gate
+        // and leaves the decision to the query below.
+        if ($cooldown > 0 && Caps::apcu()
+            && !apcu_add(FOK_APCU_NS . 'alert:' . $type, 1, $cooldown)) {
+            return false;
+        }
         $db = Db::get();
+        // Still the source of truth: shared memory can be flushed (a pool
+        // restart, a full segment) and one condition must not become a burst
+        // of rows because of it.
         $st = $db->prepare('SELECT 1 FROM alerts WHERE type = ? AND created > ? LIMIT 1');
-        $st->execute([$type, time() - Settings::int('alert_cooldown')]);
+        $st->execute([$type, time() - $cooldown]);
         $recent = $st->fetchColumn() !== false;
         $st->closeCursor();
         if ($recent) {
             return false;
         }
-        $db->prepare('INSERT INTO alerts (type, message, created, seen) VALUES (?, ?, ?, 0)')
-            ->execute([$type, $message, time()]);
+        Db::retry(static function () use ($db, $type, $message): void {
+            $db->prepare('INSERT INTO alerts (type, message, created, seen) VALUES (?, ?, ?, 0)')
+                ->execute([$type, $message, time()]);
+        });
         // Every alert is also a log line: the dashboard shows the last 50 and
         // can be cleared, the log keeps the history and the exact time. The
         // "alert" word is what Logs::level reads to colour it as a warning.

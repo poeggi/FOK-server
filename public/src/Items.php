@@ -66,28 +66,25 @@ final class Items
 
     // ---- Matches (minted from Starts where play begins) -------------------
 
+    // One predicate for the sweep and for the card that promises it; they
+    // drift apart the moment there are two (see Housekeeping).
+    private const MATCH_PRUNE_WHERE =
+        'FROM matches WHERE opened < ?
+          AND NOT EXISTS (SELECT 1 FROM duels d
+                          WHERE ((d.a = matches.a AND d.b = matches.b)
+                              OR (d.a = matches.b AND d.b = matches.a))
+                            AND d.last_seen > ?)';
+
     /**
      * Mints a match for the ordered pair and returns its row. Called from
      * inside the start transaction (see Starts::request), so it inherits the
      * epoch idempotence: the first peer mints, the second reads the mid off
-     * the start row. Prunes matches past their claim window on the way - the
-     * table holds one row per duel game, so this stays tiny.
+     * the start row.
      *
      * @return array{mid:string, sec_a:string, sec_b:string}
      */
     public static function openMatch(PDO $db, string $a, string $b, int $now): array
     {
-        // Prunes what no claim could reach any more (see matchDeadline): past
-        // the mint window AND with no duel still alive to extend it. A running
-        // duel is what holds its own match row here.
-        $cut = $now - self::windowMs();
-        $db->prepare(
-            'DELETE FROM matches WHERE opened < ?
-              AND NOT EXISTS (SELECT 1 FROM duels d
-                              WHERE ((d.a = matches.a AND d.b = matches.b)
-                                  OR (d.a = matches.b AND d.b = matches.a))
-                                AND d.last_seen > ?)'
-        )->execute([$cut, intdiv($cut, 1000)]);
         $mid = self::newId();
         $secA = self::newId();
         $secB = self::newId();
@@ -96,6 +93,35 @@ final class Items
              VALUES (?, ?, ?, ?, 0, ?, ?)'
         )->execute([$mid, $a, $b, $now, $secA, $secB]);
         return ['mid' => $mid, 'sec_a' => $secA, 'sec_b' => $secB];
+    }
+
+    /**
+     * Drops matches no claim could reach any more (see matchDeadline): past
+     * the mint window AND with no duel still alive to extend it. A running
+     * duel is what holds its own match row here.
+     *
+     * Hourly, and never on the mint path: this is a correlated DELETE across
+     * two tables, and the transaction that mints a match is the one every
+     * duel in the game waits behind. The table grows by one row per duel
+     * game, which the hour keeps just as small (see Housekeeping::sweep).
+     */
+    public static function pruneMatches(PDO $db, int $nowMs): int
+    {
+        $cut = $nowMs - self::windowMs();
+        $st = $db->prepare('DELETE ' . self::MATCH_PRUNE_WHERE);
+        $st->execute([$cut, intdiv($cut, 1000)]);
+        return $st->rowCount();
+    }
+
+    /** What the next pruneMatches() would take, for the Housekeeping card. */
+    public static function pruneableMatches(PDO $db, int $nowMs): int
+    {
+        $cut = $nowMs - self::windowMs();
+        $st = $db->prepare('SELECT COUNT(*) ' . self::MATCH_PRUNE_WHERE);
+        $st->execute([$cut, intdiv($cut, 1000)]);
+        $n = (int)$st->fetchColumn();
+        $st->closeCursor();
+        return $n;
     }
 
     /**
@@ -241,14 +267,20 @@ final class Items
     public static function seed(string $id, array $clientItems, ?array $vaultItems): array
     {
         $db = Db::get();
+        // The guard is read before the lock. Every launch of an enrolled
+        // client asks again, and all but the very first have nothing to do -
+        // so only a real first seed queues for the writer, and the rest are a
+        // read on a table nobody is blocked by.
+        if (self::seeded($db, $id)) {
+            return self::wardrobe($id);
+        }
         $now = Util::nowMs();
         $db->exec('BEGIN IMMEDIATE');
         try {
-            $st = $db->prepare('SELECT items_seeded FROM players WHERE id = ?');
-            $st->execute([$id]);
-            $seeded = (int)$st->fetchColumn();
-            $st->closeCursor();
-            if ($seeded === 0) {
+            // Read again under the lock. The unlocked look only established
+            // that there was work to do; two launches arriving together would
+            // otherwise both mint the same amnesty.
+            if (!self::seeded($db, $id)) {
                 $source = $vaultItems !== null ? $vaultItems : $clientItems;
                 $ids = [];
                 foreach ($source as $item) {
@@ -276,6 +308,27 @@ final class Items
             }
             throw $e;
         }
+        return self::wardrobe($id);
+    }
+
+    // Has this player's one-time amnesty already been granted?
+    private static function seeded(PDO $db, string $id): bool
+    {
+        $st = $db->prepare('SELECT items_seeded FROM players WHERE id = ?');
+        $st->execute([$id]);
+        $seeded = (int)$st->fetchColumn();
+        $st->closeCursor();
+        return $seeded !== 0;
+    }
+
+    /**
+     * What seed() answers with either way: the player's wardrobe as the seed
+     * reply shapes it (see docs/API.md).
+     *
+     * @return list<array{uid:string,item_id:string}>
+     */
+    private static function wardrobe(string $id): array
+    {
         $out = [];
         foreach (self::owned($id) as $r) {
             $out[] = ['uid' => $r['uid'], 'item_id' => $r['item_id']];
@@ -351,9 +404,8 @@ final class Items
             if (Ledger::verifyTag($peerSecret, $mid, $tick, $wsDigest, $peerTag)) {
                 $peerConfirmed = true;
             } else {
-                self::freeze($db, $uid);
+                self::freezeDisputed($db, $uid, $id);
                 Alerts::raise('item_tag_invalid', "Invalid attestation tag: uid $uid from player $id");
-                self::bumpClaim($id, 'claims_disputed');
                 return ['ok' => false, 'code' => 409, 'error' => 'tag invalid'];
             }
         }
@@ -385,9 +437,12 @@ final class Items
         $st->closeCursor();
 
         // Idempotent replay: this exact transfer already settled. A client
-        // that re-sends after settling must not read as counterfeit.
+        // that re-sends after settling must not read as counterfeit. The
+        // tally is deliberately NOT touched: the transaction that settled the
+        // transfer counted this claim, and a retrying client must not be able
+        // to inflate its own claim statistics by asking twice. It also costs
+        // no writer lock, which is what a replay should cost.
         if ($alreadyDone) {
-            self::bumpClaim($id, $peerConfirmed ? 'claims_ok' : 'claims_untagged');
             return ['ok' => true, 'seq' => $it === false ? $seq : (int)$it['seq'], 'state' => 'confirmed'];
         }
         if ($it === false) {
@@ -402,9 +457,8 @@ final class Items
         // asserts a DIFFERENT direction. Impossible in an honest game -
         // one simulation moment has one outcome - so it is tampering.
         if (self::contradicted($db, $mid, $uid, $tick, $from, $to)) {
-            self::freeze($db, $uid);
+            self::freezeDisputed($db, $uid, $id);
             Alerts::raise('item_contradiction', "Contradictory claims: uid $uid from player $id");
-            self::bumpClaim($id, 'claims_disputed');
             return ['ok' => false, 'code' => 409, 'error' => 'contradiction'];
         }
 
@@ -443,7 +497,13 @@ final class Items
                         throw $e;
                     }
                 } else {
-                    self::bumpClaim($id, 'claims_untagged');
+                    // The hold is already open, so this is a repeat poll on
+                    // it and the tally is the only write. Alone it has no
+                    // transaction to ride, and a lost race for the writer
+                    // must not fail a claim that was otherwise accepted.
+                    Db::retry(static function () use ($id): void {
+                        self::bumpClaim($id, 'claims_untagged');
+                    });
                 }
                 return ['ok' => true, 'seq' => (int)$it['seq'], 'state' => 'held'];
             }
@@ -460,9 +520,13 @@ final class Items
             // that is about to write anyway.
             if (self::contradicted($db, $mid, $uid, $tick, $from, $to)) {
                 self::freezeInTx($db, $uid);
+                // The tally rides the same transaction as the freeze it
+                // records: a verdict and its accounting are one fact, and
+                // taking the writer a second time for one column is a lock the
+                // whole database would queue behind.
+                self::bumpClaim($id, 'claims_disputed');
                 $db->exec('COMMIT');
                 Alerts::raise('item_contradiction', "Contradictory claims: uid $uid from player $id");
-                self::bumpClaim($id, 'claims_disputed');
                 return ['ok' => false, 'code' => 409, 'error' => 'contradiction'];
             }
 
@@ -499,15 +563,41 @@ final class Items
 
     // ---- small helpers ---------------------------------------------------
 
-    private static function freeze(PDO $db, string $uid): void
+    // Freezes an instance. Every caller holds a transaction: a freeze is a
+    // verdict on tampering, and the tally that records it has to land with it
+    // or not at all.
+    private static function freezeInTx(PDO $db, string $uid): void
     {
         $db->prepare('UPDATE items SET frozen = 1 WHERE uid = ?')->execute([$uid]);
     }
 
-    // Same, but the caller already holds a transaction.
-    private static function freezeInTx(PDO $db, string $uid): void
+    /**
+     * The tampering verdict reached OUTSIDE the settling transaction: freeze
+     * the instance and count the dispute against the claimant, in one
+     * transaction. Two writes that describe one finding, so they take the
+     * writer once between them - and a freeze with no tally behind it would
+     * be a finding the admin card cannot show.
+     *
+     * Re-runnable as a whole: a BUSY rolls the transaction back before the
+     * increment, so a retry cannot count the same dispute twice. The alert
+     * belongs AFTER the commit - it is a report of what happened, not part
+     * of it.
+     */
+    private static function freezeDisputed(PDO $db, string $uid, string $id): void
     {
-        $db->prepare('UPDATE items SET frozen = 1 WHERE uid = ?')->execute([$uid]);
+        Db::retry(static function () use ($db, $uid, $id): void {
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                self::freezeInTx($db, $uid);
+                self::bumpClaim($id, 'claims_disputed');
+                $db->exec('COMMIT');
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
+            }
+        });
     }
 
     // Is there a prior entry for this (mid, uid, tick) that asserts a
@@ -559,6 +649,9 @@ final class Items
 
     // A per-player claim tally, for statistical review on the admin card. The
     // column name is a fixed literal from a closed set, never client input.
+    // No transaction and no retry of its own: a tally belongs to the write it
+    // describes, so every caller either already holds that transaction or
+    // wraps this one call in Db::retry.
     private static function bumpClaim(string $id, string $column): void
     {
         if (!in_array($column, ['claims_ok', 'claims_untagged', 'claims_disputed'], true)) {

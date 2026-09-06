@@ -118,17 +118,48 @@ final class Settings
         'admin_stats_refresh_secs' => [5, 'Statistics card refresh interval (seconds, 0 = off)'],
     ];
 
+    // Only the rows that OVERRIDE a default are stored and cached; a key at
+    // its default has no row, and DEFS answers for it.
+    private const CACHE_KEY = FOK_APCU_NS . 'cfg';
+    // A safety net, not the invalidation: set() drops the entry. This only
+    // bounds how long a cache could outlive a row written by something that
+    // never went through set() (a restored backup that also lost the drop).
+    private const CACHE_TTL = 600;
+
     private static ?array $cache = null;
 
     public static function int(string $key): int
     {
         if (self::$cache === null) {
-            self::$cache = [];
-            foreach (Db::get()->query('SELECT key, value FROM settings') as $row) {
-                self::$cache[$row['key']] = (int)$row['value'];
-            }
+            self::$cache = self::load();
         }
         return self::$cache[$key] ?? self::DEFS[$key][0];
+    }
+
+    /**
+     * The overrides table. Every request reads settings, most of them read
+     * nothing else, so this is the query that decided whether a long poll
+     * had to open the database at all - hence shared memory in front of it.
+     *
+     * @return array<string, int>
+     */
+    private static function load(): array
+    {
+        $apcu = self::apcu();
+        if ($apcu) {
+            $hit = apcu_fetch(self::CACHE_KEY);
+            if (is_array($hit)) {
+                return $hit;
+            }
+        }
+        $rows = [];
+        foreach (Db::get()->query('SELECT key, value FROM settings') as $row) {
+            $rows[$row['key']] = (int)$row['value'];
+        }
+        if ($apcu) {
+            apcu_store(self::CACHE_KEY, $rows, self::CACHE_TTL);
+        }
+        return $rows;
     }
 
     public static function set(string $key, int $value): void
@@ -136,11 +167,31 @@ final class Settings
         if (!isset(self::DEFS[$key])) {
             throw new InvalidArgumentException("unknown setting $key");
         }
-        Db::get()->prepare(
-            'INSERT INTO settings (key, value) VALUES (?, ?)
-             ON CONFLICT (key) DO UPDATE SET value = excluded.value'
-        )->execute([$key, $value]);
+        // Row first, then the cache: a worker that reads between the two
+        // gets the new value, never a cached old one over a written row.
+        Db::retry(static function () use ($key, $value): void {
+            Db::get()->prepare(
+                'INSERT INTO settings (key, value) VALUES (?, ?)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value'
+            )->execute([$key, $value]);
+        });
+        self::forget();
+    }
+
+    /** Drop the caches; the next read re-loads from the table. */
+    public static function forget(): void
+    {
+        if (self::apcu()) {
+            apcu_delete(self::CACHE_KEY);
+        }
         self::$cache = null;
+    }
+
+    // Deliberately not Caps::apcu(): answering that opens the database, and
+    // keeping requests off the database is the whole point of this cache.
+    private static function apcu(): bool
+    {
+        return function_exists('apcu_fetch') && apcu_enabled();
     }
 
     /** @return array<int, array{key:string, value:int, default:int, label:string}> */

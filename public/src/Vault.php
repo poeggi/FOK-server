@@ -25,18 +25,33 @@ final class Vault
         if ($row === null || $row['token_hash'] === '') {
             $token = bin2hex(random_bytes(16));
             $hash = hash('sha256', $token);
+            $expect = '';
         } elseif ($token !== null && hash_equals($row['token_hash'], hash('sha256', $token))) {
             $hash = $row['token_hash'];
+            $expect = $hash;
         } else {
             return null;
         }
         $now = time();
-        Db::get()->prepare(
-            'INSERT INTO vault (id, payload, token_hash, updated) VALUES (?, ?, ?, ?)
-             ON CONFLICT (id) DO UPDATE SET payload = excluded.payload,
-                 token_hash = excluded.token_hash, updated = excluded.updated'
-        )->execute([$id, $payload, $hash, $now]);
-        return ['token' => $token, 'updated' => $now];
+        // The write arbitrates, not the read above it: the row is read
+        // unlocked, so a first backup from another device - or an operator's
+        // resetToken and the re-enrolment behind it - can land in between.
+        // The upsert therefore states which token hash it believed it was
+        // replacing, and an unenrolled slot ('') stays claimable. Matching no
+        // row means somebody else's token owns the backup now, and this
+        // caller is refused exactly as if it had presented a wrong one -
+        // never silently overwriting a backup it cannot prove it owns.
+        $won = Db::retry(static function () use ($id, $payload, $hash, $now, $expect): bool {
+            $st = Db::get()->prepare(
+                "INSERT INTO vault (id, payload, token_hash, updated) VALUES (?, ?, ?, ?)
+                 ON CONFLICT (id) DO UPDATE SET payload = excluded.payload,
+                     token_hash = excluded.token_hash, updated = excluded.updated
+                 WHERE vault.token_hash = ? OR vault.token_hash = ''"
+            );
+            $st->execute([$id, $payload, $hash, $now, $expect]);
+            return $st->rowCount() > 0;
+        });
+        return $won ? ['token' => $token, 'updated' => $now] : null;
     }
 
     /**

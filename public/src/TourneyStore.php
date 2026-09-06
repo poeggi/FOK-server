@@ -51,6 +51,15 @@ final class TourneyStore
      */
     private const LOCK_TTL = 5;
 
+    /**
+     * The lock value this worker wrote, per tid. A lock is a claim by ONE
+     * request, so the proof of ownership lives for exactly as long as the
+     * request does (see unlock).
+     *
+     * @var array<string, string>
+     */
+    private static array $held = [];
+
     /** Tournament mode is unavailable without shared memory. */
     public static function usable(): bool
     {
@@ -190,8 +199,10 @@ final class TourneyStore
      */
     public static function lock(string $tid, int $tries = 40): bool
     {
+        $token = bin2hex(random_bytes(8));
         for ($attempt = 1; $attempt <= $tries; $attempt++) {
-            if (apcu_add(self::LOCK . $tid, 1, self::LOCK_TTL)) {
+            if (apcu_add(self::LOCK . $tid, $token, self::LOCK_TTL)) {
+                self::$held[$tid] = $token;
                 return true;
             }
             usleep(random_int(2000, 8000));
@@ -199,9 +210,22 @@ final class TourneyStore
         return false;
     }
 
+    /**
+     * Releases the lock, and ONLY if it is still the one this worker took.
+     * LOCK_TTL is deliberately short - a worker that dies must not strand a
+     * tournament - so a lease can expire while its holder is still running
+     * and another worker can legitimately take the lock next. A blind delete
+     * would then release somebody else's, handing the same tournament to a
+     * third worker while the second is mid-transition. Whoever wrote the
+     * entry is the only one allowed to remove it.
+     */
     public static function unlock(string $tid): void
     {
-        apcu_delete(self::LOCK . $tid);
+        $token = self::$held[$tid] ?? null;
+        unset(self::$held[$tid]);
+        if ($token !== null && apcu_fetch(self::LOCK . $tid) === $token) {
+            apcu_delete(self::LOCK . $tid);
+        }
     }
 
     /**
