@@ -644,6 +644,20 @@ function onPresence(string $id): bool
     }
     return false;
 }
+// The tracked connections live in shared memory, so a test that needs an
+// aged or a cleared one edits the entries directly - the same way the
+// mailbox tests above reach into the signal keys.
+function connPoke(string $id, array $fields): void
+{
+    $e = ConnTrack::stateOf($id);
+    if ($e !== null) {
+        apcu_store(ConnTrack::key($id), $fields + $e, ConnTrack::TTL);
+    }
+}
+function connWipe(): void
+{
+    apcu_delete(new APCUIterator('/^' . preg_quote(FOK_APCU_NS . 'conn:', '/') . '/'));
+}
 ok(duelOf('aaaaaaaa') === [], 'an untracked client is not on the Duels card');
 ok(onPresence('aaaaaaaa'), 'but every online client is on the presence card');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
@@ -667,9 +681,9 @@ ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'playing keeps the negotiated mode');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
 ok(duelOf('aaaaaaaa')['state'] === 'ended', 'bye ends the duel but it lingers');
 ok(duelOf('bbbbbbbb')['state'] === 'ended', 'the peer side lingers as ended too');
-ok(duelOf('aaaaaaaa')['peer'] === 'bbbbbbbb', 'the ended row still names the peer');
-Db::get()->prepare('UPDATE conn SET updated = ? WHERE id IN (?, ?)')
-    ->execute([time() - FOK_DUEL_LINGER - 1, 'aaaaaaaa', 'bbbbbbbb']);
+ok(duelOf('aaaaaaaa')['peer'] === 'bbbbbbbb', 'the ended entry still names the peer');
+connPoke('aaaaaaaa', ['updated' => time() - FOK_DUEL_LINGER - 1]);
+connPoke('bbbbbbbb', ['updated' => time() - FOK_DUEL_LINGER - 1]);
 ok(duelOf('aaaaaaaa') === [], 'past the linger the ended duel drops off the card');
 
 // ConnTrack: the no-P2P bit is honored from either side and sticks within
@@ -693,41 +707,44 @@ Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
 ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'relay traffic reports relay without a declaration');
 ok(duelOf('aaaaaaaa')['state'] === 'playing', 'relay traffic means the game runs');
 
-// ConnTrack: the ICE-burst write skip (see ConnTrack::set) elides a redundant
-// same-state 'connecting' refresh, but it must never swallow a mode change.
-// Build a fresh connecting/p2p pair, prove a same-state ice leaves the mode
-// alone, then let a relay declaration arrive inside the throttle window: the
-// p2p -> relay upgrade still has to land on both sides.
+// ConnTrack: an ICE burst is a run of same-state 'connecting' signals, each
+// of which re-applies the mode rule (see ConnTrack::set). A same-state ice
+// must leave a negotiated mode alone, and a relay declaration arriving in
+// the middle of the burst must still upgrade both sides - the p2p -> relay
+// bit is the one thing in such a burst that means anything.
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
 ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'accept');
 ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'a fresh accept negotiates p2p');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'ice');
-ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'a skipped ice refresh leaves the mode untouched');
+ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'a same-state ice refresh leaves the mode untouched');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'accept-relay');
-ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'a relay upgrade lands even inside the connecting burst window');
-ok(duelOf('bbbbbbbb')['mode'] === 'relay', 'the peer side sees the in-window upgrade too');
+ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'a relay upgrade lands in the middle of the connecting burst');
+ok(duelOf('bbbbbbbb')['mode'] === 'relay', 'the peer side sees the mid-burst upgrade too');
 
 // ConnTrack: a duel that goes quiet (no bye reached us) is shown as ended
 // for the linger window, then drops off.
-Db::get()->prepare('UPDATE conn SET updated = ? WHERE id = ?')
-    ->execute([time() - FOK_CONN_TTL - 1, 'aaaaaaaa']);
+connPoke('aaaaaaaa', ['updated' => time() - FOK_CONN_TTL - 1]);
 ok(duelOf('aaaaaaaa')['state'] === 'ended', 'a quiet duel reads as ended');
-Db::get()->prepare('UPDATE conn SET updated = ? WHERE id = ?')
-    ->execute([time() - FOK_CONN_TTL - FOK_DUEL_LINGER - 1, 'aaaaaaaa']);
+connPoke('aaaaaaaa', ['updated' => time() - FOK_CONN_TTL - FOK_DUEL_LINGER - 1]);
 ok(duelOf('aaaaaaaa') === [], 'past the linger the quiet duel drops off the card');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
 ConnTrack::forget('aaaaaaaa');
 ok(duelOf('aaaaaaaa') === [], 'a forgotten client is off the Duels card');
 ok(duelOf('bbbbbbbb') === [], 'forget drops the peer side as well');
 
-// ConnTrack: a client with no player row is on neither card.
+// ConnTrack: a client with no player row is on neither card - not even one
+// that IS tracked, which is a real state (an admin delete drops the player
+// row) and used to be excluded by the card's JOIN.
 ok(!onPresence('cccccccc'), 'an unknown client is not on the presence card');
 ok(duelOf('cccccccc') === [], 'nor on the Duels card');
+ConnTrack::note('cccccccc', 'dddddddd', 'invite');
+ok(ConnTrack::stateOf('cccccccc') !== null, 'an unknown client can still be tracked');
+ok(duelOf('cccccccc') === [], 'but it has no name, so it stays off the Duels card');
 
 // ConnTrack: a quick-match seeker shows as matchmaking only while it is
 // actively polling; one that went quiet drops off (as the matchmaker does).
-Db::get()->exec('DELETE FROM conn');
+connWipe();
 Db::get()->exec('DELETE FROM mm_queue');
 Db::get()->prepare('INSERT INTO mm_queue (id, since, last_poll) VALUES (?, ?, ?)')
     ->execute(['aaaaaaaa', time(), time()]);
@@ -740,7 +757,7 @@ Db::get()->exec('DELETE FROM mm_queue');
 // Relay: relay admission is counted from the hub traffic a pair
 // really caused, not from queued messages (gone the instant the receiver
 // drains them) and not from what a client claims.
-Db::get()->exec('DELETE FROM conn');
+connWipe();
 ok(Relay::activePairs() === 0, 'no relayed pairs on a quiet server');
 ok(!Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'idle pair holds no relay slot');
 Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
@@ -749,14 +766,14 @@ ok(Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'relaying pair holds its slot');
 ok(Relay::isRelaying('bbbbbbbb', 'aaaaaaaa'), 'slot is held from either side');
 Relay::markRelaying('bbbbbbbb', 'aaaaaaaa');
 ok(Relay::activePairs() === 1, 'both directions are still one pair');
-Db::get()->prepare('UPDATE conn SET relay_seen = ? WHERE id IN (?, ?)')
-    ->execute([time() - FOK_RELAY_WINDOW - 1, 'aaaaaaaa', 'bbbbbbbb']);
+connPoke('aaaaaaaa', ['relay_seen' => time() - FOK_RELAY_WINDOW - 1]);
+connPoke('bbbbbbbb', ['relay_seen' => time() - FOK_RELAY_WINDOW - 1]);
 ok(Relay::activePairs() === 0, 'a pair that stopped relaying frees its slot');
 
 // Relay: a DECLARATION must never take a relay slot. accept-relay is
 // not friendship-gated, so if a claim counted, a handful of invented
 // pairs would deny the relay to everyone.
-Db::get()->exec('DELETE FROM conn');
+connWipe();
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite-relay');
 ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'declaration is tracked as relay mode');
 ok(Relay::activePairs() === 0, 'a no-p2p declaration takes no relay slot');
@@ -782,13 +799,13 @@ ok(duelOf('aaaaaaaa')['state'] === 'ended', "the real peer's bye ends it (it lin
 ok(!Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'and frees the relay slot at once');
 ok(Relay::peerLeft('aaaaaaaa', 'bbbbbbbb'), "the real peer's bye reads as gone");
 
-// A rematch INSIDE the write throttle. The conn row is rewritten at most
-// once per pair per FOK_RELAY_TRACK_THROTTLE (RelayStore::shouldTrackRelay),
-// so a bye that zeroed the row and left that marker standing would leave the
-// pair's next relayed duel unmarked for the rest of the window: it would
-// hold no slot at all, uncounted by the duel cap and absent from the admin
-// cards, while running.
-Db::get()->exec('DELETE FROM conn');
+// A rematch INSIDE the write throttle. The pair's slot is stamped at most
+// once per FOK_RELAY_TRACK_THROTTLE (RelayStore::shouldTrackRelay), so a bye
+// that zeroed the stamp and left that marker standing would leave the pair's
+// next relayed duel unmarked for the rest of the window: it would hold no
+// slot at all, uncounted by the duel cap and absent from the admin cards,
+// while running.
+connWipe();
 ok(RelayStore::shouldTrackRelay('aaaaaaaa', 'bbbbbbbb', time()),
     'the first relayed message of a duel marks the pair');
 Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
@@ -796,10 +813,10 @@ ok(Relay::activePairs() === 1, 'which is how it holds its slot');
 ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'bye');
 ok(Relay::activePairs() === 0, 'the bye hands the slot straight back');
 ok(RelayStore::shouldTrackRelay('aaaaaaaa', 'bbbbbbbb', time()),
-    'and takes the throttle with it, so a rematch re-marks the row at once');
+    'and takes the throttle with it, so a rematch re-marks the pair at once');
 Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
 ok(Relay::activePairs() === 1, 'so the rematch holds a slot of its own');
-Db::get()->exec('DELETE FROM conn');
+connWipe();
 
 // An early fetch - fetchColumn(), fetch() - that leaves its statement open
 // pins this connection to a read snapshot. Once ANOTHER connection commits,

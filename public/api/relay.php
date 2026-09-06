@@ -166,12 +166,12 @@ if (RelayStore::pending($peer, $id) >= Settings::int('relay_pending_cap')) {
 // every packet: a running pair carries a cheap APCu admission marker, so a set
 // marker means "already holds a slot, forward it". Only its absence - a new
 // pair, a relay-window of silence, or an evicted marker - pays for the real
-// check (a conn read, plus a COUNT for a genuinely new pair).
+// check (an entry read, plus a pair scan for a genuinely new pair).
 if (!RelayStore::admitted($id, $peer)) {
     // No marker: Relay::capReached consults the authoritative slot record
-    // FIRST (a conn read), so an APCu eviction can never cut off a live duel -
-    // only a pair that holds no slot THERE either is genuinely new and pays
-    // the COUNT and the cap.
+    // FIRST (an entry read), so an APCu admission-marker eviction can never
+    // cut off a live duel - only a pair that holds no slot THERE either is
+    // genuinely new and pays the scan and the cap.
     if (Relay::capReached($id, $peer)) {
         Alerts::raise('relay', 'Relay duel cap reached: new relayed duel rejected');
         Util::fail('relay busy', 503);

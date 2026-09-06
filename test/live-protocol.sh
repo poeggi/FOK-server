@@ -11,9 +11,9 @@
 # It targets the exact paths the 1.0.7 writer-contention cuts touch:
 #   - quick match, where the peer-select now gates on seeker liveness and the
 #     cleanup DELETE is sampled (Matchmaking);
-#   - the "connecting" signal burst, where ConnTrack::set skips a same-state
-#     re-stamp within FOK_CONN_TRACK_THROTTLE but must NEVER skip a p2p->relay
-#     mode upgrade (ConnTrack).
+#   - the "connecting" signal burst, where ConnTrack::set keeps an established
+#     relay mode across a same-state re-stamp but must NEVER swallow a
+#     p2p->relay mode upgrade (ConnTrack).
 # The upgrade's mode is only readable through the admin Duels card, so here we
 # assert the client-observable consequences instead: every signal in the burst
 # still arrives in order, and a relay pairing declared mid-burst still relays

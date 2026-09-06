@@ -2,8 +2,9 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
-require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/Caps.php';
 require_once __DIR__ . '/Settings.php';
+require_once __DIR__ . '/ConnTrack.php';
 require_once __DIR__ . '/RelayStore.php';
 require_once __DIR__ . '/RelayRate.php';
 
@@ -17,16 +18,18 @@ require_once __DIR__ . '/RelayRate.php';
  * ConnTrack::listDuels (the per-duel message count) and AdminData (the
  * Relaying tile and the per-client rate detail). ConnTrack itself no longer
  * carries any relay method - the slot accounting that used to live there
- * (it reads and writes the conn.relay_seen column) moved here so the whole
- * mechanism deletes with this file.
+ * (it reads and writes the relay_seen field of a tracked connection) moved
+ * here so the whole mechanism deletes with this file.
  *
- * The relay slot is still recorded on the conn table's relay_seen column,
- * because a slot must survive a worker restart and be visible to the admin
- * cards - the two residual column touches left in ConnTrack (the relay_seen
- * = 0 on a bye, and the read in stateOf) are the only relay references that
- * stay behind, both flagged there. When the relay goes, delete this class,
- * RelayStore, RelayRate and relay.php, remove the marked call sites, and the
- * conn.relay_seen column is orphaned schema (see the manifest).
+ * The relay slot is still recorded on the tracked connection itself, as the
+ * relay_seen stamp of the ConnTrack entry, because a slot must outlive the
+ * request that earned it and be visible to the admin cards. It is what holds
+ * that entry's TTL up to FOK_RELAY_WINDOW. The residual touches left in
+ * ConnTrack (the relay_seen = 0 on a bye, the field in the entry shape, and
+ * the TTL) are the only relay references that stay behind, all flagged
+ * there. When the relay goes, delete this class, RelayStore, RelayRate and
+ * relay.php, remove the marked call sites, and relay_seen leaves the entry
+ * shape with them (see the manifest).
  */
 final class Relay
 {
@@ -35,24 +38,25 @@ final class Relay
      * relay slot always costs hub traffic and never a client's mere claim to
      * be relaying (accept-relay is not friendship-gated, so claims are free
      * and a few would otherwise deny the relay to everyone). Writes only the
-     * sender's row: one statement on a hot path. (Was ConnTrack::relaying.)
+     * sender's entry: one store on a hot path. (Was ConnTrack::relaying.)
      */
     public static function markRelaying(string $from, string $to): void
     {
+        if (!Caps::apcu()) {
+            return;
+        }
         $now = time();
-        Db::get()->prepare(
-            'INSERT INTO conn (id, peer, state, mode, updated, relay_seen) VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT (id) DO UPDATE SET
-                 peer = excluded.peer,
-                 state = excluded.state,
-                 mode = excluded.mode,
-                 updated = excluded.updated,
-                 relay_seen = excluded.relay_seen'
-        )->execute([$from, $to, 'playing', 'relay', $now, $now]);
+        apcu_store(ConnTrack::key($from), [
+            'peer' => $to,
+            'state' => 'playing',
+            'mode' => 'relay',
+            'updated' => $now,
+            'relay_seen' => $now,
+        ], ConnTrack::TTL);
     }
 
     /**
-     * The pair gave its slot up (a bye, see ConnTrack::end). The row is
+     * The pair gave its slot up (a bye, see ConnTrack::end). The entry is
      * already zeroed by the caller; what is left is the write throttle that
      * guards it, which must go with it - see RelayStore::clearTrack.
      */
@@ -67,42 +71,44 @@ final class Relay
      */
     public static function isRelaying(string $a, string $b): bool
     {
-        $st = Db::get()->prepare(
-            'SELECT 1 FROM conn WHERE relay_seen > ?
-               AND ((id = ? AND peer = ?) OR (id = ? AND peer = ?)) LIMIT 1'
-        );
-        $st->execute([time() - FOK_RELAY_WINDOW, $a, $b, $b, $a]);
-        $relaying = $st->fetchColumn() !== false;
-        $st->closeCursor();
-        return $relaying;
+        $fresh = time() - FOK_RELAY_WINDOW;
+        foreach ([[$a, $b], [$b, $a]] as [$id, $peer]) {
+            $e = ConnTrack::stateOf($id);
+            if ($e !== null && $e['peer'] === $peer && $e['relay_seen'] > $fresh) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
      * Pairs running through the hub. Counted from relay_seen, not from queued
      * relay messages: those are deleted as the receiver drains them, so a
      * healthy duel would count as zero and the cap would protect nothing.
-     * (Was ConnTrack::relayPairs.)
+     * Either side's stamp is enough, so the two directions of one pair are
+     * folded onto a single unordered key. (Was ConnTrack::relayPairs.)
      */
     public static function activePairs(): int
     {
-        $st = Db::get()->prepare(
-            "SELECT COUNT(DISTINCT CASE WHEN id < peer THEN id || ':' || peer
-                                        ELSE peer || ':' || id END)
-               FROM conn WHERE peer IS NOT NULL AND relay_seen > ?"
-        );
-        $st->execute([time() - FOK_RELAY_WINDOW]);
-        $pairs = (int)$st->fetchColumn();
-        $st->closeCursor();
-        return $pairs;
+        $fresh = time() - FOK_RELAY_WINDOW;
+        $pairs = [];
+        foreach (ConnTrack::entries() as $id => $e) {
+            if ($e['peer'] === null || $e['relay_seen'] <= $fresh) {
+                continue;
+            }
+            $pairs[$id < $e['peer'] ? $id . ':' . $e['peer'] : $e['peer'] . ':' . $id] = true;
+        }
+        return count($pairs);
     }
 
     /**
      * Is the concurrent-duel cap reached for a pair that does not already
-     * hold a slot? The authoritative slot record (isRelaying, a conn read) is
-     * consulted FIRST, so an APCu admission-marker eviction can never cut off
-     * a live duel - only a genuinely new pair pays the COUNT and is subject to
-     * the cap. Both the signal-time declaration gate and the first relayed
-     * message ask this; each raises its own alert and answers 503 itself.
+     * hold a slot? The authoritative slot record (isRelaying, an entry read)
+     * is consulted FIRST, so an APCu admission-marker eviction can never cut
+     * off a live duel - only a genuinely new pair pays the count and is
+     * subject to the cap. Both the signal-time declaration gate and the first
+     * relayed message ask this; each raises its own alert and answers 503
+     * itself.
      */
     public static function capReached(string $a, string $b): bool
     {
@@ -112,12 +118,12 @@ final class Relay
 
     /**
      * Has the pairing $id had with $peer been explicitly torn down? A bye or
-     * decline marks both sides' conn rows 'ended'/'declined'. A relayed peer
+     * decline marks both sides' entries 'ended'/'declined'. A relayed peer
      * holding a GET checks this so it learns the other side left AT ONCE,
      * instead of waiting out its own liveness timeout - the relay's answer to
      * a P2P DataChannel close. Only an explicit teardown counts; a silent drop
      * (tab closed, no bye) is left to that timeout. Live hub traffic from
-     * EITHER side means the pair is playing (again), so a stale 'ended' row
+     * EITHER side means the pair is playing (again), so a stale 'ended' entry
      * from a previous match must not be read as a leave and kill the fresh one
      * - a bye zeroes relay_seen (see ConnTrack::end), so this is false exactly
      * when the teardown is real. (Was ConnTrack::peerLeft.)
@@ -127,13 +133,9 @@ final class Relay
         if (self::isRelaying($id, $peer)) {
             return false;
         }
-        $st = Db::get()->prepare(
-            "SELECT 1 FROM conn WHERE id = ? AND peer = ? AND state IN ('ended', 'declined') LIMIT 1"
-        );
-        $st->execute([$id, $peer]);
-        $left = $st->fetchColumn() !== false;
-        $st->closeCursor();
-        return $left;
+        $e = ConnTrack::stateOf($id);
+        return $e !== null && $e['peer'] === $peer
+            && ($e['state'] === 'ended' || $e['state'] === 'declined');
     }
 
     /**

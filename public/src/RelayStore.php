@@ -71,13 +71,11 @@ final class RelayStore
     }
 
     /**
-     * Should the pair's conn liveness row be refreshed for THIS message?
-     * The relay never touches the database except that marker
-     * (Relay::markRelaying), which the admin cards and the duel cap read over
-     * FOK_RELAY_WINDOW. Writing it per message would put the single SQLite
-     * writer back on the hot path shared memory exists to clear, so it is
-     * throttled to once per pair per FOK_RELAY_TRACK_THROTTLE, held in the
-     * cache itself.
+     * Should the pair's tracked-connection liveness be refreshed for THIS
+     * message? That stamp (Relay::markRelaying) is all the admin cards and the
+     * duel cap read, both over FOK_RELAY_WINDOW, so stamping it per message
+     * would buy nothing the window does not already give: it is throttled to
+     * once per pair per FOK_RELAY_TRACK_THROTTLE, held in the cache itself.
      */
     public static function shouldTrackRelay(string $from, string $to, int $now): bool
     {
@@ -91,7 +89,7 @@ final class RelayStore
 
     /**
      * Forget that throttle for a pair whose slot has just been given up (a
-     * bye zeroes relay_seen, see ConnTrack). The row and this marker are one
+     * bye zeroes relay_seen, see ConnTrack). The stamp and this marker are one
      * mechanism: left standing, it would suppress the re-marking of the
      * pair's NEXT relayed duel for the rest of the window - which would then
      * hold no slot in the authoritative record, so the duel cap would not
@@ -107,10 +105,10 @@ final class RelayStore
     /**
      * The cheap per-pair "this duel already holds a relay slot" marker, in the
      * pair's own APCu namespace. Present means admitted: the relay POST can
-     * skip the real concurrent-duel cap check (a conn read, plus a COUNT for a
-     * new pair) on every message and just forward. Absent means the question
-     * must be asked for real - a new pair, a relay-window of silence, or an
-     * evicted marker (see relay.php).
+     * skip the real concurrent-duel cap check (an entry read, plus a pair scan
+     * for a new pair) on every message and just forward. Absent means the
+     * question must be asked for real - a new pair, a relay-window of silence,
+     * or an evicted marker (see relay.php).
      */
     public static function admitted(string $a, string $b): bool
     {

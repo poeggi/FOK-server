@@ -202,7 +202,7 @@ curl -s "$BASE/api/relay.php?id=$ID1&peer=$ID2" > /dev/null
 # Aborting a relayed duel: its undelivered backlog dies with it (a stale input
 # must never reach the next duel), AND the peer's held GET is told the pair is
 # gone (v3.3) instead of being left to time out - the relay's answer to a P2P
-# DataChannel close. 'accept' first, so the bye has a conn row to mark ended.
+# DataChannel close. 'accept' first: the bye needs a tracked connection to mark.
 sig "$ID1" "$ID2" accept '' > /dev/null
 R=$(curl -s -w '\n%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1")
 expect "a live pairing is not reported gone" '204' "$R"

@@ -385,8 +385,8 @@ else
 
     # A full hub rejects a NEW relayed duel loudly - but a duel that is
     # already relaying must never be cut off by it. The cap counts relay_seen
-    # in the conn table; what lets a duel already relaying through is the
-    # pair's own APCu admission marker (see relay.php).
+    # stamps on the tracked connections; what lets a duel already relaying
+    # through is the pair's own APCu admission marker (see relay.php).
     setting relay_max_duels 1
     rly "$ID1" "$ID2" 'holding the slot' > /dev/null
     R=$(rlycode "$ID3" "$ID4" 'may i')

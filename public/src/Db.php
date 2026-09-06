@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 36;
+    private const SCHEMA_VERSION = 37;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -75,11 +75,12 @@ final class Db
     }
 
     // Every table the "DB entries" gauge sums. The signal mailbox, the relay
-    // hub and the presence-counter cache are not here: they live in shared
-    // memory, not in any table (see Signals and RelayStore).
+    // hub, the tracked connections and the presence-counter cache are not
+    // here: they live in shared memory, not in any table (see Signals,
+    // RelayStore and ConnTrack).
     private const COUNTED = ['players', 'scores', 'duels', 'mm_queue',
         'counters', 'alerts', 'settings', 'admin_fails', 'friends',
-        'starts', 'conn', 'pstats', 'items', 'matches', 'ledger'];
+        'starts', 'pstats', 'items', 'matches', 'ledger'];
 
     /**
      * How many rows the database holds, over every table above. One statement
@@ -576,6 +577,15 @@ final class Db
             // row it writes, and the table had no index for it.
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_alerts_type_created
                             ON alerts (type, created)');
+        }
+        if ($v < 37) {
+            // Who is talking to whom is liveness with a TTL of seconds, read
+            // by two admin cards and the relay cap and by nothing else - and
+            // it was written twice per signaling message and twice per duel
+            // heartbeat, which made it the heaviest user of the one writer
+            // the whole database shares. It lives in shared memory now (see
+            // ConnTrack), so the table and both its indexes go.
+            $pdo->exec('DROP TABLE IF EXISTS conn');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

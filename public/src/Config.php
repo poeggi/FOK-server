@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.4.5';
+const FOK_SERVER_VERSION = '1.4.6';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -31,10 +31,10 @@ const FOK_SERVER_VERSION = '1.4.5';
 // get the old {"ok":true}, and ignore "age".
 // v3.3: additive relay leave signal. A held GET /api/relay.php returns
 // {"ok":true,"gone":true} once the pairing is torn down (a bye/decline
-// marked the conn ended), so a relayed peer learns the other side left at
-// once instead of waiting out its own liveness timeout - the relay's answer
-// to a P2P DataChannel close. Major stays 3; a client that does not read
-// "gone" simply keeps timing out as before.
+// marked the connection ended), so a relayed peer learns the other side
+// left at once instead of waiting out its own liveness timeout - the
+// relay's answer to a P2P DataChannel close. Major stays 3; a client that
+// does not read "gone" simply keeps timing out as before.
 // v3.4: additive per-player stats. New GET/POST /api/stats.php lets a client
 // save cumulative gameplay counters (games, levels cleared, furthest level,
 // deaths, duels, playtime) and read them back to restore progress on another
@@ -172,17 +172,6 @@ const FOK_DUEL_WINDOW = 60;
 // A tracked connection state (see ConnTrack) goes stale after this long
 // without a signaling or duel event: the client reads as idle again.
 const FOK_CONN_TTL = 60;
-// While a pair is negotiating, ICE trickles many same-state 'connecting'
-// signals (a candidate each, plus offer/answer) in a burst. Each one would
-// rewrite both conn rows only to refresh their `updated` stamp - the state
-// and mode do not change - dragging the single SQLite writer onto the
-// signaling hot path. So a redundant 'connecting' refresh (same peer, same
-// state, no mode change) is skipped while the row is fresher than this,
-// trading a write for a lock-free read. Kept well under FOK_CONN_TTL so an
-// actively negotiating duel still refreshes long before it reads as idle.
-// The relay path throttles its own conn writes the same way; see
-// FOK_RELAY_TRACK_THROTTLE.
-const FOK_CONN_TRACK_THROTTLE = 10;
 // The admin dashboard keeps a client on its Duels / Connections cards this
 // long AFTER its liveness lapses (a duel went quiet, a client dropped), so
 // a just-ended entry does not blink out the instant it stops refreshing.
@@ -194,11 +183,11 @@ const FOK_DUEL_LINGER = 10;
 // only has to outlast a pause (level transition, backgrounded tab) - keep
 // it well above the ~30 s hello cadence or a live duel loses its slot.
 const FOK_RELAY_WINDOW = 90;
-// A relayed pair's conn row is only a liveness marker for the admin cards
-// and the duel cap, both read over FOK_RELAY_WINDOW. Rewriting it per
-// message would drag the single SQLite writer back onto the hot path APCu
-// exists to clear, so it is refreshed at most this often per pair - well
-// under the window it feeds.
+// A relayed pair's tracked connection is only a liveness marker for the
+// admin cards and the duel cap, both read over FOK_RELAY_WINDOW, so
+// stamping it on every message would buy nothing the window does not
+// already give: it is refreshed at most this often per pair - well under
+// the window it feeds.
 const FOK_RELAY_TRACK_THROTTLE = 10;
 // Undelivered signaling messages expire after this many seconds. A
 // connection attempt that dies this way is reported back to its sender

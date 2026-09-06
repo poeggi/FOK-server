@@ -25,14 +25,14 @@ so removing it is deleting a marked call site of a line or two per file - not
 untangling relay code from shared logic. Four files are wholly owned by the
 relay and delete outright (the facade, the endpoint, the store, the rate
 guard). The only relay references that are NOT a `Relay::` call are, by
-design, a short and enumerated list: two residual `conn.relay_seen` touches
-in ConnTrack (a column the connection tracker owns for display and liveness),
-the two contract-visible signal types in `Signals.php`, the admin.js UI rows,
-the config/settings constants, and the DB schema. The schema is the one seam
-that cannot be removed with "no impact" (the migration ladder is append-only;
-see the Schema section). So a clean deletion is: delete four files, remove the
-marked `Relay::` call sites and the handful of enumerated non-facade touches,
-then run one drop-migration.
+design, a short and enumerated list: the residual `relay_seen` touches in
+ConnTrack (a field of the tracked-connection entry, which the connection
+tracker owns for display and liveness), the two contract-visible signal types
+in `Signals.php`, the admin.js UI rows and the config/settings constants. The
+relay holds no schema of its own any more (see the Schema section). So a
+clean deletion is: delete four files, remove the marked `Relay::` call sites
+and the handful of enumerated non-facade touches - and nothing has to be
+migrated.
 
 
 ## A. Files wholly owned by the relay (delete the whole file)
@@ -66,15 +66,17 @@ means deleting that call (and its `require_once .../Relay.php`), nothing more.
     `NEEDS_RECEIPT`. (These are contract-visible signal types: removing them
     is a MAJOR API bump - see docs/API.md Versioning.)
 
-- `public/src/ConnTrack.php`  (only two residual column touches remain)
+- `public/src/ConnTrack.php`  (only residual entry-field touches remain)
   - This class tracks ALL 1:1 connections (p2p and relay) plus presence, so
     the file stays. The four relay methods already moved to `Relay.php`, so
-    what is left here is only: `markEnded`'s `relay_seen = 0` (drop the column
-    from that UPDATE), `stateOf`'s `relay_seen` read and return field, the
-    `'relay'` mode arm in `BY_TYPE`, and in `listDuels` the `Relay::msgsFor`
-    call plus the `msgs` output field. Revert `require_once .../Relay.php`.
-  - `mode` becomes always `'p2p'` (or drop the column entirely, another
-    migration).
+    what is left here is only: `relay_seen` in the entry shape and in the
+    `stateOf` docblock, `markEnded`'s `relay_seen = 0`, `set`'s carry of the
+    field, `TTL` (which drops to `FOK_CONN_TTL + FOK_DUEL_LINGER` once
+    `FOK_RELAY_WINDOW` no longer holds it up), the `'relay'` mode arm in
+    `BY_TYPE`, `key()` and `entries()` (public only because the facade reads
+    and stamps the entries), and in `listDuels` the `Relay::msgsFor` call
+    plus the `msgs` output field. Revert `require_once .../Relay.php`.
+  - `mode` becomes always `'p2p'` (or drop the field entirely).
 
 - `public/src/Settings.php`
   - Remove the six `relay_*` defs: `relay_max_duels`, `relay_max_payload`,
@@ -103,7 +105,7 @@ means deleting that call (and its `require_once .../Relay.php`), nothing more.
   `relay` row in the `counters` table is orphaned data, harmless.
 
 
-## C. Schema (CANNOT be deleted with zero impact - append-only ladder)
+## C. Schema (nothing left to delete - append-only ladder)
 
 `public/src/Db.php` migrations are append-only and a fresh DB replays them
 all, so you never edit a past step. What the relay put in the schema:
@@ -115,18 +117,15 @@ all, so you never edit a past step. What the relay put in the schema:
 - v33: DROPs `relay` and `relay_rate` (their indexes go with them) and
   deletes the `relay_apcu` setting - the hub moved wholly into shared memory,
   and those tables only ever backed the removed database transport.
+- v37: DROPs `conn` (both its indexes go with it) - tracked connections are
+  liveness with a TTL of seconds and moved wholly into shared memory, taking
+  the last relay column with them.
 
-So the only schema the relay still holds is `conn.relay_seen` (with
-`idx_conn_relay`), plus the `'relay'` value in `conn.mode`. Options the day
-the relay itself is removed:
-1. Leave the column as orphan schema (simplest; a little dead weight).
-2. Add a NEW forward migration that rebuilds `conn` without it, since SQLite
-   drops columns awkwardly. This is the only way to actually reclaim it, and
-   it is itself a schema change to test on a real DB copy.
-
-Either way, existing production databases keep the column until such a
-migration runs. This is the one seam where "delete without any impact" is
-not literally achievable.
+So the relay now holds NO schema at all: `relay_seen` and the `'relay'` mode
+are fields of an APCu entry, and an entry shape is not a migration. This
+section stays because the ladder is append-only history - what it used to
+warn about (a `conn` column that SQLite drops awkwardly, so either orphan
+schema or a table rebuild) no longer applies to anything.
 
 
 ## D. Contract, docs, tests

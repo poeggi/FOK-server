@@ -78,7 +78,7 @@ bench('Presence::touch()   [every hello]', 200, static fn(int $i) => Presence::t
 bench('Signals::take()     [every hello]', 200, static fn() => Signals::take('eeeeee01'));
 bench('Signals::any()      [every poll]', 200, static fn() => Signals::any('eeeeee01'));
 bench('Relay::activePairs()  [relay]', 200, static fn() => Relay::activePairs());
-bench('ConnTrack::listOnline() [admin]', 20, static fn() => ConnTrack::listOnline());
+bench('ConnTrack::listPresence() [admin]', 20, static fn() => ConnTrack::listPresence());
 bench('Scores::top()       [landing]', 20, static fn() => Scores::top());
 
 Db::close();
