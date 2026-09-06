@@ -87,27 +87,33 @@ final class PStats
             return $merged;
         }
         $merged['updated'] = $now;
-        Db::get()->prepare(
-            'INSERT INTO pstats
-                (id, games, levels, best_level, deaths, duels, duels_won, play_seconds, updated)
-             VALUES
-                (:id, :games, :levels, :best_level, :deaths, :duels, :duels_won, :play_seconds, :updated)
-             ON CONFLICT (id) DO UPDATE SET
-                games = excluded.games, levels = excluded.levels,
-                best_level = excluded.best_level, deaths = excluded.deaths,
-                duels = excluded.duels, duels_won = excluded.duels_won,
-                play_seconds = excluded.play_seconds, updated = excluded.updated'
-        )->execute([
-            ':id' => $id,
-            ':games' => $merged['games'],
-            ':levels' => $merged['levels'],
-            ':best_level' => $merged['best_level'],
-            ':deaths' => $merged['deaths'],
-            ':duels' => $merged['duels'],
-            ':duels_won' => $merged['duels_won'],
-            ':play_seconds' => $merged['play_seconds'],
-            ':updated' => $now,
-        ]);
+        // The one request a player makes at the end of a game, so a writer
+        // it cannot get must not become a 500 there. Re-running is exact:
+        // every value the statement sets is absolute and $merged is already
+        // settled, so an attempt that wrote nothing costs only the wait.
+        Db::retry(static function () use ($id, $merged, $now): void {
+            Db::get()->prepare(
+                'INSERT INTO pstats
+                    (id, games, levels, best_level, deaths, duels, duels_won, play_seconds, updated)
+                 VALUES
+                    (:id, :games, :levels, :best_level, :deaths, :duels, :duels_won, :play_seconds, :updated)
+                 ON CONFLICT (id) DO UPDATE SET
+                    games = excluded.games, levels = excluded.levels,
+                    best_level = excluded.best_level, deaths = excluded.deaths,
+                    duels = excluded.duels, duels_won = excluded.duels_won,
+                    play_seconds = excluded.play_seconds, updated = excluded.updated'
+            )->execute([
+                ':id' => $id,
+                ':games' => $merged['games'],
+                ':levels' => $merged['levels'],
+                ':best_level' => $merged['best_level'],
+                ':deaths' => $merged['deaths'],
+                ':duels' => $merged['duels'],
+                ':duels_won' => $merged['duels_won'],
+                ':play_seconds' => $merged['play_seconds'],
+                ':updated' => $now,
+            ]);
+        });
         return $merged;
     }
 

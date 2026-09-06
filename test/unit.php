@@ -2224,7 +2224,7 @@ ok($hk['db_size'] > 0, 'alongside the size of the file it is all in');
 // keeps the worst of a window rather than the last of it, and ignores
 // anything too small to diagnose - without that floor an idle server would
 // rewrite the whole list on nearly every request.
-apcu_delete(new APCUIterator('/^fok:ct:worst:/'));
+apcu_delete(new APCUIterator('/^' . preg_quote(FOK_APCU_NS . 'ct:worst:', '/') . '/'));
 Counters::worst('t_us', 500, ['s' => 'poll.php']);
 ok(Counters::worstList('t_us') === [], 'a wait under a millisecond is not filed');
 for ($i = 1; $i <= 12; $i++) {
@@ -2235,6 +2235,10 @@ ok(count($worst) === 10, 'the list is bounded');
 ok($worst[0]['v'] === 12000 && $worst[0]['s'] === 's12.php',
     'worst first, carrying what caused it');
 ok($worst[9]['v'] === 3000, 'and the two SMALLEST fell out, not the two oldest');
+// The whole buffer is database-derived, so it must not be one segment shared
+// with the other environment on a pool that serves both docroots.
+ok(apcu_exists(FOK_APCU_NS . 'ct:worst:t_us'),
+    'the counter buffer is namespaced by environment');
 Counters::worst('t_us', 2000, ['s' => 'late.php']);
 ok(Counters::worstList('t_us')[9]['v'] === 3000,
     'a reading that beats nothing in a full list is dropped');

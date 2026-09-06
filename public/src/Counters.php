@@ -41,7 +41,16 @@ require_once __DIR__ . '/Load.php';
  */
 final class Counters
 {
-    private const PREFIX = 'fok:ct:';
+    /**
+     * Everything under here is counted out of one database and folded back
+     * into it, so it carries the environment namespace: staging and live are
+     * separate docroots against separate databases and may still be served
+     * by ONE FPM pool, and then they share one APCu segment (see
+     * FOK_APCU_NS). Sharing this buffer would let one site fold the other's
+     * minutes into its own counters table and read a worst-case list the
+     * other site wrote.
+     */
+    private const PREFIX = FOK_APCU_NS . 'ct:';
 
     // Long enough that a minute cannot expire before the request that closes
     // it arrives, short enough to be self-cleaning if one never does.
@@ -55,6 +64,10 @@ final class Counters
     // 24 hours, so a case that has aged out of the graph ages out here too.
     private const WORST_KEEP = 10;
     private const WORST_AGE = 86400;
+
+    // How often a maximum may lose the compare-and-swap before it is written
+    // the blunt way instead (see max).
+    private const MAX_TRIES = 8;
 
     // Under a millisecond there is nothing to diagnose - the worker was
     // there for the taking - and without a floor an idle server would
@@ -133,11 +146,9 @@ final class Counters
         // the server is not already overloaded.
         $key = self::metricKey(gmdate('YmdHi'), 'x:' . $metric);
         // A maximum cannot be an increment, so it is a compare-and-swap - and
-        // a bounded number of tries rather than a loop until it wins. Losing
-        // the race means another worker has just written a value of its own,
-        // and a reading that keeps being outrun is by definition not the
-        // biggest one this minute saw.
-        for ($i = 0; $i < 3; $i++) {
+        // a bounded number of tries rather than a loop until it wins, because
+        // this runs on the request path and nothing here may spin.
+        for ($i = 0; $i < self::MAX_TRIES; $i++) {
             $cur = apcu_fetch($key, $ok);
             if (!$ok) {
                 if (apcu_add($key, $n, self::BUCKET_TTL) === true) {
@@ -148,6 +159,17 @@ final class Counters
             if ((int)$cur >= $n || apcu_cas($key, (int)$cur, $n) === true) {
                 return;
             }
+        }
+        // Every one of those tries read a value SMALLER than this one and was
+        // outrun before it could swap, so this reading is still the biggest
+        // the minute has seen - and the contention that cost it the race is
+        // the very thing the metric exists to report. Dropping it would hide
+        // the peak exactly when there was one, so it is written the blunt
+        // way. The guard is what keeps the store from LOWERING the slot; the
+        // sliver of a race it leaves is the one the swap closes, which is why
+        // the swap goes first and this is only the fallback.
+        if ((int)apcu_fetch($key) < $n) {
+            apcu_store($key, $n, self::BUCKET_TTL);
         }
     }
 

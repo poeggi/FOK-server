@@ -12,8 +12,14 @@ final class Presence
     /** How stale a player_nets row may get before a hello rewrites it. */
     private const NET_REFRESH_AFTER = 60;
 
-    /** Shared-memory slot for the presence counters (see counts()). */
-    private const COUNTS_KEY = 'fok:counts';
+    /**
+     * Shared-memory slot for the presence counters (see counts()). They are
+     * counted out of the players and duels tables and handed to every client
+     * on every hello, so the slot carries the environment namespace (see
+     * FOK_APCU_NS): one FPM pool serving both docroots would otherwise let
+     * live report staging's test clients as the players online, and back.
+     */
+    private const COUNTS_KEY = FOK_APCU_NS . 'counts';
 
     /**
      * Records the heartbeat and returns whether the server wants this
