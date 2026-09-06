@@ -5,12 +5,14 @@ require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/Starts.php';
+require_once __DIR__ . '/../src/Skew.php';
 
 /**
  * Server-issued start of play.
  * POST {"id": "8-hex", "peer": "8-hex", "epoch": <n>, "reason": "level",
  *       "pts": <ms>}
  *   -> {"ok":true, "start_pts": <ms>, "epoch": <n>, "now": <ms>,
+ *       "q_ms": <ms>, "resync": <bool>,        (both since API 4.4)
  *       "mid": "32-hex", "secret": "32-hex"}   (mid/secret since API 4.0)
  *
  * BOTH peers call this every time the run halts or restarts - first
@@ -80,6 +82,15 @@ if ($startPts === null) {
     Util::fail('stale epoch: the pair has already moved on', 409);
 }
 
+// The pair cross-check (4.4, see Skew). Both peers prove their clock against
+// THIS start, so the difference between their two proofs bounds how far apart
+// their two anchors are - the one clock error the server can see and neither
+// client can. A hint, never a rejection: the answer asks for a re-anchor and
+// the start is issued either way. The check runs after the start is issued
+// for exactly that reason.
+$now = Util::nowMs();
+$resync = Skew::note($id, $peer, $epoch, $now - $pts) || Skew::wanted($id);
+
 // Additive since API 4.0: the pair's match id and the CALLER'S OWN match
 // secret (never the peer's). A begin (first/rematch) minted a fresh match; an
 // in-run halt carries the open one forward. The client uses these to attest
@@ -87,11 +98,19 @@ if ($startPts === null) {
 // both fields. mid is '' only for the degenerate case of no open match.
 $match = Starts::matchInfo($id, $peer);
 
+$q = Load::queueUs();
+
 Util::jsonOut([
     'ok' => true,
     'start_pts' => $startPts,
     'epoch' => $epoch,
-    'now' => Util::nowMs(),
+    'now' => $now,
+    // Additive since 4.4. q_ms is what THIS request waited for a worker
+    // before any PHP ran: a client reads it to know its own round trip was
+    // queued and is therefore a poor clock sample. resync says the pair's two
+    // proofs disagreed - re-anchor before the next start. Both are ignorable.
+    'q_ms' => $q === null ? 0 : (int)round($q / 1000),
+    'resync' => $resync,
     'mid' => $match['mid'],
     'secret' => $match['secret'],
 ]);

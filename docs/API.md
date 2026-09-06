@@ -374,9 +374,9 @@ past a tolerance (`start_pair_skew_ms`) the answer carries
 It is as gross as the gate above and for the same reason, and it is a hint
 rather than a refusal: a genuinely healthy pair on very asymmetric paths
 would otherwise be locked out of its own match. The second caller learns it
-in its own response; the first has already been answered and picks it up on
-its next start or hello, which is soon enough, because a re-anchor precedes
-every start anyway.
+in its own response; the first has already been answered by the time the
+disagreement is visible, so its copy waits for its next start - which is
+soon enough, because a re-anchor precedes every start anyway.
 
 ### Server-side PTS validation
 

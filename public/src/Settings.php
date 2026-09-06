@@ -27,6 +27,16 @@ final class Settings
         'chat_max_len' => [FOK_CHAT_MAX_LEN, 'Max chat message bytes'],
         'start_lead_min_ms' => [200, 'Min lead time for server-issued level starts (ms)'],
         'start_sync_max_age_ms' => [2000, 'Reject a start whose sync proof is older than (ms)'],
+        // The pair cross-check (see Skew). A tolerance, not a gate: past it
+        // the pair is ASKED to re-anchor, never refused. 0 turns it off.
+        'start_pair_skew_ms' => [FOK_START_PAIR_SKEW_MS, 'Ask a pair to resync when their two clock proofs disagree by more than (ms, 0 = off)'],
+        // Client pacing (see Pace). hold_max_workers above is the budget these
+        // are measured against: pacing is what the server says BEFORE that
+        // budget runs out, and Holds is what happens when it does.
+        'pace_hello_ms' => [FOK_PACE_HELLO_MS, 'Heartbeat interval handed to an unpressured client (ms)'],
+        'pace_hello_max_ms' => [FOK_PACE_HELLO_MAX_MS, 'Longest heartbeat interval pacing may ask for (ms)'],
+        'pace_spread_ms' => [FOK_PACE_SPREAD_MS, 'Jitter budget clients spread their periodic requests over (ms)'],
+        'ices_max' => [FOK_ICES_MAX, 'Max ICE candidates in one batched signal'],
         // DEPRECATED: relay fallback (see docs/DEPRECATED-relay.md). These
         // seven relay_* settings are removed with the feature.
         'relay_max_duels' => [4, 'Max concurrent relayed duels (protects FPM workers)'],

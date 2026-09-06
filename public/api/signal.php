@@ -13,7 +13,7 @@ require_once __DIR__ . '/../src/Relay.php';
  * Matchmaking / WebRTC signaling relay.
  * POST {"id": sender, "to": recipient,
  *       "type": one of Signals::TYPES (invite, invite-relay, accept,
- *         accept-relay, decline, offer, answer, ice, bye, chat) - the
+ *         accept-relay, decline, offer, answer, ice, ices, bye, chat) - the
  *         reserved 'friend' and 'undelivered' types are server-generated
  *         and rejected here,
  *       "payload": string, opaque to the server (SDP/ICE/profile JSON;
@@ -48,6 +48,19 @@ if (!is_string($type) || !in_array($type, Signals::TYPES, true)) {
 $max = $type === 'chat' ? Settings::int('chat_max_len') : FOK_SIGNAL_MAX_PAYLOAD;
 if (!is_string($payload) || strlen($payload) > $max) {
     Util::fail('invalid payload');
+}
+// 'ices' (4.4) is the one payload with a shape, because its whole reason for
+// existing is the count: a side's trickle in ONE request instead of a request
+// per candidate. The server checks that it IS a bounded list and nothing
+// more - what a candidate looks like stays between the two peers, as it does
+// for every other payload here.
+if ($type === 'ices') {
+    $cands = json_decode($payload, true);
+    $n = is_array($cands) ? count($cands) : 0;
+    if ($n < 1 || $n > Settings::int('ices_max')
+        || array_keys($cands) !== range(0, $n - 1)) {
+        Util::fail('invalid payload');
+    }
 }
 Util::checkPts($body['pts'] ?? null, "player $id");
 

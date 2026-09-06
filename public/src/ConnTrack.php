@@ -27,6 +27,7 @@ final class ConnTrack
         'offer' => ['connecting', 'connecting', 'p2p'],
         'answer' => ['connecting', 'connecting', 'p2p'],
         'ice' => ['connecting', 'connecting', 'p2p'],
+        'ices' => ['connecting', 'connecting', 'p2p'],
         // decline is special-cased in note() (it leaves a 'declined' row);
         // bye ends the pairing for both sides.
         'decline' => [null, null, null],

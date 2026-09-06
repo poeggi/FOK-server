@@ -29,6 +29,8 @@ require_once __DIR__ . '/../public/src/RelayRate.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
 require_once __DIR__ . '/../public/src/Caps.php';
 require_once __DIR__ . '/../public/src/Holds.php';
+require_once __DIR__ . '/../public/src/Pace.php';
+require_once __DIR__ . '/../public/src/Skew.php';
 require_once __DIR__ . '/../public/src/RelayStore.php';
 require_once __DIR__ . '/../public/src/Relay.php';
 require_once __DIR__ . '/../public/src/Load.php';
@@ -1870,6 +1872,77 @@ Settings::set('hold_max_workers', 0);
 ok(Holds::claim() === true && Holds::inUse() === 0,
     'and the budget switched off holds nothing at all');
 Settings::set('hold_max_workers', FOK_HOLD_MAX_WORKERS);
+
+// Client pacing (Pace). The same budget from the other side: Holds is what
+// happens at the wall, this is what the server says before it.
+Settings::set('hold_max_workers', 4);
+apcu_delete(new APCUIterator('/^fok:hold:/'));
+$p = Pace::forTier(Pace::TIER_LOBBY);
+ok($p['hold'] === true, 'an idle pool lets even a lobby hold a long poll');
+ok($p['hello_ms'] === Settings::int('pace_hello_ms'),
+    'and asks for no more than the ordinary heartbeat');
+ok($p['poll_ms'] === FOK_POLL_WAIT_MAX * 1000, 'the poll wait is the one the server can serve');
+ok($p['spread_ms'] === Settings::int('pace_spread_ms'), 'and the jitter budget is handed out');
+// Half the budget spent: the client that is only browsing gives way first.
+apcu_add('fok:hold:0', 1, 20);
+apcu_add('fok:hold:1', 1, 20);
+ok(Pace::forTier(Pace::TIER_LOBBY)['hold'] === false,
+    'a half-spent budget withdraws the lobby hold');
+ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] > Settings::int('pace_hello_ms'),
+    'and stretches its heartbeat');
+ok(Pace::forTier(Pace::TIER_TOURNEY)['hold'] === true,
+    'a tournament screen keeps its hold that long');
+ok(Pace::forTier(Pace::TIER_DUEL)['hold'] === true, 'and so does a duel');
+// Three quarters: only the duel is still worth a held worker.
+apcu_add('fok:hold:2', 1, 20);
+ok(Pace::forTier(Pace::TIER_TOURNEY)['hold'] === false,
+    'three quarters spent takes the tournament hold too');
+ok(Pace::forTier(Pace::TIER_DUEL)['hold'] === true,
+    'the duel handshake is the last thing to give way');
+ok(Pace::forTier(Pace::TIER_DUEL)['hello_ms'] === Settings::int('pace_hello_ms'),
+    'and a duel heartbeat is never stretched - it is how the server knows the game runs');
+// The ceiling is real: pacing may not stretch a client past being counted.
+Settings::set('pace_hello_max_ms', 31000);
+ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] === 31000,
+    'the heartbeat is clamped to the ceiling');
+Settings::set('pace_hello_ms', 0);
+ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] >= 5000,
+    'and a zeroed setting cannot turn into a flood');
+Settings::set('pace_hello_ms', FOK_PACE_HELLO_MS);
+Settings::set('pace_hello_max_ms', FOK_PACE_HELLO_MAX_MS);
+apcu_delete(new APCUIterator('/^fok:hold:/'));
+Settings::set('hold_max_workers', FOK_HOLD_MAX_WORKERS);
+
+// The pair clock cross-check (Skew). One caller's figure means nothing; the
+// DIFFERENCE between the pair's two is the only clock error the server can
+// see - and it is a hint, never a refusal (start.php issues the start either
+// way; that half is in the smoke suite).
+apcu_delete(new APCUIterator('/^fok:skew:/'));
+ok(Skew::note('sk110001', 'sk220002', 0, 40) === false,
+    'the first caller of a start has nothing to be compared against');
+ok(Skew::note('sk110001', 'sk220002', 0, 900) === false,
+    'a retry from the same client is not compared against itself');
+ok(Skew::note('sk220002', 'sk110001', 0, 55) === false,
+    'two anchors a few ms apart agree');
+ok(Skew::wanted('sk110001') === false, 'so nobody is asked to re-anchor');
+// The peers reversed: the pair key must not depend on who asked first.
+apcu_delete(new APCUIterator('/^fok:skew:/'));
+ok(Skew::note('sk220002', 'sk110001', 1, 30) === false, 'the other side may open the epoch');
+ok(Skew::note('sk110001', 'sk220002', 1, 900) === true,
+    'and a pair whose proofs disagree grossly is told to re-anchor');
+ok(Skew::wanted('sk220002') === true,
+    'the caller already answered picks the verdict up on its next start');
+ok(Skew::wanted('sk220002') === false, 'delivered once, then it stops nagging');
+// The epoch scopes it: the next halt is its own comparison.
+ok(Skew::note('sk110001', 'sk220002', 2, 900) === false,
+    'a new epoch starts the comparison over');
+Settings::set('start_pair_skew_ms', 0);
+apcu_delete(new APCUIterator('/^fok:skew:/'));
+ok(Skew::note('sk110001', 'sk220002', 3, 10) === false
+    && Skew::note('sk220002', 'sk110001', 3, 9000) === false,
+    'and the tolerance switched off compares nothing at all');
+Settings::set('start_pair_skew_ms', FOK_START_PAIR_SKEW_MS);
+apcu_delete(new APCUIterator('/^fok:skew:/'));
 
 // Housekeeping: one removal path, and only rows no reader can reach go.
 Presence::touch('hk110001', '9.9.9.11');

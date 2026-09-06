@@ -284,3 +284,34 @@ expect "request pending after QR screen closed" '"state":"pending"' "$R"
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php" > /dev/null
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 curl -s "$BASE/api/poll.php?id=$ID1" > /dev/null
+
+# --- API 4.4 on the start answer.
+#
+# q_ms is this request's own queue wait; resync is the PAIR CROSS-CHECK - the
+# server compares the two clock proofs of the SAME start, which is the one
+# clock error neither client can see for itself. It is a hint: the start is
+# issued either way, because two healthy peers on very asymmetric paths would
+# fail the same comparison honestly.
+# A fresh pair is NOT the way to isolate this: a start registers its caller
+# (Presence::touch), so two new ids would move the player counts the admin
+# suite asserts on. Drain instead. A verdict is sticky until the side it was
+# left for asks again, and the deliberately bogus proofs above leave one; two
+# starts on epochs of their own collect whatever is pending without ever
+# pairing up (one caller per epoch is never compared against anything).
+start_req "$ID1" "$ID2" 897 level "$(now_ms)" > /dev/null
+start_req "$ID2" "$ID1" 898 level "$(now_ms)" > /dev/null
+R=$(start_req "$ID1" "$ID2" 900 level "$(now_ms)")
+expect "a start carries the queue figure" '"q_ms":' "$R"
+expect "the first caller of a start is not judged alone" '"resync":false' "$R"
+R=$(start_req "$ID2" "$ID1" 900 level "$(( $(now_ms) - 3000 ))")
+expect "a pair whose two clock proofs disagree is asked to resync" '"resync":true' "$R"
+expect "and is given its start regardless - it is a hint, not a refusal" '"start_pts":' "$R"
+# The verdict is for BOTH sides: the one already answered collects it next time.
+R=$(start_req "$ID1" "$ID2" 901 level "$(now_ms)")
+expect "the peer already answered collects the verdict on its next start" '"resync":true' "$R"
+R=$(start_req "$ID1" "$ID2" 902 level "$(now_ms)")
+expect "and is not nagged about it twice" '"resync":false' "$R"
+# Two anchors that agree say nothing at all.
+R=$(start_req "$ID2" "$ID1" 903 level "$(now_ms)")
+R=$(start_req "$ID1" "$ID2" 903 level "$(now_ms)")
+expect "a pair whose clocks agree is left alone" '"resync":false' "$R"

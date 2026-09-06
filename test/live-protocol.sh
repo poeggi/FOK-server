@@ -112,6 +112,17 @@ BR=$(poll "$B")
 ordered "ice burst all delivered, in order" 'cand-1' 'cand-3' "$BR"
 expect "ice burst kept the middle candidate" 'cand-2' "$BR"
 
+# The same burst as ONE request ('ices', 4.4). This is the whole point of the
+# type on this host: the cost measured here is paid per REQUEST, not per byte.
+# Worth asserting against the REAL host rather than php -S, because the thing
+# it answers - queueing above the PHP pool - only exists on the real one.
+sig "$A" "$B" ices '[{\"candidate\":\"batch-1\"},{\"candidate\":\"batch-2\"}]'
+BR=$(poll "$B")
+expect "a batched candidate list is delivered" '"type":"ices"' "$BR"
+ordered "and carries the whole batch" 'batch-1' 'batch-2' "$BR"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$A\",\"to\":\"$B\",\"type\":\"ices\",\"payload\":\"not-an-array\"}" "$BASE/api/signal.php")
+expect "a batch that is not an array is refused" '"error":"invalid payload"' "$R"
+
 # --- Start: the server hands both peers the identical shared start moment.
 start_req "$A" "$B" 0 first "$(now_ms)" > /tmp/lp_s1.$$ &
 start_req "$B" "$A" 0 first "$(now_ms)" > /tmp/lp_s2.$$ &

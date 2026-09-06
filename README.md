@@ -422,6 +422,7 @@ host-level. If this outgrows shared hosting, fix workers first.
                           "reason":"first|level|respawn|resume|rematch",
                           "pts":ms}
       -> {"ok":true,"start_pts":ms,"epoch":n,"now":ms,
+          "q_ms":ms,"resync":bool,
           "mid":"<32-hex>","secret":"<32-hex>"}
          identical for both peers; both name the same epoch, so the answer
          does not depend on when either asks. 409 if the caller is behind,
@@ -430,6 +431,11 @@ host-level. If this outgrows shared hosting, fix workers first.
          mid + secret (4.0, additive) are the pair's match id and the
          CALLER'S OWN attestation secret, for item claims below; one match
          spans the whole duel and each side gets only its own secret.
+         q_ms + resync (4.4, additive) are this request's own queue wait
+         and the pair clock cross-check: both peers prove their clock
+         against the SAME start, so the difference between their two
+         proofs is a clock error only the server can see. A hint - the
+         start is issued either way (see Skew, docs/API.md).
     POST /api/items.php  {"id":"cafe0001","action":"list|mint|seed|claim",...}
       -> list  {"ok":true,"items":[{"uid":"<32-hex>","item_id":"crown",
                                     "seq":n},...]}

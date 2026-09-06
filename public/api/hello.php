@@ -7,6 +7,7 @@ require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Friends.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Tournament.php';
+require_once __DIR__ . '/../src/Pace.php';
 
 /**
  * Heartbeat and poll endpoint, the client's single periodic request.
@@ -127,10 +128,26 @@ if (!is_bool($tourneys)) {
 
 $signals = Signals::take($id);
 Load::tick('msg_out', count($signals));
+
+// What this client is in the middle of decides how much patience the server
+// will spend on it when the pool fills (see Pace). A duel is the only thing
+// here whose handshake a player can feel; a lobby is waiting for something
+// that has not happened yet and gives way first.
+$tier = $duelWith !== null ? Pace::TIER_DUEL
+    : ($tourneys ? Pace::TIER_TOURNEY : Pace::TIER_LOBBY);
+$q = Load::queueUs();
+
 $out = [
     'ok' => true,
     'api' => FOK_API_VERSION,
     'now' => Util::nowMs(),
+    // Additive since 4.4: how long THIS request waited for a worker before
+    // any PHP ran. Normally 0. A client reads it to know the host is busy
+    // right now - above all, not to anchor its clock against this moment.
+    'q_ms' => $q === null ? 0 : (int)round($q / 1000),
+    // Additive since 4.4: the beat the server wants from this client. Only
+    // the server can see its own load, so only the server can set it.
+    'pace' => Pace::forTier($tier),
     // The client MUST honour this: true turns its debug mode on, false
     // turns it off again. It reports back what it actually did via the
     // debug field of the next hello.

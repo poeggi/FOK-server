@@ -130,6 +130,27 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
 expect "offer allows large payload" '"ok":true' "$R"
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 
+# 'ices' (4.4): a side's whole ICE trickle in ONE request. The cost on this
+# host is per request, not per byte, so this is the type that pays. The
+# server stays opaque to what a candidate looks like and checks only that the
+# payload IS a bounded list - the count is the entire point of the type.
+CANDS='[{\"candidate\":\"cand-a\"},{\"candidate\":\"cand-b\"}]'
+R=$(sig "$ID1" "$ID2" ices "$CANDS")
+expect "batched ice candidates accepted" '"ok":true' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+expect "batched ice candidates delivered" '"type":"ices"' "$R"
+expect "the whole batch arrives, not just the last of it" 'cand-b' "$R"
+R=$(sig "$ID1" "$ID2" ices 'cand-a')
+expect "ices rejects a payload that is not an array" '"error":"invalid payload"' "$R"
+R=$(sig "$ID1" "$ID2" ices '[]')
+expect "ices rejects an empty batch" '"error":"invalid payload"' "$R"
+R=$(sig "$ID1" "$ID2" ices "[$(printf '1,%.0s' $(seq 1 23))1]")
+expect "a full batch at the cap is accepted" '"ok":true' "$R"
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+R=$(sig "$ID1" "$ID2" ices "[$(printf '1,%.0s' $(seq 1 24))1]")
+expect "one candidate over the cap is refused" '"error":"invalid payload"' "$R"
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+
 R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID2")
 expect "poll empty is 204" '204' "$R"
 

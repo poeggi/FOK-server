@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.3.23';
+const FOK_SERVER_VERSION = '1.4.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -98,7 +98,17 @@ const FOK_SERVER_VERSION = '1.3.23';
 // a 4.2 client ignores "lvl" and plays every round at level 1 as before, and
 // its ordinary state() polling carries it through a break without ever
 // pressing continue - it simply sees the next roles sheet a little later.
-const FOK_API_VERSION = '4.3';
+// 4.4 answers a measurement rather than a wish. Live shows tens of ms of
+// queue wait on workers that were ALREADY WARM, so the cost on this host is
+// paid per REQUEST, above the PHP pool, and the only lever is fewer
+// simultaneous requests. Three additive fields and one additive signal type
+// pull that lever: 'ices' collapses the duel-start ICE trickle into one
+// message, q_ms tells a client when its own round trip was queued (so it
+// does not anchor its clock against a busy moment), pace lets the server set
+// the beat it can actually serve, and after_ms spreads the callbacks a
+// broadcast provokes. Major stays 4: every one of them is ignorable, and a
+// 4.3 client behaves exactly as it does today.
+const FOK_API_VERSION = '4.4';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
@@ -175,6 +185,11 @@ const FOK_RELAY_TRACK_THROTTLE = 10;
 // (see Signals::expire), so an invite never just evaporates.
 const FOK_SIGNAL_TTL = 30;
 const FOK_SIGNAL_MAX_PAYLOAD = 16384;
+// Max candidates in one batched 'ices' signal (see docs/API.md). The point
+// of the type is that ONE request carries a side's whole trickle, and a side
+// gathers under ten; the cap only stops a client turning a signal into a
+// list nobody sent.
+const FOK_ICES_MAX = 24;
 // A client's config backup: an opaque blob (its whole config; see
 // api/backup.php and docs/API.md), capped per player.
 const FOK_STATS_MAX = 65536;
@@ -217,6 +232,24 @@ const FOK_POLL_CHECK_USEC_APCU = 2000;
 // pool separately - can never add up to all of it. Raise it with the pool; 0
 // stops budgeting holds altogether.
 const FOK_HOLD_MAX_WORKERS = 12;
+
+// Client pacing (see Pace, hello.php `pace`). The base heartbeat is what the
+// client already does; the ceiling is how far pacing may stretch it when the
+// pool is under pressure, and the spread is the jitter budget that keeps
+// clients which started together from staying together. Advice, not a
+// setting - a client that ignores all three behaves exactly as before.
+const FOK_PACE_HELLO_MS = 30000;
+const FOK_PACE_HELLO_MAX_MS = 90000;
+const FOK_PACE_SPREAD_MS = 4000;
+
+// The pair clock cross-check (see Skew, start.php `resync`). Both peers
+// prove their clock against the SAME start, so the difference between their
+// two proofs bounds how far apart their anchors are - the one clock error
+// the server can see and neither client can. Gross on purpose: it must pass
+// a healthy pair on asymmetric paths, and it only ever asks for a re-anchor.
+// 120 ms is ~7 ticks at 60 Hz, well above the few ms a synced pair shows and
+// well below the tens of ms a sync taken inside the ICE burst costs.
+const FOK_START_PAIR_SKEW_MS = 120;
 
 // Default players in one tournament (admin-configurable, see Settings).
 // The default follows the HOST, not taste: measured, this deployment serves

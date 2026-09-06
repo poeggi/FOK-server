@@ -173,7 +173,21 @@ final class Tournament
      */
     private static function flush(string $from, array $events): void
     {
+        $spread = Settings::int('pace_spread_ms');
+        $seat = 0;
         foreach ($events as [$to, $payload]) {
+            // after_ms (4.4): a round board wakes every participant in the
+            // same instant and they all call back together - the ICE burst
+            // again, eight-handed, and on a host whose cost is paid per
+            // request that burst is the expensive part of a tournament. The
+            // event itself is not delayed; only the call it provokes is, and
+            // by SEAT, so the eight arrive spread over the budget instead of
+            // stacked. Additive: a client that ignores it behaves as before,
+            // and a broadcast of one is not spread at all.
+            if ($spread > 0 && count($events) > 1) {
+                $payload['after_ms'] = (int)round($seat * $spread / count($events));
+            }
+            $seat++;
             Signals::send($from, $to, 'tourney', (string)json_encode($payload));
         }
     }

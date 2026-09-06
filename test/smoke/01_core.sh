@@ -30,6 +30,15 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"}" "
 expect "hello registers" "$(strict '"registered":1')" "$R"
 expect "hello online" "$(strict '"online":1')" "$R"
 expect "hello carries api version" '"api":' "$R"
+# 4.4, both additive. q_ms is this request's own queue wait - the client
+# reads it to know not to anchor its clock against a busy moment. pace is
+# what the server wants back; only the server can see its own load.
+expect "hello carries the queue figure" '"q_ms":' "$R"
+expect "hello carries the pacing object" '"pace":' "$R"
+expect "pacing sets the heartbeat" '"hello_ms":' "$R"
+expect "pacing sets the long-poll wait" '"poll_ms":' "$R"
+expect "pacing says whether a hold is allowed" '"hold":' "$R"
+expect "pacing hands out a jitter budget" '"spread_ms":' "$R"
 HN=$(echo "$R" | grep -oE '"now":[0-9]+' | cut -d: -f2)
 if [ "${#HN}" -eq 13 ]; then echo "ok   hello now is milliseconds"; else echo "FAIL hello now not ms: $HN"; fail=1; fi
 
