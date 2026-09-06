@@ -39,6 +39,7 @@ expect "pacing sets the heartbeat" '"hello_ms":' "$R"
 expect "pacing sets the long-poll wait" '"poll_ms":' "$R"
 expect "pacing says whether a hold is allowed" '"hold":' "$R"
 expect "pacing hands out a jitter budget" '"spread_ms":' "$R"
+expect "pacing spaces a client's own requests" '"gap_ms":' "$R"
 HN=$(echo "$R" | grep -oE '"now":[0-9]+' | cut -d: -f2)
 if [ "${#HN}" -eq 13 ]; then echo "ok   hello now is milliseconds"; else echo "FAIL hello now not ms: $HN"; fail=1; fi
 

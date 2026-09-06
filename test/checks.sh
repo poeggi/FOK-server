@@ -8,9 +8,12 @@ fail=0
 step() { echo; echo "== $1"; }
 
 step "PHP syntax"
-while IFS= read -r f; do
-    php -l "$f" > /dev/null || fail=1
-done < <(git ls-files '*.php')
+# One php process per file IS this step, and no file's lint depends on
+# another's, so run them as wide as the machine is. A parse error still
+# announces itself on stderr and fails xargs.
+git ls-files '*.php' \
+    | xargs -P "$(getconf _NPROCESSORS_ONLN 2> /dev/null || echo 4)" -n 1 php -l > /dev/null \
+    || fail=1
 [ "$fail" -eq 0 ] && echo "OK"
 
 step "ASCII only (no smart quotes, dashes, arrows in sources)"
@@ -38,12 +41,17 @@ if git ls-files '*.db' | grep .; then
 fi
 
 step "PHP consistency (strict_types in every file)"
-while IFS= read -r f; do
-    if ! head -n 3 "$f" | grep -q 'declare(strict_types=1)'; then
+# One awk pass rather than a head and a grep per file. Same rule: only
+# the first three lines count, so a mention further down still fails.
+missing=$(git ls-files 'public/*.php' | xargs awk '
+    FNR <= 3 && /declare\(strict_types=1\)/ { ok[FILENAME] = 1 }
+    END { for (i = 1; i < ARGC; i++) if (!(ARGV[i] in ok)) print ARGV[i] }')
+if [ -n "$missing" ]; then
+    echo "$missing" | while IFS= read -r f; do
         echo "FAIL: $f is missing declare(strict_types=1)"
-        fail=1
-    fi
-done < <(git ls-files 'public/*.php')
+    done
+    fail=1
+fi
 [ "$fail" -eq 0 ] && echo "OK"
 
 step "Unit tests"

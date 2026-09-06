@@ -32,6 +32,7 @@ $id = $body['id'] ?? null;
 if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
+Util::noteCaller($id);
 $action = $body['action'] ?? '';
 
 Presence::touch($id, Util::clientIp());

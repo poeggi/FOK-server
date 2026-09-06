@@ -52,6 +52,7 @@ $id = $body['id'] ?? null;
 if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
+Util::noteCaller($id);
 $action = $body['action'] ?? null;
 if (!in_array($action, ['create', 'join', 'leave', 'start', 'continue', 'state',
         'result', 'standdown', 'orphan'], true)) {

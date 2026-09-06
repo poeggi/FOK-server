@@ -36,6 +36,7 @@ final class Settings
         'pace_hello_ms' => [FOK_PACE_HELLO_MS, 'Heartbeat interval handed to an unpressured client (ms)'],
         'pace_hello_max_ms' => [FOK_PACE_HELLO_MAX_MS, 'Longest heartbeat interval pacing may ask for (ms)'],
         'pace_spread_ms' => [FOK_PACE_SPREAD_MS, 'Jitter budget clients spread their periodic requests over (ms)'],
+        'pace_gap_ms' => [FOK_PACE_GAP_MS, 'Minimum spacing asked between the background requests of one client (ms, 0 = off)'],
         'ices_max' => [FOK_ICES_MAX, 'Max ICE candidates in one batched signal'],
         // DEPRECATED: relay fallback (see docs/DEPRECATED-relay.md). These
         // seven relay_* settings are removed with the feature.

@@ -41,6 +41,7 @@ $id = $body['id'] ?? null;
 if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
+Util::noteCaller($id);
 $action = $body['action'] ?? null;
 if (!in_array($action, ['list', 'mint', 'seed', 'claim'], true)) {
     Util::fail('invalid action');

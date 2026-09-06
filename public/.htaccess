@@ -6,8 +6,29 @@
     </FilesMatch>
 </IfModule>
 
+# The vhost already answers http:// with a 301, but that lives in the host's
+# own configuration: this repo does not own it, CI cannot check it, and a
+# deploy can neither break nor restore it. So the redirect is ALSO stated
+# here, where it is version-controlled. Normally it never runs - the vhost
+# rule fires first - and it exists for the day that rule is lost.
+#
+# 308, not 301: it is the only redirect status a client must not turn into a
+# GET, so a redirected POST keeps its body. That does not make http:// safe to
+# use - the body has already crossed the network in cleartext by then - which
+# is why the API contract tells clients to request https:// directly.
+#
+# php -S ignores .htaccess entirely, so the smoke suite cannot cover this;
+# only real Apache can prove it. Verify on live after the deploy that carries
+# it: a plain http:// request still lands on https://, and an https:// request
+# is answered normally rather than looping.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTPS} !=on
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=308,L]
+</IfModule>
+
 # HSTS: a browser that has loaded the site over HTTPS then upgrades any later
-# http:// itself, closing the pre-redirect window the 301 leaves. Non-HSTS
+# http:// itself, closing the pre-redirect window the redirect leaves. Non-HSTS
 # clients (an old TV) ignore it, so it blocks no one. No includeSubDomains -
 # this host only. Apache-only, verified on live.
 <IfModule mod_headers.c>

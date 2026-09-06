@@ -105,6 +105,17 @@ ok(Util::tlsBelow12('TLSv1.3') === false, 'TLS 1.3 is accepted');
 ok(Util::tlsBelow12('TLSv2.0') === false, 'a future TLS is accepted');
 ok(Util::tlsBelow12('') === false, 'an absent/unknown protocol is fail-open');
 
+// Util: the cleartext gate. Only what the server itself observed counts, and
+// "off" is what Apache sets on a plain connection - an empty string is not the
+// only way to be insecure.
+ok(Util::isSecureTransport('on', '443') === true, 'HTTPS on is secure');
+ok(Util::isSecureTransport('1', '80') === true, 'a truthy HTTPS var alone is secure');
+ok(Util::isSecureTransport('', '443') === true, 'port 443 alone is secure');
+ok(Util::isSecureTransport('off', '80') === false, 'HTTPS off is cleartext');
+ok(Util::isSecureTransport('OFF', '80') === false, 'HTTPS off is case-insensitive');
+ok(Util::isSecureTransport('', '80') === false, 'no HTTPS var and port 80 is cleartext');
+ok(Util::isSecureTransport('', '') === false, 'nothing known is cleartext, not fail-open');
+
 // Util: address-family classification for the peer-net hint.
 ok(Util::ipInfo('1.2.3.4') === ['ip' => '1.2.3.4', 'family' => 4], 'ipv4 classified as family 4');
 ok(Util::ipInfo('2a01:db8::5') === ['ip' => '2a01:db8::5', 'family' => 6], 'ipv6 classified as family 6');
@@ -233,6 +244,29 @@ $r2 = Friends::request('22227777', '11117777');
 ok($r1['state'] === 'pending' && $r2['state'] === 'accepted' && $r2['changed'] === true,
     'crossing requests auto-match into a friendship');
 Friends::remove('11117777', '22227777');
+
+// The roster hello's `friends_list` and friend.php `list` both serve
+// (Friends::rosterOf): every row listOf returns, decorated with the peer
+// status of its ACCEPTED half only.
+Presence::touch('a05a0001', '4.4.4.1');
+Presence::touch('a05a0002', '4.4.4.2', 25, 'BRAVO');
+Presence::touch('a05a0003', '4.4.4.3', 30, 'CHARLIE');
+Friends::request('a05a0001', 'a05a0002');
+Friends::accept('a05a0002', 'a05a0001');
+Friends::request('a05a0003', 'a05a0001');
+$roster = array_column(Friends::rosterOf('a05a0001'), null, 'id');
+ok(count($roster) === 2, 'the roster carries every row the plain list does');
+ok($roster['a05a0002']['state'] === 'accepted' && $roster['a05a0002']['outgoing'] === true
+    && $roster['a05a0002']['name'] === 'BRAVO' && $roster['a05a0002']['online'] === true
+    && $roster['a05a0002']['latency'] === 25,
+    'an accepted row is decorated with the peer status');
+ok($roster['a05a0003']['state'] === 'pending' && $roster['a05a0003']['outgoing'] === false
+    && $roster['a05a0003']['name'] === null && $roster['a05a0003']['online'] === false
+    && $roster['a05a0003']['latency'] === null,
+    'a pending row is listed but says nothing about the peer');
+ok(Friends::rosterOf('a05a0004') === [], 'a player with no friends gets an empty roster');
+Friends::remove('a05a0001', 'a05a0002');
+Friends::remove('a05a0001', 'a05a0003');
 
 // Auto-accept while the peer is on the QR/add-friend screen
 Presence::touch('bbbbbbbb', '5.6.7.8', null, null, true);
@@ -1883,6 +1917,8 @@ ok($p['hello_ms'] === Settings::int('pace_hello_ms'),
     'and asks for no more than the ordinary heartbeat');
 ok($p['poll_ms'] === FOK_POLL_WAIT_MAX * 1000, 'the poll wait is the one the server can serve');
 ok($p['spread_ms'] === Settings::int('pace_spread_ms'), 'and the jitter budget is handed out');
+ok($p['gap_ms'] === Settings::int('pace_gap_ms'),
+    'and the plain gap between the client\'s own background requests');
 // Half the budget spent: the client that is only browsing gives way first.
 apcu_add('fok:hold:0', 1, 20);
 apcu_add('fok:hold:1', 1, 20);
@@ -1892,6 +1928,8 @@ ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] > Settings::int('pace_hello_ms'),
     'and stretches its heartbeat');
 ok(Pace::forTier(Pace::TIER_TOURNEY)['hold'] === true,
     'a tournament screen keeps its hold that long');
+ok(Pace::forTier(Pace::TIER_DUEL)['gap_ms'] === Settings::int('pace_gap_ms') * 2,
+    'pressure widens the gap for every tier - a duel spaces its background too');
 ok(Pace::forTier(Pace::TIER_DUEL)['hold'] === true, 'and so does a duel');
 // Three quarters: only the duel is still worth a held worker.
 apcu_add('fok:hold:2', 1, 20);
@@ -1908,6 +1946,13 @@ ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] === 31000,
 Settings::set('pace_hello_ms', 0);
 ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] >= 5000,
     'and a zeroed setting cannot turn into a flood');
+// And the gap has a ceiling of its own: pressure may space a client's
+// background work, never stall it.
+Settings::set('pace_gap_ms', 1500);
+ok(Pace::forTier(Pace::TIER_LOBBY)['gap_ms'] === 2000, 'the widened gap is clamped');
+Settings::set('pace_gap_ms', 0);
+ok(Pace::forTier(Pace::TIER_LOBBY)['gap_ms'] === 0, 'and zeroing the setting turns it off');
+Settings::set('pace_gap_ms', FOK_PACE_GAP_MS);
 Settings::set('pace_hello_ms', FOK_PACE_HELLO_MS);
 Settings::set('pace_hello_max_ms', FOK_PACE_HELLO_MAX_MS);
 apcu_delete(new APCUIterator('/^fok:hold:/'));

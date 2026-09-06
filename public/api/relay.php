@@ -81,6 +81,7 @@ if ($method === 'GET') {
     if (!Util::isValidId($id) || !Util::isValidId($peer) || $id === $peer) {
         Util::fail('invalid id/peer');
     }
+    Util::noteCaller($id);
     $wait = min((int)($_GET['wait'] ?? 0), FOK_POLL_WAIT_MAX);
     // Two relayed players hold two workers for as long as their duel runs,
     // which is why relay_max_duels exists - but that cap only knows about
@@ -142,6 +143,7 @@ $peer = $body['peer'] ?? null;
 if (!Util::isValidId($id) || !Util::isValidId($peer) || $id === $peer) {
     Util::fail('invalid id/peer');
 }
+Util::noteCaller($id);
 // A client sustaining too high a send rate is turned away for a while
 // (see RelayRate) - a cheap indexed read, before any of the work below.
 if (RelayRate::blocked($id)) {

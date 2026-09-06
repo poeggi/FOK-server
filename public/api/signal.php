@@ -42,6 +42,7 @@ $payload = $body['payload'] ?? '';
 if (!Util::isValidId($id) || !Util::isValidId($to) || $id === $to) {
     Util::fail('invalid id/to');
 }
+Util::noteCaller($id);
 if (!is_string($type) || !in_array($type, Signals::TYPES, true)) {
     Util::fail('invalid type');
 }

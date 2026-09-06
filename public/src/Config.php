@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.4.0';
+const FOK_SERVER_VERSION = '1.4.1';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -237,10 +237,16 @@ const FOK_HOLD_MAX_WORKERS = 12;
 // client already does; the ceiling is how far pacing may stretch it when the
 // pool is under pressure, and the spread is the jitter budget that keeps
 // clients which started together from staying together. Advice, not a
-// setting - a client that ignores all three behaves exactly as before.
+// setting - a client that ignores any of them behaves exactly as before.
 const FOK_PACE_HELLO_MS = 30000;
 const FOK_PACE_HELLO_MAX_MS = 90000;
 const FOK_PACE_SPREAD_MS = 4000;
+// The spread turned inward: that one separates clients from each other, this
+// one separates a single client's OWN requests from each other. A client
+// with several independent schedulers fires two of them into the same tick
+// and queues its second request behind its first - paying the wait twice,
+// for traffic that was never urgent in the first place.
+const FOK_PACE_GAP_MS = 250;
 
 // The pair clock cross-check (see Skew, start.php `resync`). Both peers
 // prove their clock against the SAME start, so the difference between their

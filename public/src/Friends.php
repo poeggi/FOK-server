@@ -240,6 +240,36 @@ final class Friends
         return $out;
     }
 
+    /**
+     * The caller's whole roster, decorated with the status of its accepted
+     * half. THE one implementation of it: hello.php serves this under the
+     * `friends_list` flag and friend.php serves it as the `list` action, and
+     * a roster that differed between the two routes would be a roster no
+     * client could trust.
+     *
+     * @return array listOf plus, per row: {name, online, latency}
+     */
+    public static function rosterOf(string $me): array
+    {
+        $list = self::listOf($me);
+        $accepted = array_column(array_filter(
+            $list,
+            static fn(array $f): bool => $f['state'] === 'accepted'
+        ), 'id');
+        require_once __DIR__ . '/Presence.php';
+        $info = Presence::infoOf($accepted);
+        foreach ($list as &$f) {
+            // Status belongs to an ACCEPTED friendship only. A pending row
+            // says somebody asked; it does not entitle either side to see
+            // whether the other is online.
+            $peer = $f['state'] === 'accepted' ? ($info[$f['id']] ?? null) : null;
+            $f['name'] = $peer['name'] ?? null;
+            $f['online'] = $peer['online'] ?? false;
+            $f['latency'] = $peer['latency'] ?? null;
+        }
+        return $list;
+    }
+
     /** @return array all relations of $me: [{id, state, outgoing}] */
     public static function listOf(string $me): array
     {

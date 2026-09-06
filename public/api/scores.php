@@ -41,6 +41,7 @@ $id = $body['id'] ?? null;
 if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
+Util::noteCaller($id);
 $score = $body['score'] ?? null;
 $level = $body['level'] ?? null;
 $diff = $body['diff'] ?? 1;

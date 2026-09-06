@@ -23,6 +23,10 @@ require_once __DIR__ . '/../src/Pace.php';
  *   "debug": bool,              optional, whether the client IS in debug
  *                               mode (absent means it is not)
  *   "friends": ["8-hex", ...]   optional, ids to check
+ *   "friends_list": bool        optional, return the caller's WHOLE roster
+ *                               (the same array friend.php `list` returns)
+ *                               so a screen showing it needs no second
+ *                               request alongside this heartbeat
  *   "tourneys": bool            optional, ask for open tournament lobbies
  *                               hosted on one of the caller's own networks
  *   "nets": ["ip", ...]         optional, the caller's OWN public addresses
@@ -46,6 +50,7 @@ $id = $body['id'] ?? null;
 if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
+Util::noteCaller($id);
 
 $latency = $body['latency'] ?? null;
 if ($latency !== null && (!is_int($latency) || $latency < 0 || $latency > 60000)) {
@@ -109,6 +114,7 @@ if ($duelWith !== null) {
 // EVERY input is validated before the mailbox is touched: Signals::take()
 // deletes what it returns, so a Util::fail() after it would drop the
 // caller's pending invites for good.
+$wantRoster = !empty($body['friends_list']);
 $friends = null;
 if (isset($body['friends'])) {
     $friends = $body['friends'];
@@ -172,6 +178,16 @@ if ($friends !== null) {
     // take an invite or join a lobby, and saying so up front is the
     // difference between a considered invite and a wasted one.
     $out['friends_playing'] = Presence::playingOf(array_keys($accepted));
+}
+
+// The roster itself, which is not what the status maps above it are. Those
+// can only answer for ids the request already named; this is who the
+// caller's friends ARE - pending rows, outgoing rows, and names for ids the
+// client has never seen. Serving it here is the whole point of the flag: a
+// screen that shows the roster was sending this heartbeat anyway, and its
+// second request queued behind it.
+if ($wantRoster) {
+    $out['friends'] = Friends::rosterOf($id);
 }
 
 // Lobbies are announced by NETWORK, not by friendship: a tournament is a

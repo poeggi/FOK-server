@@ -35,6 +35,16 @@ added in 4.1, self-reported networks, added in 4.2, the tournament round
 ladder and its round breaks, added in 4.3, or batched ICE candidates, the
 queue-wait figure and server-set pacing, added in 4.4) is available.
 
+A MINOR is also RE-RELEASED when a later server on the SAME `api` string
+gains an optional flag or field that an earlier server of that MINOR does
+not have. 4.4 carries one such re-release: `friends_list` on hello with its
+`friends` response, and `pace.gap_ms`. So the version says what the contract
+PERMITS, not what the server in front of you implements. FEATURE-DETECT
+every optional field - ask for it, use it when the answer carries it, fall
+back when it does not - and never gate an optional feature on the MINOR. The
+rule costs nothing when the field is present and is the only thing that
+works when it is not.
+
 ## Conventions
 
 - All endpoints speak JSON. POST bodies are JSON documents
@@ -55,20 +65,41 @@ queue-wait figure and server-set pacing, added in 4.4) is available.
   exactly 8 lowercase hex chars, e.g. `"c0ffee42"` (regex
   `^[0-9a-f]{8}$`). It is a PUBLIC identity, not a secret. A per-session
   secret token is planned but not part of this version.
-- CORS: browsers may call the API from `https://poeggi.github.io` and
-  `http://localhost:8000` / `http://127.0.0.1:8000`. Other origins are
-  not sent CORS headers. The one exception is `t.txt`, which is served by
-  Apache without PHP and so cannot consult that allowlist: it answers any
-  origin, and discloses nothing the standard HTTP `Date` header does not.
-- Transport: HTTPS only, TLS 1.3, HTTP/2 (ALPN `h2`, with HTTP/1.1
-  fallback); connections are persistent (keep-alive). Clients should REUSE
-  one connection across requests - browsers do this automatically. It
-  matters for the long-poll pattern: over HTTP/2 a held poll GET and any
-  outbound POSTs share one multiplexed connection, with no per-request TLS
-  handshake and no HTTP-level head-of-line blocking between them. This is
-  transport only: it keeps connections up, it does NOT let the server push
-  without a held request (each held request still occupies one worker).
-  HTTP/3 / QUIC is not offered.
+- CORS: browsers may call the API from `https://poeggi.github.io` and, for
+  local client development, `http://localhost:8000` /
+  `http://127.0.0.1:8000`. Those two are the ONLY `http://` origins in the
+  allowlist, and they are deliberate: loopback never leaves the machine, so
+  there is no cleartext on a wire to protect. Every other origin must be
+  `https://`. Origins outside the allowlist are not sent CORS headers. The
+  one exception is `t.txt`, which is served by Apache without PHP and so
+  cannot consult that allowlist: it answers any origin, and discloses
+  nothing the standard HTTP `Date` header does not.
+- Transport: HTTPS only, and ENFORCED rather than merely expected, at three
+  levels:
+  - `http://` is answered with a redirect to the same path on `https://`
+    (the host sends 301, the rule this repo ships sends 308);
+  - every response carries `Strict-Transport-Security: max-age=31536000`,
+    so a browser that has loaded the site once upgrades later `http://`
+    URLs itself, without the redirect;
+  - a cleartext request that reaches PHP anyway is REFUSED with **426**
+    `{"ok":false,"error":"HTTPS required"}`. It is a backstop, not a normal
+    path: the redirect sits in front of it.
+  TLS 1.2 is the floor - below it the same 426 answers
+  `{"ok":false,"error":"TLS 1.2 or higher required"}` - and 1.3 is what the
+  host negotiates in practice.
+  Clients MUST request `https://` URLs directly and never lean on the
+  redirect. A 301 does not preserve a POST body, so a redirected POST
+  arrives empty; and the body has already crossed the network in cleartext
+  by the time the redirect comes back.
+- Connections: HTTP/2 (ALPN `h2`, with HTTP/1.1 fallback) and persistent
+  (keep-alive). Clients should REUSE one connection across requests -
+  browsers do this automatically. It matters for the long-poll pattern:
+  over HTTP/2 a held poll GET and any outbound POSTs share one multiplexed
+  connection, with no per-request TLS handshake and no HTTP-level
+  head-of-line blocking between them. This is transport only: it keeps
+  connections up, it does NOT let the server push without a held request
+  (each held request still occupies one worker). HTTP/3 / QUIC is not
+  offered.
 - Clients must gate ALL calls on the user's offline setting
   (`!cfg.offline` in FOK-snake): when offline is ON, never contact the
   server.
@@ -419,6 +450,15 @@ Request:
       "debug": true,              optional bool: whether the client IS in
                                   debug mode right now (absent means it is
                                   not). See Debug mode below.
+      "friends_list": true        optional bool: return the caller's WHOLE
+                                  friend roster in this response - the same
+                                  array friend.php list returns. Send it in
+                                  place of a separate friend.php call while
+                                  a screen that shows the roster is open.
+                                  It is a 4.4 RE-RELEASE addition, so a 4.4
+                                  server may not have it: fall back to
+                                  friend.php when the response carries no
+                                  "friends", never gate on the version.
       "tourneys": true            optional bool: ask for the open tournament
                                   lobbies hosted on the caller's own network
                                   (see Tournament mode). Send it only while a
@@ -447,7 +487,8 @@ Response:
         "hello_ms": 30000,        pace itself. Additive and ignorable, but
         "poll_ms": 9000,          only the server knows its own load.
         "hold": true,             See Pacing below.
-        "spread_ms": 4000
+        "spread_ms": 4000,
+        "gap_ms": 250
       },
       "debug": false,             the server's instruction: the client MUST
                                   honour it (see Debug mode below)
@@ -461,11 +502,28 @@ Response:
       "friends_latency": {"deadbeef": 31},   ms while online, else null
       "friends_name": {"deadbeef": "KAI"},   last reported display name
       "friends_playing": ["deadbeef"],       accepted friends in a duel NOW
+      "friends": [                           only when "friends_list" was
+        {"id": "deadbeef",                   true, AND only on a server that
+         "state": "accepted",                has the 4.4 re-release. Byte
+         "outgoing": false,                  for byte what friend.php list
+         "name": "KAI",                      returns - see Friendships
+         "online": true,
+         "latency": 31}
+      ],
       "tourneys": [                          only when "tourneys" was true
         {"tid": "<32-hex>", "code": "K7QMX2", "host": "c0ffee42",
          "host_name": "KAI", "players": 3, "max": 8, "stakes": false}
       ]
     }
+
+`friends` and `friends_*` are two different things and the names are
+close enough to hurt: `friends_online` / `friends_latency` / `friends_name`
+/ `friends_playing` report STATUS for ids the request already named in
+`friends`, while `friends` in the response is the ROSTER - who the caller's
+friends are at all, including requests still pending, requests the caller
+sent out, and names for ids the client has never seen. The maps cannot
+carry the roster, which is the only reason friend.php list exists as a
+separate call.
 
 The friends_* fields are AUTHORIZATION-GATED: real values are served only
 for ids with an ACCEPTED friendship to the caller (see Friendships);
@@ -520,6 +578,19 @@ today - but a client that honours it lets the host carry more players.
                 offset for the session, and apply it to every periodic
                 request. It exists so clients that started together do
                 not stay together.
+    gap_ms      the minimum spacing the server wants between any two
+                requests THIS client has in flight, whichever endpoints
+                they are. Where spread_ms separates clients from each
+                other once per session, this separates a client's own
+                requests from each other continuously - a client that
+                fires a heartbeat and a roster read in the same tick
+                queues the second behind the first and pays the wait
+                twice. Serialise background traffic through ONE gate and
+                hold the gap there; let the duel handshake (signal,
+                start, poll) past it, because that is the latency a
+                player feels. 0 or absent means the client's own
+                default. It is a 4.4 re-release addition, so treat an
+                absent field as 0 rather than as an old server.
 
 Both intervals are clamped server-side at both ends: a floor, or the client
 looks offline, and a ceiling, or it floods. Read the values as advice about
@@ -887,6 +958,15 @@ The server records friendship relations as a mutual handshake. An
 ACCEPTED friendship is what entitles a client to query the friend's
 status (hello's friends_* maps, friend.php list) and to send game
 invites; quick match remains open to strangers by design.
+
+READING the roster does not need this endpoint. `list` is the one action
+here that is not a mutation, and a client that polls it on a timer is
+sending a second request alongside a heartbeat it was sending anyway - two
+requests into the same instant, the second queued behind the first. Send
+hello's `friends_list` flag instead and read `friends` off the heartbeat;
+call friend.php only for the mutating actions below, which are
+user-initiated and rare. `list` stays for clients that have no heartbeat in
+flight and for the fallback path when a server does not answer the flag.
 
     POST {"id":"c0ffee42", "action":"request", "peer":"deadbeef"}
       -> {"ok":true,"state":"pending","exists":true}

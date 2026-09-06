@@ -44,22 +44,14 @@ $id = $body['id'] ?? null;
 if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
+Util::noteCaller($id);
 $action = $body['action'] ?? '';
 
 Presence::touch($id, Util::clientIp());
 Util::bump('friend');
 
 if ($action === 'list') {
-    $list = Friends::listOf($id);
-    $accepted = array_column(array_filter($list, static fn(array $f) => $f['state'] === 'accepted'), 'id');
-    $info = Presence::infoOf($accepted);
-    foreach ($list as &$f) {
-        $peerInfo = $f['state'] === 'accepted' ? ($info[$f['id']] ?? null) : null;
-        $f['name'] = $peerInfo['name'] ?? null;
-        $f['online'] = $peerInfo['online'] ?? false;
-        $f['latency'] = $peerInfo['latency'] ?? null;
-    }
-    Util::jsonOut(['ok' => true, 'friends' => $list]);
+    Util::jsonOut(['ok' => true, 'friends' => Friends::rosterOf($id)]);
 }
 
 $peer = $body['peer'] ?? null;

@@ -522,6 +522,19 @@ table.kv .kv-sec td {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
 }
 
+/* A confirmation popup. The warning reads as prose - it is the one place with
+   room for the whole sentence - and the action sits under it, away from the
+   close button, so the destructive one is never the one already under the
+   cursor. */
+.modal-msg { margin: 0 0 14px; overflow-wrap: anywhere; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 6px; }
+.modal-foot button { border-color: var(--danger-line); color: var(--danger); }
+.modal-foot button:hover { border-color: var(--danger); background: rgba(255, 255, 255, 0.03); }
+
+/* A status line under a toolbar rather than inside it, for text that is a
+   sentence and not a control. */
+.barnote { margin: 0 0 8px; font-size: 12px; }
+
 
 /* -------------------------------------------------------- login, export */
 

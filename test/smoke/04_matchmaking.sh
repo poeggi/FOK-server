@@ -74,18 +74,23 @@ else
 
     # Escalation (see Friends::rateHit): a repeat burst within the window earns
     # the long cooldown, not the short one. Keep the burst to two requests
-    # (burst=1) so the pair always lands inside one cooldown even over a slow
-    # remote link; the cooldown is short enough to lift with a brief sleep, and
-    # a distinctive hard cooldown makes the escalated retry_after unmistakable.
-    setting friend_rate_cooldown 4
+    # (burst=1) so the pair always lands inside one cooldown, and a distinctive
+    # hard cooldown makes the escalated retry_after unmistakable. Both waits
+    # are real seconds of every run, so they are only as long as the mode
+    # needs; the nap must outlast the cooldown, because that idle gap is what
+    # clears the streak the second burst then trips again.
+    CD=2
+    NAP=2.5
+    if [ "$REMOTE" -eq 1 ]; then CD=4; NAP=5; fi
+    setting friend_rate_cooldown "$CD"
     setting friend_rate_cooldown_hard 7200
     setting friend_rate_burst 1
     for p in aa000010 aa000011; do
         R=$(curl -s -X POST -H 'Content-Type: application/json' \
             -d "{\"id\":\"c2c2c2c2\",\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
     done
-    expect "a first burst trips the short cooldown" '"retry_after":4' "$R"
-    sleep 5
+    expect "a first burst trips the short cooldown" "\"retry_after\":$CD" "$R"
+    sleep "$NAP"
     for p in aa000010 aa000011; do
         R=$(curl -s -X POST -H 'Content-Type: application/json' \
             -d "{\"id\":\"c2c2c2c2\",\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")

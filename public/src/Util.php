@@ -13,6 +13,11 @@ final class Util
     // clearing the traffic statistics must not make a warm pool look cold.
     private const WORKER_KEY = 'fok:pid:';
     private const WORKER_TTL = 3600;
+    // One player's requests in flight. Its own prefix, and a TTL well clear
+    // of the longest request there can be (a held poll, FOK_POLL_WAIT_MAX),
+    // so a worker killed mid-request cannot leave a count high for good.
+    private const FLIGHT_PREFIX = 'fok:flight:';
+    private const FLIGHT_TTL = FOK_POLL_WAIT_MAX + 60;
 
     /**
      * Keeps the "every response is JSON with ok" contract when something
@@ -186,6 +191,45 @@ final class Util
     }
 
     /**
+     * True when the SERVER ITSELF saw a TLS connection: its own HTTPS variable,
+     * or the port it answered on. Only its own view counts. This host
+     * terminates TLS directly, so a header like X-Forwarded-Proto is set by the
+     * caller and not by any proxy - trusting it would hand the caller the
+     * switch that turns the gate below off. If TLS ever does terminate upstream,
+     * add that proxy's header HERE and nowhere else, and only once the proxy is
+     * known to overwrite it.
+     */
+    public static function isSecureTransport(string $https, string $port): bool
+    {
+        return ($https !== '' && strtolower($https) !== 'off') || $port === '443';
+    }
+
+    /**
+     * Refuse a cleartext request. In normal operation this never fires: a
+     * redirect answers http:// long before PHP runs - the vhost's own 301, and
+     * behind it the 308 this repo ships in public/.htaccess. Neither is
+     * something the smoke suite can exercise, and the vhost rule is not even
+     * version-controlled, so PHP keeps its own backstop: if both redirects are
+     * ever lost, the API refuses cleartext instead of quietly serving it.
+     *
+     * The command line has no transport to judge, so both CLI SAPIs are exempt:
+     * php -S (the smoke suite) and the CLI test runner. Neither can occur on the
+     * live host, which serves through FPM.
+     */
+    public static function requireHttps(): void
+    {
+        if (PHP_SAPI === 'cli' || PHP_SAPI === 'cli-server') {
+            return;
+        }
+        if (!self::isSecureTransport(
+            (string)($_SERVER['HTTPS'] ?? ''),
+            (string)($_SERVER['SERVER_PORT'] ?? '')
+        )) {
+            self::fail('HTTPS required', 426);
+        }
+    }
+
+    /**
      * True only for a transport we can positively identify as pre-1.2 (SSLv2/3,
      * TLS 1.0/1.1). Empty/unknown is fail-open: TLS may terminate upstream where
      * PHP never sees it, so we never block what we cannot judge.
@@ -230,6 +274,8 @@ final class Util
 
     /** @var list<callable> */
     private static array $deferred = [];
+    private static ?string $caller = null;
+    private static int $depth = 0;
 
     /**
      * Runs $fn AFTER the response has been handed to the client. The
@@ -249,6 +295,52 @@ final class Util
     public static function defer(callable $fn): void
     {
         self::$deferred[] = $fn;
+    }
+
+    /**
+     * Names the player this request belongs to, and counts it against that
+     * player's requests in flight.
+     *
+     * The caller cannot simply be read back later. queueWho() runs after the
+     * response is already sent, and by then php://input is spent: jsonBody()
+     * consumed it, and on FPM a second read yields nothing. So the endpoint
+     * states it HERE, once, at the point where it has already parsed and
+     * validated it - which is also the only point that knows an id in a
+     * query string and an id in a JSON body are the same thing.
+     *
+     * The depth is taken NOW and kept, rather than read again when the
+     * bookkeeping runs, because by then this request's siblings may have
+     * finished. Read it for what it is: how many of this player's requests
+     * were open when this one STARTED. It is NOT how many were open while it
+     * queued - that is the stretch no PHP was running to see, and the reason
+     * a self-inflicted wait can still read as one deep.
+     */
+    public static function noteCaller(string $id): void
+    {
+        if (self::$caller !== null) {
+            return;
+        }
+        self::$caller = $id;
+        require_once __DIR__ . '/Caps.php';
+        if (Caps::apcu() !== true) {
+            return;
+        }
+        $key = self::FLIGHT_PREFIX . $id;
+        $n = apcu_inc($key, 1, $ok, self::FLIGHT_TTL);
+        if ($ok !== true) {
+            return;
+        }
+        self::$depth = (int)$n;
+        // Shutdown rather than the foot of the endpoint: a request leaves
+        // through jsonOut(), through fail() or through a fatal, and a count
+        // handed back only where control falls through would drift upwards
+        // for good. Dropping the key at zero keeps the keyspace to the
+        // players actually talking, and heals a count a killed worker left.
+        register_shutdown_function(static function () use ($key): void {
+            if (apcu_dec($key, 1) < 1) {
+                apcu_delete($key);
+            }
+        });
     }
 
     /** Idempotent: jsonOut runs the queue, the shutdown handler catches
@@ -388,6 +480,17 @@ final class Util
             'ip' => self::clientIp(),
             'w' => $fresh ? 1 : 0,
         ];
+        if (self::$caller !== null) {
+            $who['id'] = self::$caller;
+            if (self::$depth > 0) {
+                $who['d'] = self::$depth;
+            }
+            return $who;
+        }
+        // The fallback for anything that never named itself. Nothing should
+        // lean on it: an endpoint that takes an id and does not state it
+        // reads as an anonymous row, which is the one thing this list must
+        // not be full of.
         $id = (string)($_GET['id'] ?? '');
         if (preg_match('/^[0-9a-f]{8}$/', $id) === 1) {
             $who['id'] = $id;
@@ -555,8 +658,11 @@ final class Util
 }
 
 Util::installFaultHandler();
-// Every request reaches PHP through Util. Refuse pre-1.2 TLS (fail-open when
-// the version is not visible, e.g. CLI tests or upstream termination).
+// Every request reaches PHP through Util, so the transport is judged once,
+// here. Cleartext first - is this TLS at all - then the version floor
+// (fail-open when the version is not visible, e.g. CLI tests or upstream
+// termination).
+Util::requireHttps();
 Util::requireModernTls();
 // And, from the same place, record what the request waited to get here. This
 // measurement cannot live in an endpoint: the queue is a property of the

@@ -45,6 +45,7 @@ $id = $body['id'] ?? '';
 if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
+Util::noteCaller($id);
 $payload = $body['payload'] ?? null;
 if (!is_string($payload) || $payload === '') {
     Util::fail('invalid payload');

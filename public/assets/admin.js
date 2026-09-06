@@ -318,6 +318,28 @@ function infoModal(titleText, bodyNode) {
     document.body.append(overlay);
 }
 
+// A destructive action asks in a popup we own, deliberately NOT through
+// confirm(): a browser may suppress a second native dialog raised from the
+// same gesture - Chrome offers the operator exactly that - and a suppressed
+// confirm() answers cancel, so the button would have done nothing and had
+// nothing to say about it. A popup also has room for the whole warning, which
+// a note wedged into a toolbar does not.
+function confirmModal(titleText, message, confirmLabel, onConfirm) {
+    const { overlay, head, title, close, body } = makeModal(titleText);
+    close.textContent = 'cancel';
+    head.append(title, close);
+    body.append(el('p', 'modal-msg', message));
+    const foot = el('div', 'modal-foot');
+    const go = el('button', 'small', confirmLabel);
+    go.onclick = () => { closeModal(overlay); onConfirm(); };
+    foot.append(go);
+    body.append(foot);
+    document.body.append(overlay);
+    // Focus cancel, not the destructive button: Escape and Enter must both be
+    // the safe answer.
+    close.focus();
+}
+
 function showAlert(a) {
     const tbl = el('table', 'kv');
     const kv = (k, v) => { const r = el('tr'); r.append(el('td', 'kv-k', k), el('td', 'kv-v', v)); tbl.append(r); };
@@ -749,11 +771,20 @@ function worstQueue(rows) {
         return box;
     }
     const t = el('table');
-    t.append(row(['When', 'Waited', 'Worker', 'Script', 'Player', 'Address'], 'th'));
+    t.append(row(['When', 'Waited', 'Deep', 'Worker', 'Script', 'Player', 'Address'],
+        'th'));
     for (const r of rows) {
         const tr = el('tr');
         tr.append(el('td', '', fmtSec(r.t)));
         tr.append(el('td', 'num', fmtQms(r.v / 1000)));
+        // How many requests that same player had open when this one STARTED
+        // (Util::noteCaller). It is what separates one client bursting from
+        // several clients arriving, which is the whole question a wait
+        // raises. Read it as a floor, not a count: the waiting happened
+        // before PHP ran, so a sibling that finished during the wait is not
+        // in it, and a genuinely stacked request can still read 1. A dash is
+        // a row recorded before this was kept.
+        tr.append(r.d ? el('td', 'num', String(r.d)) : el('td', 'muted', '-'));
         // A worker PHP had just started pays for its own startup before it
         // can answer, and that lands here looking exactly like a busy pool
         // (see Util::claimWorker). "new" on every row means the pool keeps
@@ -1029,12 +1060,9 @@ function scriptCounts(d) {
 // view instead of throwing the operator back to the list.
 let pickedScript = null;
 let scriptWindow = 'total';   // which of SCRIPT_WINDOWS the table is read over
-// The Clear statistics button is armed by one click and fires on the next,
-// and both live here rather than on the button: the card redraws itself on
-// its own interval, and state held in the DOM would be disarmed under the
-// operator's hand between the two clicks. clearNote is what the last attempt
-// did, kept on screen until something else happens.
-let clearArmed = false;
+// What the last Clear statistics attempt did, kept on screen until something
+// else happens. It lives here rather than in the DOM because the card redraws
+// itself on its own interval and would wipe a note held in the card.
 let clearNote = '';
 
 function renderScripts(box, d) {
@@ -1074,51 +1102,43 @@ function renderScripts(box, d) {
         c.title = SCRIPT_WINDOWS[key][1];
         c.onclick = () => {
             scriptWindow = key;
-            clearArmed = false;
             clearNote = '';
             renderScripts(box, d);
         };
         return c;
     };
-    bar.append(chip('total'), chip('hour'), chip('min'));
-    if (clearNote) {
-        bar.append(el('span', clearArmed ? 'error' : 'muted', clearNote));
-    }
-    bar.append(el('span', 'grow'));
-    // Two steps, and deliberately NOT two confirm() dialogs. A browser may
-    // suppress a second dialog opened from the same gesture - Chrome offers
-    // the operator exactly that - and a suppressed confirm() answers cancel,
-    // so the button did nothing and had nothing to say about it. This asks
-    // in the card, where nothing can answer for the operator, and says
-    // afterwards what the server actually removed.
-    const clear = el('button', 'small', clearArmed
-        ? 'Confirm: erase the traffic history' : 'Clear statistics');
+    bar.append(chip('total'), chip('hour'), chip('min'), el('span', 'grow'));
+    const clear = el('button', 'small', 'Clear statistics');
     clear.title = 'Erases every per-script figure and every graph on this card, for all '
         + 'three windows. Players, scores and the item registry are not touched.';
-    clear.onclick = async () => {
-        if (!clearArmed) {
-            clearArmed = true;
-            clearNote = 'No undo. Click again to erase, or pick a window to cancel.';
+    clear.onclick = () => confirmModal('Clear statistics',
+        'This erases every per-script figure and every graph on this card, for all '
+        + 'three windows, and there is no undo. Players, scores and the item '
+        + 'registry are not touched.',
+        'Erase the traffic history', async () => {
+            clearNote = 'Clearing...';
             renderScripts(box, d);
-            return;
-        }
-        clearArmed = false;
-        clearNote = 'Clearing...';
-        renderScripts(box, d);
-        try {
-            const r = await api('clear_stats', { method: 'POST' });
-            clearNote = r.ok
-                ? 'Cleared ' + r.rows + ' stored rows and ' + r.keys + ' buffered counters.'
-                : 'NOT cleared: ' + (r.error || 'the server refused');
-        } catch (e) {
-            clearNote = 'NOT cleared: ' + e.message;
-        }
-        pickedScript = null;
-        refreshModule('perf');
-        refreshModule('alerts');
-    };
+            try {
+                const r = await api('clear_stats', { method: 'POST' });
+                clearNote = r.ok
+                    ? 'Cleared ' + r.rows + ' stored rows and ' + r.keys + ' buffered counters.'
+                    : 'NOT cleared: ' + (r.error || 'the server refused');
+            } catch (e) {
+                clearNote = 'NOT cleared: ' + e.message;
+            }
+            pickedScript = null;
+            refreshModule('perf');
+            refreshModule('alerts');
+        });
     bar.append(clear);
     box.append(bar);
+    // The outcome is a whole sentence, so it gets a line of its own. As a flex
+    // item in the toolbar it was squeezed between the window chips and the
+    // button, broke to one word per line and pushed the button out of the card.
+    if (clearNote) {
+        box.append(el('p', 'barnote' + (clearNote.startsWith('NOT ') ? ' error' : ' muted'),
+            clearNote));
+    }
     if (!rows.length) {
         box.append(el('p', 'muted', scriptWindow === 'total'
             ? 'No traffic recorded yet.' : 'Nothing was served in that window.'));

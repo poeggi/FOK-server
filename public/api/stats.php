@@ -21,6 +21,7 @@ if ($method === 'GET') {
     if (!Util::isValidId($id)) {
         Util::fail('invalid id');
     }
+    Util::noteCaller($id);
     $stats = PStats::get($id);
     $updated = $stats['updated'];
     unset($stats['updated']);
@@ -36,6 +37,7 @@ $id = $body['id'] ?? '';
 if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
+Util::noteCaller($id);
 $in = $body['stats'] ?? null;
 if (!is_array($in)) {
     Util::fail('invalid stats');

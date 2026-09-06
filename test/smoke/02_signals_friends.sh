@@ -188,6 +188,13 @@ expect "friend latency reported" "\"$ID2\":31" "$FL"
 FN=$(echo "$R" | grep -o '"friends_name":{[^}]*}')
 expect "friend name reported" "\"$ID2\":\"SMOKE TWO\"" "$FN"
 
+# The whole roster on the heartbeat a screen showing it was sending anyway,
+# byte for byte what friend.php `list` returns (4.4 re-release).
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends_list\":true}" "$BASE/api/hello.php")
+expect "hello serves the whole roster on request" '"friends":[' "$R"
+expect "the roster carries the peer state" '"state":"accepted"' "$R"
+expect "the roster carries the peer name" '"name":"SMOKE TWO"' "$R"
+
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"latency\":99999}" "$BASE/api/hello.php")
 expect "absurd latency rejected" '"error":"invalid latency"' "$R"
 

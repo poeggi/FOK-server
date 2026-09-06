@@ -34,6 +34,7 @@ $id = $_GET['id'] ?? null;
 if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
+Util::noteCaller($id);
 $wait = min((int)($_GET['wait'] ?? 0), FOK_POLL_WAIT_MAX);
 // Waiting costs an FPM worker for its whole duration, and the pool has a
 // budget for that (see Holds). Over the budget it is the WAIT that is given

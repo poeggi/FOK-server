@@ -38,6 +38,7 @@ $peer = $body['peer'] ?? null;
 if (!Util::isValidId($id) || !Util::isValidId($peer) || $id === $peer) {
     Util::fail('invalid id/peer');
 }
+Util::noteCaller($id);
 
 $epoch = $body['epoch'] ?? null;
 // A run halts a few hundred times at most; the ceiling only keeps a

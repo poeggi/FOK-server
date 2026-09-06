@@ -40,6 +40,11 @@ final class Pace
     // (pace_hello_max_ms) - this end is only a backstop against a zero.
     private const FLOOR_MS = 5000;
 
+    // A mistuned gap must not stall a client's background work outright. The
+    // gap delays only what the client itself calls background, and this is
+    // the backstop against a setting that forgets that.
+    private const GAP_MAX_MS = 2000;
+
     public const TIER_LOBBY = 0;
     public const TIER_TOURNEY = 1;
     public const TIER_DUEL = 2;
@@ -47,11 +52,17 @@ final class Pace
     /**
      * The pacing advice for one client.
      *
-     * @return array{hello_ms:int, poll_ms:int, hold:bool, spread_ms:int}
+     * @return array{hello_ms:int, poll_ms:int, hold:bool, spread_ms:int,
+     *               gap_ms:int}
      */
     public static function forTier(int $tier): array
     {
         $pressure = self::pressure();
+        // Widened by pressure and not by tier: it delays only the traffic a
+        // client itself calls background, and a duel's own handshake is let
+        // past it at the client's gate rather than withheld here.
+        $gap = Settings::int('pace_gap_ms');
+        $gap = $gap <= 0 ? 0 : min((int)round($gap * (1 + $pressure)), self::GAP_MAX_MS);
         $hello = Settings::int('pace_hello_ms');
         $ceiling = Settings::int('pace_hello_max_ms');
 
@@ -76,6 +87,8 @@ final class Pace
             // point is to separate clients from each other permanently, not
             // to smear each client's own requests.
             'spread_ms' => Settings::int('pace_spread_ms'),
+            // Which is exactly what this one does instead.
+            'gap_ms' => $gap,
         ];
     }
 
