@@ -10,7 +10,7 @@ final class Util
 {
     // One key per worker process, marking that it has answered before, and
     // how long that mark stands (see claimWorker). Its own prefix, because
-    // clearing the traffic statistics must not make a warm pool look cold.
+    // clearing the traffic statistics must not make every worker look new.
     private const WORKER_KEY = 'fok:pid:';
     private const WORKER_TTL = 3600;
     // One player's requests in flight. Its own prefix, and a TTL well clear
@@ -450,7 +450,7 @@ final class Util
      *
      * The mark is per process id and it expires, which makes this a proxy
      * and not a fact: a child recycled onto a process id whose mark is
-     * still standing reads as warm. It is accurate enough for the only
+     * still standing reads as reused. It is accurate enough for the only
      * question being asked of it, which is whether a pool is forever
      * spawning or never does.
      */

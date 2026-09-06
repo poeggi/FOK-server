@@ -588,7 +588,13 @@ today - but a client that honours it lets the host carry more players.
                 twice. Serialise background traffic through ONE gate and
                 hold the gap there; let the duel handshake (signal,
                 start, poll) past it, because that is the latency a
-                player feels. 0 or absent means the client's own
+                player feels. Past the gate is not the same as together:
+                a parked poll is an open request, so one exempt call
+                already makes two in flight, and two exempt calls sent
+                in the same tick race each other - BOTH pay the full
+                queue wait rather than one of them paying it. Keep at
+                most ONE request in flight besides a parked poll, exempt
+                or not. 0 or absent means the client's own
                 default. It is a 4.4 re-release addition, so treat an
                 absent field as 0 rather than as an old server.
 
@@ -2118,6 +2124,12 @@ that ignores the field behaves exactly as before.
 A client MUST NOT act on a `tourney` signal it did not expect to the
 extent of playing a match it cannot see in `state` - when in doubt, call
 `state` and render that.
+
+That is the doubtful case only. An expected `roles` event already carries
+the whole sheet a match needs - `nid`, `hm`, `lvl`, `stakes`, `players`,
+`feeder`, `primaries`, `secondaries`, `names` and `you` - so `state` is
+not a routine follow-up to it, and least of all one made alongside the
+`start.php` that the same event prompts. One event, one call.
 
 ### What it costs on the wire
 

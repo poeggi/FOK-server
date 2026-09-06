@@ -89,8 +89,10 @@ start_req() { # id peer epoch reason pts
 }
 
 # --- Register both players (records the display name the peer will see).
-expect "hello A registers" '"ok":true' "$(hello "$A" LIVEA)"
-expect "hello B registers" '"ok":true' "$(hello "$B" LIVEB)"
+# Every name here is srv-CI-*: on a live instance the players list is read by
+# an operator, and a harness must never look like somebody's account.
+expect "hello A registers" '"ok":true' "$(hello "$A" srv-CI-1111)"
+expect "hello B registers" '"ok":true' "$(hello "$B" srv-CI-2222)"
 
 # --- Quick match: the matchmaking-prune path. Two LIVE seekers must still
 # pair, name carried, roles assigned.
@@ -98,7 +100,7 @@ expect "first seeker waits" '"waiting":true' "$(seek "$A")"
 M=$(seek "$B")
 expect "second seeker is matched to the first" "\"matched\":\"$A\"" "$M"
 expect "the matched seeker is the answerer" '"role":"answerer"' "$M"
-expect "the match carries the peer name" 'LIVEA' "$M"
+expect "the match carries the peer name" 'srv-CI-1111' "$M"
 expect "the first seeker re-polls as offerer" '"role":"offerer"' "$(seek "$A")"
 
 # --- Connecting-signal burst (P2P): the ICE-throttle path. offer/answer then
@@ -137,8 +139,8 @@ sig "$A" "$B" bye ''; poll "$B" > /dev/null
 # --- Invites are friend-gated: a stranger cannot be invited (quick match is
 # the sanctioned path to a stranger, and it carries no invite). Assert the
 # gate holds, then drive the relay pairing the quick-match way.
-expect "hello C registers" '"ok":true' "$(hello "$C" LIVEC)"
-expect "hello D registers" '"ok":true' "$(hello "$D" LIVED)"
+expect "hello C registers" '"ok":true' "$(hello "$C" srv-CI-3333)"
+expect "hello D registers" '"ok":true' "$(hello "$D" srv-CI-4444)"
 INV=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$C\",\"to\":\"$D\",\"type\":\"invite\",\"payload\":\"x\"}" "$BASE/api/signal.php")
 expect "inviting a stranger is refused" 'not friends' "$INV"
@@ -250,7 +252,7 @@ curl -6 -sf -m 10 -o /dev/null "$BASE/api/version.php" && V6=1
 if [ "$V4" -eq 1 ] && [ "$V6" -eq 1 ]; then
     echo "   dual-stack runner: driving the announce over both families (host=$E seekers=$D,$G)"
     hf() { # hf <-4|-6> <id> : hello asking for the announce
-        curl "$1" -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$2\",\"name\":\"DUAL\",\"tourneys\":true}" "$BASE/api/hello.php"
+        curl "$1" -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$2\",\"name\":\"srv-CI-dual\",\"tourneys\":true}" "$BASE/api/hello.php"
     }
     tf() { curl "$1" -s -X POST -H 'Content-Type: application/json' -d "$2" "$BASE/api/tournament.php"; }
     hf -6 "$E" > /dev/null
@@ -278,7 +280,7 @@ if [ "$V4" -eq 1 ] && [ "$V6" -eq 1 ]; then
         # but it can find its own public addresses through STUN.
         MY4=$(curl -4 -s -m 10 "$BASE/api/net.php" | grep -oE '"ip":"[0-9.]+"' | cut -d'"' -f4)
         if [ -n "$MY4" ]; then
-            curl -6 -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$F\",\"name\":\"CLAIM\",\"nets\":[\"$MY4\"]}" "$BASE/api/hello.php" > /dev/null
+            curl -6 -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$F\",\"name\":\"srv-CI-claim\",\"nets\":[\"$MY4\"]}" "$BASE/api/hello.php" > /dev/null
             TR=$(tf -6 "{\"id\":\"$F\",\"action\":\"create\"}")
             case "$TR" in
             *'"ok":true'*)

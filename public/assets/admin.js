@@ -789,7 +789,7 @@ function worstQueue(rows) {
         // can answer, and that lands here looking exactly like a busy pool
         // (see Util::claimWorker). "new" on every row means the pool keeps
         // going cold, not that it is short of workers.
-        tr.append(r.w ? el('td', '', 'new') : el('td', 'muted', 'warm'));
+        tr.append(r.w ? el('td', '', 'new') : el('td', 'muted', 'reused'));
         tr.append(el('td', '', r.s || '-'));
         // Only the endpoints that take an id in the query string can name a
         // player here; a POST is identified by its address (Util::queueWho).

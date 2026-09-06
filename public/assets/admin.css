@@ -432,13 +432,15 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* Filter/action row above a pane: chips or a note on the left, the action
    pushed right. Used by every tab that has one (logs, performance, load,
    the registry's chain verify). */
-.toolbar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
 .toolbar .grow { margin-left: auto; }
 /* A control keeps its label on one line and its natural width. As flex items
    they would otherwise be squeezed by whatever sits beside them and break
    mid-label - "Last hour" over two lines is taller than the row and taller
    than the fixed height of button.small. Notes and status text are left out
-   of this on purpose: a verify error in the registry's bar must still wrap. */
+   of this on purpose: a verify error in the registry's bar must still wrap.
+   The row wraps for the same reason: controls that cannot shrink have to fall
+   to a second line on a narrow card, or the last one is pushed out of it. */
 .toolbar button { flex: none; white-space: nowrap; }
 .chip {
     padding: 2px 10px; font-size: 12px; border-radius: var(--r-pill);
