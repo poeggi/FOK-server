@@ -363,7 +363,19 @@ Settings::set('player_ttl_days', 0);
 ok(Presence::expireStale() === 0, 'ttl 0 disables expiry');
 Settings::set('player_ttl_days', 180);
 
+// The quick-match queue lives in shared memory, so a test that needs a
+// stale seeker or an empty queue edits the entries directly.
+function mmSeeker(string $id, int $since, int $poll): void
+{
+    apcu_store(FOK_APCU_NS . 'mm:q:' . $id, ['since' => $since, 'poll' => $poll], FOK_MATCH_WINDOW);
+}
+function mmWipe(): void
+{
+    apcu_delete(new APCUIterator('/^' . preg_quote(FOK_APCU_NS . 'mm:', '/') . '/'));
+}
+
 // Matchmaking: first seeker waits, second gets matched, roles assigned
+mmWipe();
 ok((Matchmaking::seek('11111111')['waiting'] ?? false) === true, 'first seeker waits');
 $m = Matchmaking::seek('22222222');
 ok(($m['matched'] ?? '') === '11111111', 'second seeker matched with first');
@@ -378,15 +390,57 @@ Matchmaking::cancel('33333333');
 
 // Matchmaking: a stale seeker (stopped polling) is never handed out as a
 // match. Correctness rides on the peer-select's liveness predicate, not on
-// the prune - which now runs on only a sampled fraction of seeks - so a live
-// seeker keeps waiting whether or not this poll happened to prune the ghost.
-Db::get()->exec('DELETE FROM mm_queue');
-Db::get()->prepare('INSERT INTO mm_queue (id, since, last_poll) VALUES (?, ?, ?)')
-    ->execute(['44444444', time() - 20, time() - 20]);
+// the entry expiring: expiry is lazy, so the ghost is still there to read.
+mmWipe();
+mmSeeker('44444444', time() - 20, time() - 20);
 ok((Matchmaking::seek('55555555')['waiting'] ?? false) === true,
     'a stale seeker is never offered as a match');
 Matchmaking::cancel('55555555');
-Db::get()->exec('DELETE FROM mm_queue');
+
+// Matchmaking: the player who started looking first offers, whichever way
+// the two ids happen to sort. Two seekers of one quick-match pair arrive
+// milliseconds apart, so the wait is compared to the microsecond - to whole
+// seconds these two are simultaneous and only the id order is left.
+mmWipe();
+ok((Matchmaking::seek('ffff0001')['waiting'] ?? false) === true, 'the higher id seeks first');
+$m = Matchmaking::seek('00110011');
+ok(($m['matched'] ?? '') === 'ffff0001', 'the lower id that came second is the one that pairs them');
+ok(($m['role'] ?? '') === 'answerer', 'the newcomer answers');
+ok((Matchmaking::seek('ffff0001')['role'] ?? '') === 'offerer',
+    'and the one that waited longer offers, though its id sorts after');
+
+// Matchmaking: two seekers that cannot be told apart by arrival at all fall
+// back on their ids, so exactly one of them attempts the pair and neither
+// can hand the other a match at the same moment and end up matched twice.
+mmWipe();
+$t = time();
+mmSeeker('66666666', $t, $t);
+mmSeeker('77777777', $t, $t);
+ok((Matchmaking::seek('66666666')['waiting'] ?? false) === true,
+    'the lower id of an equally old pair does not attempt it');
+$m = Matchmaking::seek('77777777');
+ok(($m['matched'] ?? '') === '66666666', 'the higher id is the one that pairs them');
+ok(($m['role'] ?? '') === 'answerer', 'and takes the answerer role');
+ok((Matchmaking::seek('66666666')['matched'] ?? '') === '77777777',
+    'the peer collects the match on its next poll');
+
+// Matchmaking: a seeker that is itself mid-attempt is not handed a match on
+// top of it - the attempt that finds it busy waits for its next poll.
+mmWipe();
+mmSeeker('66666666', $t - 5, $t);
+apcu_store(FOK_APCU_NS . 'mm:m:66666666', ['kind' => 'busy'], 2);
+ok((Matchmaking::seek('77777777')['waiting'] ?? false) === true,
+    'a busy seeker is not paired over its own attempt');
+
+// Matchmaking: a cancel that arrives after the pairing cannot undo it - the
+// peer was already told, and is waiting for the handshake.
+mmWipe();
+ok((Matchmaking::seek('66666666')['waiting'] ?? false) === true, 'seeker queues up');
+ok((Matchmaking::seek('77777777')['matched'] ?? '') === '66666666', 'and is paired');
+Matchmaking::cancel('66666666');
+ok((Matchmaking::seek('66666666')['matched'] ?? '') === '77777777',
+    'a cancel after delivery still lets the peer collect the match');
+mmWipe();
 
 // Server-issued starts: both peers NAME the epoch, so the answer never
 // depends on when either of them asks
@@ -742,17 +796,27 @@ ConnTrack::note('cccccccc', 'dddddddd', 'invite');
 ok(ConnTrack::stateOf('cccccccc') !== null, 'an unknown client can still be tracked');
 ok(duelOf('cccccccc') === [], 'but it has no name, so it stays off the Duels card');
 
+// ConnTrack: an id of nothing but digits is a valid id, and the entries it
+// is looked up under are an array keyed by id - where PHP turns it into an
+// integer.
+connWipe();
+Presence::touch('11111111', '10.11.12.1', null, 'ONES');
+Presence::touch('22222222', '10.11.12.2', null, 'TWOS');
+ConnTrack::note('11111111', '22222222', 'invite');
+ok(duelOf('11111111')['id'] === '11111111', 'an all-digit id is on the card as a string');
+ok(duelOf('22222222')['peer'] === '11111111', 'and names its peer as one');
+ConnTrack::forget('22222222');
+ok(duelOf('11111111') === [], 'forgetting the peer of an all-digit id drops both sides');
+
 // ConnTrack: a quick-match seeker shows as matchmaking only while it is
 // actively polling; one that went quiet drops off (as the matchmaker does).
 connWipe();
-Db::get()->exec('DELETE FROM mm_queue');
-Db::get()->prepare('INSERT INTO mm_queue (id, since, last_poll) VALUES (?, ?, ?)')
-    ->execute(['aaaaaaaa', time(), time()]);
+mmWipe();
+mmSeeker('aaaaaaaa', time(), time());
 ok(duelOf('aaaaaaaa')['state'] === 'matchmaking', 'an active seeker shows as matchmaking');
-Db::get()->prepare('UPDATE mm_queue SET last_poll = ? WHERE id = ?')
-    ->execute([time() - FOK_MATCH_WINDOW - 1, 'aaaaaaaa']);
+mmSeeker('aaaaaaaa', time(), time() - FOK_MATCH_WINDOW - 1);
 ok(duelOf('aaaaaaaa') === [], 'a seeker that stopped polling drops off the Duels card');
-Db::get()->exec('DELETE FROM mm_queue');
+mmWipe();
 
 // Relay: relay admission is counted from the hub traffic a pair
 // really caused, not from queued messages (gone the instant the receiver

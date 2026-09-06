@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 37;
+    private const SCHEMA_VERSION = 38;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -75,10 +75,10 @@ final class Db
     }
 
     // Every table the "DB entries" gauge sums. The signal mailbox, the relay
-    // hub, the tracked connections and the presence-counter cache are not
-    // here: they live in shared memory, not in any table (see Signals,
-    // RelayStore and ConnTrack).
-    private const COUNTED = ['players', 'scores', 'duels', 'mm_queue',
+    // hub, the tracked connections, the quick-match queue and the presence-
+    // counter cache are not here: they live in shared memory, not in any
+    // table (see Signals, RelayStore, ConnTrack and Matchmaking).
+    private const COUNTED = ['players', 'scores', 'duels',
         'counters', 'alerts', 'settings', 'admin_fails', 'friends',
         'starts', 'pstats', 'items', 'matches', 'ledger'];
 
@@ -586,6 +586,14 @@ final class Db
             // the whole database shares. It lives in shared memory now (see
             // ConnTrack), so the table and both its indexes go.
             $pdo->exec('DROP TABLE IF EXISTS conn');
+        }
+        if ($v < 38) {
+            // A quick-match seeker is a player waiting a few seconds, polling
+            // once or twice a second, and every poll took the one writer the
+            // whole database shares just to restamp its row - for a queue no
+            // reader outlives. It lives in shared memory now (see
+            // Matchmaking), so the table goes.
+            $pdo->exec('DROP TABLE IF EXISTS mm_queue');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

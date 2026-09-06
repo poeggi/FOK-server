@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Caps.php';
+require_once __DIR__ . '/Matchmaking.php';
 require_once __DIR__ . '/Relay.php';
 
 /**
@@ -167,7 +168,9 @@ final class ConnTrack
      * Every tracked entry, keyed by client id. The scan only ever covers
      * clients in a duel phase - the TTL is seconds and an idle client holds
      * no entry - and only the admin cards, forget() and the relay's pair
-     * count ask for it.
+     * count ask for it. An id of nothing but digits is a valid id and PHP
+     * makes it an INTEGER array key, so a caller that passes a key on as an
+     * id casts it back.
      * @return array<string,array{peer:?string,state:string,mode:?string,updated:int,relay_seen:int}>
      */
     public static function entries(): array
@@ -196,7 +199,7 @@ final class ConnTrack
         // showing a duel with someone the server has forgotten.
         foreach (self::entries() as $other => $e) {
             if ($e['peer'] === $id) {
-                apcu_delete(self::key($other));
+                apcu_delete(self::key((string)$other));
             }
         }
     }
@@ -238,11 +241,11 @@ final class ConnTrack
     /**
      * The 1:1 Duels card: one row per client in a duel phase - inferred
      * from the entry the signal handshake, duel heartbeat and relay write
-     * leave - plus quick-match seekers from mm_queue with no peer yet. A
-     * live phase shows while the entry is fresh (FOK_CONN_TTL); a clean bye
-     * or decline leaves a terminal entry that lingers exactly
-     * FOK_DUEL_LINGER seconds, and a duel that simply goes quiet is shown
-     * as 'ended' for the same tail - so nothing blinks out mid-glance.
+     * leave - plus quick-match seekers with no peer yet. A live phase shows
+     * while the entry is fresh (FOK_CONN_TTL); a clean bye or decline leaves
+     * a terminal entry that lingers exactly FOK_DUEL_LINGER seconds, and a
+     * duel that simply goes quiet is shown as 'ended' for the same tail - so
+     * nothing blinks out mid-glance.
      * @return array [{id, name, peer, state, mode, latency, msgs, since}]
      */
     public static function listDuels(int $limit = 200): array
@@ -272,6 +275,9 @@ final class ConnTrack
         $out = [];
         $seen = [];
         foreach ($live as $id => $e) {
+            // An all-digit id comes back as an integer key (see entries()),
+            // and everything below hands it on as an id.
+            $id = (string)$id;
             if (!isset($players[$id])) {
                 // Nothing to name it with - which is what the JOIN this list
                 // replaced did with an entry whose player row is gone.
@@ -291,33 +297,24 @@ final class ConnTrack
         }
         $out = array_slice($out, 0, $limit);
         // Quick-match seekers with no peer yet: half a duel, shown the
-        // instant they start looking. Only ACTIVE seekers - the matchmaker
-        // drops one from the queue once it stops polling for FOK_MATCH_WINDOW
-        // (Matchmaking::seek), but that prune only runs when someone else
-        // seeks; without the same filter here a seeker that quietly left
+        // instant they start looking. Only seekers that are still polling
+        // (Matchmaking::seekers) - without that filter one that quietly left
         // would linger on the card as "matchmaking" forever.
-        $seekers = Db::get()->prepare(
-            'SELECT m.id, m.since, p.name, p.latency
-               FROM mm_queue m JOIN players p ON p.id = m.id
-              WHERE m.matched_with IS NULL AND m.last_poll > ?'
-        );
-        $seekers->execute([$now - FOK_MATCH_WINDOW]);
-        foreach ($seekers->fetchAll() as $r) {
-            if (isset($seen[$r['id']])) {
-                continue;
-            }
+        $seekers = array_diff_key(Matchmaking::seekers(), $seen);
+        foreach (self::players(array_keys($seekers)) as $sid => $p) {
+            $since = $seekers[$sid];
+            $sid = (string)$sid;
             $out[] = [
-                'id' => $r['id'],
-                'name' => $r['name'],
+                'id' => $sid,
+                'name' => $p['name'],
                 'peer' => null,
                 'state' => 'matchmaking',
                 'mode' => null,
-                'latency' => $r['latency'] === null ? null : (int)$r['latency'],
+                'latency' => $p['latency'],
                 'msgs' => 0,
-                'since' => (int)$r['since'],
+                'since' => $since,
             ];
         }
-        $seekers->closeCursor();
         return $out;
     }
 

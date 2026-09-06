@@ -96,6 +96,9 @@ final class Relay
             if ($e['peer'] === null || $e['relay_seen'] <= $fresh) {
                 continue;
             }
+            // An all-digit id comes back as an integer key (see entries()),
+            // and the key below orders it against a peer id.
+            $id = (string)$id;
             $pairs[$id < $e['peer'] ? $id . ':' . $e['peer'] : $e['peer'] . ':' . $id] = true;
         }
         return count($pairs);

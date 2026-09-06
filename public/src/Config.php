@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.4.6';
+const FOK_SERVER_VERSION = '1.4.7';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -293,16 +293,12 @@ const FOK_SCORE_RATE_WINDOW = 300;
 const FOK_TOP_SCORES = 100;
 // Must match MAX_NAME in FOK-snake js/assets.js.
 const FOK_MAX_NAME_LEN = 15;
-// A quick-match seeker drops out of the queue after this many quiet seconds.
+// A quick-match seeker drops out of the queue after this many quiet
+// seconds. It is both the liveness predicate the peer-select applies - a
+// seeker that stopped polling is never handed out as a match - and the TTL
+// of the seeker's own entry, so a queue nobody is polling empties itself
+// (see Matchmaking).
 const FOK_MATCH_WINDOW = 10;
-// A stale seeker (one that stopped polling) is made unselectable by the
-// liveness predicate on the peer-select, so deleting its row is no longer
-// needed to pair correctly - it is pure GC of a tiny, self-limiting table.
-// So the prune runs on only a sampled 1-in-N fraction of seeks (a seek must
-// take the write lock to record its own poll either way; this keeps the
-// DELETE off most of them). Sampling is load-adaptive: a busier queue prunes
-// proportionally more often, which is exactly when the row churn warrants it.
-const FOK_MATCH_PRUNE_SAMPLE = 20;
 const FOK_MAX_FRIENDS = 64;
 
 // How many self-reported addresses one hello may carry (see hello.php

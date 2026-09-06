@@ -6,6 +6,7 @@ require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Caps.php';
 require_once __DIR__ . '/Presence.php';
 require_once __DIR__ . '/ConnTrack.php';
+require_once __DIR__ . '/Matchmaking.php';
 require_once __DIR__ . '/Relay.php';
 require_once __DIR__ . '/Load.php';
 require_once __DIR__ . '/Vault.php';
@@ -346,7 +347,7 @@ final class AdminData
             $duel['live'] = $duel['updated'] > $now - FOK_CONN_TTL;
         }
         $rate = Relay::rateDetail($id);
-        $queue = self::one($db, 'SELECT since, matched_with FROM mm_queue WHERE id = ?', $id);
+        $queue = Matchmaking::stateOf($id);
         $fr = $db->prepare("SELECT state, COUNT(*) c FROM friends WHERE a = ? OR b = ? GROUP BY state");
         $fr->execute([$id, $id]);
         $friends = ['accepted' => 0, 'pending' => 0];
@@ -376,8 +377,7 @@ final class AdminData
                 'friend_ban_until' => (int)$p['friend_ban_until'],
                 'duel' => $duel,
                 'relay_rate' => $rate,
-                'matchmaking' => $queue === null ? null
-                    : ['since' => (int)$queue['since'], 'matched_with' => $queue['matched_with']],
+                'matchmaking' => $queue,
                 'friends' => $friends,
                 'scores' => ['count' => (int)$scores['c'],
                     'best' => $scores['best'] === null ? null : (int)$scores['best']],
