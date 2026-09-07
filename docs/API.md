@@ -582,7 +582,10 @@ the wire, the same for every client:
 
     heartbeat   send hello every 30 s while online. Half the 60 s online
                 window, so one missed beat never reads as offline.
-    poll wait   ask poll.php for `wait=9`, the longest wait it serves.
+    poll wait   ask poll.php for `wait` of up to 9 s, the longest hold it
+                serves; anything shorter is served as asked. A shorter hold
+                re-arms more often, and cuts how long a pushed event or a
+                tournament deadline can wait for the next poll.
     gap         keep at least 100 ms between any two requests THIS client
                 has in flight, whichever endpoints they are. It separates a
                 client's own requests from each other - a client that fires
@@ -2140,8 +2143,12 @@ payload carries `tid`.
                  count the round that just ended and nothing else.
                  `adv` is "through to `next`", `until` is the deepest
                  round that player reaches, and `gone` marks a forfeit.
-    result       {event, tid, nid, winner, draw, score}
-                 a node settled (winner is null for a draw or a void)
+    result       {event, tid, nid, winner, draw, score,
+                  rows:[{seat,id,pts,diff,rank}]}
+                 a node settled (winner is null for a draw or a void).
+                 `rows` are the standings after it, in the `standings`
+                 event's row shape without `adv`: the result is applied
+                 from the event and nothing is re-read
     freeze       {event, tid, nid}
                  the two reports contradicted each other. Round 1 plays
                  on and only the advancer cut waits; in the knockout the
@@ -2156,11 +2163,10 @@ Every pushed event may carry `after_ms` (4.4, ADDITIVE): a small
 per-recipient delay in milliseconds to wait before making any follow-up
 REQUEST the event prompts. A round board wakes eight clients in the same
 instant and they all call back together - the same pile-up the ICE burst
-makes, eight-handed - so the server staggers them by seat. Render the
-event itself immediately and delay only the calls it provokes. The value
-is bounded well under a second and the whole field is served inside that
-budget: it de-stacks the burst, it never makes the last seat wait for its
-data. A client that ignores the field behaves exactly as before.
+makes, eight-handed - so the server staggers them by seat: 100 ms per
+seat, seat 0 waits nothing, the eighth seat 700 ms, never more than
+1000 ms. Render the event itself immediately and delay only the calls it
+provokes. A client that ignores the field behaves exactly as before.
 
 A client MUST NOT act on a `tourney` signal it did not expect to the
 extent of playing a match it cannot see in `state` - when in doubt, call
@@ -2168,9 +2174,10 @@ extent of playing a match it cannot see in `state` - when in doubt, call
 
 That is the doubtful case only. An expected `roles` event already carries
 the whole sheet a match needs - `nid`, `hm`, `lvl`, `stakes`, `players`,
-`feeder`, `primaries`, `secondaries`, `names` and `you` - so `state` is
-not a routine follow-up to it, and least of all one made alongside the
-`start.php` that the same event prompts. One event, one call.
+`feeder`, `primaries`, `secondaries`, `names` and `you` - and a `result`
+carries the standings it moved, so `state` is not a routine follow-up to
+either, and least of all one made alongside the `start.php` that a
+`roles` event prompts. One event, one call.
 
 ### What it costs on the wire
 
@@ -2194,18 +2201,24 @@ it counts eight times.
     -----------  --------  -------  --------  --------------------------
     roles             152      717    108568  a match comes up
     roles-patch       152      272     39712  the spectator tree changed
-    result            152      211     32000  a node settled
+    result            152      758    115216  a node settled
     round              16     1645     26136  a round boundary
     lobby              35      645     18648  a join, a leave, an abandon
     standings           8      853      6824  round 1 is over
     over                8      187      1496  the podium
     -----------  --------  -------  --------
-    TOTAL             523              233384
+    TOTAL             523              316600
 
-233 KB for the entire tournament across all eight clients - about 29 KB
+317 KB for the entire tournament across all eight clients - about 40 KB
 each for 19 matches. The largest single push is the round-break scoreboard
-at ~1.6 KB; the steady one is the roles sheet at ~0.7 KB per match per
-participant.
+at ~1.6 KB; the steady ones are the roles sheet and the result, ~0.75 KB
+each per match per participant.
+
+The result is that size because it carries the standings rows (server
+1.4.17; 211 B without them). That buys out the `state` read a client
+would otherwise make after every settle - 152 of them at ~5 KB, ~760 KB,
+more than twice the whole event stream - and the burst those make,
+eight-handed, 19 times a tournament.
 
 The request side is smaller. Response bodies, same run:
 

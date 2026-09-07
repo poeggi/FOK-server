@@ -33,7 +33,7 @@ final class Settings
         // The client's own request gap (docs/API.md, Pacing) spaces the
         // requests a client decides to make; this spaces the ones a broadcast
         // provokes from everyone at once (after_ms, see Tournament::flush).
-        'tourney_after_ms' => [FOK_TOURNEY_AFTER_MS, 'Budget a pushed event staggers its follow-up calls over (ms, 0 = off)'],
+        'tourney_after_step_ms' => [FOK_TOURNEY_AFTER_STEP_MS, 'Stagger between seats for the follow-up calls a pushed event provokes (ms per seat, 0 = off)'],
         'ices_max' => [FOK_ICES_MAX, 'Max ICE candidates in one batched signal'],
         // DEPRECATED: relay fallback (see docs/DEPRECATED-relay.md). These
         // seven relay_* settings are removed with the feature.

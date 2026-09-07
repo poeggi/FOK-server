@@ -202,23 +202,24 @@ final class Tournament
      */
     private static function flush(string $from, array $events): void
     {
-        $after = Settings::int('tourney_after_ms');
-        $seat = 0;
+        $step = Settings::int('tourney_after_step_ms');
+        $seatOf = [];
         foreach ($events as [$to, $payload]) {
             // after_ms (4.4): a round board wakes every participant in the
             // same instant and they all call back together - the ICE burst
             // again, eight-handed, and on a host whose cost is paid per
             // request that burst is the expensive part of a tournament. The
-            // event itself is not delayed; only the call it provokes is, and
-            // by SEAT, so the eight arrive staggered across the budget
-            // instead of stacked. The budget is milliseconds - the whole
-            // field is served inside it, so the last seat is de-stacked and
-            // not made to wait. Additive: a client that ignores it behaves
-            // as before, and a broadcast of one is not staggered at all.
-            if ($after > 0 && count($events) > 1) {
-                $payload['after_ms'] = (int)round($seat * $after / count($events));
+            // event itself is not delayed; only the call it provokes is, by
+            // a fixed step per RECIPIENT - one transition pushes several
+            // events to each of them, and all of one recipient's carry the
+            // same delay, so the eight callbacks land a step apart instead
+            // of stacked. Capped where the client caps it (1000 ms), so a
+            // wrong number cannot park a seat. Additive: a client that
+            // ignores it behaves as before.
+            if ($step > 0) {
+                $seatOf[$to] ??= count($seatOf);
+                $payload['after_ms'] = min(1000, $seatOf[$to] * $step);
             }
-            $seat++;
             Signals::send($from, $to, 'tourney', (string)json_encode($payload));
         }
     }
@@ -643,12 +644,15 @@ final class Tournament
         $r['score'] = $score;
         $t['data']['results'][$nid] = $r;
         self::standings($t);
+        // The rows ride with the result: they are what a result changes on
+        // a client's screen, and a client never ranks on its own.
         self::event($t, [
             'event' => 'result',
             'nid' => $nid,
             'winner' => $draw ? null : self::idOfSeat($t, (int)$verdict),
             'draw' => $draw,
             'score' => $score,
+            'rows' => self::ranked($t),
         ]);
 
         $node = self::node($t, $nid);

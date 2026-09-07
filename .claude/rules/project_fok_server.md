@@ -29,9 +29,11 @@ mechanism, not more. Do not re-add pace_hello_ms / pace_gap_ms (removed;
 stale settings rows for them are harmless, Settings::all() iterates DEFS)
 or a spread/jitter field (pace.spread_ms was withdrawn: per-session
 jitter only pays at a client count this host will not see).
-tourney_after_ms (400) is the budget a pushed tournament event staggers
-its follow-up calls over - under a shared 4000 ms constant, seat 8 of 8
-waited 3.5 s.
+tourney_after_step_ms (100) staggers the follow-up calls a pushed
+tournament event provokes, per RECIPIENT, capped at the client's 1000 ms
+guard. Per recipient, not per event: one transition pushes several events
+to each seat, and a budget spread over the EVENTS once put the eight
+roles callbacks inside ~130 ms - the measured peak of a tournament.
 
 ## Deploy
 

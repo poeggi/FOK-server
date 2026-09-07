@@ -1793,7 +1793,8 @@ ok($v2['bracket'][0]['winner'] === null, 'and it has no winner at all');
 // the tournament, and hello/poll.php touch it through pulse() for ANY
 // participant. Three players, so one of them is a spectator of the match in
 // flight - the carrier is any seat, not the two who played. Nothing below
-// reads `state`; the tournament is watched through the store directly.
+// reads `state` to move the clock; the tournament is watched through the
+// store directly.
 $w = ['7b000001', '7b000002', '7b000003'];
 foreach ($w as $p) {
     Presence::touch($p, '127.0.0.1');
@@ -1827,31 +1828,58 @@ $raw = TourneyStore::get($tid6);
 ok($raw['data']['results']['r1.1']['state'] === 'settled',
     'a drain by the spectator of the match settles the held result');
 ok($raw['data']['cursor'] === 'r1.2', 'and deals the next match');
-$got = Signals::take($y);
-$events = array_map(static fn (array $s): string => json_decode($s['payload'], true)['event'], $got);
+$mail = [];
+foreach ($w as $p) {
+    $mail[$p] = Signals::take($p);
+}
+$got = $mail[$y];
+$ev = static fn (array $s): array => json_decode($s['payload'], true);
+$events = array_map(static fn (array $s): string => $ev($s)['event'], $got);
 ok($got !== [] && $got[0]['type'] === 'tourney' && $events[0] === 'result',
     'the loser is told through the mailbox the drain was about to read');
+// The result carries the standings it moved, ranked exactly as `state`
+// ranks them and without the cut, which is not made until round 1 is over.
 $v6 = Tournament::view($w[0], $tid6);
+$res = $ev($got[0]);
+ok(array_keys($res['rows'][0]) === ['seat', 'id', 'pts', 'diff', 'rank'],
+    'a result carries the standings rows in the standings event\'s shape, without adv');
+ok(json_encode($res['rows']) === json_encode($v6['standings']) && $res['rows'][0]['id'] === $x,
+    'ranked as state ranks them, the winner on top');
+ok(array_keys($res) === ['event', 'nid', 'winner', 'draw', 'score', 'rows', 'tid', 'after_ms'],
+    'and is otherwise the event it always was');
+// One push, several events per recipient: the stagger is a fixed step per
+// RECIPIENT, so all of one seat's events carry the same delay and the
+// callbacks land a step apart.
+ok($ev($mail[$w[0]][0])['after_ms'] === 0 && $ev($mail[$w[1]][0])['after_ms'] === 100
+    && $ev($mail[$w[2]][0])['after_ms'] === 200, 'the follow-up calls are staggered 100 ms per seat');
+ok(count($mail[$w[2]]) >= 2 && $ev($mail[$w[2]][1])['after_ms'] === 200,
+    'every event of the same push to the same seat carries the same delay');
 [$x, $y] = $v6['roles']['players'];
 ok(Tournament::report($y, $tid6, 'r1.2', 'draw', [3, 3], null)['state'] === 'held', 'a lone draw is held too');
 $raw = TourneyStore::get($tid6);
 $raw['data']['results']['r1.2']['reports'][$y]['at'] -= Settings::int('tournament_result_ms') + 1000;
 TourneyStore::put($raw);
+Settings::set('tourney_after_step_ms', 600);
 Tournament::pulse($x);
+Settings::set('tourney_after_step_ms', FOK_TOURNEY_AFTER_STEP_MS);
 ok(TourneyStore::get($tid6)['data']['results']['r1.2']['state'] === 'settled',
     'and the opponent\'s own drain settles it just the same');
+ok($ev(Signals::take($w[2])[0])['after_ms'] === 1000,
+    'a wrong step cannot park a seat past the client\'s own 1000 ms cap');
 // A dangling index - the tournament it names is gone - is dropped by the
 // drain that finds it, not answered with an error.
 apcu_store('fok:tin:7b000009', str_repeat('f', 32), 60);
 Tournament::pulse('7b000009');
 ok(TourneyStore::runningFor('7b000009') === null, 'an index that names nothing is dropped on the drain');
-Tournament::leave($bystander, $tid6);
-ok(TourneyStore::runningFor($bystander) === null && TourneyStore::runningFor($x) === $tid6,
-    'a forfeit drops that seat from the index and nobody else');
+// A guest's leave is a forfeit; the host's is an abandon (seats are dealt
+// by the seed, so the host is named, never taken from a role).
+Tournament::leave($w[1], $tid6);
+ok(TourneyStore::runningFor($w[1]) === null && TourneyStore::runningFor($w[0]) === $tid6
+    && TourneyStore::runningFor($w[2]) === $tid6, 'a forfeit drops that seat from the index and nobody else');
 Tournament::leave($w[0], $tid6);
-ok(TourneyStore::runningFor($x) === null && TourneyStore::runningFor($y) === null,
+ok(TourneyStore::runningFor($w[0]) === null && TourneyStore::runningFor($w[2]) === null,
     'the host ending it drops every seat');
-Tournament::pulse($x);
+Tournament::pulse($w[2]);
 ok(TourneyStore::get($tid6)['state'] === 'abandoned', 'and a drain afterwards is a no-op');
 
 // ---- Forfeits and lobbies --------------------------------------------

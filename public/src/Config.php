@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.4.16';
+const FOK_SERVER_VERSION = '1.4.17';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -250,12 +250,13 @@ const FOK_HOLD_MAX_WORKERS = 12;
 // that never changes belongs in the contract, not on the wire. The one
 // per-request decision, whether a client may hold a long poll, is Pace.
 
-// The budget a pushed event's follow-up calls are staggered over (after_ms,
-// see Tournament::flush). A round board wakes every participant in the same
-// instant and they all call back together. Milliseconds and not seconds, on
-// purpose: the point is to de-stack the burst, not to make the last seat
-// wait for its data.
-const FOK_TOURNEY_AFTER_MS = 400;
+// The step a pushed event's follow-up calls are staggered by, per seat
+// (after_ms, see Tournament::flush). A round board wakes every participant
+// in the same instant and they all call back together; a step apart, a
+// full room of eight is served inside 700 ms. Milliseconds and not
+// seconds, on purpose: the point is to de-stack the burst, not to make the
+// last seat wait for its data.
+const FOK_TOURNEY_AFTER_STEP_MS = 100;
 
 // The pair clock cross-check (see Skew, start.php `resync`). Both peers
 // prove their clock against the SAME start, so the difference between their
