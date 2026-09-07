@@ -30,11 +30,10 @@ final class Settings
         // The pair cross-check (see Skew). A tolerance, not a gate: past it
         // the pair is ASKED to re-anchor, never refused. 0 turns it off.
         'start_pair_skew_ms' => [FOK_START_PAIR_SKEW_MS, 'Ask a pair to resync when their two clock proofs disagree by more than (ms, 0 = off)'],
-        // Client pacing (see Pace). hold_max_workers above is the budget these
-        // are measured against: pacing is what the server says BEFORE that
-        // budget runs out, and Holds is what happens when it does.
-        'pace_hello_ms' => [FOK_PACE_HELLO_MS, 'Heartbeat interval handed to an unpressured client (ms)'],
-        'pace_hello_max_ms' => [FOK_PACE_HELLO_MAX_MS, 'Longest heartbeat interval pacing may ask for (ms)'],
+        // Client pacing (see Pace): the beat handed to every client on hello.
+        // Plain settings - neither follows load. hold_max_workers above is
+        // the one budget pacing reads, and only to withdraw the hold.
+        'pace_hello_ms' => [FOK_PACE_HELLO_MS, 'Heartbeat interval handed to every client (ms)'],
         'pace_gap_ms' => [FOK_PACE_GAP_MS, 'Minimum spacing asked between any two requests one client has in flight (ms, 0 = off)'],
         // The same idea one step out: gap_ms spaces the requests a client
         // decides to make, this spaces the ones a broadcast provokes from

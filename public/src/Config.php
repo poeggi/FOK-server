@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.4.10';
+const FOK_SERVER_VERSION = '1.4.11';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -242,12 +242,11 @@ const FOK_POLL_CHECK_USEC_APCU = 2000;
 // stops budgeting holds altogether.
 const FOK_HOLD_MAX_WORKERS = 12;
 
-// Client pacing (see Pace, hello.php `pace`). The base heartbeat is what the
-// client already does, and the ceiling is how far pacing may stretch it when
-// the pool is under pressure. Advice, not a setting - a client that ignores
-// either behaves exactly as before.
+// Client pacing (see Pace, hello.php `pace`). The heartbeat every client is
+// asked to keep - the same for all of them, and half the online window, so
+// one missed beat never reads as offline. Advice, not a rule: a client that
+// ignores it behaves exactly as before.
 const FOK_PACE_HELLO_MS = 30000;
-const FOK_PACE_HELLO_MAX_MS = 90000;
 // What separates a single client's OWN requests from each other. A client
 // with several independent schedulers fires two of them into the same tick
 // and queues its second request behind its first - paying the wait twice,

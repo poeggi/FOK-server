@@ -487,10 +487,10 @@ Response:
                                   worker before any PHP ran; normally 0.
                                   Non-trivial means the host is busy NOW -
                                   do not anchor the clock against it
-      "pace": {                   4.4: how the server wants this client to
-        "hello_ms": 30000,        pace itself. Additive and ignorable, but
-        "poll_ms": 9000,          only the server knows its own load.
-        "hold": true,             See Pacing below.
+      "pace": {                   4.4: the beat the server wants this
+        "hello_ms": 30000,        client to keep. Additive and ignorable;
+        "poll_ms": 9000,          three settings and one load figure
+        "hold": true,             (hold). See Pacing below.
         "gap_ms": 100
       },
       "debug": false,             the server's instruction: the client MUST
@@ -564,9 +564,15 @@ minute.
 
 ### Pacing (`pace`, 4.4)
 
-The server sets the beat, because only the server knows its own load. The
-object is additive - a client that ignores it behaves exactly as it does
-today - but a client that honours it lets the host carry more players.
+The server states the beat so that no interval is a client-side constant:
+a client built against this contract takes its heartbeat, its poll wait and
+its request spacing from here, and the operator changes any of them in the
+admin config without a client release. The object is additive - a client
+that ignores it behaves exactly as it does today.
+
+Three of the four values are SETTINGS: the same for every client, and the
+same from one hello to the next until the operator changes them. Nothing in
+them follows load. The fourth, `hold`, is the one thing that does.
 
     hello_ms    how often to send this heartbeat
     poll_ms     the long-poll wait to ask poll.php for
@@ -599,9 +605,10 @@ today - but a client that honours it lets the host carry more players.
                 addition, so treat an absent field as 0 rather than as an
                 old server.
 
-Both intervals are clamped server-side at both ends: a floor, or the client
-looks offline, and a ceiling, or it floods. Read the values as advice about
-THIS moment rather than a setting - they move with load.
+`hello_ms` is clamped server-side at both ends as a backstop against a
+mistuned setting: a floor (5 s), or a zero floods the host, and a ceiling
+at the online window (60 s), or every client reads offline between its own
+heartbeats. Inside that range the setting is handed over as it is.
 
 None of this is enforced. The server never rate-limits, delays or refuses a
 request for arriving too close behind another one - a heartbeat is how a

@@ -2113,12 +2113,12 @@ apcu_add('fok:hold:0', 1, 20);
 apcu_add('fok:hold:1', 1, 20);
 ok(Pace::forTier(Pace::TIER_LOBBY)['hold'] === false,
     'a half-spent budget withdraws the lobby hold');
-ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] > Settings::int('pace_hello_ms'),
-    'and stretches its heartbeat');
+ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] === Settings::int('pace_hello_ms'),
+    'and leaves its heartbeat alone - the beat is a setting, not a load figure');
+ok(Pace::forTier(Pace::TIER_LOBBY)['gap_ms'] === Settings::int('pace_gap_ms'),
+    'and the gap alone, for the same reason');
 ok(Pace::forTier(Pace::TIER_TOURNEY)['hold'] === true,
     'a tournament screen keeps its hold that long');
-ok(Pace::forTier(Pace::TIER_DUEL)['gap_ms'] === Settings::int('pace_gap_ms') * 2,
-    'pressure widens the gap for every tier - a duel spaces its background too');
 ok(Pace::forTier(Pace::TIER_DUEL)['hold'] === true, 'and so does a duel');
 // Three quarters: only the duel is still worth a held worker.
 apcu_add('fok:hold:2', 1, 20);
@@ -2126,24 +2126,21 @@ ok(Pace::forTier(Pace::TIER_TOURNEY)['hold'] === false,
     'three quarters spent takes the tournament hold too');
 ok(Pace::forTier(Pace::TIER_DUEL)['hold'] === true,
     'the duel handshake is the last thing to give way');
-ok(Pace::forTier(Pace::TIER_DUEL)['hello_ms'] === Settings::int('pace_hello_ms'),
-    'and a duel heartbeat is never stretched - it is how the server knows the game runs');
-// The ceiling is real: pacing may not stretch a client past being counted.
-Settings::set('pace_hello_max_ms', 31000);
-ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] === 31000,
-    'the heartbeat is clamped to the ceiling');
+ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] === Settings::int('pace_hello_ms'),
+    'and a hot pool still asks for the ordinary heartbeat');
+// The clamps are backstops against a mistuned setting, nothing more.
 Settings::set('pace_hello_ms', 0);
-ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] >= 5000,
-    'and a zeroed setting cannot turn into a flood');
-// And the gap has a ceiling of its own: pressure may space a client's
-// background work, never stall it.
-Settings::set('pace_gap_ms', 1500);
-ok(Pace::forTier(Pace::TIER_LOBBY)['gap_ms'] === 2000, 'the widened gap is clamped');
+ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] === 5000,
+    'a zeroed heartbeat setting cannot turn into a flood');
+Settings::set('pace_hello_ms', FOK_ONLINE_WINDOW * 1000 + 1);
+ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] === FOK_ONLINE_WINDOW * 1000,
+    'and one past the online window cannot read every client as offline');
+Settings::set('pace_gap_ms', 2500);
+ok(Pace::forTier(Pace::TIER_LOBBY)['gap_ms'] === 2000, 'an oversized gap is clamped');
 Settings::set('pace_gap_ms', 0);
 ok(Pace::forTier(Pace::TIER_LOBBY)['gap_ms'] === 0, 'and zeroing the setting turns it off');
 Settings::set('pace_gap_ms', FOK_PACE_GAP_MS);
 Settings::set('pace_hello_ms', FOK_PACE_HELLO_MS);
-Settings::set('pace_hello_max_ms', FOK_PACE_HELLO_MAX_MS);
 apcu_delete(new APCUIterator('/^fok:hold:/'));
 Settings::set('hold_max_workers', FOK_HOLD_MAX_WORKERS);
 
