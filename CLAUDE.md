@@ -1,5 +1,8 @@
 # FOK-server - notes for AI sessions
 
+Repo: FOK-server (our own code; PRODUCTION - push to main == deploy).
+Work ONLY on this repo; never touch another repo unless explicitly instructed otherwise.
+
 Read README.md for what this is; read docs/API.md before touching any
 endpoint - it is the contract the FOK-snake client is built against.
 
