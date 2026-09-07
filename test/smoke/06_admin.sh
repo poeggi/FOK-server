@@ -134,6 +134,7 @@ else
     expect "registry card counts open matches" '"matches_open":' "$R"
     expect "registry card sizes the ledger against its cap" '"ledger_max":' "$R"
     expect "registry card shows recent ledger rows" '"kind":"transfer"' "$R"
+    expect "and names the players those rows are between" '"names":' "$R"
     expect "registry card names the frozen instances" '"frozen":[{' "$R"
     expect "and the verdict that froze each one" '"why":"tag_invalid"' "$R"
     expect "registry card tallies disputed claims per player" '"disputed":' "$R"
@@ -156,6 +157,7 @@ else
     expect "with the verdict that froze it" '"frozen_why":"tag_invalid"' "$R"
     expect "and who was holding it" "\"owner\":\"$ID1\"" "$R"
     expect "and what the ledger still has on it" '"kind":"mint"' "$R"
+    expect "with the names those ids resolve to" '"names":' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item&uid=nothex")
     expect "a malformed uid is rejected" '"error":"invalid uid"' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item&uid=00000000000000000000000000000000")

@@ -236,11 +236,17 @@ function debugLabel(c) {
 
 // A client id, clickable: opens the details popup. Used wherever an id
 // appears (Connections, Duels, Registered users) so any id is a way in.
-function idCell(id) {
+//
+// The name it resolves to comes with it wherever the payload carries one:
+// the tables are keyed on ids, but an operator reads about people. A player
+// row can be gone - Presence::forget keeps what somebody owned and drops the
+// person - and then the id is all there is.
+function idCell(id, name) {
     const td = el('td');
     const s = el('span', 'id-link', id);
     s.onclick = () => showClient(id);
     td.append(s);
+    if (name) td.append(el('span', 'muted idname', name));
     return td;
 }
 
@@ -266,8 +272,8 @@ function uidCell(uid) {
 }
 
 // A ledger party is an 8-hex player id (clickable) or empty / a digest.
-function partyCell(v) {
-    if (typeof v === 'string' && v.length === 8) return idCell(v);
+function partyCell(v, name) {
+    if (typeof v === 'string' && v.length === 8) return idCell(v, name);
     return v ? hexCell(v, 'muted') : el('td', 'muted', '-');
 }
 
@@ -419,9 +425,16 @@ function renderClientBody(body, overlay, d, reload) {
     const tbl = el('table', 'kv');
     const sec = (t) => { const r = el('tr', 'kv-sec'); const td = el('td', '', t); td.colSpan = 2; r.append(td); tbl.append(r); };
     const kv = (k, v) => { const r = el('tr'); r.append(el('td', 'kv-k', k), el('td', 'kv-v', (v === null || v === undefined || v === '') ? '-' : String(v))); tbl.append(r); };
+    const nameOf = (id) => (d.names && d.names[id]) || '';
     const kvId = (k, id) => {
         const r = el('tr'), v = el('td', 'kv-v');
-        if (id) { const s = el('span', 'id-link', id); s.onclick = () => { closeModal(overlay); showClient(id); }; v.append(s); } else { v.textContent = '-'; }
+        if (id) {
+            const s = el('span', 'id-link', id);
+            s.onclick = () => { closeModal(overlay); showClient(id); };
+            v.append(s);
+            const n = nameOf(id);
+            if (n) v.append(el('span', 'muted idname', n));
+        } else { v.textContent = '-'; }
         r.append(el('td', 'kv-k', k), v); tbl.append(r);
     };
 
@@ -819,7 +832,7 @@ function worstQueue(rows) {
         tr.append(el('td', '', r.s || '-'));
         // Only the endpoints that take an id in the query string can name a
         // player here; a POST is identified by its address (Util::queueWho).
-        tr.append(r.id ? idCell(r.id) : el('td', 'muted', '-'));
+        tr.append(r.id ? idCell(r.id, r.name) : el('td', 'muted', '-'));
         tr.append(ipCell(r.ip));
         t.append(tr);
     }
@@ -1247,7 +1260,8 @@ function whyCell(why) {
 // instance out of play, who was holding it, what the ledger still remembers,
 // and the two answers an operator can give - hand it to a player, or drop it.
 async function showItem(uid) {
-    const { overlay, head, title, name, body, close } = makeModal(uid);
+    const { overlay, modal, head, title, name, body, close } = makeModal(uid);
+    modal.classList.add('wide');
     title.append(el('span', 'modal-id', uid.slice(0, 8) + '..'));
 
     const load = async () => {
@@ -1274,6 +1288,7 @@ async function showItem(uid) {
 // cancel. The armed button is held in a variable, not in the DOM.
 function renderItemBody(body, overlay, uid, d) {
     const it = d.item;
+    const named = (id) => (d.names && d.names[id]) || '';
     body.replaceChildren();
 
     const tbl = el('table', 'kv');
@@ -1301,7 +1316,8 @@ function renderItemBody(body, overlay, uid, d) {
         for (const h of d.history) {
             const r = el('tr');
             r.append(el('td', 'muted', fmtTime(h.at)), el('td', '', h.kind),
-                partyCell(h.from), partyCell(h.to), el('td', 'muted tight', h.tick || '-'));
+                partyCell(h.from, named(h.from)), partyCell(h.to, named(h.to)),
+                el('td', 'muted tight', h.tick || '-'));
             t.append(r);
         }
         body.append(t);
@@ -1313,17 +1329,8 @@ function renderItemBody(body, overlay, uid, d) {
         return;
     }
 
-    const note = el('p', 'modal-msg', 'Whichever is chosen, the instance leaves the frozen '
-        + 'state and this popup will not offer it again.');
-    const foot = el('div', 'modal-foot');
-    // Candidates: whoever holds it now, and every party the ledger still
-    // names. Those are the people this instance has actually been between.
-    const seen = new Set([it.owner]);
-    for (const h of d.history) {
-        if (h.from.length === 8) seen.add(h.from);
-        if (h.to.length === 8) seen.add(h.to);
-    }
-
+    const note = el('p', 'modal-msg', 'Whichever answer is given, the instance leaves the '
+        + 'frozen state and this popup will not offer it again.');
     const act = async (to) => {
         try {
             await api('item_resolve', { method: 'POST', body: form({ uid: uid, to: to }) });
@@ -1333,11 +1340,13 @@ function renderItemBody(body, overlay, uid, d) {
             note.replaceChildren(el('span', 'error', 'Failed: ' + e.message));
         }
     };
-    let armed = '';
+    // Armed on the ELEMENT, not on its label: several buttons here say the
+    // same word, and arming one must never let another act.
+    let armedBtn = null;
     const buttons = [];
     const disarm = () => {
         for (const b of buttons) b.el.textContent = b.label;
-        armed = '';
+        armedBtn = null;
     };
     // getTo answers null to refuse the click outright, which is what keeps a
     // half-typed id from reading as the empty id that means drop.
@@ -1347,27 +1356,48 @@ function renderItemBody(body, overlay, uid, d) {
         b.onclick = () => {
             const to = getTo();
             if (to === null) {
-                note.replaceChildren(el('span', 'error', 'That is not an 8 hex id.'));
                 disarm();
+                note.replaceChildren(el('span', 'error', 'That is not an 8 hex id.'));
                 return;
             }
-            if (armed === label) {
+            if (armedBtn === b) {
                 disarm();
                 act(to);
                 return;
             }
             disarm();
-            armed = label;
+            armedBtn = b;
             b.textContent = 'confirm';
             note.replaceChildren(el('span', '', message + ' Click again to go through with it.'));
         };
         return b;
     };
 
-    for (const id of seen) {
-        foot.append(arming('assign to ' + id,
-            'Hands the instance to ' + id + ' and takes it out of the frozen state.', () => id));
+    body.append(el('h3', 'subhead', 'Resolve'), note);
+
+    // Where it can go: whoever holds it now, and every party the ledger still
+    // names. A row each rather than a row of buttons - the operator is picking
+    // a PERSON, so the name has to sit beside the id and be read, not be
+    // crammed into a button label.
+    const seen = new Set([it.owner]);
+    for (const h of d.history) {
+        if (h.from.length === 8) seen.add(h.from);
+        if (h.to.length === 8) seen.add(h.to);
     }
+    const cands = el('table');
+    cands.append(row(['ID', 'Name', ''], 'th'));
+    for (const id of seen) {
+        const r = el('tr');
+        const go = el('td', 'tight');
+        go.append(arming('assign', 'Hands the instance to ' + id + '.', () => id));
+        r.append(idCell(id), el('td', '', named(id) || '-'), go);
+        cands.append(r);
+    }
+    body.append(cands);
+
+    // Anyone else, by id. Dropping sits at the far end and is the only one
+    // painted as destructive, because it is the only one that is.
+    const foot = el('div', 'resolve');
     const input = el('input');
     input.placeholder = '8 hex id';
     input.maxLength = 8;
@@ -1376,9 +1406,11 @@ function renderItemBody(body, overlay, uid, d) {
             const v = input.value.trim().toLowerCase();
             return /^[0-9a-f]{8}$/.test(v) ? v : null;
         }));
-    foot.append(arming('drop', 'Removes the instance from the registry for good. The ledger '
-        + 'keeps the record that it existed.', () => ''));
-    body.append(el('h3', 'subhead', 'Resolve'), note, foot);
+    const drop = arming('drop', 'Removes the instance from the registry for good. The ledger '
+        + 'keeps the record that it existed.', () => '');
+    drop.classList.add('drop');
+    foot.append(drop);
+    body.append(foot);
 }
 
 // Status: what the registry HOLDS - the counters, the chain verify, and the
@@ -1468,12 +1500,13 @@ function renderItemLedger(box, d) {
         box.append(el('p', 'muted', 'No item activity yet.'));
         return;
     }
+    const nm = (id) => (d.names && d.names[id]) || '';
     const t = el('table');
     t.append(row(['n', 'Kind', 'UID', 'From', 'To', 'Tick', 'When'], 'th'));
     for (const e of d.recent) {
         const r = el('tr');
         r.append(el('td', 'muted', e.n), el('td', '', e.kind), hexCell(e.uid, 'muted'),
-            partyCell(e.from), partyCell(e.to), el('td', 'muted', e.tick),
+            partyCell(e.from, nm(e.from)), partyCell(e.to, nm(e.to)), el('td', 'muted', e.tick),
             el('td', 'muted', fmtTime(Math.floor(e.at / 1000))));
         t.append(r);
     }

@@ -212,6 +212,9 @@ input.usearch { width: 100%; margin: 6px 0 8px; padding: 5px 8px; -webkit-appear
     width: 100%; max-width: 460px;
     display: flex; flex-direction: column;
 }
+/* The item popup carries a table naming two players per row, which does not
+   fit the width a detail popup needs. */
+.modal.wide { max-width: 640px; }
 .modal-title { display: flex; flex-direction: column; }
 .modal-name { font-size: 15px; }
 .modal-id { color: var(--muted); font-size: 12px; }
@@ -541,6 +544,19 @@ table.kv .kv-sec td {
 .modal-foot { display: flex; justify-content: flex-end; gap: 6px; }
 .modal-foot button { border-color: var(--danger-line); color: var(--danger); }
 .modal-foot button:hover { border-color: var(--danger); background: rgba(255, 255, 255, 0.03); }
+
+/* An id resolves to a person wherever it is shown (see idCell). The name
+   trails the id instead of taking a column, so no table grows for it. */
+.idname { margin-left: 6px; }
+
+/* The resolve controls in the item popup: the free-id field and the two
+   answers, wrapping rather than crushing into one overflowing row. Only
+   dropping is destructive, so only it is painted that way - .modal-foot
+   colours every button because a confirm popup holds nothing else. */
+.resolve { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.resolve input { width: 10em; padding: 3px 6px; }
+.resolve .drop { margin-left: auto; border-color: var(--danger-line); color: var(--danger); }
+.resolve .drop:hover { border-color: var(--danger); background: rgba(255, 255, 255, 0.03); }
 
 /* A status line under a toolbar rather than inside it, for text that is a
    sentence and not a control. */

@@ -51,7 +51,7 @@ final class AdminData
             // The worst queue waits on record, with what caused them. Read
             // here rather than off the history payload so the gauge's popup
             // has them the moment it opens (see Counters::worst).
-            'q_worst' => Counters::worstList('q_us'),
+            'q_worst' => self::worstNamed(Counters::worstList('q_us')),
             'php' => PHP_VERSION,
             'server_version' => FOK_SERVER_VERSION,
             'env' => FOK_ENV,
@@ -277,6 +277,47 @@ final class AdminData
         return $out;
     }
 
+    // Each worst-wait row names the client that caused it, and the table is
+    // read about people, so the name rides along (see namesFor).
+    private static function worstNamed(array $rows): array
+    {
+        $names = self::namesFor(array_map(static fn($r) => $r['id'] ?? '', $rows));
+        foreach ($rows as &$r) {
+            $r['name'] = $names[(string)($r['id'] ?? '')] ?? null;
+        }
+        unset($r);
+        return $rows;
+    }
+
+    /**
+     * Names for a set of player ids. Every table here is keyed on ids and
+     * every one of them is read about PEOPLE, so an id on screen carries the
+     * name it resolves to. Missing where the player row is gone -
+     * Presence::forget keeps what somebody owned and drops the person - and
+     * missing is a real answer, not an error.
+     *
+     * @param array<int, mixed> $ids
+     * @return array<string, string>
+     */
+    public static function namesFor(array $ids): array
+    {
+        $ids = array_values(array_filter(array_unique($ids),
+            static fn($v) => is_string($v) && Util::isValidId($v)));
+        if ($ids === []) {
+            return [];
+        }
+        $st = Db::get()->prepare('SELECT id, name FROM players WHERE id IN ('
+            . implode(', ', array_fill(0, count($ids), '?')) . ')');
+        $st->execute($ids);
+        $rows = $st->fetchAll();
+        $st->closeCursor();
+        $names = [];
+        foreach ($rows as $r) {
+            $names[(string)$r['id']] = $r['name'];
+        }
+        return $names;
+    }
+
     /**
      * The Registry card: item-ownership subsystem health (see Items, Ledger).
      * Read-only. Match SECRETS are never selected - a match row's sec_a/sec_b
@@ -317,8 +358,14 @@ final class AdminData
             $disputed[] = ['id' => $r['id'], 'name' => $r['name'], 'ok' => (int)$r['claims_ok'],
                 'untagged' => (int)$r['claims_untagged'], 'disputed' => (int)$r['claims_disputed']];
         }
+        $parties = [];
+        foreach ($recent as $r) {
+            $parties[] = $r['from'];
+            $parties[] = $r['to'];
+        }
         return [
             'now' => time(),
+            'names' => (object)self::namesFor($parties),
             'items_total' => (int)$db->query('SELECT COUNT(*) FROM items')->fetchColumn(),
             'items_frozen' => (int)$db->query('SELECT COUNT(*) FROM items WHERE frozen = 1')->fetchColumn(),
             'matches_open' => (int)$db->query('SELECT COUNT(*) FROM matches WHERE closed = 0')->fetchColumn(),
@@ -367,6 +414,16 @@ final class AdminData
                 'to' => $r['to_id'], 'mid' => $r['mid'], 'tick' => (int)$r['tick'],
                 'at' => (int)$r['at']];
         }
+        // The parties this instance has been between, named. The registry is
+        // keyed on ids, but the operator deciding where it goes next is
+        // reading about people - and a player row can be gone (Presence::forget
+        // keeps the property and drops the person), so a name can be missing.
+        $ids = [(string)$row['owner']];
+        foreach ($history as $h) {
+            $ids[] = $h['from'];
+            $ids[] = $h['to'];
+        }
+        $names = self::namesFor($ids);
         return [
             'item' => [
                 'uid' => $row['uid'],
@@ -381,6 +438,8 @@ final class AdminData
                 'frozen_why' => (string)$row['frozen_why'],
             ],
             'history' => $history,
+            // An object even when empty, so the client can index it either way.
+            'names' => (object)$names,
         ];
     }
 
@@ -423,6 +482,9 @@ final class AdminData
         return [
             'now' => $now,
             'online_window' => FOK_ONLINE_WINDOW,
+            'names' => (object)self::namesFor([
+                (string)($duel['peer'] ?? ''), (string)($queue['matched_with'] ?? ''),
+            ]),
             'client' => [
                 'id' => $p['id'],
                 'name' => $p['name'],

@@ -1445,6 +1445,17 @@ $st->closeCursor();
 ok($left === 0, 'so nobody holds it any more');
 ok(Ledger::verify($idb)['ok'], 'and the chain still verifies over both verdicts');
 
+// Every admin table is keyed on ids and read about people, so the payloads
+// answer the names those ids resolve to. A missing name is a real answer.
+$idb->prepare('UPDATE players SET name = ? WHERE id = ?')->execute(['srv-CI-alice', 'aa11aa11']);
+$named = AdminData::namesFor(['aa11aa11', 'nothexid', 'ff99ff99']);
+ok(($named['aa11aa11'] ?? null) === 'srv-CI-alice', 'a set of ids answers the names behind them');
+ok(!array_key_exists('nothexid', $named), 'anything that is not an id is never asked about');
+ok(!array_key_exists('ff99ff99', $named), 'and an id with no player row simply has no name');
+$view = (array)AdminData::item($u4)['names'];
+ok(($view['aa11aa11'] ?? null) === 'srv-CI-alice',
+    'so an instance names everyone its ledger still mentions');
+
 // The legacy amnesty: one-time, idempotent, and the server's own list wins.
 Presence::touch('cc33cc33', '1.2.3.4');
 ok(count(Items::seed('cc33cc33', ['cap', 'cap', 'NOT AN ID', 'scarf'], null)) === 2,
