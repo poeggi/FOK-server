@@ -164,6 +164,15 @@ final class Settings
         // Row first, then the cache: a worker that reads between the two
         // gets the new value, never a cached old one over a written row.
         Db::retry(static function () use ($key, $value): void {
+            // A row IS the override, so the default is stored as no row at all.
+            // Writing it would pin today's number and shadow every later one -
+            // which is what a config export/import roundtrip does to every key
+            // it carries, and how an install ends up answering a cap the code
+            // no longer sets.
+            if ($value === self::DEFS[$key][0]) {
+                Db::get()->prepare('DELETE FROM settings WHERE key = ?')->execute([$key]);
+                return;
+            }
             Db::get()->prepare(
                 'INSERT INTO settings (key, value) VALUES (?, ?)
                  ON CONFLICT (key) DO UPDATE SET value = excluded.value'

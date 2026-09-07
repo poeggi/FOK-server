@@ -1102,6 +1102,17 @@ Settings::set('chat_max_len', 77);
 ok(apcu_fetch(FOK_APCU_NS . 'cfg') === false, 'and a save drops that cache');
 ok(Settings::int('chat_max_len') === 77, 'so the next read answers with the saved value');
 
+// A row IS the override, so saving the default removes it: an install that
+// wrote every key once (a config export/import roundtrip does) would
+// otherwise answer today's default forever, whatever the code later says.
+Settings::set('chat_max_len', FOK_CHAT_MAX_LEN);
+$st = Db::get()->prepare('SELECT COUNT(*) FROM settings WHERE key = ?');
+$st->execute(['chat_max_len']);
+$rows = (int)$st->fetchColumn();
+$st->closeCursor();
+ok($rows === 0, 'saving the default keeps no row');
+ok(Settings::int('chat_max_len') === FOK_CHAT_MAX_LEN, 'and the default is what reads back');
+
 // The capability assessment is cached the same way and keyed by release, so
 // a deploy re-probes a host that may have changed under it.
 apcu_delete(FOK_APCU_NS . 'caps:' . FOK_SERVER_VERSION);
@@ -2176,6 +2187,9 @@ Db::get()->exec("INSERT INTO duels (a, b, started, last_seen) VALUES ('hk440004'
 Db::get()->exec("INSERT INTO alerts (type, message, created, seen) VALUES ('hk', 'read', 0, 1)");
 Db::get()->exec("INSERT INTO alerts (type, message, created, seen) VALUES ('hk', 'unread', 0, 0)");
 Db::get()->exec("INSERT INTO settings (key, value) VALUES ('retired_last_release', 7)");
+// A known key needs a ROW to prove the sweep spares it, and a row exists only
+// for an override (see Settings::set).
+Settings::set('player_ttl_days', 366);
 // The two the duel paths hand over rather than delete under their own lock
 // (see Starts::prune and Items::pruneMatches): a start no epoch guard can
 // reach, and a match no claim could name. The live pair above keeps its own.

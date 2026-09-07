@@ -479,6 +479,19 @@ else
     R=$(curl -s -b "$COOKIES" -X POST --data-urlencode 'config={"nope":1}' "$BASE/admin/api.php?action=config_import")
     expect "config import rejects unknown key" '"error":"unknown setting' "$R"
 
+    # tournament_max_players once defaulted to 10, and a roundtrip like the
+    # one above wrote that number back as an explicit row, which outlived the
+    # default it came from: the persistent staging database went on answering
+    # a cap the code no longer sets. Saving the default now removes the row,
+    # so this heals such an install and does nothing to one that never drifted.
+    D=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings" \
+        | grep -oE '"key":"tournament_max_players","value":[0-9]+,"default":[0-9]+' \
+        | grep -oE '"default":[0-9]+' | cut -d: -f2)
+    setting tournament_max_players "$D"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
+    expect "the tournament cap answers its own default" \
+        "\"key\":\"tournament_max_players\",\"value\":$D,\"default\":$D" "$R"
+
     if [ "$REMOTE" -eq 1 ]; then
         # Remove this run's test data from the remote instance.
         for sid in $(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=scores" \
