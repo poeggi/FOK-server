@@ -712,7 +712,7 @@ true, honour what is asked.
 What "debug mode" shows is entirely the client's business; the server
 only carries the bit.
 
-## GET /api/poll.php - fast signal poll (matchmaking window only)
+## GET /api/poll.php - fast signal poll
 
     GET /api/poll.php?id=c0ffee42[&wait=9]
 
@@ -741,6 +741,9 @@ for or performing matchmaking/signaling; stop when the DataChannel
 opens or the attempt is abandoned. In P2P mode the server is then out
 of the in-game path entirely - peer packets flow directly and there is
 no server hop to optimize. In relay mode it is the path (relay.php).
+A tournament participant's poll also runs that tournament's deadlines
+(see Tournament mode, When nobody answers); the request and the answer
+are unchanged.
 
 ## GET /api/scores.php - global top 100
 
@@ -2020,7 +2023,8 @@ a settled node nor freeze one nobody was disputing.
 ### When nobody answers
 
 Nothing here runs on a timer - the host has no cron - so every deadline is
-evaluated lazily, on whatever request touches the tournament next:
+evaluated lazily, on the next request that touches the tournament: any
+tournament.php request, or any participant's poll.php or hello.
 
 - a held one-sided result settles after `tournament_result_ms` (15 s)
 - the match in flight is forfeited after `tournament_walkover_ms` (3 min)
@@ -2029,6 +2033,14 @@ evaluated lazily, on whatever request touches the tournament next:
 - an unstarted lobby is abandoned after `tournament_join_ttl` (15 min)
 - a round break continues by itself after `tournament_break_ttl_ms`
   (2 min), so a host that walked away cannot wedge the tournament
+
+So the mailbox drain a participant makes anyway is what keeps the clock
+moving, and whatever a deadline produces - a settled result, the next
+roles sheet - is in that same answer. With a held poll that is about 9 s
+at worst; with hello alone, about 30 s. Nothing is added to the wire for
+it, and a client never calls `state` for timekeeping: `state` is for a
+reload, a rejoin, or genuine doubt that an event was missed, and nothing
+else.
 
 A player who forfeits (by leaving, or by being offline past the walkover)
 loses their remaining matches as walkovers. A node where BOTH sides are
@@ -2203,7 +2215,9 @@ The request side is smaller. Response bodies, same run:
 
 `state` is the exception, and the one thing to get right: a full read-back
 is ~5 KB, seven times a `roles` event. It exists for a reload, a
-reconnect, or a client that believes it missed an event - NOT as a poll.
+reconnect, or a client that believes it missed an event - NOT as a poll,
+and not for timekeeping either: the deadlines run on the drain (see When
+nobody answers).
 Eight clients polling `state` once a second would cost more server egress
 every second than the whole tournament costs in pushed events.
 

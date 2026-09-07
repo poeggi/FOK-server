@@ -1788,6 +1788,72 @@ ok($v2['state'] === 'running' && $v2['bracket'][0]['state'] === 'frozen',
     'a frozen final blocks the tournament instead of crowning a guess');
 ok($v2['bracket'][0]['winner'] === null, 'and it has no winner at all');
 
+// ---- The clock moves on a participant's mailbox drain -----------------
+// Nothing runs on a timer: a deadline fires on the next request that touches
+// the tournament, and hello/poll.php touch it through pulse() for ANY
+// participant. Three players, so one of them is a spectator of the match in
+// flight - the carrier is any seat, not the two who played. Nothing below
+// reads `state`; the tournament is watched through the store directly.
+$w = ['7b000001', '7b000002', '7b000003'];
+foreach ($w as $p) {
+    Presence::touch($p, '127.0.0.1');
+}
+$tid6 = Tournament::create($w[0], false)['tid'];
+Tournament::join($w[1], $tid6);
+Tournament::join($w[2], $tid6);
+ok(TourneyStore::runningFor($w[1]) === null, 'a lobby seats nobody in a running tournament');
+Tournament::start($w[0], $tid6);
+ok(TourneyStore::runningFor($w[0]) === $tid6 && TourneyStore::runningFor($w[2]) === $tid6,
+    'a start indexes every seat under the tournament');
+$v6 = Tournament::view($w[0], $tid6);
+[$x, $y] = $v6['roles']['players'];
+$bystander = array_values(array_diff($w, [$x, $y]))[0];
+foreach ($w as $p) {
+    Signals::take($p);
+}
+ok(Tournament::report($x, $tid6, 'r1.1', 'win', [8, 2], null)['state'] === 'held', 'a lone win is held');
+Tournament::pulse('79999999');
+Tournament::pulse($bystander);
+$raw = TourneyStore::get($tid6);
+ok($raw['data']['results']['r1.1']['state'] === 'held',
+    'a drain inside the grace changes nothing, whoever makes it');
+$raw['data']['results']['r1.1']['reports'][$x]['at'] -= Settings::int('tournament_result_ms') + 1000;
+TourneyStore::put($raw);
+Tournament::pulse('79999999');
+ok(TourneyStore::get($tid6)['data']['results']['r1.1']['state'] === 'held',
+    'past the grace, a drain by a stranger still changes nothing');
+Tournament::pulse($bystander);
+$raw = TourneyStore::get($tid6);
+ok($raw['data']['results']['r1.1']['state'] === 'settled',
+    'a drain by the spectator of the match settles the held result');
+ok($raw['data']['cursor'] === 'r1.2', 'and deals the next match');
+$got = Signals::take($y);
+$events = array_map(static fn (array $s): string => json_decode($s['payload'], true)['event'], $got);
+ok($got !== [] && $got[0]['type'] === 'tourney' && $events[0] === 'result',
+    'the loser is told through the mailbox the drain was about to read');
+$v6 = Tournament::view($w[0], $tid6);
+[$x, $y] = $v6['roles']['players'];
+ok(Tournament::report($y, $tid6, 'r1.2', 'draw', [3, 3], null)['state'] === 'held', 'a lone draw is held too');
+$raw = TourneyStore::get($tid6);
+$raw['data']['results']['r1.2']['reports'][$y]['at'] -= Settings::int('tournament_result_ms') + 1000;
+TourneyStore::put($raw);
+Tournament::pulse($x);
+ok(TourneyStore::get($tid6)['data']['results']['r1.2']['state'] === 'settled',
+    'and the opponent\'s own drain settles it just the same');
+// A dangling index - the tournament it names is gone - is dropped by the
+// drain that finds it, not answered with an error.
+apcu_store('fok:tin:7b000009', str_repeat('f', 32), 60);
+Tournament::pulse('7b000009');
+ok(TourneyStore::runningFor('7b000009') === null, 'an index that names nothing is dropped on the drain');
+Tournament::leave($bystander, $tid6);
+ok(TourneyStore::runningFor($bystander) === null && TourneyStore::runningFor($x) === $tid6,
+    'a forfeit drops that seat from the index and nobody else');
+Tournament::leave($w[0], $tid6);
+ok(TourneyStore::runningFor($x) === null && TourneyStore::runningFor($y) === null,
+    'the host ending it drops every seat');
+Tournament::pulse($x);
+ok(TourneyStore::get($tid6)['state'] === 'abandoned', 'and a drain afterwards is a no-op');
+
 // ---- Forfeits and lobbies --------------------------------------------
 $f = ['72000001', '72000002', '72000003'];
 foreach ($f as $p) {

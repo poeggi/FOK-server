@@ -132,6 +132,11 @@ if (!is_bool($tourneys)) {
     Util::fail('invalid tourneys');
 }
 
+// A tournament participant's heartbeat carries that tournament's deadlines
+// the way its poll does (see poll.php), so a client that is not polling
+// still keeps the clock moving - and picks up what a deadline produced in
+// the drain right below.
+Tournament::pulse($id);
 $signals = Signals::take($id);
 Load::tick('msg_out', count($signals));
 

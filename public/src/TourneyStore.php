@@ -31,6 +31,9 @@ require_once __DIR__ . '/Caps.php';
  *   - CD:    the per-host create cooldown, expiring on its own TTL
  *   - OPEN:  a small card per open lobby, so answering a lobby announce never
  *            deserialises a running tournament's full state
+ *   - IN:    player id -> the running tournament they are seated in, so a
+ *            mailbox drain can find the tournament whose deadlines it
+ *            carries without scanning (see Tournament::pulse)
  *
  * apcu_add() is the primitive that replaces BEGIN IMMEDIATE for all of them:
  * it writes only if the key is absent, so a claim is atomic against every
@@ -43,6 +46,7 @@ final class TourneyStore
     private const HOST = 'fok:thost:';
     private const CD   = 'fok:tcd:';
     private const OPEN = 'fok:topen:';
+    private const IN   = 'fok:tin:';
     private const LOCK = 'fok:tlock:';
 
     /**
@@ -120,6 +124,19 @@ final class TourneyStore
         } else {
             apcu_delete(self::HOST . $t['host']);
         }
+        // The seat index lives exactly as long as the tournament runs: written
+        // with the same TTL in the same store call, so the two expire
+        // together; dropped for a seat that forfeited and for a tournament
+        // that ended. A lobby leaves it alone - its players may be seated in
+        // a running tournament of somebody else's.
+        foreach ($t['players'] as $p) {
+            $pid = (string)$p['id'];
+            if ($state === 'running' && !($p['forfeited'] ?? false)) {
+                apcu_store(self::IN . $pid, $tid, self::ttl($t));
+            } elseif ($state !== 'open') {
+                self::forgetRunning($pid, $tid);
+            }
+        }
         if ($state === 'open') {
             apcu_store(self::CODE . $t['code'], $tid, self::ttl($t));
             apcu_store(self::OPEN . $tid, [
@@ -140,6 +157,21 @@ final class TourneyStore
     {
         $tid = apcu_fetch(self::CODE . strtoupper($code));
         return is_string($tid) ? self::get($tid) : null;
+    }
+
+    /** The running tournament $id is seated in, as far as the index knows. */
+    public static function runningFor(string $id): ?string
+    {
+        $tid = apcu_fetch(self::IN . $id);
+        return is_string($tid) ? $tid : null;
+    }
+
+    /** Drops $id's seat index, and only if it still names $tid. */
+    public static function forgetRunning(string $id, string $tid): void
+    {
+        if (apcu_fetch(self::IN . $id) === $tid) {
+            apcu_delete(self::IN . $id);
+        }
     }
 
     /**

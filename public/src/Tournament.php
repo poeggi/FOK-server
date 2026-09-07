@@ -1412,14 +1412,8 @@ final class Tournament
         // overwhelming majority of them change nothing at all: no deadline is
         // due, so there is nothing to write. Those must not queue behind the
         // tournament's lock, and taking it costs the same whether or not
-        // anything is written in the end.
-        //
-        // So the deadlines are run on a snapshot loaded OUTSIDE the lock, and
-        // only when that dry run actually moves something is the whole thing
-        // redone under it, where it counts. What makes this safe is that
-        // touch() writes nothing of its own - everything it does lands in $t
-        // - so a dry run that decides nothing is due has changed nothing
-        // anywhere.
+        // anything is written in the end. So the lock is taken only once a
+        // dry run says a deadline is due (see due()).
         $t = self::load($tid);
         if ($t === null) {
             return null;
@@ -1427,9 +1421,7 @@ final class Tournament
         if (!self::isMember($t, $id)) {
             return ['ok' => false, 'error' => 'not a participant', 'http' => 403];
         }
-        $before = [$t['state'], $t['round'], json_encode($t['data'])];
-        self::touch($t);
-        if ($t['events'] === [] && $before === [$t['state'], $t['round'], json_encode($t['data'])]) {
+        if (!self::due($t)) {
             return self::project($t, $id);
         }
         return self::mutate($tid, static function (array &$t) use ($id): array {
@@ -1438,6 +1430,61 @@ final class Tournament
                 return ['ok' => false, 'error' => 'not a participant', 'http' => 403];
             }
             return self::project($t, $id);
+        });
+    }
+
+    /**
+     * Whether a deadline is due: touch() run on a snapshot loaded OUTSIDE
+     * the lock, compared against what was loaded. What makes the dry run
+     * safe is that touch() writes nothing of its own - everything it does
+     * lands in the array it is given - so a run that decides nothing is due
+     * has changed nothing anywhere. $t is a copy here; the caller's stays
+     * as loaded.
+     */
+    private static function due(array $t): bool
+    {
+        $before = [$t['state'], $t['round'], json_encode($t['data'])];
+        self::touch($t);
+        return $t['events'] !== [] || $before !== [$t['state'], $t['round'], json_encode($t['data'])];
+    }
+
+    /**
+     * The deadlines, run for a mailbox drain. hello and poll.php are the
+     * requests every participant makes anyway - a held poll on the
+     * tournament screens, an unheld one during a match, the heartbeat
+     * throughout - so they are what keeps the clock moving for a tournament
+     * nobody is otherwise touching, and a client never reads `state` for
+     * timekeeping. Called at request ENTRY, before the mailbox is read, so
+     * whatever a deadline produces - a settled result, the next roles sheet
+     * - is in the answer the same request gives.
+     *
+     * The common case is shared memory and nothing else: one index lookup,
+     * one snapshot, one dry run. Only a deadline that is due takes the lock.
+     * Not seated, not running, no shared memory: nothing happens, and the
+     * drain answers exactly as it would without this.
+     */
+    public static function pulse(string $id): void
+    {
+        if (!TourneyStore::usable()) {
+            return;
+        }
+        $tid = TourneyStore::runningFor($id);
+        if ($tid === null) {
+            return;
+        }
+        $t = self::load($tid);
+        if ($t === null || $t['state'] !== 'running' || !self::isMember($t, $id)) {
+            // An index entry that outlived what it named: the tournament
+            // expired between two transitions, or was evicted.
+            TourneyStore::forgetRunning($id, $tid);
+            return;
+        }
+        if (!self::due($t)) {
+            return;
+        }
+        self::mutate($tid, static function (array &$t): array {
+            self::touch($t);
+            return [];
         });
     }
 

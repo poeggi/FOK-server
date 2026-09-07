@@ -135,7 +135,7 @@ additive.
                       local tournament lobbies, self-reported networks
         net.php       what network the server sees the caller on - a field
                       diagnostic, reads and writes nothing
-        poll.php      fast signal poll, 204 when idle (matchmaking window)
+        poll.php      fast signal poll, 204 when idle (matchmaking, tournaments)
         friend.php    friendship handshake: request/accept/remove/list
         match.php     quick-match queue (pair with anyone waiting)
         start.php     server-issued absolute start PTS per pair, for every

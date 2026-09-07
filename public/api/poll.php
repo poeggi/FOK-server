@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Holds.php';
 require_once __DIR__ . '/../src/Signals.php';
+require_once __DIR__ . '/../src/Tournament.php';
 
 /**
  * Fast, cheap signal poll for the matchmaking/signaling window.
@@ -35,6 +36,11 @@ if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
 Util::noteCaller($id);
+// A tournament participant's poll carries that tournament's deadlines, and
+// it does so HERE, before the hold: what a deadline produces lands in the
+// mailbox this request is about to drain. Once per request, never inside
+// the loop below - the hold touches nothing but the mailbox.
+Tournament::pulse($id);
 $wait = min((int)($_GET['wait'] ?? 0), FOK_POLL_WAIT_MAX);
 // Waiting costs an FPM worker for its whole duration, and the pool has a
 // budget for that (see Holds). Over the budget it is the WAIT that is given

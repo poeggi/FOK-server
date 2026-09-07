@@ -161,16 +161,37 @@ expect "which is a normal 3-heart duel" '"hm":3' "$R"
 expect "played one level deeper than round 1" '"lvl":2' "$R"
 expect "and no board is up any more" '"break":null' "$R"
 
-# Nobody lies to lose, so a reported loss settles on the spot.
+# A held result settles on a participant's plain poll once the grace has
+# passed: nothing runs on a timer, and the mailbox drain a client makes
+# anyway is what carries the deadlines. What the settle produces - here the
+# result AND the podium, since this is the final - rides in that same
+# answer. The grace is a setting, so the deadline is crossed by shortening
+# it rather than by waiting; the lone loss that settles on the spot is
+# walked over the wire in test/live-protocol.sh.
+R=$(result "$ID2" "$T1" final win 6 4)
+expect "a lone win on the final is held, waiting for the other side" '"state":"held"' "$R"
+curl -s "$BASE/api/poll.php?id=$ID1" > /dev/null
+R=$(act "$ID1" state "$T1")
+expect "a participant's poll inside the grace changes nothing" '"state":"held"' "$R"
+if [ "$ADMIN" -eq 1 ]; then
+    setting tournament_result_ms 0
+    R=$(curl -s "$BASE/api/poll.php?id=$ID1")
+    expect "past the grace, a plain poll from a participant settles it" 'event\":\"result' "$R"
+    expect "and carries what the settle produced, the podium included" 'podium' "$R"
+    setting tournament_result_ms 15000
+    CLOSED=settled
+else
+    echo "skip the poll-settle check: shortening the grace needs admin"
+    R=$(result "$ID1" "$T1" final loss 4 6)
+    expect "the loser's report completes the pair" '"state":"confirmed"' "$R"
+    CLOSED=confirmed
+fi
 R=$(result "$ID1" "$T1" final loss 4 6)
-expect "a reported loss settles at once" '"state":"settled"' "$R"
-R=$(result "$ID1" "$T1" final loss 4 6)
-expect "and re-sending it is idempotent" '"state":"settled"' "$R"
-# The other side now claims the opposite, far too late. Applied, it would
-# freeze a node nobody was disputing - and the loser's own admission is the
-# one report that cannot be a lie in the reporter's favour.
+expect "a report on a closed node is answered with its state" "\"state\":\"$CLOSED\"" "$R"
+# The winner now claims the opposite, far too late. Applied, it would freeze
+# a node nobody was disputing.
 R=$(result "$ID2" "$T1" final loss 6 4)
-expect "a contradicting late report cannot reopen a settled node" '"state":"settled"' "$R"
+expect "a contradicting late report cannot reopen a closed node" "\"state\":\"$CLOSED\"" "$R"
 
 R=$(act "$ID2" state "$T1")
 expect "the final settles the tournament" '"state":"done"' "$R"
