@@ -7,3 +7,6 @@ fok-server-data/
 # Local-only secrets (deploy credentials live in ~/.fok-server-deploy.json)
 *.secret
 __pycache__/
+# Claude Code local files
+CLAUDE.local.md
+.claude/settings.local.json
