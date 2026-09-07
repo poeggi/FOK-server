@@ -331,6 +331,60 @@ final class AdminData
     }
 
     /**
+     * One instance in full, for the operator deciding what happens to a
+     * frozen one: the registry row, the owner's name where a player row
+     * still exists, and what the ledger still holds about this uid. Null
+     * when the registry does not know the uid.
+     *
+     * The ledger is checkpointed and truncated, so an old instance can have
+     * no history left. It is shown for what it is - an audit trail, never
+     * the answer to who owns the thing, which is the items row and only it.
+     */
+    public static function item(string $uid): ?array
+    {
+        $db = Db::get();
+        $st = $db->prepare(
+            'SELECT i.uid, i.item_id, i.owner, i.seq, i.origin, i.minted, i.frozen,
+                    i.frozen_at, i.frozen_why, p.name
+               FROM items i LEFT JOIN players p ON p.id = i.owner WHERE i.uid = ?'
+        );
+        $st->execute([$uid]);
+        $row = $st->fetch();
+        $st->closeCursor();
+        if ($row === false) {
+            return null;
+        }
+        $history = [];
+        $st = $db->prepare(
+            'SELECT n, kind, from_id, to_id, mid, tick, at FROM ledger
+              WHERE uid = ? ORDER BY n DESC LIMIT 50'
+        );
+        $st->execute([$uid]);
+        $rows = $st->fetchAll();
+        $st->closeCursor();
+        foreach ($rows as $r) {
+            $history[] = ['n' => (int)$r['n'], 'kind' => $r['kind'], 'from' => $r['from_id'],
+                'to' => $r['to_id'], 'mid' => $r['mid'], 'tick' => (int)$r['tick'],
+                'at' => (int)$r['at']];
+        }
+        return [
+            'item' => [
+                'uid' => $row['uid'],
+                'item_id' => $row['item_id'],
+                'owner' => $row['owner'],
+                'name' => $row['name'],
+                'seq' => (int)$row['seq'],
+                'origin' => $row['origin'],
+                'minted' => (int)$row['minted'],
+                'frozen' => (int)$row['frozen'] === 1,
+                'frozen_at' => (int)$row['frozen_at'],
+                'frozen_why' => (string)$row['frozen_why'],
+            ],
+            'history' => $history,
+        ];
+    }
+
+    /**
      * Everything known about one client for the detail popup - identity,
      * presence, its 1:1 state, relay/matchmaking/friend/score/mailbox
      * counters and its config backup. Null if the id is unknown. Read-only,

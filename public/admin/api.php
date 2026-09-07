@@ -15,6 +15,7 @@ require_once __DIR__ . '/../src/Vault.php';
 require_once __DIR__ . '/../src/Debug.php';
 require_once __DIR__ . '/../src/AdminData.php';
 require_once __DIR__ . '/../src/Ledger.php';
+require_once __DIR__ . '/../src/Items.php';
 require_once __DIR__ . '/../src/Tournament.php';
 require_once __DIR__ . '/../src/Housekeeping.php';
 
@@ -312,6 +313,39 @@ switch ($action) {
         // POST-only so it is never triggered by a cross-site navigation.
         requirePost();
         Util::jsonOut(['ok' => true, 'verify' => Ledger::verify($db)]);
+
+    case 'item':
+        // One instance in full: the registry row, what the ledger still holds
+        // about it, and - for a frozen one - the verdict an operator has to
+        // act on. Read-only; the acting is the case below.
+        $uid = (string)($_GET['uid'] ?? '');
+        if (!Items::isValidUid($uid)) {
+            Util::fail('invalid uid');
+        }
+        $item = AdminData::item($uid);
+        if ($item === null) {
+            Util::fail('unknown item', 404);
+        }
+        Util::jsonOut(['ok' => true] + $item);
+
+    case 'item_resolve':
+        // The operator's verdict on a frozen instance: hand it to a player, or
+        // drop it from the registry when no id is given. Only a FROZEN one can
+        // be named, so this is the release valve for a terminal state and never
+        // a second way to grant an item (see Items::resolve).
+        requirePost();
+        $uid = (string)($_POST['uid'] ?? '');
+        if (!Items::isValidUid($uid)) {
+            Util::fail('invalid uid');
+        }
+        $to = (string)($_POST['to'] ?? '');
+        if ($to !== '' && !Util::isValidId($to)) {
+            Util::fail('invalid id');
+        }
+        if (!Items::resolve($uid, $to)) {
+            Util::fail('not a frozen instance', 409);
+        }
+        Util::jsonOut(['ok' => true]);
 
     // ---- host capabilities ----
     case 'caps':

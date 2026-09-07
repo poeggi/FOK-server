@@ -568,6 +568,59 @@ final class Items
         }
     }
 
+    /**
+     * The operator's verdict on a frozen instance: hand it to $to, or drop it
+     * from the registry when $to is ''. False when the uid names no frozen
+     * instance.
+     *
+     * ONLY a frozen instance can be resolved. A healthy one moves by claim and
+     * by nothing else, so this can never become a second way to grant an item:
+     * it is the release valve for the one state the claim ladder cannot leave
+     * on its own, a freeze being terminal until somebody decides. The decision
+     * is taken once - what comes out is an ordinary instance again, which this
+     * path will not touch a second time.
+     *
+     * The seq advances with the move, so a claim built on the seq the instance
+     * carried while frozen is refused rather than applied on top of the
+     * verdict. The move and its ledger entry are one transaction: the ledger
+     * is the only record that the instance was ever out of play, and a move
+     * without one would be the untraceable reassignment the registry exists to
+     * rule out.
+     */
+    public static function resolve(string $uid, string $to): bool
+    {
+        $db = Db::get();
+        return (bool)Db::retry(static function () use ($db, $uid, $to): bool {
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                $st = $db->prepare('SELECT owner FROM items WHERE uid = ? AND frozen = 1');
+                $st->execute([$uid]);
+                $owner = $st->fetchColumn();
+                $st->closeCursor();
+                if ($owner === false) {
+                    $db->exec('ROLLBACK');
+                    return false;
+                }
+                if ($to === '') {
+                    $db->prepare('DELETE FROM items WHERE uid = ? AND frozen = 1')->execute([$uid]);
+                } else {
+                    $db->prepare(
+                        "UPDATE items SET owner = ?, seq = seq + 1, frozen = 0, frozen_at = 0,
+                                frozen_why = '' WHERE uid = ? AND frozen = 1"
+                    )->execute([$to, $uid]);
+                }
+                Ledger::append($db, 'resolve', $uid, (string)$owner, $to, '', 0, time());
+                $db->exec('COMMIT');
+                return true;
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
+            }
+        });
+    }
+
     // ---- small helpers ---------------------------------------------------
 
     // Freezes an instance, and records which verdict did it and when - the

@@ -91,12 +91,13 @@ additive.
   it for every online client.
 - Admin interface at /admin/: a one-screen dashboard - game statistics,
   players (registered users, top-100 management), connection state of
-  every online client, matches, item registry (frozen instances, players
-  by disputed-claim count, recent ledger entries and an on-demand chain
-  verify), server performance and diagnostics - live gauges including
-  what requests waited for a free PHP worker, what each script costs in
-  worker time, CPU and queries read over everything kept or the last hour
-  or the last minute, each script's last 24 hours graphed, host
+  every online client, matches, item registry (frozen instances, each
+  opened to be assigned or dropped, players by disputed-claim count,
+  recent ledger entries and an on-demand chain verify), server
+  performance and diagnostics - live gauges including what requests
+  waited for a free PHP worker, what each script costs in worker time,
+  CPU and queries read over everything kept or the last hour or the last
+  minute, each script's last 24 hours graphed, host
   capabilities and per-hour load, and a button that clears the traffic
   history without touching players, scores or the item registry - alerts
   and logs (alert feed, server log), debug reports - plus a settings view

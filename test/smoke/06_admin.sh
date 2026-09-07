@@ -29,6 +29,7 @@ else
     expect "the dashboard stops polling while nobody looks" 'visibilitychange' "$JS_ASSET"
     expect "a gauge opens its own last 24 h" 'showGaugeCharts' "$JS_ASSET"
     expect "a bubble shortens a count that would not fit" 'function fmtNum' "$JS_ASSET"
+    expect "a frozen instance is resolved from the card it is listed on" 'function showItem' "$JS_ASSET"
     CSS_ASSET=$(curl -s "$BASE/assets/admin.css?v=$VER")
     expect "hidden class wins the cascade" 'display: none !important' "$CSS_ASSET"
     expect "the header stacks instead of breaking on a phone" '@media (max-width: 560px)' "$CSS_ASSET"
@@ -146,6 +147,37 @@ else
     expect "chain verification via GET rejected" '405' "$R"
     R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=items_verify")
     expect "the ledger hash chain verifies intact" '"verify":{"ok":true' "$R"
+
+    # A freeze is terminal until somebody decides, so the card that lists the
+    # frozen instances is also where they are settled. 05_items.sh left two:
+    # U4 frozen on a forged attestation, U5 on contradictory claims.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item&uid=$U4")
+    expect "one instance reads back in full" "\"uid\":\"$U4\"" "$R"
+    expect "with the verdict that froze it" '"frozen_why":"tag_invalid"' "$R"
+    expect "and who was holding it" "\"owner\":\"$ID1\"" "$R"
+    expect "and what the ledger still has on it" '"kind":"mint"' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item&uid=nothex")
+    expect "a malformed uid is rejected" '"error":"invalid uid"' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item&uid=00000000000000000000000000000000")
+    expect "a uid the registry never minted is a 404" '"error":"unknown item"' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item_resolve&uid=$U4&to=$ID2")
+    expect "resolving via GET rejected" '"error":"POST only"' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST -d "uid=$U4&to=nothex" "$BASE/admin/api.php?action=item_resolve")
+    expect "resolving to a malformed id is rejected" '"error":"invalid id"' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST -d "uid=$U4&to=$ID2" "$BASE/admin/api.php?action=item_resolve")
+    expect "an operator hands the frozen instance to a player" '"ok":true' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item&uid=$U4")
+    expect "which takes it out of the frozen state" '"frozen":false' "$R"
+    expect "and gives it to who was named" "\"owner\":\"$ID2\"" "$R"
+    expect "recording the verdict in the ledger" '"kind":"resolve"' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST -d "uid=$U4&to=$ID1" "$BASE/admin/api.php?action=item_resolve")
+    expect "an instance back in play cannot be resolved again" '"error":"not a frozen instance"' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST -d "uid=$U5" "$BASE/admin/api.php?action=item_resolve")
+    expect "naming nobody drops the instance instead" '"ok":true' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item&uid=$U5")
+    expect "and the registry no longer knows it" '"error":"unknown item"' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=items_verify")
+    expect "the chain still verifies over both verdicts" '"verify":{"ok":true' "$R"
 
     # Connection tracker: the admin sees the state the signaling implies.
     # These types need no friendship, so they work after the unfriend above.

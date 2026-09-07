@@ -254,6 +254,17 @@ function hexCell(v, cls) {
     return td;
 }
 
+// An item uid, clickable: opens the instance popup, which is where a frozen
+// one is resolved. What idCell is for a player, this is for a thing.
+function uidCell(uid) {
+    const td = el('td', 'muted');
+    const s = el('span', 'id-link trunc', uid.slice(0, 8) + '..');
+    s.title = uid;
+    s.onclick = () => showItem(uid);
+    td.append(s);
+    return td;
+}
+
 // A ledger party is an 8-hex player id (clickable) or empty / a digest.
 function partyCell(v) {
     if (typeof v === 'string' && v.length === 8) return idCell(v);
@@ -1231,6 +1242,145 @@ function whyCell(why) {
     return td;
 }
 
+// One instance, and what may be done with it. A freeze is terminal until
+// somebody decides, so this popup IS the deciding: the verdict that took the
+// instance out of play, who was holding it, what the ledger still remembers,
+// and the two answers an operator can give - hand it to a player, or drop it.
+async function showItem(uid) {
+    const { overlay, head, title, name, body, close } = makeModal(uid);
+    title.append(el('span', 'modal-id', uid.slice(0, 8) + '..'));
+
+    const load = async () => {
+        try {
+            const d = await api('item&uid=' + uid);
+            name.textContent = d.item.item_id;
+            renderItemBody(body, overlay, uid, d);
+        } catch (e) {
+            body.replaceChildren(el('p', 'error', 'Error: ' + e.message));
+        }
+    };
+    const refresh = el('button', 'small refresh', 'refresh');
+    refresh.onclick = load;
+    head.append(title, refresh, close);
+    body.append(el('p', 'muted', 'Loading ...'));
+    document.body.append(overlay);
+    await load();
+}
+
+// The registry row first, then the ledger, then - only for a frozen instance
+// - the buttons. Each of those arms on the first click and acts on the
+// second, in the card rather than through confirm(): a native dialog raised
+// from the same gesture may be suppressed, and a suppressed one answers
+// cancel. The armed button is held in a variable, not in the DOM.
+function renderItemBody(body, overlay, uid, d) {
+    const it = d.item;
+    body.replaceChildren();
+
+    const tbl = el('table', 'kv');
+    const kv = (k, v) => { const r = el('tr'); r.append(el('td', 'kv-k', k), el('td', 'kv-v', v)); tbl.append(r); };
+    kv('UID', it.uid);
+    kv('Item', it.item_id);
+    kv('Held by', it.owner + (it.name ? ' (' + it.name + ')' : ' (no player row)'));
+    kv('Transfers', String(it.seq));
+    kv('Origin', it.origin);
+    kv('Minted', fmtTime(it.minted));
+    if (it.frozen) {
+        kv('Frozen', it.frozen_at ? fmtTime(it.frozen_at) : 'time not recorded');
+        const why = FREEZE_WHY[it.frozen_why];
+        kv('Verdict', why ? why[0] + '. ' + why[1] : (it.frozen_why || 'not recorded'));
+    }
+    body.append(tbl);
+
+    body.append(el('h3', 'subhead', 'Ledger'));
+    if (!d.history.length) {
+        body.append(el('p', 'muted', 'Nothing left for this instance: the chain is '
+            + 'checkpointed and trimmed, so an old one keeps no entries.'));
+    } else {
+        const t = el('table');
+        t.append(row(['When', 'What', 'From', 'To', 'Tick'], 'th'));
+        for (const h of d.history) {
+            const r = el('tr');
+            r.append(el('td', 'muted', fmtTime(h.at)), el('td', '', h.kind),
+                partyCell(h.from), partyCell(h.to), el('td', 'muted tight', h.tick || '-'));
+            t.append(r);
+        }
+        body.append(t);
+    }
+
+    if (!it.frozen) {
+        body.append(el('p', 'muted', 'In play: an instance that is not frozen moves by claim '
+            + 'and by nothing else.'));
+        return;
+    }
+
+    const note = el('p', 'modal-msg', 'Whichever is chosen, the instance leaves the frozen '
+        + 'state and this popup will not offer it again.');
+    const foot = el('div', 'modal-foot');
+    // Candidates: whoever holds it now, and every party the ledger still
+    // names. Those are the people this instance has actually been between.
+    const seen = new Set([it.owner]);
+    for (const h of d.history) {
+        if (h.from.length === 8) seen.add(h.from);
+        if (h.to.length === 8) seen.add(h.to);
+    }
+
+    const act = async (to) => {
+        try {
+            await api('item_resolve', { method: 'POST', body: form({ uid: uid, to: to }) });
+            closeModal(overlay);
+            refreshModule('items');
+        } catch (e) {
+            note.replaceChildren(el('span', 'error', 'Failed: ' + e.message));
+        }
+    };
+    let armed = '';
+    const buttons = [];
+    const disarm = () => {
+        for (const b of buttons) b.el.textContent = b.label;
+        armed = '';
+    };
+    // getTo answers null to refuse the click outright, which is what keeps a
+    // half-typed id from reading as the empty id that means drop.
+    const arming = (label, message, getTo) => {
+        const b = el('button', 'small', label);
+        buttons.push({ el: b, label });
+        b.onclick = () => {
+            const to = getTo();
+            if (to === null) {
+                note.replaceChildren(el('span', 'error', 'That is not an 8 hex id.'));
+                disarm();
+                return;
+            }
+            if (armed === label) {
+                disarm();
+                act(to);
+                return;
+            }
+            disarm();
+            armed = label;
+            b.textContent = 'confirm';
+            note.replaceChildren(el('span', '', message + ' Click again to go through with it.'));
+        };
+        return b;
+    };
+
+    for (const id of seen) {
+        foot.append(arming('assign to ' + id,
+            'Hands the instance to ' + id + ' and takes it out of the frozen state.', () => id));
+    }
+    const input = el('input');
+    input.placeholder = '8 hex id';
+    input.maxLength = 8;
+    foot.append(input, arming('assign', 'Hands the instance to the id typed beside this button.',
+        () => {
+            const v = input.value.trim().toLowerCase();
+            return /^[0-9a-f]{8}$/.test(v) ? v : null;
+        }));
+    foot.append(arming('drop', 'Removes the instance from the registry for good. The ledger '
+        + 'keeps the record that it existed.', () => ''));
+    body.append(el('h3', 'subhead', 'Resolve'), note, foot);
+}
+
 // Status: what the registry HOLDS - the counters, the chain verify, and the
 // two exception lists (a frozen instance, a player whose claims keep being
 // disputed). The ledger itself is the other tab.
@@ -1280,7 +1430,7 @@ function renderItemStatus(box, d) {
             const r = el('tr');
             r.classList.add('gone');
             r.append(el('td', 'muted', f.at ? fmtTime(f.at) : '-'), whyCell(f.why),
-                hexCell(f.uid, 'muted'), el('td', '', f.item_id),
+                uidCell(f.uid), el('td', '', f.item_id),
                 idCell(f.owner), el('td', '', f.name === null ? '-' : f.name),
                 el('td', 'muted tight', f.seq));
             t.append(r);

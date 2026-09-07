@@ -1404,6 +1404,47 @@ $st->closeCursor();
 ok((int)$again['frozen_at'] === $was,
     'a later claim on an instance already out of play cannot rewrite that finding');
 
+// Deciding is what ends a freeze, and it is the one thing that moves an
+// instance without a claim. It is also once: what comes out is an ordinary
+// instance again, which the same call will not touch a second time.
+$st = $idb->prepare('SELECT owner, seq FROM items WHERE uid = ?');
+$st->execute([$u4]);
+$before = $st->fetch();
+$st->closeCursor();
+ok(Items::resolve($u4, 'ee55ee55'), 'an operator hands a frozen instance to a player');
+$st->execute([$u4]);
+$after = $st->fetch();
+$st->closeCursor();
+ok($after['owner'] === 'ee55ee55', 'which is who holds it afterwards');
+ok((int)$after['seq'] === (int)$before['seq'] + 1,
+    'and the seq moves with it, so a claim built on the frozen one is stale');
+$st = $idb->prepare('SELECT frozen, frozen_at, frozen_why FROM items WHERE uid = ?');
+$st->execute([$u4]);
+$thawed = $st->fetch();
+$st->closeCursor();
+ok((int)$thawed['frozen'] === 0 && (int)$thawed['frozen_at'] === 0 && $thawed['frozen_why'] === '',
+    'the verdict is cleared along with the freeze it explained');
+ok(!Items::resolve($u4, 'aa11aa11'), 'an instance back in play cannot be resolved again');
+$st = $idb->prepare("SELECT from_id, to_id FROM ledger WHERE uid = ? AND kind = 'resolve'");
+$st->execute([$u4]);
+$verdicts = $st->fetchAll();
+$st->closeCursor();
+ok(count($verdicts) === 1 && $verdicts[0]['from_id'] === $before['owner']
+    && $verdicts[0]['to_id'] === 'ee55ee55',
+    'and the ledger records who it was taken from and who it went to');
+
+$m5 = Items::openMatch($idb, 'aa11aa11', 'bb22bb22', Util::nowMs());
+$u5 = Items::mint('aa11aa11', 'visor', 'box')['uid'];
+Items::claim('bb22bb22', $m5['mid'], $u5, 'aa11aa11', 'bb22bb22', 30, 0, 'ws6',
+    Ledger::mac($m5['sec_b'], $m5['mid'], 30, 'ws6'), '0123456789abcdef');
+ok(Items::resolve($u5, ''), 'the other answer drops the instance from the registry');
+$st = $idb->prepare('SELECT COUNT(*) FROM items WHERE uid = ?');
+$st->execute([$u5]);
+$left = (int)$st->fetchColumn();
+$st->closeCursor();
+ok($left === 0, 'so nobody holds it any more');
+ok(Ledger::verify($idb)['ok'], 'and the chain still verifies over both verdicts');
+
 // The legacy amnesty: one-time, idempotent, and the server's own list wins.
 Presence::touch('cc33cc33', '1.2.3.4');
 ok(count(Items::seed('cc33cc33', ['cap', 'cap', 'NOT AN ID', 'scarf'], null)) === 2,
