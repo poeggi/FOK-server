@@ -13,9 +13,28 @@ expect "game origin allowed by CORS" 'poeggi.github.io' "$R"
 expect "version endpoint" '"server":"' "$R"
 expect "api contract version" '"api":' "$R"
 expect "environment reported" "\"env\":\"$EXPECT_ENV\"" "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: https://poeggi.github.io' \
-    -H 'Access-Control-Request-Method: POST' "$BASE/api/hello.php")
-expect "CORS preflight passes" '204' "$R"
+# The preflight is the other half of every cross-origin POST, so it sits on
+# the critical path of a duel forming. Apache answers it without starting
+# PHP (public/.htaccess). Header names are lowercased before matching: HTTP/2
+# sends them that way and php -S does not.
+R=$(curl -s -o /dev/null -D - -w 'code=%{http_code}' -X OPTIONS \
+    -H 'Origin: https://poeggi.github.io' \
+    -H 'Access-Control-Request-Method: POST' "$BASE/api/hello.php" | tr 'A-Z' 'a-z')
+expect "CORS preflight passes" 'code=204' "$R"
+expect "preflight names an origin" 'access-control-allow-origin' "$R"
+expect "preflight allows the method" 'access-control-allow-methods' "$R"
+expect "preflight allows the content type" 'access-control-allow-headers' "$R"
+expect "preflight answer is cacheable" 'access-control-max-age: 3600' "$R"
+# Only real Apache reads .htaccess, so only a remote run can prove where the
+# answer came from. PHP writes Cache-Control on every reply it sends
+# (Util::cors), so a preflight without one never reached a worker.
+if [ "$REMOTE" -eq 1 ]; then
+    if echo "$R" | grep -q 'cache-control'; then
+        echo "FAIL preflight was answered by PHP, not by Apache"; fail=1
+    else
+        echo "ok   preflight bypasses PHP"
+    fi
+fi
 
 # The field diagnostic behind "my phone cannot see the lobby on my PC": it
 # reports the network the announce matches on, so the two devices can be

@@ -27,6 +27,40 @@
     RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=308,L]
 </IfModule>
 
+# The CORS preflight, answered by Apache instead of PHP. A browser will not
+# send a cross-origin POST carrying Content-Type: application/json until it
+# has asked permission with an OPTIONS request, so every such POST is two
+# requests. That question has a constant answer: it carries no body, reads
+# nothing, and depends on no state - but routed to PHP it still queues for
+# an FPM worker and holds one for the whole round trip. On a pool this size
+# that worker is the cost, not the bytes (README "Capacity and limits").
+# Same reason t.txt bypasses PHP below, different beneficiary.
+#
+# Allow-Origin is * where the PHP endpoints answer the FOK_ALLOWED_ORIGINS
+# allowlist, because this file bypasses PHP and cannot consult it. It grants
+# nothing: a preflight carries no data, and the REAL response still comes
+# from PHP, which still applies the list, so a stranger still cannot read an
+# answer. It opens no write either - a cross-origin POST sent as text/plain
+# needs no preflight at all, and Util::jsonBody decodes the body without
+# ever looking at the type, so an unlisted origin could always reach these
+# endpoints. The allowlist governs who may READ a reply, and still does.
+#
+# php -S ignores .htaccess, so the local smoke run cannot see any of this.
+# The staging leg proves it on real Apache (test/smoke/01_core.sh, REMOTE
+# only): PHP sets Cache-Control on every reply it writes, so a preflight
+# that comes back without one was answered here.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_METHOD} =OPTIONS
+    RewriteRule ^api/ - [E=FOK_PREFLIGHT:1,R=204,L]
+</IfModule>
+<IfModule mod_headers.c>
+    Header always set Access-Control-Allow-Origin "*" env=FOK_PREFLIGHT
+    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS" env=FOK_PREFLIGHT
+    Header always set Access-Control-Allow-Headers "Content-Type" env=FOK_PREFLIGHT
+    Header always set Access-Control-Max-Age "3600" env=FOK_PREFLIGHT
+</IfModule>
+
 # HSTS: a browser that has loaded the site over HTTPS then upgrades any later
 # http:// itself, closing the pre-redirect window the redirect leaves. Non-HSTS
 # clients (an old TV) ignore it, so it blocks no one. No includeSubDomains -

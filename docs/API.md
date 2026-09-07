@@ -76,10 +76,12 @@ works when it is not.
   `http://127.0.0.1:8000`. Those two are the ONLY `http://` origins in the
   allowlist, and they are deliberate: loopback never leaves the machine, so
   there is no cleartext on a wire to protect. Every other origin must be
-  `https://`. Origins outside the allowlist are not sent CORS headers. The
-  one exception is `t.txt`, which is served by Apache without PHP and so
-  cannot consult that allowlist: it answers any origin, and discloses
-  nothing the standard HTTP `Date` header does not.
+  `https://`. Origins outside the allowlist are not sent CORS headers. Two
+  answers come from Apache without PHP and so cannot consult that allowlist;
+  both answer any origin. `t.txt` discloses nothing the standard HTTP `Date`
+  header does not. The `OPTIONS` preflight on `/api/` carries no data, and
+  the response behind it still comes from PHP and still applies the
+  allowlist, so a stranger still cannot read an answer.
 - Transport: HTTPS only, and ENFORCED rather than merely expected, at three
   levels:
   - `http://` is answered with a redirect to the same path on `https://`
