@@ -24,7 +24,7 @@ expect "CORS preflight passes" 'code=204' "$R"
 expect "preflight names an origin" 'access-control-allow-origin' "$R"
 expect "preflight allows the method" 'access-control-allow-methods' "$R"
 expect "preflight allows the content type" 'access-control-allow-headers' "$R"
-expect "preflight answer is cacheable" 'access-control-max-age: 3600' "$R"
+expect "preflight answer is cacheable" 'access-control-max-age: 86400' "$R"
 # Only real Apache reads .htaccess, so only a remote run can prove where the
 # answer came from. PHP writes Cache-Control on every reply it sends
 # (Util::cors), so a preflight without one never reached a worker.
