@@ -31,14 +31,13 @@ expect "hello registers" "$(strict '"registered":1')" "$R"
 expect "hello online" "$(strict '"online":1')" "$R"
 expect "hello carries api version" '"api":' "$R"
 # 4.4, both additive. q_ms is this request's own queue wait - the client
-# reads it to know not to anchor its clock against a busy moment. pace is
-# what the server wants back; only the server can see its own load.
+# reads it to know not to anchor its clock against a busy moment. pace
+# carries the one thing only the server can decide: whether a long poll may
+# be held right now. The beat itself is a contract constant, not a field.
 expect "hello carries the queue figure" '"q_ms":' "$R"
 expect "hello carries the pacing object" '"pace":' "$R"
-expect "pacing sets the heartbeat" '"hello_ms":' "$R"
-expect "pacing sets the long-poll wait" '"poll_ms":' "$R"
 expect "pacing says whether a hold is allowed" '"hold":' "$R"
-expect "pacing spaces a client's own requests" '"gap_ms":' "$R"
+if echo "$R" | grep -q '"hello_ms"'; then echo "FAIL pace still hands the beat over"; fail=1; else echo "ok   pace hands over nothing the contract already states"; fi
 HN=$(echo "$R" | grep -oE '"now":[0-9]+' | cut -d: -f2)
 if [ "${#HN}" -eq 13 ]; then echo "ok   hello now is milliseconds"; else echo "FAIL hello now not ms: $HN"; fail=1; fi
 

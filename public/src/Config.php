@@ -104,20 +104,22 @@ const FOK_SERVER_VERSION = '1.4.11';
 // simultaneous requests. Three additive fields and one additive signal type
 // pull that lever: 'ices' collapses the duel-start ICE trickle into one
 // message, q_ms tells a client when its own round trip was queued (so it
-// does not anchor its clock against a busy moment), pace lets the server set
-// the beat it can actually serve, and after_ms staggers the callbacks a
-// broadcast provokes. Major stays 4: every one of them is ignorable, and a
-// 4.3 client behaves exactly as it does today.
-// 4.4 re-release: pace.spread_ms is WITHDRAWN. It asked each client to draw a
-// one-time phase offset so a roomful that booted together would stop beating
-// together - a real effect, but one that only pays at a client count this
-// host will not see, while the burst that DOES cost here is a single client
-// stacking its own requests. gap_ms and after_ms both act on that, in
-// milliseconds, at the moment it happens. This removes a field and so reads
-// like a MAJOR break; it is not one. pace is optional, its members are
-// individually optional, and the contract already requires an absent one to
-// be treated as the client's own default - which for a jitter budget is no
-// jitter. A client that read it keeps working with nothing to draw from.
+// does not anchor its clock against a busy moment), pace says whether the
+// server can afford to hold this client's long poll, and after_ms staggers
+// the callbacks a broadcast provokes. Major stays 4: every one of them is
+// ignorable, and a 4.3 client behaves exactly as it does today.
+// 4.4 re-release: pace is down to that one decision. It first carried a
+// per-session jitter offset (spread_ms) and then the beat itself - heartbeat,
+// poll wait, request gap. The jitter only pays at a client count this host
+// will not see, while the burst that DOES cost here is a single client
+// stacking its own requests, which the gap and after_ms both act on, in
+// milliseconds, at the moment it happens. The beat never followed load, so
+// handing it over bought nothing a constant in docs/API.md does not; it is
+// stated there now. Dropping fields reads like a MAJOR break; it is not one.
+// pace is optional, its members are individually optional, and the contract
+// already requires an absent one to be treated as the client's own default -
+// which for the beat IS the contract's constant, and for a jitter budget is
+// no jitter. A client that read them keeps working exactly as before.
 const FOK_API_VERSION = '4.4';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
@@ -242,18 +244,11 @@ const FOK_POLL_CHECK_USEC_APCU = 2000;
 // stops budgeting holds altogether.
 const FOK_HOLD_MAX_WORKERS = 12;
 
-// Client pacing (see Pace, hello.php `pace`). The heartbeat every client is
-// asked to keep - the same for all of them, and half the online window, so
-// one missed beat never reads as offline. Advice, not a rule: a client that
-// ignores it behaves exactly as before.
-const FOK_PACE_HELLO_MS = 30000;
-// What separates a single client's OWN requests from each other. A client
-// with several independent schedulers fires two of them into the same tick
-// and queues its second request behind its first - paying the wait twice,
-// for traffic that was never urgent in the first place. Sized just above the
-// measured per-request cost, so a stacked burst drains in milliseconds: this
-// is spacing, never a wait a player can feel.
-const FOK_PACE_GAP_MS = 100;
+// The client's own beat - the 30 s heartbeat, the 9 s poll wait and the
+// 100 ms gap between its own requests - is stated in docs/API.md (Pacing)
+// and is not a setting here: nothing about it follows load, and a number
+// that never changes belongs in the contract, not on the wire. The one
+// per-request decision, whether a client may hold a long poll, is Pace.
 
 // The budget a pushed event's follow-up calls are staggered over (after_ms,
 // see Tournament::flush). A round board wakes every participant in the same

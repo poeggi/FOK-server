@@ -30,14 +30,9 @@ final class Settings
         // The pair cross-check (see Skew). A tolerance, not a gate: past it
         // the pair is ASKED to re-anchor, never refused. 0 turns it off.
         'start_pair_skew_ms' => [FOK_START_PAIR_SKEW_MS, 'Ask a pair to resync when their two clock proofs disagree by more than (ms, 0 = off)'],
-        // Client pacing (see Pace): the beat handed to every client on hello.
-        // Plain settings - neither follows load. hold_max_workers above is
-        // the one budget pacing reads, and only to withdraw the hold.
-        'pace_hello_ms' => [FOK_PACE_HELLO_MS, 'Heartbeat interval handed to every client (ms)'],
-        'pace_gap_ms' => [FOK_PACE_GAP_MS, 'Minimum spacing asked between any two requests one client has in flight (ms, 0 = off)'],
-        // The same idea one step out: gap_ms spaces the requests a client
-        // decides to make, this spaces the ones a broadcast provokes from
-        // everyone at once (after_ms, see Tournament::flush).
+        // The client's own request gap (docs/API.md, Pacing) spaces the
+        // requests a client decides to make; this spaces the ones a broadcast
+        // provokes from everyone at once (after_ms, see Tournament::flush).
         'tourney_after_ms' => [FOK_TOURNEY_AFTER_MS, 'Budget a pushed event staggers its follow-up calls over (ms, 0 = off)'],
         'ices_max' => [FOK_ICES_MAX, 'Max ICE candidates in one batched signal'],
         // DEPRECATED: relay fallback (see docs/DEPRECATED-relay.md). These

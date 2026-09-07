@@ -33,16 +33,18 @@ is safe to talk to; a client may read the MINOR to tell whether an
 optional feature (e.g. the peer-net hint, added in 3.1, tournament mode,
 added in 4.1, self-reported networks, added in 4.2, the tournament round
 ladder and its round breaks, added in 4.3, or batched ICE candidates, the
-queue-wait figure and server-set pacing, added in 4.4) is available.
+queue-wait figure and the hold decision, added in 4.4) is available.
 
 A MINOR is also RE-RELEASED when a later server on the SAME `api` string
 gains an optional flag or field that an earlier server of that MINOR does
 not have. 4.4 carries one such re-release: `friends_list` on hello with its
-`friends` response, and `pace.gap_ms`. The same rule runs the other way: a
-later server may stop sending an optional field, as 4.4 dropped
-`pace.spread_ms` - a per-session jitter offset that bought nothing a client
-could not get from `gap_ms` and `after_ms`, both of which act where the
-requests actually stack. So the version says what the contract
+`friends` response. The same rule runs the other way: a later server may
+stop sending an optional field, as 4.4 dropped `pace.spread_ms` - a
+per-session jitter offset that bought nothing a client could not get from
+the request gap and `after_ms`, both of which act where the requests
+actually stack - and later the interval fields of `pace` (`hello_ms`,
+`poll_ms`, `gap_ms`), which had only ever carried the constants the contract
+states under Pacing. So the version says what the contract
 PERMITS, not what the server in front of you implements. FEATURE-DETECT
 every optional field - ask for it, use it when the answer carries it, fall
 back when it does not - and never gate an optional feature on the MINOR. The
@@ -487,12 +489,9 @@ Response:
                                   worker before any PHP ran; normally 0.
                                   Non-trivial means the host is busy NOW -
                                   do not anchor the clock against it
-      "pace": {                   4.4: the beat the server wants this
-        "hello_ms": 30000,        client to keep. Additive and ignorable;
-        "poll_ms": 9000,          three settings and one load figure
-        "hold": true,             (hold). See Pacing below.
-        "gap_ms": 100
-      },
+      "pace": {                   4.4: whether this client may hold a long
+        "hold": true              poll right now. Additive and ignorable.
+      },                          See Pacing below.
       "debug": false,             the server's instruction: the client MUST
                                   honour it (see Debug mode below)
       "online": 3,                players seen in the last 60 s
@@ -564,18 +563,34 @@ minute.
 
 ### Pacing (`pace`, 4.4)
 
-The server states the beat so that no interval is a client-side constant:
-a client built against this contract takes its heartbeat, its poll wait and
-its request spacing from here, and the operator changes any of them in the
-admin config without a client release. The object is additive - a client
-that ignores it behaves exactly as it does today.
+The beat is part of the contract. Three constants, stated here and not on
+the wire, the same for every client:
 
-Three of the four values are SETTINGS: the same for every client, and the
-same from one hello to the next until the operator changes them. Nothing in
-them follows load. The fourth, `hold`, is the one thing that does.
+    heartbeat   send hello every 30 s while online. Half the 60 s online
+                window, so one missed beat never reads as offline.
+    poll wait   ask poll.php for `wait=9`, the longest wait it serves.
+    gap         keep at least 100 ms between any two requests THIS client
+                has in flight, whichever endpoints they are. It separates a
+                client's own requests from each other - a client that fires
+                a heartbeat and a roster read in the same tick queues the
+                second behind the first and pays the wait twice. It is
+                SPACING, not a wait: it sits just above what a single
+                request costs, so a stacked burst drains in milliseconds
+                and no one call is ever held long enough for a player to
+                feel it. Serialise background traffic through ONE gate and
+                hold the gap there; let the duel handshake (signal, start,
+                poll) past it, because that is the latency a player feels.
+                Past the gate is not the same as together: a parked poll
+                is an open request, so one exempt call already makes two
+                in flight, and two exempt calls sent in the same tick race
+                each other - BOTH pay the full queue wait rather than one
+                of them paying it. Keep at most ONE request in flight
+                besides a parked poll, exempt or not.
 
-    hello_ms    how often to send this heartbeat
-    poll_ms     the long-poll wait to ask poll.php for
+Only one thing depends on the moment, and that is all the `pace` object
+carries. It is additive - a client that ignores it behaves exactly as it
+does today.
+
     hold        whether this client may hold a long poll AT ALL. A held
                 poll occupies a PHP worker for its whole duration, which
                 makes this the real lever: when it is false, poll without
@@ -583,32 +598,10 @@ them follows load. The fourth, `hold`, is the one thing that does.
                 tier - a client in a duel or reconnecting keeps it
                 longest, then a tournament screen with a match pending,
                 then one merely browsing the lobby.
-    gap_ms      the minimum spacing the server wants between any two
-                requests THIS client has in flight, whichever endpoints
-                they are. It separates a client's own requests from each
-                other - a client that fires a heartbeat and a roster read
-                in the same tick queues the second behind the first and
-                pays the wait twice. It is SPACING, not a wait: it is
-                sized just above what a single request costs, so a
-                stacked burst drains in milliseconds and no one call is
-                ever held long enough for a player to feel it. Serialise
-                background traffic through ONE gate and hold the gap
-                there; let the duel handshake (signal, start, poll) past
-                it, because that is the latency a player feels. Past the
-                gate is not the same as together: a parked poll is an
-                open request, so one exempt call already makes two in
-                flight, and two exempt calls sent in the same tick race
-                each other - BOTH pay the full queue wait rather than one
-                of them paying it. Keep at most ONE request in flight
-                besides a parked poll, exempt or not. 0 or absent means
-                the client's own default. It is a 4.4 re-release
-                addition, so treat an absent field as 0 rather than as an
-                old server.
 
-`hello_ms` is clamped server-side at both ends as a backstop against a
-mistuned setting: a floor (5 s), or a zero floods the host, and a ceiling
-at the online window (60 s), or every client reads offline between its own
-heartbeats. Inside that range the setting is handed over as it is.
+Earlier 4.4 servers also sent `hello_ms`, `poll_ms` and `gap_ms` in this
+object. They only ever carried the constants above; treat them, present or
+absent, as exactly those.
 
 None of this is enforced. The server never rate-limits, delays or refuses a
 request for arriving too close behind another one - a heartbeat is how a
@@ -2208,7 +2201,7 @@ every 3 s per player.
 
 What the rate DOES have is a BURST term, and 4.4 addresses it in both
 places it appears: `after_ms` staggers the follow-up calls a pushed event
-provokes, and `pace.gap_ms` spaces a client's own. Neither saves bytes. Both
+provokes, and the 100 ms gap spaces a client's own. Neither saves bytes. Both
 cut how many requests land in the same instant, which on this host is the
 thing that actually costs - see Pacing.
 

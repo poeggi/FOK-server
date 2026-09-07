@@ -2097,26 +2097,18 @@ ok(Holds::claim() === true && Holds::inUse() === 0,
 Settings::set('hold_max_workers', FOK_HOLD_MAX_WORKERS);
 
 // Client pacing (Pace). The same budget from the other side: Holds is what
-// happens at the wall, this is what the server says before it.
+// happens at the wall, this is what the server says before it. The block
+// carries that one decision and nothing else - the beat is the contract's.
 Settings::set('hold_max_workers', 4);
 apcu_delete(new APCUIterator('/^fok:hold:/'));
 $p = Pace::forTier(Pace::TIER_LOBBY);
-ok($p['hold'] === true, 'an idle pool lets even a lobby hold a long poll');
-ok($p['hello_ms'] === Settings::int('pace_hello_ms'),
-    'and asks for no more than the ordinary heartbeat');
-ok($p['poll_ms'] === FOK_POLL_WAIT_MAX * 1000, 'the poll wait is the one the server can serve');
-ok(!array_key_exists('spread_ms', $p), 'and the retired jitter budget is gone from the block');
-ok($p['gap_ms'] === Settings::int('pace_gap_ms'),
-    'and the plain gap between the client\'s own background requests');
+ok($p === ['hold' => true],
+    'an idle pool lets even a lobby hold a long poll, and says only that');
 // Half the budget spent: the client that is only browsing gives way first.
 apcu_add('fok:hold:0', 1, 20);
 apcu_add('fok:hold:1', 1, 20);
 ok(Pace::forTier(Pace::TIER_LOBBY)['hold'] === false,
     'a half-spent budget withdraws the lobby hold');
-ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] === Settings::int('pace_hello_ms'),
-    'and leaves its heartbeat alone - the beat is a setting, not a load figure');
-ok(Pace::forTier(Pace::TIER_LOBBY)['gap_ms'] === Settings::int('pace_gap_ms'),
-    'and the gap alone, for the same reason');
 ok(Pace::forTier(Pace::TIER_TOURNEY)['hold'] === true,
     'a tournament screen keeps its hold that long');
 ok(Pace::forTier(Pace::TIER_DUEL)['hold'] === true, 'and so does a duel');
@@ -2126,21 +2118,6 @@ ok(Pace::forTier(Pace::TIER_TOURNEY)['hold'] === false,
     'three quarters spent takes the tournament hold too');
 ok(Pace::forTier(Pace::TIER_DUEL)['hold'] === true,
     'the duel handshake is the last thing to give way');
-ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] === Settings::int('pace_hello_ms'),
-    'and a hot pool still asks for the ordinary heartbeat');
-// The clamps are backstops against a mistuned setting, nothing more.
-Settings::set('pace_hello_ms', 0);
-ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] === 5000,
-    'a zeroed heartbeat setting cannot turn into a flood');
-Settings::set('pace_hello_ms', FOK_ONLINE_WINDOW * 1000 + 1);
-ok(Pace::forTier(Pace::TIER_LOBBY)['hello_ms'] === FOK_ONLINE_WINDOW * 1000,
-    'and one past the online window cannot read every client as offline');
-Settings::set('pace_gap_ms', 2500);
-ok(Pace::forTier(Pace::TIER_LOBBY)['gap_ms'] === 2000, 'an oversized gap is clamped');
-Settings::set('pace_gap_ms', 0);
-ok(Pace::forTier(Pace::TIER_LOBBY)['gap_ms'] === 0, 'and zeroing the setting turns it off');
-Settings::set('pace_gap_ms', FOK_PACE_GAP_MS);
-Settings::set('pace_hello_ms', FOK_PACE_HELLO_MS);
 apcu_delete(new APCUIterator('/^fok:hold:/'));
 Settings::set('hold_max_workers', FOK_HOLD_MAX_WORKERS);
 
