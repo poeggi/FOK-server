@@ -37,8 +37,10 @@ queue-wait figure and the hold decision, added in 4.4) is available.
 
 A MINOR is also RE-RELEASED when a later server on the SAME `api` string
 gains an optional flag or field that an earlier server of that MINOR does
-not have. 4.4 carries one such re-release: `friends_list` on hello with its
-`friends` response. The same rule runs the other way: a later server may
+not have. 4.4 carries such re-releases: `friends_list` on hello with its `friends`
+response, and later the latency report on hello relaxed from mandated to
+optional, once the start lead stopped depending on it (see start.php:
+the lead is a flat 1000 ms). The same rule runs the other way: a later server may
 stop sending an optional field, as 4.4 dropped `pace.spread_ms` - a
 per-session jitter offset that bought nothing a client could not get from
 the request gap and `after_ms`, both of which act where the requests
@@ -164,15 +166,17 @@ in milliseconds, for clients that cannot read the header (and for a
     2. GET /api/t.txt -> T (microseconds; T/1000 = ms). Record local
        time t1 on arrival.
     3. rtt = t1 - t0;  offset = T/1000 + rtt/2 - t1_wallclock
-    4. Repeat ~5 times, keep the offset from the sample with the
+    4. Repeat 3 to 5 times, keep the offset from the sample with the
        LOWEST rtt. localToPts(x) = x + offset.
 
 Keeping the lowest-rtt sample is what removes the error, not averaging:
 a sample delayed by queuing carries that delay into the offset, and the
-fastest sample is the least polluted one. SPREAD the samples out (a few
-hundred ms apart) rather than firing them back to back - consecutive
-requests hit the same server load and can all be slow together, leaving
-no clean sample to pick.
+fastest sample is the least polluted one. Space the samples by the
+request gap (100 ms, fixed - see Pacing) rather than firing them back to
+back: consecutive requests hit the same server load and can all be slow
+together, leaving no clean sample to pick. A sweep is EXCLUSIVE: from
+the first sample to the last, no other HTTP request leaves the client
+for this server (the rule below).
 
 #### Anchor the clock when the wire is quiet (4.4)
 
@@ -199,10 +203,14 @@ The rule:
   open and candidate traffic has stopped, never in parallel with the
   handshake. Nothing needs it earlier - the first start request comes
   after the channel opens anyway.
-- Do not sample while the client has requests of its own in flight.
-  Quiet means quiet.
-- Re-sync before every start as required below. Those moments are quiet
-  by construction and make good samples.
+- Do not sample while the client has requests of its own in flight, and
+  send NOTHING ELSE while a sweep runs: from the first sample to the
+  last, no other HTTP request leaves the client for this server - no
+  heartbeat, no signal, no claim, no poll re-arm. Begin the sweep only
+  once the wire is quiet; a request already in flight is let finish
+  first. A held poll that is already parked is not traffic and may stay
+  parked, but one that answers mid-sweep is re-armed after the last
+  sample is back, not before. Quiet means quiet.
 - When a response reports a non-trivial `q_ms` (see hello.php and
   start.php), the host is busy right now: defer the sync rather than bake
   that congestion into the offset.
@@ -214,17 +222,19 @@ on typical connections) - enough for frame- and audio-level sync. The
 server does zero per-client work for any of this, which is what makes it
 scale.
 
-Clients MUST sync:
-
-- before sending an invite, and on receiving one;
-- before starting an online game;
-- before EVERY start request (see start.php) - so before the first
-  start, before each next level, after a death and before the respawn,
-  and before resuming from a pause;
-- periodically during long sessions (a device clock drifts by roughly
-  1-3 ms per minute).
-
-The rule is simply: a fresh sync always precedes a new start PTS.
+When to sweep is the client's business. The server checks two things and
+nothing else: a `pts` is never ahead of the server (**400** `bogus pts:
+in the future` - repair the anchor, then retry), and a `pts` on a start
+that BEGINS play is computed at send time from an anchor the client
+holds (the sync gate under start.php rejects a reading older than 2 s,
+never an old anchor). Two facts size how long an anchor stays good: a
+device clock drifts by roughly 1-3 ms per minute, and a suspended
+device's counter freezes, so on return from background the anchor is off
+by the whole sleep. Whether a client refreshes on a timer, on a screen,
+on an age, or blends a new reading into the anchor it holds is its own
+choice; the server only ever sees the resulting `pts`. The pair's
+residual disagreement is the peer-to-peer burst's job, not the server
+sync's.
 
 ### Using PTS
 
@@ -263,12 +273,16 @@ The rule is simply: a fresh sync always precedes a new start PTS.
   the audible limit is then the device's own audio stack, not the
   network.
 
-### Latency measurement and reporting (MANDATED)
+### Latency measurement and reporting (OPTIONAL)
 
-Every client regularly measures its latency to the server and reports
-it via hello's `latency` field (integer ms), so the server keeps a
-record per player (shown in the admin UI, and served to friends - see
-hello's `friends_latency`).
+A client MAY measure its latency to the server and report it via hello's
+`latency` field (integer ms). The server keeps the last value per player
+and uses it for display only: the admin UI, and friends - see hello's
+`friends_latency`, which is null for a friend that never reported.
+Nothing in gameplay reads it; the start lead is a flat figure (see
+start.php). A client that never reports loses nothing. One that does
+must follow the procedure below - a wrong figure is worse than none,
+because a friend reads it as the state of the line.
 
 Measurement procedure:
 
@@ -282,14 +296,11 @@ Measurement procedure:
     4. Report the AVERAGE of the remaining samples, rounded to ms -
        a stable value, not a single noisy reading.
 
-Report with the next hello after measuring; re-measure at least when
-entering the multiplayer screen and every few minutes while online.
+Report with the next hello after measuring. How often to re-measure is
+the client's choice: a value taken from the multiplayer screen's clock
+sync is plenty, and there is no obligation to sample for this alone.
 Valid range 0..60000; omit the field between measurements (the server
 keeps the last value).
-
-An inflated reading is not harmless: start.php scales its lead time by the
-pair's worst reported latency, so one sample polluted by queuing widens the
-lead on every start that pair takes afterwards.
 
 ### POST /api/start.php - server-issued start of play
 
@@ -360,12 +371,10 @@ asked only for its timing.
   real duel never reaches; treat an empty `mid` as "no item claims
   possible for now" rather than an error.
 
-The lead time is chosen by the server: at least 200 ms
-(`start_lead_min_ms`), scaled by the pair's latencies
-(150 + 2 x worst latency when that exceeds the minimum), capped at 3 s.
-A player who has never reported a latency counts as 100 ms, so a pair
-that has not measured yet gets a 350 ms lead rather than the 200 ms
-floor - report latency (see above) and the lead fits the pair instead.
+The lead time is chosen by the server and is the same for every pair:
+1000 ms (`start_lead_ms`, admin-configurable). It depends on nothing a
+client reports, so no measurement a client makes can move the moment
+play begins. Clients never compute it; they trigger on `start_pts`.
 
 The epoch line belongs to one pairing, and the server resets it when a
 pairing BEGINS: an `invite`, an `invite-relay` or an `offer` for the pair
@@ -397,7 +406,9 @@ from a single direction - the very reason NTP needs a round trip. So the
 gate is deliberately GROSS and generous: it catches a client that never
 synced (a raw device clock is off by seconds to minutes) and passes any
 client that did (min-RTT sampling bounds the error to a few ms). Passing
-it is not a licence to skip the sync; the procedure above is the contract.
+it is not a licence to skip the sync: the procedure above (HOW to sample)
+is the contract; WHEN to sweep is the client's business, bounded only by
+these gates.
 
 ##### The pair cross-check (4.4)
 
@@ -415,7 +426,8 @@ rather than a refusal: a genuinely healthy pair on very asymmetric paths
 would otherwise be locked out of its own match. The second caller learns it
 in its own response; the first has already been answered by the time the
 disagreement is visible, so its copy waits for its next start - which is
-soon enough, because a re-anchor precedes every start anyway.
+soon enough: `resync: true` is the one moment the server asks for a
+fresh anchor before the next start.
 
 ### Server-side PTS validation
 
@@ -443,9 +455,9 @@ Request:
                                   recorded server-side and shown to
                                   accepted friends
       "duel_with": "deadbeef",    optional, peer ID while a 1:1 game runs
-      "latency": 23,              optional, measured latency in ms (the
-                                  MANDATED regular report, see Latency
-                                  measurement; server keeps the last value)
+      "latency": 23,              optional, measured latency in ms (see
+                                  Latency measurement; display only, the
+                                  server keeps the last value)
       "friends": ["deadbeef"],    optional, up to 64 IDs to check (send the
                                   friend list when the multiplayer screen
                                   is open)
@@ -1133,9 +1145,10 @@ friend list; the hello `friends` field tells A whether B is online):
        docs/multiplayer-server-prompt.md for the tick sync protocol).
        Clients keep the normal slow hello heartbeat (~30 s) with
        duel_with set, so the server can count running games.
-    7. EVERY further halt of the run - next level, respawn, resume from
-       pause - repeats step 6 with the next epoch and its reason, and a
-       fresh sync each time. See start.php for the epoch rules.
+    7. The further halts of the run - next level, respawn, resume from
+       pause - are settled between the peers. start.php still accepts
+       them as reasons with the next epoch (see start.php for the epoch
+       rules), and none of them calls for a sweep.
     8. Either side sends bye (via the DataChannel if open, and via
        signal as fallback) to end the session. A rematch is a new
        pairing: it re-runs the handshake from step 1 and opens a new

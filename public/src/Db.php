@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 39;
+    private const SCHEMA_VERSION = 40;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -618,6 +618,13 @@ final class Db
                           AND a.message LIKE '%uid ' || items.uid || ' %'
                         ORDER BY a.created LIMIT 1), '')
                 WHERE frozen = 1");
+        }
+        if ($v < 40) {
+            // The start lead is one flat figure under start_lead_ms. A row
+            // under any other lead key is one nothing reads, and it would
+            // linger as a key no release knows (config export/import
+            // rejects unknown keys).
+            $pdo->exec("DELETE FROM settings WHERE key = 'start_lead_min_ms'");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

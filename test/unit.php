@@ -443,12 +443,15 @@ ok((Matchmaking::seek('66666666')['matched'] ?? '') === '77777777',
 mmWipe();
 
 // Server-issued starts: both peers NAME the epoch, so the answer never
-// depends on when either of them asks
+// depends on when either of them asks. The lead is one flat figure: a
+// reported latency, however wild, does not move it.
+Db::get()->prepare('UPDATE players SET latency = 9000 WHERE id = ?')->execute(['aaaaaaaa']);
+$t0 = Util::nowMs();
 $s1 = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'first');
 $s2 = Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first');
 ok($s1 === $s2, 'both peers receive the identical start pts');
-ok($s1 > Util::nowMs(), 'start pts lies in the future');
-ok($s1 <= Util::nowMs() + 3000, 'start lead is capped');
+ok($s1 >= $t0 + 1000 && $s1 <= Util::nowMs() + 1000, 'the lead is a flat 1000 ms');
+Db::get()->prepare('UPDATE players SET latency = 40 WHERE id = ?')->execute(['aaaaaaaa']);
 
 // The race a pair-only key lost: a peer whose request lands after the
 // moment it is asking about must still be told THAT moment. Handing it a

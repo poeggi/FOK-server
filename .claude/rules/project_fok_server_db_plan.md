@@ -71,13 +71,17 @@ SQLite.
    Related trap: `===` between an int and a float is ALWAYS false, which
    matters because the unit helpers seed `since` as an int.
 
-## Known: staging tournament cap drift
+## A settings row is an override, never a default
 
-test/live-protocol.sh asserts the deployed tournament player cap is 8
-(FOK_TOURNAMENT_MAX_PLAYERS). Live passes; staging answers 10. It is
-stored-settings drift, not a code fault: the smoke's `config_export` ->
-`config_import` roundtrip (test/smoke/06_admin.sh) writes every current
-value back as an explicit settings row, which pins an old default and
-shadows a new one forever. CI never runs live-protocol.sh against
-staging. Fixing it means deleting the `tournament_max_players` row from
-the staging DB (needs admin credentials).
+`Settings::set` deletes the row when the value equals the DEFS default, so
+an install cannot end up answering a number the code no longer sets. The
+way one did: the admin smoke's `config_export` -> `config_import` roundtrip
+(test/smoke/06_admin.sh) carries every key, and writing them all back as
+explicit rows pinned staging's tournament player cap at an old default of
+10 against a DEFS default of 8. The same smoke now saves that key back to
+its default, which removes the row, so a drifted install heals on its next
+run without anyone touching the database.
+
+test/live-protocol.sh asserts the deployed cap by opening a real lobby and
+passes against both live and staging. CI still never runs it - it needs a
+network and a deployment.

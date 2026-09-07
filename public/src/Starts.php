@@ -162,7 +162,12 @@ final class Starts
         // Before any lock is taken: the first settings read of a request can
         // load the whole overrides table, and under the lock every other
         // writer on the server would be waiting for that too.
-        $leadMin = Settings::int('start_lead_min_ms');
+        //
+        // The lead is one flat figure for every pair, never a function of
+        // what either peer reported: a second clears any round trip a
+        // playable connection has, and a start moment that depends on no
+        // client-supplied number cannot be stretched by a polluted sample.
+        $lead = Settings::int('start_lead_ms');
 
         // Answer without the writer lock wherever the stored row already
         // decides the answer. Both peers ask about the same start and every
@@ -172,14 +177,6 @@ final class Starts
         if ($settled !== null) {
             return $settled[0];
         }
-
-        // The answer must arrive before the moment it announces, so the lead
-        // covers the slower peer's round trip. Also a read, also unlocked.
-        $st = $db->prepare('SELECT MAX(COALESCE(latency, 100)) FROM players WHERE id IN (?, ?)');
-        $st->execute([$a, $b]);
-        $worstLatency = (int)$st->fetchColumn();
-        $st->closeCursor();
-        $lead = min(max($leadMin, 150 + 2 * $worstLatency), 3000);
 
         return Db::retry(static function () use ($db, $a, $b, $epoch, $reason, $begin, $lead): ?int {
             $db->exec('BEGIN IMMEDIATE');
