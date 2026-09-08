@@ -77,7 +77,15 @@ Two different things, deliberately kept apart:
 - WAIT is `BEGIN IMMEDIATE` and nothing else - the one statement whose
   whole job is taking the single writer, so its whole duration IS the
   wait. Friends, Items, Starts and Db::tryWrite are the paths that take
-  it.
+  it. A WAIT reading is QUANTIZED and reads only as one of
+  ~1.1, ~3.2, ~8.4, ~18.4, ~33.6, ~53.7 ms - never between. That is
+  SQLite's default busy handler sleeping 1, 2, 5, 10, 15, 20 ms, so the
+  number says which sleep the lock came free in, and it OVERSTATES the
+  real hold by up to the next step (measured on Linux against a holder
+  held for a known time). An uncontended acquisition is microseconds and
+  never reaches the list at all - Load::SLOW_FLOOR_US is 1 ms. So 3.1 ms
+  is the mildest contention that CAN be recorded, one rung above the
+  floor; only 8.4 and up say a writer was really in the way.
 - TOOK is every other statement's own duration. A bare write that waited
   out busy_timeout counts that wait as part of it: SQLite does not report
   the busy handler's sleep, so the split cannot be made there. Do not
