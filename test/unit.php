@@ -2690,6 +2690,26 @@ ok(isset($dbcost['x:dbt_us']) && $dbcost['x:dbt_us'] > 0,
     'the slowest statement of the minute is kept beside the mean');
 ok(($dbcost['n:db_skip'] ?? 0) >= 1, 'a writer the housekeeping stepped aside for is counted');
 
+// ---- Folding the write-ahead log back --------------------------------
+// The log is folded into the database file by the hourly tail, not by
+// whichever write happens to cross SQLite's own threshold - which is
+// routinely a player's (see Db::drainWal). The drain reports the pages it
+// folded, and the log restarts at its beginning on the next write after
+// one, so the write following a drain leaves almost nothing behind it.
+for ($i = 0; $i < 50; $i++) {
+    Db::get()->prepare(
+        "INSERT INTO counters (bucket, metric, value) VALUES ('meta', ?, 1)
+         ON CONFLICT (bucket, metric) DO UPDATE SET value = value + 1"
+    )->execute(['wal' . $i]);
+}
+$walFolded = Db::drainWal();
+ok($walFolded > 0, 'the drain folds the pending log back into the database');
+Db::get()->prepare(
+    "INSERT INTO counters (bucket, metric, value) VALUES ('meta', 'wal-after', 1)
+     ON CONFLICT (bucket, metric) DO UPDATE SET value = value + 1"
+)->execute();
+ok(Db::drainWal() < $walFolded, 'and the write after one starts the log over rather than adding to it');
+
 // Cleanup
 Db::close();
 foreach (glob($tmp . '/backups/*') ?: [] as $f) {

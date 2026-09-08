@@ -105,6 +105,27 @@ twenty statements must not pay that twenty times.
 writer (Db::tryWrite), not an error. It is the only reading that says
 contention was real rather than theoretical.
 
+A `PRAGMA wal_checkpoint(PASSIVE)` row is the hourly drain, not a fault.
+SQLite folds the write-ahead log back into the database file once it passes
+`wal_autocheckpoint` (1000 pages, left at the default) and charges the whole
+cost - the page copy plus the one fsync `synchronous = NORMAL` defers to
+exactly here - to whichever write crosses the line, which is routinely a
+player's. `Db::drainWal` does it at the end of the hourly tail instead,
+where the response has already gone out.
+
+Measured, so do not re-derive: the cost is mostly FIXED per checkpoint, not
+per page (606 pages 5.6 ms, 3028 pages 12.6 ms, 24544 pages 131 ms), so
+draining more often costs MORE in total - `wal_autocheckpoint = 200` took
+0.58 s where 1000 took 0.34 s on the same work. Do not lower it and do not
+raise it either: with the drain in place it is a backstop, and a backstop is
+set where its worst case is acceptable, not where it is rare. A big log does
+NOT slow reads (2.0 us per point read at 0 and at 36k pages) - the WAL index
+is a hash. Eight players in duels put roughly 1500 pages an hour into the
+log, two thirds of it the duel heartbeat (2 pages, and hello carries one per
+player per minute), so a busy hour still crosses the threshold about once;
+if that ever matters, gate the drain on the `-wal` file size in the same
+tail rather than raising the ceiling.
+
 APCu namespacing rule (from the shared-counter-buffer bug fixed in
 1.4.8): Counters::PREFIX and Presence::COUNTS_KEY build on FOK_APCU_NS
 because both are counted out of a PER-ENVIRONMENT database - a bare

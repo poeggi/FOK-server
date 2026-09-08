@@ -680,6 +680,11 @@ final class Util
         if (!$done && Caps::apcu()) {
             apcu_store(FOK_APCU_NS . 'sweep:hourly', 1, 60);
         }
+        // The pruning above is the largest writer this server has, so the
+        // write-ahead log is at its longest right here - and this tail is
+        // the one place folding it back costs nobody anything (see
+        // Db::drainWal).
+        Db::drainWal();
     }
 
     /**

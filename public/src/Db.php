@@ -202,6 +202,43 @@ final class Db
         }
     }
 
+    /**
+     * Folds the write-ahead log back into the database file.
+     *
+     * SQLite does this by itself once the log passes wal_autocheckpoint
+     * (1000 pages) and charges the whole cost - copying the pages, plus the
+     * one fsync synchronous = NORMAL defers to exactly here - to whichever
+     * write happens to cross the line. That write is routinely a player's:
+     * eight players in duels put roughly 1500 pages an hour into the log
+     * and the duel heartbeat is two writes in three of them. Draining in
+     * the hourly tail instead spends the same cost after the response has
+     * gone out, where nobody is waiting for it.
+     *
+     * PASSIVE does as much as it can without blocking anybody: a reader
+     * still on an older snapshot simply leaves frames behind for the next
+     * pass. The automatic checkpoint stays on as the backstop, so a tail
+     * that never runs cannot let the log grow without bound.
+     *
+     * Costs less per page the fuller the log is, so draining more often
+     * than this would buy nothing and pay the fixed cost more times.
+     *
+     * Answers how many pages it folded back. The frames stay in the log
+     * until the next write restarts it, so a second drain with nothing
+     * written in between reports the same pages over again, and a reader
+     * still on an older snapshot makes it report fewer than the log holds.
+     */
+    public static function drainWal(): int
+    {
+        $st = self::get()->query('PRAGMA wal_checkpoint(PASSIVE)');
+        if ($st === false) {
+            return 0;
+        }
+        // busy, log frames, frames folded back.
+        $row = $st->fetch(PDO::FETCH_NUM);
+        $st->closeCursor();
+        return is_array($row) ? max(0, (int)$row[2]) : 0;
+    }
+
     // SQLITE_BUSY (5) and SQLITE_LOCKED (6) arrive as driver-specific codes;
     // the SQLSTATE is the generic HY000, so it cannot be matched on.
     private static function isLocked(PDOException $e): bool
