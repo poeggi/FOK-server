@@ -76,10 +76,11 @@ final class TourneyStore
      * between two of them, never a total lifetime. An open lobby expires on
      * the join TTL, which is what retires a lobby nobody ever started, with
      * no sweep to run and no 'abandoned' row left behind. A running one has
-     * to outlast the longest deadline it can be waiting on. A terminal one
+     * to outlast the longest deadline it can be waiting on. A finished one
      * is a receipt: the podium is read off it once, by players who are
      * looking at it already, and nobody comes back to a tournament that is
-     * over.
+     * over. An abandoned one has no podium - it stops where it stood - so it
+     * lives only long enough to tell the players still on that screen.
      */
     private static function ttl(array $t): int
     {
@@ -88,6 +89,9 @@ final class TourneyStore
         }
         if ($t['state'] === 'running') {
             return Settings::int('tournament_run_ttl');
+        }
+        if ($t['state'] === 'abandoned') {
+            return Settings::int('tournament_abandoned_ttl');
         }
         return Settings::int('tournament_done_ttl');
     }

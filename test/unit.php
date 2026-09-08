@@ -1849,6 +1849,8 @@ for ($step = 0; $step < 40; $step++) {
 }
 $view = Tournament::view($tp[0], $tid);
 ok($view['state'] === 'done', 'reporting every match runs the tournament to the end');
+ok(apcu_key_info('fok:t:' . $tid)['ttl'] === Settings::int('tournament_done_ttl'),
+    'and a finished bracket is kept longer than an abandoned one, to be read back');
 ok($view['break'] === null, 'and a tournament that is over is not waiting on anything');
 ok(count($view['bracket']) === 1 && $view['bracket'][0]['nid'] === 'final',
     '4 players advance 2, so the knockout is the final alone');
@@ -2320,8 +2322,8 @@ $k2 = 'fok:t:' . $c2['tid'];
 ok(apcu_key_info($k2)['ttl'] === Settings::int('tournament_join_ttl'),
     'an open lobby is held for the join TTL');
 Tournament::leave('77000002', $c2['tid']);
-ok(apcu_key_info($k2)['ttl'] === Settings::int('tournament_done_ttl'),
-    'and a tournament nobody can still play only as long as its result is worth reading');
+ok(apcu_key_info($k2)['ttl'] === Settings::int('tournament_abandoned_ttl'),
+    'and an abandoned one only long enough to tell the players who were in it');
 Settings::set('tournament_create_cooldown', 10);
 
 // The long-poll worker budget (Holds). Slots stand in for the OTHER workers
