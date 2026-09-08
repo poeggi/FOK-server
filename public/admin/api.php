@@ -443,11 +443,11 @@ switch ($action) {
             Util::fail('upload failed');
         }
         try {
-            Backup::restore($_FILES['db']['tmp_name']);
+            $snapshot = Backup::restore($_FILES['db']['tmp_name']);
         } catch (RuntimeException $e) {
             Util::fail($e->getMessage());
         }
-        Util::jsonOut(['ok' => true]);
+        Util::jsonOut(['ok' => true, 'snapshot' => $snapshot]);
 
     default:
         Util::fail('unknown action', 404);

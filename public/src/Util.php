@@ -309,6 +309,16 @@ final class Util
     }
 
     /**
+     * Throws the queued tail away. Everything in it describes the database
+     * as it was when it was queued, so after a restore it would write
+     * pre-restore counts and presence over the rows just brought back.
+     */
+    public static function cancelDeferred(): void
+    {
+        self::$deferred = [];
+    }
+
+    /**
      * Names the player this request belongs to, and counts it against that
      * player's requests in flight.
      *

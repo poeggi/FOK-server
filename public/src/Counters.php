@@ -459,4 +459,14 @@ final class Counters
         });
         return ['rows' => $rows, 'keys' => $keys];
     }
+
+    /**
+     * Drops the unfolded minute buffer without touching the stored history.
+     * For a restore: those counts fold into a table that has just been
+     * replaced, so they would land in a history they were never part of.
+     */
+    public static function dropBuffer(): void
+    {
+        Caps::dropKeys(self::PREFIX);
+    }
 }

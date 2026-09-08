@@ -103,6 +103,13 @@ final class Db
         self::$pdo = null;
     }
 
+    // The ladder only moves forward, so this is also the newest schema a
+    // restored file may carry (see Backup::verify).
+    public static function schemaVersion(): int
+    {
+        return self::SCHEMA_VERSION;
+    }
+
     /**
      * READ CURSORS MUST BE CLOSED BEFORE WRITING. A fetch that stops early -
      * fetchColumn(), fetch() - leaves the statement open, which keeps this

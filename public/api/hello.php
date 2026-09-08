@@ -5,6 +5,7 @@ require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Friends.php';
+require_once __DIR__ . '/../src/FriendFeed.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Tournament.php';
 require_once __DIR__ . '/../src/Pace.php';
@@ -24,6 +25,10 @@ require_once __DIR__ . '/../src/Pace.php';
  *                               screen is open (auto-accepts requests)
  *   "debug": bool,              optional, whether the client IS in debug
  *                               mode (absent means it is not)
+ *   "friends_since": int ms     optional, 4.6: answer with the caller's
+ *                               accepted friends whose presence changed
+ *                               after this cursor (0 = all of them), and
+ *                               ignore "friends"
  *   "friends": ["8-hex", ...]   optional, ids to check
  *   "friends_list": bool        optional, return the caller's WHOLE roster
  *                               (the same array friend.php `list` returns)
@@ -129,6 +134,10 @@ if (isset($body['friends'])) {
         }
     }
 }
+$since = $body['friends_since'] ?? null;
+if ($since !== null && (!is_int($since) || $since < 0)) {
+    Util::fail('invalid friends_since');
+}
 $tourneys = $body['tourneys'] ?? false;
 if (!is_bool($tourneys)) {
     Util::fail('invalid tourneys');
@@ -168,7 +177,15 @@ $out = [
     'signals' => $signals,
 ] + Presence::counts();
 
-if ($friends !== null) {
+if ($since !== null) {
+    // 4.6: the same authorization, asked the other way round. The caller
+    // names no ids - the server answers for the friendships it already
+    // knows about, and only for what changed since the cursor.
+    $delta = FriendFeed::delta($id, $since);
+    $out['friends_delta'] = (object)$delta['rows'];
+    $out['friends_at'] = $delta['at'];
+    $out['friends_more'] = $delta['more'];
+} elseif ($friends !== null) {
     // Status is only served for ACCEPTED friendships; everything else
     // reads as offline/unknown so mere possession of an id leaks nothing.
     $accepted = Friends::acceptedOf($id, $friends);

@@ -103,9 +103,11 @@ additive.
   and logs (alert feed, server log), debug reports - plus a settings view
   behind the gear with server properties (PTS anchor, versions), the runtime
   configuration (incl. JSON export/import) and database backup (SQLite
-  online backup, download) and restore (upload). Cards refresh on a
-  global interval (default 30 s, control in the top bar); Connections has
-  its own (default 1 s), since a connection changes in seconds.
+  online backup, download) and restore (upload; the replaced database is
+  snapshotted first, and a file this release cannot run is refused). Cards
+  refresh on a global interval (default 30 s, control in the top bar);
+  Connections has its own (default 1 s), since a connection changes in
+  seconds.
 - Monitoring and alerting: inline checks (no daemons on shared hosting)
   raise de-duplicated alerts for excessive traffic, system overload, too
   many connections, client spam (flooding, oversized or repeatedly invalid
@@ -130,12 +132,16 @@ additive.
         t.txt         clock source: Apache stamps the receive time into a
                       header, so sync never queues for a PHP worker
         time.php      millisecond clock sync, fallback for t.txt
-        hello.php     heartbeat: presence, counters, signals, friends online,
-                      debug flag (server instruction + client report),
-                      local tournament lobbies, self-reported networks
+        hello.php     heartbeat: presence, counters, signals, friend
+                      presence deltas, debug flag (server instruction +
+                      client report), local tournament lobbies,
+                      self-reported networks
         net.php       what network the server sees the caller on - a field
                       diagnostic, reads and writes nothing
-        poll.php      fast signal poll, 204 when idle (matchmaking, tournaments)
+        poll.php      fast signal poll, 204 when idle (matchmaking,
+                      tournaments); carries the friend delta, the counters
+                      and the hold decision when asked, and wakes on a
+                      friend transition
         friend.php    friendship handshake: request/accept/remove/list
         match.php     quick-match queue (pair with anyone waiting)
         start.php     server-issued absolute start PTS per pair, for every

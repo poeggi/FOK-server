@@ -229,4 +229,14 @@ final class Matchmaking
         }
         return $out;
     }
+
+    /**
+     * Empties the queue and every dealt match, busy markers included; a
+     * restore replaced the players waiting in it (see Backup).
+     */
+    public static function dropQueue(): void
+    {
+        Caps::dropKeys(self::QUEUE);
+        Caps::dropKeys(self::MATCH);
+    }
 }

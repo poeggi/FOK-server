@@ -72,6 +72,26 @@ final class Caps
         self::$cache = null;
     }
 
+    /**
+     * Deletes every key under a prefix and says how many went. Guarded on
+     * the raw probe rather than apcu(), for the same reason
+     * Counters::clearHistory() is: a caller emptying a store must not be
+     * turned away by a stored verdict while the writes it clears land anyway.
+     */
+    public static function dropKeys(string $prefix): int
+    {
+        if (!self::available() || !class_exists('APCUIterator')) {
+            return 0;
+        }
+        $n = 0;
+        foreach (new APCUIterator('/^' . preg_quote($prefix, '/') . '/') as $e) {
+            if (apcu_delete((string)$e['key'])) {
+                $n++;
+            }
+        }
+        return $n;
+    }
+
     // The raw probe, not apcu() below: that one answers FROM the assessment
     // this is guarding, so asking it here would be a cycle.
     private static function available(): bool

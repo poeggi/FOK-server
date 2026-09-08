@@ -5,15 +5,32 @@ require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Caps.php';
+require_once __DIR__ . '/Util.php';
+require_once __DIR__ . '/Counters.php';
+require_once __DIR__ . '/Presence.php';
+require_once __DIR__ . '/ConnTrack.php';
+require_once __DIR__ . '/Matchmaking.php';
+require_once __DIR__ . '/FriendFeed.php';
 
 final class Backup
 {
+    // The trailing counter separates two backups taken in the same second.
+    private const NAME = '/^fok-[0-9]{8}-[0-9]{6}(-[0-9]+)?\.db$/';
+
     public static function create(): string
     {
         if (!is_dir(FOK_BACKUP_DIR)) {
             mkdir(FOK_BACKUP_DIR, 0770, true);
         }
-        $name = 'fok-' . gmdate('Ymd-His') . '.db';
+        // A restore snapshots the live database in the second an operator's
+        // own backup may already occupy, and the copy must not land on the
+        // file it is about to read: seconds name a backup, they do not
+        // identify one.
+        $stamp = 'fok-' . gmdate('Ymd-His');
+        $name = $stamp . '.db';
+        for ($n = 2; is_file(FOK_BACKUP_DIR . '/' . $name); $n++) {
+            $name = $stamp . '-' . $n . '.db';
+        }
         $dest = FOK_BACKUP_DIR . '/' . $name;
         $src = new SQLite3(FOK_DB_FILE, SQLITE3_OPEN_READONLY);
         $dst = new SQLite3($dest);
@@ -34,7 +51,7 @@ final class Backup
         }
         $out = [];
         foreach (scandir(FOK_BACKUP_DIR, SCANDIR_SORT_DESCENDING) as $f) {
-            if (preg_match('/^fok-[0-9]{8}-[0-9]{6}\.db$/', $f)) {
+            if (preg_match(self::NAME, $f)) {
                 $out[] = ['name' => $f, 'size' => filesize(FOK_BACKUP_DIR . '/' . $f)];
             }
         }
@@ -43,16 +60,23 @@ final class Backup
 
     public static function isValidName(string $name): bool
     {
-        return preg_match('/^fok-[0-9]{8}-[0-9]{6}\.db$/', $name) === 1;
+        return preg_match(self::NAME, $name) === 1;
     }
 
-    /** Replaces the live database with an uploaded SQLite file. */
-    public static function restore(string $uploadedFile): void
+    /**
+     * Replaces the live database with an uploaded SQLite file, and answers
+     * with the snapshot of what it replaced.
+     */
+    public static function restore(string $uploadedFile): string
     {
         $head = (string)file_get_contents($uploadedFile, false, null, 0, 16);
         if (!str_starts_with($head, 'SQLite format 3')) {
             throw new RuntimeException('not a SQLite database');
         }
+        self::verify($uploadedFile);
+        // The undo. Taken before anything moves, so the cost of the wrong
+        // file is a second restore rather than the live data.
+        $snapshot = self::create();
         // The mirror of create(): copy pages in through SQLite's own backup
         // API, never swap the file on disk. SQLite takes the write lock and
         // does the WAL bookkeeping, so it is safe while a connection is open
@@ -79,5 +103,62 @@ final class Backup
         // every worker in the pool holds them, not only this one.
         Settings::forget();
         Caps::forget();
+        self::forgetEphemeral();
+        // This request queued its own bookkeeping before the restore (the
+        // admin endpoint counts itself), and it runs after the response is
+        // flushed - i.e. into the restored database.
+        Util::cancelDeferred();
+        return $snapshot;
+    }
+
+    /**
+     * What the upload has to be before anything is overwritten. The
+     * migration ladder only moves forward, so a snapshot from a newer
+     * server would leave this release reading columns that are not there.
+     */
+    private static function verify(string $file): void
+    {
+        try {
+            $db = new SQLite3($file, SQLITE3_OPEN_READONLY);
+        } catch (Throwable $e) {
+            throw new RuntimeException('cannot open the uploaded database');
+        }
+        try {
+            if ((string)$db->querySingle('PRAGMA quick_check') !== 'ok') {
+                throw new RuntimeException('the uploaded database is damaged');
+            }
+            if ($db->querySingle(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'players'"
+            ) === null) {
+                throw new RuntimeException('not a FOK database');
+            }
+            $v = (int)$db->querySingle('PRAGMA user_version');
+            if ($v > Db::schemaVersion()) {
+                throw new RuntimeException('the uploaded database is schema ' . $v
+                    . ' and this server runs ' . Db::schemaVersion());
+            }
+        } finally {
+            $db->close();
+        }
+    }
+
+    /**
+     * The shared memory that mirrors the database: presence entries, tracked
+     * connections and the quick-match queue all name players from the
+     * replaced rows, and the unfolded counters would fold into the restored
+     * history.
+     *
+     * Only the per-environment stores (FOK_APCU_NS) go. The bare-prefix ones
+     * - mailbox, holds, tournaments - can be shared with the other
+     * environment on one FPM pool and hold nothing read out of a database;
+     * they lapse on their own TTLs.
+     */
+    private static function forgetEphemeral(): void
+    {
+        Presence::dropEntries();
+        ConnTrack::dropEntries();
+        Matchmaking::dropQueue();
+        Counters::dropBuffer();
+        FriendFeed::dropAll();
     }
 }

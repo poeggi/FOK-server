@@ -25,6 +25,7 @@ require_once __DIR__ . '/../public/src/Backup.php';
 require_once __DIR__ . '/../public/src/Matchmaking.php';
 require_once __DIR__ . '/../public/src/Starts.php';
 require_once __DIR__ . '/../public/src/Friends.php';
+require_once __DIR__ . '/../public/src/FriendFeed.php';
 require_once __DIR__ . '/../public/src/RelayRate.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
 require_once __DIR__ . '/../public/src/Caps.php';
@@ -1569,6 +1570,56 @@ Backup::restore(FOK_BACKUP_DIR . '/' . $name);
 ok(count(Scores::top()) === 5, 'restore works with a live handle held open (as admin/api.php does)');
 unset($live);
 
+// The undo point: what a restore replaces is snapshotted first, and the
+// snapshot cannot land on the file being restored from even in the same
+// second.
+$before = count(Backup::list());
+$snapshot = Backup::restore(FOK_BACKUP_DIR . '/' . $name);
+ok(Backup::isValidName($snapshot), 'the snapshot has a valid backup name');
+ok(is_file(FOK_BACKUP_DIR . '/' . $snapshot), 'restore snapshots the database it replaces');
+ok($snapshot !== $name, 'the snapshot never overwrites the file being restored');
+ok(count(Backup::list()) === $before + 1, 'the snapshot is listed with the backups');
+
+// Refused before anything moves: the ladder only goes forward, and a
+// stranger's database is not this server's.
+$newer = $tmp . '/newer.db';
+$sq = new SQLite3($newer);
+$sq->exec('CREATE TABLE players (id TEXT PRIMARY KEY)');
+$sq->exec('PRAGMA user_version = ' . (Db::schemaVersion() + 1));
+$sq->close();
+$threw = false;
+try {
+    Backup::restore($newer);
+} catch (RuntimeException $e) {
+    $threw = true;
+}
+ok($threw, 'restore refuses a database from a newer schema');
+$foreign = $tmp . '/foreign.db';
+$sq = new SQLite3($foreign);
+$sq->exec('CREATE TABLE other (x INTEGER)');
+$sq->close();
+$threw = false;
+try {
+    Backup::restore($foreign);
+} catch (RuntimeException $e) {
+    $threw = true;
+}
+ok($threw, 'restore refuses a SQLite file that is not a FOK database');
+ok(count(Backup::list()) === $before + 1, 'a refused restore takes no snapshot');
+ok(count(Scores::top()) === 5, 'a refused restore leaves the live data standing');
+
+// Shared memory and the request's own tail both describe the replaced
+// database, so neither may reach the restored one.
+Presence::touch('deadbeef', '198.51.100.7', null, 'srv-CI-restore');
+$tail = false;
+Util::defer(static function () use (&$tail): void {
+    $tail = true;
+});
+Backup::restore(FOK_BACKUP_DIR . '/' . $name);
+ok(Presence::entryOf('deadbeef') === null, 'a restore empties the presence store');
+Util::runDeferred();
+ok($tail === false, 'the tail queued before a restore never runs');
+
 // ---- Tournaments (API 4.1) -------------------------------------------
 // Bracket is pure math with a normative spec (docs/API.md "Tournament
 // mode"), and a client renders what it computes - so the rules are pinned
@@ -2463,6 +2514,117 @@ ok(Counters::worstList('t_us')[9]['v'] === 3000,
 // cleared graphs no longer show (Counters::clearHistory).
 Counters::clearHistory();
 ok(Counters::worstList('t_us') === [], 'clearing the statistics clears it as well');
+
+// ---- Friend presence deltas (API 4.6) --------------------------------
+// The entries are shared memory, so a test that needs a friend who last beat
+// three minutes ago writes one directly rather than waiting for a window.
+function ffEntry(string $id, array $over = []): void
+{
+    apcu_store(FOK_APCU_NS . 'p:' . $id, $over + [
+        'seen' => time(), 'start' => time(), 'ip' => '9.9.9.9', 'lat' => 20,
+        'name' => 'srv-CI-' . $id, 'accept' => 0, 'dbg' => false,
+        'wish' => false, 'nets' => [], 'chg' => 1, 'duel' => 0,
+    ], 86400);
+}
+
+$me = 'ff110001';
+$f1 = 'ff220002';
+$f2 = 'ff330003';
+Presence::touch($me, '9.9.9.1', null, 'srv-CI-me');
+Presence::touch($f1, '9.9.9.2', null, 'srv-CI-one');
+Presence::touch($f2, '9.9.9.3', null, 'srv-CI-two');
+Friends::request($me, $f1);
+Friends::accept($f1, $me);
+Friends::request($me, $f2);
+Friends::accept($f2, $me);
+
+// A cursor of 0 is "I know nothing", not "nothing changed since the epoch".
+$d = FriendFeed::delta($me, 0);
+ok(count($d['rows']) === 2, 'a cursor of 0 answers with every accepted friend');
+ok(($d['rows'][$f1]['online'] ?? null) === true, 'a friend who just beat reads online');
+ok(array_keys($d['rows'][$f1]) === ['online', 'playing', 'latency', 'name'],
+    'a row is the whole current state, not a description of the change');
+ok($d['more'] === false, 'two rows do not reach the cap');
+ok(FriendFeed::delta($me, $d['at'])['rows'] === [], 'and the next read finds nothing changed');
+
+// Authorization: the delta answers for ACCEPTED friendships and no other.
+Friends::request($me, 'ff660006');
+ok(!isset(FriendFeed::delta($me, 0)['rows']['ff660006']),
+    'a pending friendship is not in the delta');
+Friends::accept('ff660006', $me);
+ok(isset(FriendFeed::delta($me, 0)['rows']['ff660006']),
+    'accepting shows up at once - the write dropped the cached list');
+Friends::remove($me, 'ff660006');
+ok(!isset(FriendFeed::delta($me, 0)['rows']['ff660006']),
+    'and removing the friendship takes the row away again');
+ok(FriendFeed::delta('ff990009', 0)['rows'] === [], 'a caller with no friends gets nothing');
+
+// Transition: coming online. The entry is gone, so the beat opens a session.
+// The other friend is pinned to an old stamp first: everything above ran
+// inside one millisecond, and a tie with the cursor is not what is under test.
+ffEntry($f2);
+apcu_delete(FOK_APCU_NS . 'p:' . $f1);
+$cur = Util::nowMs() - 1;
+Presence::touch($f1, '9.9.9.2', null, 'srv-CI-one');
+$d = FriendFeed::delta($me, $cur);
+ok(($d['rows'][$f1]['online'] ?? null) === true, 'coming online is reported as a transition');
+ok(!isset($d['rows'][$f2]), 'and a friend who did not move stays out of the answer');
+
+// Transition: a rename, on a beat that is not a new session.
+ffEntry($f1, ['name' => 'srv-CI-old']);
+$cur = Util::nowMs() - 1;
+Presence::touch($f1, '9.9.9.2', null, 'srv-CI-new');
+ok((FriendFeed::delta($me, $cur)['rows'][$f1]['name'] ?? '') === 'srv-CI-new',
+    'a rename is a transition of its own');
+
+// Transition: entering a duel. Per player, so the peer who did not insert
+// the duels row announces it too.
+ffEntry($f2);
+$cur = Util::nowMs() - 1;
+Presence::touchDuel($f2, 'ff440004');
+$d = FriendFeed::delta($me, $cur);
+ok(($d['rows'][$f2]['playing'] ?? null) === true, 'entering a duel is a transition');
+Presence::touchDuel($f2, 'ff440004');
+ok(!isset(FriendFeed::delta($me, $d['at'])['rows'][$f2]),
+    'the beats that keep the duel alive are not');
+
+// Derived, not pushed: going offline and leaving a duel are the absence of a
+// beat, so they are read off the windows against an older cursor.
+$old = Util::nowMs() - 60000;
+ffEntry($f1, ['seen' => time() - FOK_ONLINE_WINDOW - 30]);
+ffEntry($f2, ['duel' => time() - FOK_DUEL_WINDOW - 30]);
+$d = FriendFeed::delta($me, $old);
+ok(($d['rows'][$f1]['online'] ?? null) === false, 'a friend who stopped beating reads offline');
+ok($d['rows'][$f1]['latency'] === null, 'and reports no latency, being nowhere');
+ok(($d['rows'][$f2]['playing'] ?? null) === false, 'a duel that stopped reporting ends by the window');
+ok(($d['rows'][$f2]['online'] ?? null) === true, 'while the player it belongs to is still here');
+ok(FriendFeed::delta($me, $d['at'])['rows'] === [], 'a lapse is reported once, not on every read');
+
+// The cap spreads over consecutive answers and never splits a stamp tie.
+Settings::set('friends_delta_max', 1);
+ffEntry($f1, ['chg' => 100000]);
+ffEntry($f2, ['chg' => 200000]);
+$d = FriendFeed::delta($me, 1);
+ok(count($d['rows']) === 1 && $d['more'] === true, 'the cap cuts the answer short and says so');
+ok($d['at'] === 100000, 'the cursor to continue from is the last row included');
+$d = FriendFeed::delta($me, $d['at']);
+ok(count($d['rows']) === 1 && isset($d['rows'][$f2]) && $d['more'] === false,
+    'and the next read carries the rest');
+ffEntry($f2, ['chg' => 100000]);
+$d = FriendFeed::delta($me, 1);
+ok(count($d['rows']) === 2 && $d['more'] === false,
+    'a page runs past the cap rather than split a stamp tie');
+Settings::set('friends_delta_max', 64);
+
+// The wake: what a held poll checks beside the mailbox.
+ffEntry($f1);
+ffEntry($f2);
+FriendFeed::delta($me, Util::nowMs());
+$cur = Util::nowMs();
+usleep(2000);
+ok(FriendFeed::pending($me, $cur) === false, 'a quiet roster leaves the hold alone');
+Presence::touchDuel($f1, 'ff550005');
+ok(FriendFeed::pending($me, $cur) === true, 'a friend transition wakes the held poll');
 
 // Cleanup
 Db::close();

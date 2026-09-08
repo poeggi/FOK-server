@@ -203,6 +203,12 @@ final class ConnTrack
         }
     }
 
+    /** Empties the store; a restore replaced the players it tracks. */
+    public static function dropEntries(): void
+    {
+        Caps::dropKeys(self::PREFIX);
+    }
+
     /**
      * The Connections card's list (see Presence::recent).
      * @return array [{id, name, ip, latency, last_seen, gone}]

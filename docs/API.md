@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.5", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.6", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -32,8 +32,9 @@ misbehave against an incompatible server. A newer MINOR on the same MAJOR
 is safe to talk to; a client may read the MINOR to tell whether an
 optional feature (e.g. the peer-net hint, added in 3.1, tournament mode,
 added in 4.1, self-reported networks, added in 4.2, the tournament round
-ladder and its round breaks, added in 4.3, or batched ICE candidates, the
-queue-wait figure and the hold decision, added in 4.4) is available, and
+ladder and its round breaks, added in 4.3, batched ICE candidates, the
+queue-wait figure and the hold decision, added in 4.4, or friend presence
+deltas, added in 4.6) is available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
 
@@ -462,7 +463,13 @@ Request:
                                   server keeps the last value)
       "friends": ["deadbeef"],    optional, up to 64 IDs to check (send the
                                   friend list when the multiplayer screen
-                                  is open)
+                                  is open). Superseded by "friends_since"
+                                  in 4.6, and ignored when that is present
+      "friends_since": 0,         optional, 4.6: a cursor in ms. Answer
+                                  with the caller's ACCEPTED friends whose
+                                  presence changed after it, no ids sent.
+                                  0 asks for all of them. See Friend
+                                  presence deltas below
       "auto_accept": true         optional bool: send true in EVERY hello
                                   while the QR/add-friend screen is open -
                                   incoming friend requests are then accepted
@@ -498,7 +505,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.5",               contract version, see Versioning
+      "api": "4.6",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a PHP
@@ -520,6 +527,14 @@ Response:
       "friends_latency": {"deadbeef": 31},   ms while online, else null
       "friends_name": {"deadbeef": "KAI"},   last reported display name
       "friends_playing": ["deadbeef"],       accepted friends in a duel NOW
+      "friends_delta": {                     only when "friends_since" was
+        "deadbeef": {"online": true,         sent: each accepted friend
+                     "playing": false,       whose state changed after the
+                     "latency": 31,          cursor, whole
+                     "name": "KAI"}
+      },
+      "friends_at": 1784182417123,           the cursor for the next read
+      "friends_more": false,                 true: ask again immediately
       "friends": [                           only when "friends_list" was
         {"id": "deadbeef",                   true, AND only on a server that
          "state": "accepted",                has the 4.4 re-release. Byte
@@ -551,6 +566,62 @@ so possessing an id alone reveals nothing.
 `friends_playing` lists the accepted friends who are in a duel right now.
 Online is not the same as available - a friend mid-duel cannot take an
 invite or join a lobby - so show them as busy rather than inviting them.
+
+### Friend presence deltas (`friends_since`, 4.6)
+
+The maps above answer for the ids the request names, in full, every time.
+From 4.6 there is a second way to read the same thing: ask for what
+CHANGED.
+
+    hello.php   "friends_since": 0     request field, a cursor in ms
+    poll.php    ?fs=0                  query parameter, the same cursor
+
+The caller sends no ids. Status is served for the caller's ACCEPTED
+friends, which the server already knows, under the same authorization
+gate: an id with no accepted friendship is not in the answer at all.
+
+Response, on both endpoints:
+
+    "friends_delta": {            each friend whose state changed after
+      "deadbeef": {               the cursor, keyed by id. An entry is the
+        "online": true,           friend's CURRENT state, whole - not a
+        "playing": false,         description of what changed - so applying
+        "latency": 31,            one blind is always right and a repeat
+        "name": "KAI"             costs nothing
+      }
+    },
+    "friends_at": 1784182417123,  the cursor for the NEXT read
+    "friends_more": false         true: rows are still pending
+
+The cursor:
+
+- Start at 0. That is not "nothing changed since the epoch", it is "I know
+  nothing": the answer then carries every accepted friend, which is what a
+  screen opening wants.
+- Continue from the `friends_at` you were just given, never from your own
+  clock. It is the server's now when the whole delta fit, and the stamp of
+  the last row included when it did not.
+- `friends_more` true means the per-response cap (64 rows) cut the answer
+  short. Ask again at once with the new cursor rather than at the next
+  tick.
+- Rows sharing a stamp always travel together, so a capped page may carry
+  a few rows more rather than split a tie. A repeated row is harmless; a
+  dropped one would leave a friend on screen in the wrong state forever.
+
+What is pushed and what is derived:
+
+- Coming online, starting a duel and a rename are TRANSITIONS. They stamp
+  the friend when they happen and they wake a held poll (see poll.php), so
+  a subscriber sees them within the hold's check interval instead of at
+  its next tick.
+- Going offline and leaving a duel are DERIVED from the presence and duel
+  windows at the moment the delta is read. Nothing wakes for them - they
+  are the absence of a beat - and they are at worst one read late.
+
+`friends_delta` and the `friends_*` maps are alternatives, not layers. A
+request carrying `friends_since` is answered with the delta and no maps; a
+request carrying `friends` is answered exactly as in 4.5. Sending both is
+not an error - the delta wins - but there is no reason to.
 
 `tourneys` is served only when the request set `"tourneys": true`, and
 lists the OPEN lobbies whose host shares a NETWORK with the caller: the
@@ -609,6 +680,15 @@ the wire, the same for every client:
                 each other - BOTH pay the full queue wait rather than one
                 of them paying it. Keep at most ONE request in flight
                 besides a parked poll, exempt or not.
+
+    screen tick The lobby, friends, MY ID and tournament-lobby screens
+                refresh out of the poll they are already holding: `fs`
+                makes it carry the friend delta, the presence counters and
+                the hold decision (4.6), so those screens send no hello of
+                their own and the 60 s beat is the only one left. Against
+                a server older than 4.6 there is no delta: fall back to
+                `friends` on hello at the screen's own tick, and feature-
+                detect on the response, never on the version.
 
 Only one thing depends on the moment, and that is all the `pace` object
 carries. It is additive - a client that ignores it behaves exactly as it
@@ -728,7 +808,7 @@ only carries the bit.
 
 ## GET /api/poll.php - fast signal poll
 
-    GET /api/poll.php?id=c0ffee42[&wait=9]
+    GET /api/poll.php?id=c0ffee42[&wait=9][&fs=<cursor>]
 
     -> 204 No Content                          nothing pending
     -> 200 {"ok":true,"signals":[...]}         pending messages, drained
@@ -762,6 +842,28 @@ no server hop to optimize. In relay mode it is the path (relay.php).
 A tournament participant's poll also runs that tournament's deadlines
 (see Tournament mode, When nobody answers); the request and the answer
 are unchanged.
+
+### Friend presence on the poll (`fs`, 4.6)
+
+With `fs=<cursor>` the answer also carries the friend delta described
+under hello (`friends_delta`, `friends_at`, `friends_more`), the presence
+counters and `pace`, so a screen holding a poll needs nothing else to stay
+current:
+
+    -> 200 {"ok":true, "signals":[], "friends_delta":{...},
+            "friends_at":1784182417123, "friends_more":false,
+            "online":3, "playing":2, "registered":17, "pace":{"hold":true}}
+
+Two things change, and only for a request that sends `fs`:
+
+- A held poll returns when a friend TRANSITION lands as well as on a
+  signal. One transition wakes every subscriber at once.
+- `signals` can therefore be EMPTY in a 200. Read the two independently:
+  the delta is not a signal and a signal is not a delta.
+
+Nothing changes for a poll without `fs`. A 204 remains the answer whenever
+the hold runs out with nothing pending and no transition; keep the cursor
+you have and ask again.
 
 ## GET /api/scores.php - global top 100
 

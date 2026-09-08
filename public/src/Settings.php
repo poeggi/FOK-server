@@ -50,6 +50,7 @@ final class Settings
         'friend_rate_cooldown' => [60, 'Friend-request cooldown after a burst (seconds)'],
         'friend_rate_repeat_window' => [600, 'Re-offense window: a second burst within this escalates the cooldown (seconds)'],
         'friend_rate_cooldown_hard' => [3600, 'Escalated friend-request cooldown after a repeat burst (seconds)'],
+        'friends_delta_max' => [64, 'Max friend-presence rows per response (a stamp tie is never split)'],
         // Housekeeping (see Housekeeping::sweep, run hourly). All three are
         // in DAYS on purpose: every reader of these rows works in seconds or
         // minutes, so no value an operator can enter here comes close to one

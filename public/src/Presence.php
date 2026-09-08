@@ -7,6 +7,7 @@ require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Signals.php';
 require_once __DIR__ . '/ConnTrack.php';
 require_once __DIR__ . '/Caps.php';
+require_once __DIR__ . '/FriendFeed.php';
 
 /**
  * Who is here. Presence is volatile - it is worth nothing FOK_ONLINE_WINDOW
@@ -78,6 +79,7 @@ final class Presence
     {
         self::mustHaveApcu();
         $now = time();
+        $moved = false;
         $e = self::entryOf($id);
         if ($e === null || (int)$e['seen'] < Util::since(FOK_ONLINE_WINDOW, $now)) {
             // A stale entry the fold has not reached carries the last
@@ -94,7 +96,12 @@ final class Presence
                 'dbg' => false,
                 'wish' => (int)$row['debug'] === 1,
                 'nets' => [],
+                // Coming online is a transition: the moment it happened is
+                // what a friend's cursor is compared against (see FriendFeed).
+                'chg' => Util::nowMs(),
+                'duel' => 0,
             ];
+            $moved = true;
             // Nobody may watch their own first hello report zero online, so
             // an arrival drops the counters cache. The beats that are
             // virtually all the traffic leave it alone.
@@ -113,6 +120,8 @@ final class Presence
                 Db::get()->prepare('UPDATE players SET name = ? WHERE id = ?')->execute([$name, $id]);
             });
             $e['name'] = $name;
+            $e['chg'] = Util::nowMs();
+            $moved = true;
         }
         if ($autoAccept !== null) {
             $e['accept'] = $autoAccept ? $now + FOK_AUTO_ACCEPT_WINDOW + FOK_BEAT_JITTER : 0;
@@ -122,6 +131,11 @@ final class Presence
         }
         self::seenOnEntry($e, $ip, true, $now);
         self::store($id, $e);
+        // After the store, never before it: what the announcement wakes is a
+        // poll that reads this entry.
+        if ($moved) {
+            FriendFeed::bump($id, (int)$e['chg']);
+        }
         return (bool)$e['wish'];
     }
 
@@ -203,6 +217,19 @@ final class Presence
     }
 
     /**
+     * Empties the store: the entries, the fold's rate gate and the counts
+     * cache. For a restore (see Backup) - the entries describe players in
+     * the database that was replaced, and the fold would write their last
+     * beat over the rows just brought back.
+     */
+    public static function dropEntries(): void
+    {
+        Caps::dropKeys(self::PREFIX);
+        Caps::dropKeys(self::FOLD_KEY);
+        Caps::dropKeys(self::COUNTS_KEY);
+    }
+
+    /**
      * One player's entry, or null when there is none. Shape:
      * {seen, start, ip, lat, name, accept, dbg, wish, nets:{family:{net, seen, src}}}
      * - seen is the last beat, start the session's first; accept is the
@@ -222,11 +249,12 @@ final class Presence
 
     /**
      * The entries of a set of ids, keyed by id, in one fetch. An id with no
-     * entry is simply absent.
+     * entry is simply absent. This is the whole cost of a friend delta that
+     * has something to report (see FriendFeed).
      * @param list<string> $ids
      * @return array<string, array>
      */
-    private static function entriesOf(array $ids): array
+    public static function entriesOf(array $ids): array
     {
         if ($ids === [] || !Caps::apcu()) {
             return [];
@@ -502,6 +530,23 @@ final class Presence
         if ($started) {
             self::flushCounts();
         }
+        // Playing rides the entry as well, because a friend delta may not
+        // read the duels table (see FriendFeed). Per player, not per pair:
+        // the row's first insert belongs to whichever peer got there first,
+        // and the other peer's friends have to hear about it too.
+        $e = self::entryOf($id);
+        if ($e === null) {
+            return;
+        }
+        $was = (int)($e['duel'] ?? 0) >= Util::since(FOK_DUEL_WINDOW, $now);
+        $e['duel'] = $now;
+        if (!$was) {
+            $e['chg'] = Util::nowMs();
+        }
+        self::store($id, $e);
+        if (!$was) {
+            FriendFeed::bump($id, (int)$e['chg']);
+        }
     }
 
     /**
@@ -698,8 +743,10 @@ final class Presence
         $db = Db::get();
         $st = $db->prepare('SELECT a, b FROM friends WHERE a = ? OR b = ?');
         $st->execute([$id, $id]);
+        $others = [];
         foreach ($st->fetchAll() as $row) {
             $other = $row['a'] === $id ? $row['b'] : $row['a'];
+            $others[] = (string)$other;
             Signals::send($id, $other, 'friend', json_encode(['event' => 'expired', 'from' => $id]));
         }
         $db->prepare('DELETE FROM friends WHERE a = ? OR b = ?')->execute([$id, $id]);
@@ -708,6 +755,12 @@ final class Presence
             apcu_delete(self::PREFIX . $id);
         }
         ConnTrack::forget($id);
+        // The friendships went with the player, so every cached list naming
+        // it is wrong now (see FriendFeed).
+        foreach ($others as $other) {
+            FriendFeed::forgetPair($id, $other);
+        }
+        FriendFeed::forget($id);
         // registered and online are cached (see counts), so the dashboard
         // must not keep showing a player that is gone until the TTL lapses.
         self::flushCounts();
@@ -748,12 +801,15 @@ final class Presence
      */
     private static function population(): array
     {
-        $db = Db::get();
         $now = time();
         $hit = apcu_fetch(self::COUNTS_KEY, $ok);
         if ($ok && is_array($hit)) {
             return $hit;
         }
+        // Below the cache check, not above it: poll.php serves these figures
+        // too, and opening the database is the one thing that path does not
+        // do (see docs/API.md, Friend presence on the poll).
+        $db = Db::get();
         $cut = Util::since(FOK_ONLINE_WINDOW, $now);
         $online = 0;
         $online6 = 0;

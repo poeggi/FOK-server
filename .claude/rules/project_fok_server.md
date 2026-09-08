@@ -169,6 +169,51 @@ client-trusted (the coin economy is client-side), so items are conserved
 and auditable, NOT unforgeable - do not describe or extend the registry
 as anti-forgery; moving generation server-side is the open TODO.
 
+## Friend presence deltas (since API 4.6)
+
+The four friend-facing screens used to tick hello every 5 s with the whole
+id list and read the whole status table back - about 92 percent of all
+hello traffic, each one a friendship lookup plus a presence lookup plus
+the touch. 4.6 replaces it with a cursor: `friends_since` on hello, `fs`
+on poll, no ids on the wire, and the caller's ACCEPTED friends answered as
+`friends_delta` + `friends_at` + `friends_more`.
+
+THE INVARIANT: the steady state costs APCu only. Nothing changed is ONE
+apcu_fetch (the watch stamp and the due stamp together); a read that finds
+something changed adds one bulk fetch of the caller's friends. SQLite is
+touched twice and only twice: a cold friend-list cache reads the friends
+table, and a cursor-0 read looks up names for friends with no entry left.
+Never the duels table, never on a steady-state poll, and nothing scans the
+keyspace.
+
+- Every fact lives in the PRESENCE ENTRY: `chg` (ms of the last
+  transition) and `duel` (the last duel beat, seconds). Playing is
+  therefore derived per player from a window, not read off the duels row -
+  which is why both peers stamp their own entry and neither writes the
+  other's.
+- TRANSITIONS are the only pushes: coming online, a rename, and a player's
+  own not-playing -> playing edge. Each stamps `chg` and FANS OUT to the
+  accepted friends, bumping their watch key. Going offline and leaving a
+  duel push nothing - they are the absence of a beat and are derived at
+  read time from the same windows every other reader uses.
+- Three APCu key families, all per environment: `fl:<id>` the caller's
+  accepted-friend ids (invalidated at every friends-table write, never
+  aged into a stale roster), `fw:<id>` the last push aimed at that caller,
+  `fd:<id>` the earliest future moment a window lapse could change
+  something for them. Fast path: cursor >= fw and now < fd means nothing
+  changed.
+- A held poll checks the same two keys beside the mailbox, so a transition
+  wakes every subscriber within the poll's check interval. It is NOT a
+  mailbox message: `signals` stays exactly what it was, and a 200 woken by
+  a delta carries an empty one.
+- The cap (`friends_delta_max`, 64) never splits a stamp tie - a page runs
+  past the cap to the end of the tie instead. Splitting one would strand a
+  friend in the wrong state forever, because the client would advance its
+  cursor past the rows it never got.
+- `friends` on hello still answers exactly as in 4.5 when `friends_since`
+  is absent. The deployed client sends ids; ignoring them outright would
+  have broken every live player until they updated.
+
 ## Tournament mode (since API 4.1)
 
 THE INVARIANT, do not erode: the server orchestrates and settles ONLY -
@@ -235,6 +280,16 @@ must be case-insensitive (HTTP/2 lowercases header names).
 - sys_getloadavg on shared hosting measures the WHOLE machine, so the
   load alert is a "host is thrashing" signal per core, never our
   capacity gauge.
+- Admin restore is verify -> snapshot -> page copy (Backup::restore). The
+  copy goes through SQLite's backup API, never a file swap, because
+  admin/api.php holds a Db::get() across the whole request. An upload is
+  refused unless it passes quick_check, has a players table and carries a
+  schema this release can run (the ladder only goes forward). Afterwards
+  the per-environment APCu stores (presence, conn, matchmaking, counter
+  buffer) and the request's own deferred tail go, so nothing describing
+  the replaced database writes into the restored one; the bare-prefix
+  stores stay, being shared with the other environment. Persistent PDO
+  stays off: Db::close() only drops the reference.
 
 ## Known dead weight (assessed only - no removal decided)
 
@@ -254,9 +309,6 @@ fallback), net.php.
 
 ## Open
 
-- Backup::restore can corrupt the database it just restored - re-derive
-  the failure mode before fixing; it also blocks persistent PDO
-  connections.
 - tournament_create_cooldown is charged off the host's newest row with no
   state filter, so abandoning an open lobby locks the host out for the
   rest of the window (the floor is deliberate, the wording is not).

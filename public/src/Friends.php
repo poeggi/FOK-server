@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/FriendFeed.php';
 require_once __DIR__ . '/Settings.php';
 
 /**
@@ -43,6 +44,7 @@ final class Friends
                     $db->prepare('UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ?')
                         ->execute(['accepted', $now, $a, $b]);
                     $db->exec('COMMIT');
+                    FriendFeed::forgetPair($a, $b);
                     return ['state' => 'accepted', 'changed' => true];
                 }
                 $db->exec('COMMIT');
@@ -186,6 +188,7 @@ final class Friends
         Db::get()->prepare(
             'UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ? AND state = ?'
         )->execute(['accepted', time(), $a, $b, 'pending']);
+        FriendFeed::forgetPair($a, $b);
     }
 
     /** Accept a request the peer made; false when there is none. */
@@ -196,6 +199,7 @@ final class Friends
             'UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ? AND state = ? AND requester = ?'
         );
         $st->execute(['accepted', time(), $a, $b, 'pending', $peer]);
+        FriendFeed::forgetPair($a, $b);
         return $st->rowCount() > 0;
     }
 
@@ -204,6 +208,7 @@ final class Friends
     {
         [$a, $b] = $me < $peer ? [$me, $peer] : [$peer, $me];
         Db::get()->prepare('DELETE FROM friends WHERE a = ? AND b = ?')->execute([$a, $b]);
+        FriendFeed::forgetPair($a, $b);
     }
 
     public static function isFriend(string $me, string $peer): bool

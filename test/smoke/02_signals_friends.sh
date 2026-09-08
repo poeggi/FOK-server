@@ -198,3 +198,30 @@ expect "the roster carries the peer name" '"name":"SMOKE TWO"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"latency\":99999}" "$BASE/api/hello.php")
 expect "absurd latency rejected" '"error":"invalid latency"' "$R"
 
+# The same status, asked as a delta (4.6): no ids on the wire, and the
+# cursor comes back with the answer.
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends_since\":0}" "$BASE/api/hello.php")
+expect "hello serves a friend delta" '"friends_delta":{' "$R"
+expect "the delta carries the accepted friend" "\"$ID2\":{" "$R"
+expect "the friend reads online in it" '"online":true' "$R"
+expect "the delta says whether more is pending" '"friends_more":false' "$R"
+FAT=$(echo "$R" | grep -oE '"friends_at":[0-9]+' | cut -d: -f2)
+if [ "${#FAT}" -eq 13 ]; then echo "ok   the cursor is a millisecond stamp"; else echo "FAIL friends_at not ms: $FAT"; fail=1; fi
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"friends_since\":$FAT,\"friends\":[\"$ID2\"]}" "$BASE/api/hello.php")
+expect "a second read finds nothing changed" '"friends_delta":{}' "$R"
+if [[ "$R" != *'"friends_online"'* ]]; then echo "ok   the delta replaces the status maps"; else echo "FAIL friends_online served beside the delta: $R"; fail=1; fi
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends_since\":-1}" "$BASE/api/hello.php")
+expect "a negative cursor is refused" '"error":"invalid friends_since"' "$R"
+
+# ...and on the poll, where the screens already are.
+R=$(curl -s "$BASE/api/poll.php?id=$ID1&fs=0")
+expect "the poll serves the delta too" '"friends_delta":{' "$R"
+expect "with the presence counters" "$(strict '"online":2')" "$R"
+expect "and the hold decision" '"pace":{' "$R"
+PAT=$(echo "$R" | grep -oE '"friends_at":[0-9]+' | cut -d: -f2)
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&fs=$PAT")
+expect "a poll with nothing pending still answers 204" '204' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID1&fs=nonsense")
+expect "a bogus cursor is refused" '"error":"invalid fs"' "$R"
+

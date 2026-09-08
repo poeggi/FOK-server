@@ -2067,7 +2067,9 @@ const MODULES = [
                 if (!confirm('Replace the LIVE database with this file?')) return;
                 const body = new FormData(restore);
                 const res = await api('backup_restore', { method: 'POST', body });
-                alert(res.ok ? 'Restored.' : 'Failed: ' + res.error);
+                alert(res.ok
+                    ? 'Restored. The replaced database is kept as ' + res.snapshot + '.'
+                    : 'Failed: ' + res.error);
                 refreshAll();
             };
             box.append(restore);
