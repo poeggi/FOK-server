@@ -1069,10 +1069,10 @@ function renderServerLive(box, d) {
         // What the database costs, beside what it is asked for: the writer
         // is the ceiling on this host, so the wait to take it is the gauge
         // that says whether the ceiling is being touched.
-        { label: 'DB wait mean | worst', perRequest: true,
+        { label: 'DB avg | max', perRequest: true,
             value: pairQms(w.dbw_mean_us / 1000, w.dbw_max_us / 1000),
-            tip: win + 'How long a request waited to TAKE the single SQLite writer. '
-                + 'A wait can only be timed apart from the work it guards where the '
+            tip: win + 'Average and worst case of the wait to TAKE the single SQLite '
+                + 'writer. A wait can only be timed apart from the work it guards where the '
                 + 'lock is taken explicitly, so this is BEGIN IMMEDIATE: what a '
                 + 'friend accept, an item claim, a match start and the housekeeping '
                 + 'open. Near zero is a database nobody is fighting over; a climb '
@@ -1080,10 +1080,10 @@ function renderServerLive(box, d) {
                 + 'timing can show. ' + graph + ' The graphs also carry how long '
                 + 'the statements themselves took, and the five slowest accesses of '
                 + 'the last 24 h are listed under them.',
-            charts: [['DB wait, mean', 'chart-wall', meanMs('n:dbw_us', 'n:dbw_n'), fmtQms],
-                ['DB wait, worst', 'chart-cpu', maxMs('x:dbw_us'), fmtQms],
-                ['Access time, mean', 'chart-db', meanMs('n:dbt_us', 'n:dbt_n'), fmtQms],
-                ['Access time, worst', 'chart-req', maxMs('x:dbt_us'), fmtQms]],
+            charts: [['DB wait, avg', 'chart-wall', meanMs('n:dbw_us', 'n:dbw_n'), fmtQms],
+                ['DB wait, max', 'chart-cpu', maxMs('x:dbw_us'), fmtQms],
+                ['Access time, avg', 'chart-db', meanMs('n:dbt_us', 'n:dbt_n'), fmtQms],
+                ['Access time, max', 'chart-req', maxMs('x:dbt_us'), fmtQms]],
             extra: () => worstDb(d.db_worst, w.db_skip) },
         { label: 'Busiest script', value: w.top === null ? '-' : w.top,
             tip: win + 'Held the most worker time. ' + (w.top === null ? '' : graph),

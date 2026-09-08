@@ -2,7 +2,9 @@
 
 The admin "Queue mean | worst" gauge measures Apache-accepted ->
 PHP-started (`Load::queueUs`, X-Request-Start vs REQUEST_TIME_FLOAT),
-i.e. the wait for a free PHP worker. No server code runs in that window.
+i.e. the handoff to FPM: the wait for a free PHP worker, plus anything
+else that delays the handoff on a machine we share. No server code runs
+in that window.
 
 Single isolated worst rows in the tens of ms on a sub-ms mean are NOISE -
 a quiet pool, not a problem. Saturation on this gauge starts in the
@@ -30,16 +32,36 @@ The three levers, already reasoned through - do not re-derive:
 
 Reading caveats:
 
-- The metric cannot separate "waited for a free worker" from "waited
-  behind my own previous response on the same HTTP/2 connection". Both
-  land in the same window, so a lone worst row from one client is not
-  proof the pool was short.
+- The floor is ~1 ms, not 0, and it is very stable. That is what the
+  handoff costs. Measured against live on 2026-09-08 by reading `q_ms`
+  off hello.php from outside: thirty-odd requests over HTTP/2 and over
+  HTTP/1.1, on fresh and on reused connections, six different clients at
+  once, twelve streams multiplexed on one connection - every one of them
+  1 ms. A row in the tens of ms is therefore a REAL stall, not an
+  artefact of how the window is drawn.
+- The request BODY is NOT in the window, however much it looks like it
+  should be. php-fpm stamps REQUEST_TIME_FLOAT when the FastCGI params
+  record arrives; the body streams in after that. A body held back
+  600 ms and a genuine 100-continue round trip both still report 1 ms.
+  So a client's round trip cannot explain a reading and neither can a
+  slow uplink - do not re-propose either. Nothing in hello.php can cause
+  its own queue wait.
+- Nor can a client's own siblings: twelve of one client's requests in
+  flight on a single HTTP/2 connection all read 1 ms.
+- What is left for a tens-of-ms row is the machine we share, and it is
+  NARROWED, not known. Six and twelve in flight leave our own pool
+  nowhere near its ~20 ceiling, so it is not a worker of ours. The two
+  candidates left are a cold filesystem lookup (Apache walks the
+  directory and parses .htaccess on every request, and a dentry miss on
+  shared storage costs tens of ms) and a wait for a CPU slice (one CFS
+  period is ~24-48 ms). Both are binary, which is why the readings are
+  1 ms or ~30 ms with nothing between, and neither can be reproduced
+  from outside: hammering keeps the cache warm and the process
+  runnable. To tell them apart, record sys_getloadavg per core on the
+  row - high says the neighbours, near zero says storage. Not done;
+  three rows a day against a 0.9 ms mean does not earn it yet.
 - Deep is a floor, not a count - siblings that finish during the wait are
   not in it (see Util::noteCaller).
-- A POST's body still has to arrive after Apache stamps X-Request-Start,
-  so one RTT on a domestic line (~20-35 ms) lands in this metric looking
-  exactly like a busy pool. Nothing in hello.php can cause its own queue
-  wait.
 - The minute fold is invisible: Counters::hit() runs flushDue() in the
   deferred tail, after cost() has been computed, so the fold's own time
   never shows in the per-script .ms column yet occupies the worker.

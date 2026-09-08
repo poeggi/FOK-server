@@ -194,6 +194,15 @@ final class Util
             header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
             header('Access-Control-Allow-Headers: Content-Type');
             header('Access-Control-Max-Age: 86400');
+            // A browser blanks the Resource Timing breakdown of a
+            // cross-origin response unless the server allows it: the
+            // protocol, the connect and TLS marks and the transfer sizes all
+            // read empty or zero. A client needs them to tell a cold
+            // connection from a warm one before it anchors its clock. It
+            // names the caller rather than answering any origin because it
+            // also discloses the response SIZE, and who may read an answer is
+            // exactly what the allowlist governs.
+            header('Timing-Allow-Origin: ' . $origin);
         }
         if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
             http_response_code(204);

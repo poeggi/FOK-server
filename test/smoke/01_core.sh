@@ -13,6 +13,17 @@ expect "game origin allowed by CORS" 'poeggi.github.io' "$R"
 expect "version endpoint" '"server":"' "$R"
 expect "api contract version" '"api":' "$R"
 expect "environment reported" "\"env\":\"$EXPECT_ENV\"" "$R"
+# Resource Timing blanks the connection breakdown of a cross-origin response -
+# protocol, connect and TLS marks, transfer sizes - unless the server allows
+# it, and a client reads those to tell a cold connection from a warm one. The
+# allowlist governs it too, because the breakdown includes the response size.
+expect "timing allowed for the game origin"     'timing-allow-origin: https://poeggi.github.io' "$(echo "$R" | tr 'A-Z' 'a-z')"
+R=$(curl -s -i -H 'Origin: https://not.allowed.example' "$BASE/api/version.php" | tr 'A-Z' 'a-z')
+if echo "$R" | grep -q 'timing-allow-origin'; then
+    echo "FAIL an unlisted origin is told the timing"; fail=1
+else
+    echo "ok   an unlisted origin is not told the timing"
+fi
 # The preflight is the other half of every cross-origin POST, so it sits on
 # the critical path of a duel forming. Apache answers it without starting
 # PHP (public/.htaccess). Header names are lowercased before matching: HTTP/2
@@ -34,6 +45,13 @@ if [ "$REMOTE" -eq 1 ]; then
     else
         echo "ok   preflight bypasses PHP"
     fi
+    # The clock source is a static file, so its headers come from .htaccess
+    # and only a real Apache can answer for them.
+    R=$(curl -s -o /dev/null -D - "$BASE/api/t.txt" | tr 'A-Z' 'a-z')
+    expect "clock source stamps the arrival time" 'x-fok-t: t=' "$R"
+    expect "clock source exposes its stamp" 'access-control-expose-headers: x-fok-t' "$R"
+    expect "clock source is never cached" 'cache-control: no-store' "$R"
+    expect "clock source allows timing" 'timing-allow-origin: *' "$R"
 fi
 
 # The field diagnostic behind "my phone cannot see the lobby on my PC": it

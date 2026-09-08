@@ -86,7 +86,12 @@ works when it is not.
   both answer any origin. `t.txt` discloses nothing the standard HTTP `Date`
   header does not. The `OPTIONS` preflight on `/api/` carries no data, and
   the response behind it still comes from PHP and still applies the
-  allowlist, so a stranger still cannot read an answer.
+  allowlist, so a stranger still cannot read an answer. A reply to an allowed
+  origin also carries `Timing-Allow-Origin` naming that origin. Without it a
+  browser blanks the connection breakdown of a cross-origin request -
+  `nextHopProtocol`, the connect and TLS marks, the transfer sizes. It names
+  the caller rather than any origin because it also discloses the response
+  size. `t.txt` answers any origin: its own size is fixed.
 - Transport: HTTPS only, and ENFORCED rather than merely expected, at three
   levels:
   - `http://` is answered with a redirect to the same path on `https://`
@@ -144,6 +149,9 @@ Apache received the request, in MICROSECONDS since the epoch (note the
 `t=` prefix; divide by 1000 for PTS milliseconds). The header is exposed
 via CORS (`Access-Control-Expose-Headers`) and the response is
 `no-store` - never cache it, a cached timestamp is a wrong clock.
+`Timing-Allow-Origin` is set as well, so a browser may read the connection
+breakdown: a client can SEE that a request paid a TCP and TLS handshake
+rather than inferring it from an outlying first sample.
 
 Static on purpose: it is answered without PHP, so it never queues for a
 PHP-FPM worker. That queue wait happens before PHP starts, so PHP can

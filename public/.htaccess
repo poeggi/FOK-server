@@ -115,11 +115,18 @@
 # endpoints use: this file bypasses PHP, so it cannot consult that list,
 # and it discloses nothing the HTTP Date header does not already.
 # Expose-Headers is what lets a browser read X-Fok-T cross-origin at all.
+# Timing-Allow-Origin unblanks the connection breakdown beside it, so a client
+# can SEE that a sample paid a TCP and TLS handshake instead of guessing from
+# an outlying first reading. It is * for the same reason Allow-Origin is: this
+# file bypasses PHP and cannot consult the allowlist. It discloses nothing
+# either - the size it would tell an unlisted origin is the same two bytes for
+# everyone.
 <IfModule mod_headers.c>
     <Files "t.txt">
         Header set X-Fok-T "%t"
         Header set Cache-Control "no-store"
         Header set Access-Control-Allow-Origin "*"
         Header set Access-Control-Expose-Headers "X-Fok-T"
+        Header set Timing-Allow-Origin "*"
     </Files>
 </IfModule>
