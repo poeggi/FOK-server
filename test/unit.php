@@ -2626,6 +2626,68 @@ ok(FriendFeed::pending($me, $cur) === false, 'a quiet roster leaves the hold alo
 Presence::touchDuel($f1, 'ff550005');
 ok(FriendFeed::pending($me, $cur) === true, 'a friend transition wakes the held poll');
 
+// ---- Housekeeping asks for the writer, it never waits for it ---------
+// The hourly pass runs in a deferred tail on some client's worker, so a task
+// that cannot have the single writer is skipped and done next time instead
+// of sitting out busy_timeout (4 s) with a worker in its hand.
+ok(Db::tryWrite(static function (): void {
+    Db::get()->prepare(
+        "INSERT INTO counters (bucket, metric, value) VALUES ('meta', 'trylock', 1)
+         ON CONFLICT (bucket, metric) DO UPDATE SET value = excluded.value"
+    )->execute();
+}) === true, 'a free writer is taken and the work commits');
+$st = Db::get()->query("SELECT value FROM counters WHERE bucket = 'meta' AND metric = 'trylock'");
+$wrote = (int)$st->fetchColumn();
+$st->closeCursor();
+ok($wrote === 1, 'what tryWrite committed is there to read');
+
+// A second connection holds the writer for the length of this block.
+$other = new PDO('sqlite:' . FOK_DB_FILE, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+$other->exec('PRAGMA busy_timeout = 0');
+$other->exec('BEGIN IMMEDIATE');
+$t0 = microtime(true);
+$skipped = Db::tryWrite(static function (): void {
+    Db::get()->prepare("DELETE FROM counters WHERE bucket = 'meta' AND metric = 'trylock'")->execute();
+});
+$waitedMs = (microtime(true) - $t0) * 1000;
+$other->exec('ROLLBACK');
+$other = null;
+ok($skipped === false, 'a writer somebody else holds is skipped, not waited for');
+ok($waitedMs < 500, 'and the skip does not sit out busy_timeout');
+$st = Db::get()->query("SELECT value FROM counters WHERE bucket = 'meta' AND metric = 'trylock'");
+$survived = (int)$st->fetchColumn();
+$st->closeCursor();
+ok($survived === 1, 'a skipped task left the database exactly as it was');
+
+// ---- What every database access costs -------------------------------
+// Two readings, taken apart at the only place they CAN be taken apart: a
+// BEGIN IMMEDIATE does nothing but acquire, so its whole duration is a lock
+// wait, and anything else is the statement's own work (see Load::noteTime).
+// The skip above is still pending in this request, so it folds with them.
+$dbcost = inOneMinute(static function (): array {
+    Db::get()->exec('DELETE FROM counters');
+    Db::get()->exec('BEGIN IMMEDIATE');
+    Db::get()->exec('COMMIT');
+    $st = Db::get()->query('SELECT COUNT(*) FROM players');
+    $st->fetchColumn();
+    $st->closeCursor();
+    Load::flush();
+    Counters::flushDue(gmdate('YmdHi', time() + 60));
+    $out = [];
+    foreach (Db::get()->query('SELECT metric, value FROM counters')->fetchAll() as $r) {
+        $out[(string)$r['metric']] = (int)$r['value'];
+    }
+    return $out;
+});
+ok(($dbcost['n:dbw_n'] ?? 0) >= 1, 'taking the writer is booked as a lock wait');
+ok(($dbcost['n:dbt_n'] ?? 0) >= 1, 'an ordinary statement is booked as access time');
+// The worst single case of the minute, beside the mean. Only the statement
+// side is asserted: an UNCONTENDED acquisition can round to zero
+// microseconds, and a maximum of zero is not recorded (Counters::max).
+ok(isset($dbcost['x:dbt_us']) && $dbcost['x:dbt_us'] > 0,
+    'the slowest statement of the minute is kept beside the mean');
+ok(($dbcost['n:db_skip'] ?? 0) >= 1, 'a writer the housekeeping stepped aside for is counted');
+
 // Cleanup
 Db::close();
 foreach (glob($tmp . '/backups/*') ?: [] as $f) {

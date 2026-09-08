@@ -52,6 +52,8 @@ final class AdminData
             // here rather than off the history payload so the gauge's popup
             // has them the moment it opens (see Counters::worst).
             'q_worst' => self::worstNamed(Counters::worstList('q_us')),
+            // ...and the slowest database accesses, read the same way.
+            'db_worst' => self::worstNamed(Counters::worstList('db_us')),
             'php' => PHP_VERSION,
             'server_version' => FOK_SERVER_VERSION,
             'env' => FOK_ENV,
@@ -179,33 +181,41 @@ final class AdminData
      * request count, "n:" a counted total, "g:" a sampled level, and a dotted
      * suffix the cost of the endpoint before the dot.
      */
+    /**
+     * Metrics the live window carries through as they are, metric => field.
+     *
+     * The three pairs are a sum beside a count, useful only divided into
+     * each other: the queue wait a request served out before it started
+     * (Load::queueUs), the time spent taking the single writer, and the time
+     * spent running statements (Load::noteTime). The mean is worked out at
+     * the end and the pair does not travel to the browser. An "x:" beside a
+     * pair is the worst single case of the bucket, which a mean hides.
+     */
+    private const DIRECT = [
+        'n:msg_out' => 'out',
+        'n:db_w' => 'db_writes',
+        'n:db_skip' => 'db_skip',
+        'n:q_us' => 'q_us',
+        'n:q_n' => 'q_n',
+        'x:q_us' => 'q_max_us',
+        'n:dbw_us' => 'dbw_us',
+        'n:dbw_n' => 'dbw_n',
+        'x:dbw_us' => 'dbw_max_us',
+        'n:dbt_us' => 'dbt_us',
+        'n:dbt_n' => 'dbt_n',
+        'x:dbt_us' => 'dbt_max_us',
+    ];
+
     private static function window(string $bucket): array
     {
         $out = ['in' => 0, 'out' => 0, 'db_writes' => 0, 'wall_ms' => 0, 'cpu_ms' => 0,
-            'db' => 0, 'top' => null, 'top_ms' => 0, 'q_n' => 0, 'q_us' => 0, 'q_max_us' => 0];
+            'db' => 0, 'top' => null, 'top_ms' => 0];
+        foreach (self::DIRECT as $field) {
+            $out[$field] = 0;
+        }
         foreach (self::bucket($bucket) as $metric => $v) {
-            if ($metric === 'n:msg_out') {
-                $out['out'] = $v;
-                continue;
-            }
-            if ($metric === 'n:db_w') {
-                $out['db_writes'] = $v;
-                continue;
-            }
-            // The queue: how long requests waited for a worker before they
-            // started (see Load::queueUs). The sum and the count are only
-            // useful divided into each other, so the average is worked out
-            // here and the pair does not travel to the browser.
-            if ($metric === 'n:q_us') {
-                $out['q_us'] = $v;
-                continue;
-            }
-            if ($metric === 'n:q_n') {
-                $out['q_n'] = $v;
-                continue;
-            }
-            if ($metric === 'x:q_us') {
-                $out['q_max_us'] = $v;
+            if (isset(self::DIRECT[$metric])) {
+                $out[self::DIRECT[$metric]] = $v;
                 continue;
             }
             // req_min is the same requests counted once more, as a total; the
@@ -235,8 +245,15 @@ final class AdminData
                     break;
             }
         }
-        $out['q_mean_us'] = $out['q_n'] > 0 ? (int)round($out['q_us'] / $out['q_n']) : 0;
+        $out['q_mean_us'] = self::mean($out['q_us'], $out['q_n']);
+        $out['dbw_mean_us'] = self::mean($out['dbw_us'], $out['dbw_n']);
+        $out['dbt_mean_us'] = self::mean($out['dbt_us'], $out['dbt_n']);
         return $out;
+    }
+
+    private static function mean(int $sum, int $n): int
+    {
+        return $n > 0 ? (int)round($sum / $n) : 0;
     }
 
     /** One bucket's metrics, in the metric => value shape hours() keys by. */

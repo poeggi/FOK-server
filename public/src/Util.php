@@ -496,10 +496,21 @@ final class Util
      */
     private static function queueWho(bool $fresh): array
     {
+        return self::who() + ['w' => $fresh ? 1 : 0];
+    }
+
+    /**
+     * Which request this is, for any worst-case list: the script, the
+     * address and the player where one is known. One builder, so the queue
+     * list and the database list name a request the same way.
+     *
+     * @return array<string, mixed>
+     */
+    public static function who(): array
+    {
         $who = [
             's' => basename((string)($_SERVER['SCRIPT_NAME'] ?? '')),
             'ip' => self::clientIp(),
-            'w' => $fresh ? 1 : 0,
         ];
         if (self::$caller !== null) {
             $who['id'] = self::$caller;
@@ -533,6 +544,12 @@ final class Util
         if ($reqPerMin > 0 && $reqPerMin % 25 === 0) {
             self::watch($reqPerMin);
         }
+        // The hourly work is NOT on that sample. The count it reads is per
+        // MINUTE, so a server that never sees 25 requests inside one minute
+        // never reaches it - and then the expiry, the sweeps, the gauge
+        // samples and the counter pruning never run at all. Its gate is one
+        // shared-memory add of its own (see hourly).
+        self::hourly();
     }
 
     /**
@@ -603,80 +620,106 @@ final class Util
         if ($online > Settings::int('alert_online')) {
             Alerts::raise('connections', "Excessive connections: $online players online");
         }
-        // At most once per hour, and in exactly one worker (see claimHourly).
-        $db = Db::get();
-        if (self::claimHourly()) {
-            $n = Db::retry(static fn(): int => Presence::expireStale());
+    }
+
+    /**
+     * The once-an-hour work: player expiry, the sweeps, a reading of the
+     * levels the dashboard graphs, and the pruning of the counter buckets
+     * nothing reads back. Runs in exactly one worker per hour and opens no
+     * database in any other (see claimHourly).
+     */
+    private static function hourly(): void
+    {
+        if (!self::claimHourly()) {
+            return;
+        }
+        require_once __DIR__ . '/Presence.php';
+        require_once __DIR__ . '/Housekeeping.php';
+        require_once __DIR__ . '/Counters.php';
+        // Every task takes the writer WITHOUT waiting and is skipped when
+        // another request holds it (see Db::tryWrite). None of this is
+        // urgent and all of it is idempotent, so a skip costs nothing - and
+        // waiting would cost a worker out of a pool of about twenty, on a
+        // request whose client already has its answer. One task per lock, so
+        // the writer is free again between them.
+        $done = Db::tryWrite(static function (): void {
+            $n = Presence::expireStale();
             if ($n > 0) {
                 Alerts::raise('expiry', "Expired $n player(s) not seen for "
                     . Settings::int('player_ttl_days') . ' days; friendships cancelled');
             }
-            // Same cadence for the rows no reader can reach any more: the
-            // pair a finished duel leaves behind, alerts that have been read
-            // and settings keys no release knows (see Housekeeping).
-            require_once __DIR__ . '/Housekeeping.php';
-            Housekeeping::sweep();
-            // On the same hourly cadence: a reading of the levels the
-            // dashboard graphs, which no counter accumulates (see
-            // Counters::sampleGauges).
-            require_once __DIR__ . '/Counters.php';
-            Counters::sampleGauges();
-            // And drop minute buckets older than 2h. A minute stamp is twelve
-            // digits where an hour stamp is ten, so this leaves the history
-            // and the lifetime totals alone. They are pure bloat once the
-            // Live tab has moved past them, and doing it here keeps the
-            // DELETE (and its write lock) off the other ~24 in 25 watch()
-            // calls.
-            Db::retry(static function () use ($db): void {
-                $db->prepare(
-                    "DELETE FROM counters
-                     WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
-                       AND bucket < ?"
-                )->execute([gmdate('YmdHi', time() - 7200)]);
-            });
-            // Same cadence for the traffic history. An hour bucket is ten
-            // digits (GLOB matches the whole string, so the lifetime totals
-            // and the meta rows, whose buckets are not numeric, are never
-            // touched), and every endpoint books four of them an hour now
-            // that it also carries its cost - a month of that is already far
-            // more than anything reads back.
-            Db::retry(static function () use ($db): void {
-                $db->prepare(
-                    "DELETE FROM counters
-                     WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' AND bucket < ?"
-                )->execute([gmdate('YmdH', time() - 30 * 86400)]);
+        });
+        // The rows no reader can reach any more: the pair a finished duel
+        // leaves behind, alerts that have been read and settings keys no
+        // release knows (see Housekeeping).
+        $done = Db::tryWrite(static fn() => Housekeeping::sweep()) && $done;
+        // A reading of the levels the dashboard graphs, which no counter
+        // accumulates (see Counters::sampleGauges).
+        $done = Db::tryWrite(static fn() => Counters::sampleGauges()) && $done;
+        $done = Db::tryWrite(static fn() => self::pruneCounters()) && $done;
+        // The hour is closed only by a pass that did all of it. One that was
+        // sent away comes back in a minute rather than an hour, and finds
+        // the tasks that did run with nothing left to do.
+        if ($done) {
+            $done = Db::tryWrite(static function (): void {
+                Db::get()->prepare(
+                    "INSERT INTO counters (bucket, metric, value) VALUES ('meta', 'player_sweep', ?)
+                     ON CONFLICT (bucket, metric) DO UPDATE SET value = excluded.value"
+                )->execute([time()]);
             });
         }
+        if (!$done && Caps::apcu()) {
+            apcu_store(FOK_APCU_NS . 'sweep:hourly', 1, 60);
+        }
+    }
+
+    /**
+     * The counter buckets nothing reads back any more.
+     *
+     * Minute buckets go at 2 h: a minute stamp is twelve digits where an
+     * hour stamp is ten, so this leaves the history and the lifetime totals
+     * alone, and they are pure bloat once the Live tab has moved past them.
+     * Hour buckets go at 30 days - GLOB matches the whole string, so the
+     * lifetime totals and the meta rows, whose buckets are not numeric, are
+     * never touched, and every endpoint books four of them an hour now that
+     * it also carries its cost.
+     */
+    private static function pruneCounters(): void
+    {
+        $db = Db::get();
+        $db->prepare(
+            "DELETE FROM counters
+             WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
+               AND bucket < ?"
+        )->execute([gmdate('YmdHi', time() - 7200)]);
+        $db->prepare(
+            "DELETE FROM counters
+             WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' AND bucket < ?"
+        )->execute([gmdate('YmdH', time() - 30 * 86400)]);
     }
 
     /**
      * Wins for exactly one worker per hour. The marker row is the horizon
      * and stays the record - so a flushed cache cannot make the hourly work
-     * run twice in one hour - but reading it and writing it back is not
-     * atomic, and two workers that read the same value would both proceed.
-     * The shared-memory add settles that: it succeeds for one caller.
+     * run twice in one hour - but reading it is not atomic with moving it,
+     * and two workers that read the same value would both proceed. The
+     * shared-memory add settles that: it succeeds for one caller. The marker
+     * is moved by a pass that finished, not by the claim (see hourly).
      */
     private static function claimHourly(): bool
     {
+        require_once __DIR__ . '/Caps.php';
+        // Shared memory answers first, so a request that is not the one
+        // doing the work costs one apcu_add and never opens the database.
+        if (Caps::apcu() && !apcu_add(FOK_APCU_NS . 'sweep:hourly', 1, 3600)) {
+            return false;
+        }
         $db = Db::get();
         $st = $db->prepare("SELECT value FROM counters WHERE bucket = 'meta' AND metric = 'player_sweep'");
         $st->execute();
         $last = (int)$st->fetchColumn();
         $st->closeCursor();
-        if ($last >= time() - 3600) {
-            return false;
-        }
-        require_once __DIR__ . '/Caps.php';
-        if (Caps::apcu() && !apcu_add(FOK_APCU_NS . 'sweep:hourly', 1, 3600)) {
-            return false;
-        }
-        Db::retry(static function () use ($db): void {
-            $db->prepare(
-                "INSERT INTO counters (bucket, metric, value) VALUES ('meta', 'player_sweep', ?)
-                 ON CONFLICT (bucket, metric) DO UPDATE SET value = excluded.value"
-            )->execute([time()]);
-        });
-        return true;
+        return $last < time() - 3600;
     }
 
     // Counts invalid (HTTP 400) requests per IP per minute and alerts on

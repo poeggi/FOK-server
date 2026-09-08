@@ -14,8 +14,10 @@ FEATURE-DETECT and never version-gate an optional feature. Dropping an
 OPTIONAL field is likewise not a MAJOR break when the contract already
 requires an absent field to mean the client's own default; docs/API.md
 records such withdrawals. FOK_SERVER_VERSION (implementation) is
-independent and bumps every release; "minor version" means bump the LAST
-digit, tagged as a bare number (feedback_fok_server_version_bump.md).
+independent and bumps every release: a release that MOVES THE CONTRACT
+bumps the middle digit and resets the last one (1.4.18 -> 1.5.0), any
+other one bumps the last digit, tagged as a bare number
+(feedback_fok_server_version_bump.md).
 Some releases shipped untagged, so match the next release number to the
 LIVE version.php, never to the last git tag. docs/API.md is THE client
 contract and must stay in step.

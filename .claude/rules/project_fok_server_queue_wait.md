@@ -48,6 +48,33 @@ Reading caveats:
   continuous MEAN plateau across a disputed minute proves the bucket
   existed.
 
+## DB wait gauge (since 1.5.0)
+
+Two different things, deliberately kept apart:
+
+- WAIT is `BEGIN IMMEDIATE` and nothing else - the one statement whose
+  whole job is taking the single writer, so its whole duration IS the
+  wait. Friends, Items, Starts and Db::tryWrite are the paths that take
+  it.
+- TOOK is every other statement's own duration. A bare write that waited
+  out busy_timeout counts that wait as part of it: SQLite does not report
+  the busy handler's sleep, so the split cannot be made there. Do not
+  re-propose splitting it.
+
+Both accumulate in the request and are booked once in the deferred tail
+(Load::flush), in the same sum/count/`x:` shapes the queue gauge uses, so
+the graphs and the worst list are the same code. The connection open is
+deliberately excluded (Load::openDone): five PRAGMAs and a schema read
+that every request pays identically would BE the mean.
+
+The worst list keeps the slowest ACCESS OF EACH REQUEST, not every access
+- naming one costs a shared-memory read and write, and a request issuing
+twenty statements must not pay that twenty times.
+
+`n:db_skip` under the table is the housekeeping declining to queue for the
+writer (Db::tryWrite), not an error. It is the only reading that says
+contention was real rather than theoretical.
+
 APCu namespacing rule (from the shared-counter-buffer bug fixed in
 1.4.8): Counters::PREFIX and Presence::COUNTS_KEY build on FOK_APCU_NS
 because both are counted out of a PER-ENVIRONMENT database - a bare

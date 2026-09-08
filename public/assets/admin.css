@@ -146,6 +146,17 @@ button.small {
     justify-content: center;
 }
 
+/* Every refresh flashes its own button, so an automatic one looks like the
+   click that would have done the same thing and a tile that keeps itself up
+   to date says so. One animation for the cards, the popups and the graphs -
+   whatever refreshes, this is what it looks like. */
+@keyframes ctl-flash {
+    from { border-color: var(--accent); background: rgba(61, 220, 132, 0.22); }
+    to { border-color: var(--border); background: var(--card); }
+}
+button.flashing { animation: ctl-flash 320ms ease-out; }
+@media (prefers-reduced-motion: reduce) { button.flashing { animation: none; } }
+
 /* Refresh-interval control: one in the top bar (global), one per card that
    carries its own interval, one in the client popup. */
 .interval { display: inline-flex; align-items: center; gap: 5px; }

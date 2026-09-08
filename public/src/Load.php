@@ -28,6 +28,23 @@ final class Load
     private static int $queries = 0;
     private static ?float $cpu0 = null;
 
+    // What the database cost this request in microseconds, split into taking
+    // the single writer and running the statements themselves (see noteTime).
+    // Sum and count make the mean, the maximum is the worst one case a mean
+    // would hide, and $slowest is the one access worth naming.
+    private static int $lockUs = 0;
+    private static int $lockN = 0;
+    private static int $lockMax = 0;
+    private static int $sqlUs = 0;
+    private static int $sqlN = 0;
+    private static int $sqlMax = 0;
+    /** @var array{us:int, sql:string, lock:bool}|null */
+    private static ?array $slowest = null;
+
+    // Under this, a statement is not worth naming in the worst list (the
+    // same floor Counters::worst applies to a queue wait).
+    private const SLOW_FLOOR_US = 1000;
+
     public static function tick(string $metric, int $n = 1): void
     {
         if ($n <= 0 || self::$untracked) {
@@ -62,6 +79,55 @@ final class Load
             || $verb === 'CRE' || $verb === 'ALT' || $verb === 'DRO') {
             self::tick('db_w');
         }
+    }
+
+    /**
+     * How long one database access took, in microseconds.
+     *
+     * A statement that does nothing but TAKE the single writer - BEGIN
+     * IMMEDIATE - is booked as a lock wait, because waiting is all it does.
+     * Everything else is booked as access duration. SQLite does not report
+     * how long its busy handler slept inside an ordinary statement, so a
+     * bare write that waited counts the wait as part of its duration; the
+     * explicit acquisitions are where a real stall shows and they are what
+     * every contended path takes (Friends, Items, Starts, Db::tryWrite).
+     *
+     * The slowest access of the request is remembered rather than filed
+     * here: naming one costs a shared-memory read and write, and a request
+     * that issues twenty statements must not pay that twenty times (see
+     * flush).
+     */
+    public static function noteTime(string $sql, int $us): void
+    {
+        if (self::$untracked || $us < 0) {
+            return;
+        }
+        $lock = stripos(ltrim($sql), 'BEGIN IMMEDIATE') === 0;
+        if ($lock) {
+            self::$lockUs += $us;
+            self::$lockN++;
+            self::$lockMax = max(self::$lockMax, $us);
+        } else {
+            self::$sqlUs += $us;
+            self::$sqlN++;
+            self::$sqlMax = max(self::$sqlMax, $us);
+        }
+        if ($us >= self::SLOW_FLOOR_US && $us > (int)(self::$slowest['us'] ?? 0)) {
+            self::$slowest = ['us' => $us, 'sql' => self::shortSql($sql), 'lock' => $lock];
+        }
+        self::arm();
+    }
+
+    /**
+     * A statement as the worst list shows it: the first few words, which is
+     * the verb and the table. The whole text can be a page of SQL and the
+     * column is one line, and anything past the table name says nothing an
+     * operator reading a slow access needs.
+     */
+    private static function shortSql(string $sql): string
+    {
+        $flat = preg_replace('/\s+/', ' ', trim($sql)) ?? '';
+        return strlen($flat) > 40 ? substr($flat, 0, 39) . '...' : $flat;
     }
 
     /** Database queries this request has issued so far (see noteQuery). */
@@ -100,6 +166,12 @@ final class Load
     public static function openDone(): void
     {
         self::$queries = 0;
+        // The same argument for the timings: five PRAGMAs and a schema read
+        // that every request pays identically would BE the access-time mean.
+        // What opening costs has its own reading on the Performance card.
+        self::$lockUs = self::$lockN = self::$lockMax = 0;
+        self::$sqlUs = self::$sqlN = self::$sqlMax = 0;
+        self::$slowest = null;
     }
 
     /**
@@ -185,15 +257,42 @@ final class Load
      */
     public static function flush(): void
     {
-        if (self::$pending === []) {
-            return;
-        }
+        require_once __DIR__ . '/Counters.php';
         $pending = self::$pending;
         self::$pending = [];
-        require_once __DIR__ . '/Counters.php';
         foreach ($pending as $metric => $n) {
             Counters::add('n:' . $metric, $n);
         }
+        self::flushDbTime();
+    }
+
+    /**
+     * What the database cost, booked in the shapes every other gauge uses: a
+     * sum and a count that divide into the mean, a maximum beside them, and
+     * the one slowest access named in the standing worst list. All of it
+     * once per request, all of it in shared memory.
+     */
+    private static function flushDbTime(): void
+    {
+        if (self::$lockN > 0) {
+            Counters::add('n:dbw_us', self::$lockUs);
+            Counters::add('n:dbw_n', self::$lockN);
+            Counters::max('dbw_us', self::$lockMax);
+        }
+        if (self::$sqlN > 0) {
+            Counters::add('n:dbt_us', self::$sqlUs);
+            Counters::add('n:dbt_n', self::$sqlN);
+            Counters::max('dbt_us', self::$sqlMax);
+        }
+        if (self::$slowest !== null) {
+            Counters::worst('db_us', self::$slowest['us'], Util::who() + [
+                'q' => self::$slowest['sql'],
+                'lk' => self::$slowest['lock'] ? 1 : 0,
+            ]);
+        }
+        self::$lockUs = self::$lockN = self::$lockMax = 0;
+        self::$sqlUs = self::$sqlN = self::$sqlMax = 0;
+        self::$slowest = null;
     }
 }
 
@@ -203,14 +302,24 @@ final class LoadPDO extends PDO
     public function exec(string $statement): int|false
     {
         Load::noteQuery($statement);
-        return parent::exec($statement);
+        $t = microtime(true);
+        try {
+            return parent::exec($statement);
+        } finally {
+            Load::noteTime($statement, (int)round((microtime(true) - $t) * 1e6));
+        }
     }
 
     /** The other direct path: a one-shot read that skips prepare(). */
     public function query(string $query, ?int $fetchMode = null, mixed ...$args): PDOStatement|false
     {
         Load::noteQuery($query);
-        return parent::query($query, $fetchMode, ...$args);
+        $t = microtime(true);
+        try {
+            return parent::query($query, $fetchMode, ...$args);
+        } finally {
+            Load::noteTime($query, (int)round((microtime(true) - $t) * 1e6));
+        }
     }
 }
 
@@ -224,6 +333,11 @@ final class LoadStatement extends PDOStatement
     public function execute(?array $params = null): bool
     {
         Load::noteQuery($this->queryString);
-        return parent::execute($params);
+        $t = microtime(true);
+        try {
+            return parent::execute($params);
+        } finally {
+            Load::noteTime($this->queryString, (int)round((microtime(true) - $t) * 1e6));
+        }
     }
 }

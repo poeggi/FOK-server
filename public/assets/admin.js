@@ -385,14 +385,18 @@ async function showClient(id) {
     // The head is built once and stays put; only the body re-renders, so
     // the interval control keeps focus and the popup does not flicker.
     const { overlay, head, title, name, body, close } = makeModal(id);
+    const refresh = el('button', 'small refresh', 'refresh');
     title.append(el('span', 'modal-id', id));
 
+    body._sid = 'client';
     const load = async () => {
+        flash(refresh);
         try {
             const d = await api('client&id=' + id);
             if (!d.ok) throw new Error(d.error || 'failed');
             name.textContent = d.client.name || '(no name)';
             renderClientBody(body, overlay, d, load);
+            restoreScroll(body);
         } catch (e) {
             body.replaceChildren(el('p', 'error', 'Error: ' + e.message));
         }
@@ -406,7 +410,6 @@ async function showClient(id) {
     overlay._stop = () => { if (timer) clearInterval(timer); };
 
     const ctl = localIntervalControl(() => clientRefreshSecs, (s) => { clientRefreshSecs = s; restart(); });
-    const refresh = el('button', 'small refresh', 'refresh');
     refresh.onclick = load;
     head.append(title, ctl, refresh, close);
 
@@ -758,13 +761,27 @@ function series(buckets, keys, pick, level) {
 // One named metric, absent meaning "not recorded" rather than zero.
 const one = (name) => (m) => (m[name] === undefined ? null : m[name]);
 
-// The queue, in milliseconds, off the two shapes Util::noteQueue books it as:
-// a sum with a count to divide it by, and a per-bucket maximum. Absent means
-// the bucket recorded no wait at all - not a wait of zero - so the graph
-// leaves a true zero there rather than carrying a reading forward.
-const qMeanMs = (m) => (m['n:q_n'] === undefined ? null
-    : (m['n:q_n'] > 0 ? (m['n:q_us'] || 0) / m['n:q_n'] / 1000 : 0));
-const qMaxMs = (m) => (m['x:q_us'] === undefined ? null : m['x:q_us'] / 1000);
+// The two shapes every timing gauge is booked in: a sum with a count to
+// divide it by, and a per-bucket maximum, both in microseconds and both read
+// as milliseconds. Absent means the bucket recorded nothing at all - not a
+// reading of zero - so the graph leaves a true gap rather than carrying a
+// value forward. One definition, so the queue and the database gauges cannot
+// draw the same shape two different ways.
+const meanMs = (sum, n) => (m) => (m[n] === undefined ? null
+    : (m[n] > 0 ? (m[sum] || 0) / m[n] / 1000 : 0));
+const maxMs = (name) => (m) => (m[name] === undefined ? null : m[name] / 1000);
+const qMeanMs = meanMs('n:q_us', 'n:q_n');
+const qMaxMs = maxMs('x:q_us');
+
+// A pair of readings in ONE bubble cell. The unit is written once where both
+// carry the same one, which is what lets a pair fit where two whole figures
+// would not; where they differ - a mean in milliseconds beside a worst in
+// seconds - both keep theirs, because dropping one would lie.
+function pairQms(a, b) {
+    const x = fmtQms(a), y = fmtQms(b);
+    const cut = x.indexOf(' ');
+    return x.slice(cut) === y.slice(y.indexOf(' ')) ? x.slice(0, cut) + ' | ' + y : x + ' | ' + y;
+}
 
 // Summed over the endpoints, by the same metric shapes AdminData::window
 // sorts by: '' is the request counts, '.ms' / '.cpu' / '.db' what they cost.
@@ -840,10 +857,55 @@ function worstQueue(rows) {
     return box;
 }
 
+// The slowest database accesses on record, under the graphs of the same
+// gauge. The graphs say the database got slow; this says which statement it
+// was.
+//
+// A row carries a figure in ONE of the two columns. WAITED is a lock
+// acquisition - BEGIN IMMEDIATE, which does nothing but take the single
+// writer, so its whole duration is the wait. TOOK is a statement doing its
+// own work. Never both: SQLite does not report the two apart inside one
+// ordinary statement (see Load::noteTime).
+function worstDb(rows, skipped) {
+    const box = el('div');
+    box.append(el('div', 'subhead', 'Slowest accesses, last 24 h'));
+    if (!rows || !rows.length) {
+        box.append(el('div', 'muted', 'No access has taken as long as a millisecond. '
+            + 'Shorter ones are not recorded - there is nothing in them to diagnose.'));
+    } else {
+        const t = el('table');
+        const hr = el('tr');
+        hr.append(el('th', '', 'When'), el('th', 'num', 'Waited'), el('th', 'num', 'Took'),
+            el('th', '', 'Statement'), el('th', '', 'Script'), el('th', '', 'Player'));
+        t.append(hr);
+        // Five, as the gauge promises. The store keeps ten, which is what
+        // makes the fifth trustworthy after a couple of them age out.
+        for (const r of rows.slice(0, 5)) {
+            const tr = el('tr');
+            const ms = fmtQms(r.v / 1000);
+            tr.append(el('td', '', fmtSec(r.t)));
+            tr.append(r.lk ? el('td', 'num', ms) : el('td', 'muted num', '-'));
+            tr.append(r.lk ? el('td', 'muted num', '-') : el('td', 'num', ms));
+            tr.append(el('td', '', r.q || '-'));
+            tr.append(el('td', '', r.s || '-'));
+            tr.append(r.id ? idCell(r.id, r.name) : el('td', 'muted', '-'));
+            t.append(tr);
+        }
+        box.append(t);
+    }
+    // What the try-lock turned away. A skip is not a fault - it is the
+    // housekeeping declining to queue behind somebody - but it is the one
+    // reading that says the contention was real (see Db::tryWrite).
+    box.append(el('div', 'muted', skipped > 0
+        ? 'Housekeeping stepped aside for the writer ' + skipped + ' time(s) in this window.'
+        : 'Housekeeping never had to step aside for the writer in this window.'));
+    return box;
+}
+
 // A gauge's last 24 h, in the same overlay a player's details open in.
 // Under the grid the graphs had to share the tile's height budget with the
 // bubbles, which on a narrow screen left them scrolled out of sight.
-async function showGaugeCharts(gauge) {
+async function showGaugeCharts(gauge, srcId) {
     // Levels are sampled once an hour and only ever written to an hour
     // bucket (see Counters::sampleGauges), so a gauge that reads one keeps
     // its 24 h graph in either window - sixty minute buckets it was never
@@ -853,48 +915,73 @@ async function showGaugeCharts(gauge) {
     const ax = byMin ? AXIS.min : AXIS.hour;
     const name = gauge.label.replace(/\/(min|h)$/, '');
     const { overlay, head, title, close, body } = makeModal(name);
-    head.append(title, close);
+    const refresh = el('button', 'small refresh', 'refresh');
+    body._sid = 'gauge:' + gauge.label;
+
+    // The graph keeps step with the card it was opened from (see follows),
+    // and takes the gauge from that card's latest render: the last point of
+    // a sampled level and the table under the graphs are then the reading
+    // the bubble behind the popup is showing, not the one it opened on.
+    const load = async () => {
+        flash(refresh);
+        const g = (lastGauges[srcId] || []).find((x) => x.label === gauge.label) || gauge;
+        let hist;
+        try {
+            hist = await api(byMin ? 'load_min' : 'load');
+        } catch (e) {
+            body.replaceChildren(el('div', 'error', 'The history could not be read.'));
+            return;
+        }
+        // The operator may have closed it while the history was in flight.
+        if (!overlay.isConnected) return;
+        const charts = el('div', 'charts');
+        const keys = byMin ? minuteKeys(hist.now) : hourKeys(hist.now);
+        const buckets = (byMin ? hist.minutes : hist.hours) || {};
+        for (const [t, cls, pick, fmt, level, reading] of g.charts) {
+            const data = series(buckets, keys, pick, level);
+            // A level is sampled once an hour (see Counters::sampleGauges),
+            // so the newest sample the history holds can be most of an hour
+            // old and the graph would end on a figure the bubble beside it
+            // disagrees with. The bubble is right - it is read on the spot -
+            // so the last point is that reading, and "now" on the axis is
+            // true.
+            if (level && reading !== undefined) data[data.length - 1] = reading;
+            // A level reads the same however long the bucket was, and so
+            // does a per-request figure - it is an average or a worst case
+            // OVER the bucket, not an amount OF it. Only a true total
+            // carries the window in its title and only a true total is
+            // scaled pro rata: a mean queue wait multiplied up because the
+            // hour is half over would be an invention.
+            const flat = level || g.perRequest === true;
+            chart(charts, flat ? t : t + (byMin ? '/min' : '/h'),
+                (flat || byMin) ? data : partHour(data, hist.now), fmt, cls, ax);
+        }
+        body.replaceChildren(charts);
+        // The tile is on its minute window but this gauge is a LEVEL, read
+        // once an hour (see Counters::sampleGauges): there are no minute
+        // buckets to draw, so the graph is the day and says so rather than
+        // looking like the switch was ignored.
+        if (liveWindow === 'min' && !byMin) {
+            body.append(el('div', 'muted',
+                'Read once an hour, so this one is always the last 24 h.'));
+        }
+        if (g.extra) body.append(g.extra());
+        restoreScroll(body);
+    };
+
+    refresh.onclick = load;
+    head.append(title, refresh, close);
     body.append(el('div', 'muted', 'Loading the ' + ax.aria + '.'));
     document.body.append(overlay);
-    let hist;
-    try {
-        hist = await api(byMin ? 'load_min' : 'load');
-    } catch (e) {
-        body.replaceChildren(el('div', 'error', 'The history could not be read.'));
-        return;
-    }
-    // The operator may have closed it while the history was in flight.
-    if (!overlay.isConnected) return;
-    const charts = el('div', 'charts');
-    const keys = byMin ? minuteKeys(hist.now) : hourKeys(hist.now);
-    const buckets = (byMin ? hist.minutes : hist.hours) || {};
-    for (const [t, cls, pick, fmt, level, reading] of gauge.charts) {
-        const data = series(buckets, keys, pick, level);
-        // A level is sampled once an hour (see Counters::sampleGauges), so
-        // the newest sample the history holds can be most of an hour old and
-        // the graph would end on a figure the bubble beside it disagrees
-        // with. The bubble is right - it is read on the spot - so the last
-        // point is that reading, and the axis label "now" is true.
-        if (level && reading !== undefined) data[data.length - 1] = reading;
-        // A level reads the same however long the bucket was, and so does a
-        // per-request figure - it is an average or a worst case OVER the
-        // bucket, not an amount OF it. Only a true total carries the window
-        // in its title and only a true total is scaled pro rata: a mean queue
-        // wait multiplied up because the hour is half over would be an
-        // invention.
-        const flat = level || gauge.perRequest === true;
-        chart(charts, flat ? t : t + (byMin ? '/min' : '/h'),
-            (flat || byMin) ? data : partHour(data, hist.now), fmt, cls, ax);
-    }
-    body.replaceChildren(charts);
-    if (gauge.extra) body.append(gauge.extra());
+    follows(overlay, srcId, load);
+    await load();
 }
 
 function renderServerLive(box, d) {
     box.replaceChildren();
     const w = (d.live || {})[liveWindow]
         || { stamp: '--', in: 0, out: 0, db_writes: 0, wall_ms: 0, cpu_ms: 0, db: 0, top: null,
-            q_mean_us: 0, q_max_us: 0 };
+            q_mean_us: 0, q_max_us: 0, dbw_mean_us: 0, dbw_max_us: 0, db_skip: 0 };
     const m = d.apcu_mem || { used: 0, total: 0 };
     const per = liveWindow === 'min' ? '/min' : '/h';
     const win = (liveWindow === 'min' ? 'Last full minute (' : 'Last full hour (')
@@ -979,16 +1066,36 @@ function renderServerLive(box, d) {
             tip: win + 'Queries the endpoints caused - opening the connection is '
                 + 'not one of them (see Load::openDone). ' + graph,
             charts: [['DB queries', 'chart-db', total('.db'), fmtNum]] },
-        { label: 'Busiest script', value: w.top === null ? '-' : w.top, wide: true,
+        // What the database costs, beside what it is asked for: the writer
+        // is the ceiling on this host, so the wait to take it is the gauge
+        // that says whether the ceiling is being touched.
+        { label: 'DB wait mean | worst', perRequest: true,
+            value: pairQms(w.dbw_mean_us / 1000, w.dbw_max_us / 1000),
+            tip: win + 'How long a request waited to TAKE the single SQLite writer. '
+                + 'A wait can only be timed apart from the work it guards where the '
+                + 'lock is taken explicitly, so this is BEGIN IMMEDIATE: what a '
+                + 'friend accept, an item claim, a match start and the housekeeping '
+                + 'open. Near zero is a database nobody is fighting over; a climb '
+                + 'here is writers queueing behind each other, which no endpoint '
+                + 'timing can show. ' + graph + ' The graphs also carry how long '
+                + 'the statements themselves took, and the five slowest accesses of '
+                + 'the last 24 h are listed under them.',
+            charts: [['DB wait, mean', 'chart-wall', meanMs('n:dbw_us', 'n:dbw_n'), fmtQms],
+                ['DB wait, worst', 'chart-cpu', maxMs('x:dbw_us'), fmtQms],
+                ['Access time, mean', 'chart-db', meanMs('n:dbt_us', 'n:dbt_n'), fmtQms],
+                ['Access time, worst', 'chart-req', maxMs('x:dbt_us'), fmtQms]],
+            extra: () => worstDb(d.db_worst, w.db_skip) },
+        { label: 'Busiest script', value: w.top === null ? '-' : w.top,
             tip: win + 'Held the most worker time. ' + (w.top === null ? '' : graph),
             charts: w.top === null ? null
                 : [[w.top + ' requests', 'chart-req', one(w.top), fmtNum],
                     [w.top + ' worker time', 'chart-wall', one(w.top + '.ms'), fmtMs]] },
     ];
 
+    lastGauges.perf = gauges;
     bubbles(box, gauges.map((g) => ({
         label: g.label, value: g.value, tip: g.tip, wide: g.wide,
-        open: g.charts === null ? null : () => showGaugeCharts(g),
+        open: g.charts === null ? null : () => showGaugeCharts(g, 'perf'),
     })));
 }
 
@@ -1264,16 +1371,19 @@ async function showItem(uid) {
     modal.classList.add('wide');
     title.append(el('span', 'modal-id', uid.slice(0, 8) + '..'));
 
+    body._sid = 'item';
+    const refresh = el('button', 'small refresh', 'refresh');
     const load = async () => {
+        flash(refresh);
         try {
             const d = await api('item&uid=' + uid);
             name.textContent = d.item.item_id;
             renderItemBody(body, overlay, uid, d);
+            restoreScroll(body);
         } catch (e) {
             body.replaceChildren(el('p', 'error', 'Error: ' + e.message));
         }
     };
-    const refresh = el('button', 'small refresh', 'refresh');
     refresh.onclick = load;
     head.append(title, refresh, close);
     body.append(el('p', 'muted', 'Loading ...'));
@@ -1626,6 +1736,12 @@ const MODULES = [
         async refresh(box) {
             const d = await api('stats');
             box.replaceChildren();
+            const relaying = {
+                label: 'Relaying',
+                charts: [['Relayed duels', 'chart-req', one('g:relaying'),
+                    fmtNum, true, d.relaying]],
+            };
+            lastGauges.stats = [relaying];
             bubbles(box, [
                 { label: 'Users online', value: d.counts.online },
                 { label: 'Online v4 | v6', value: d.families.v4 + ' | ' + d.families.v6,
@@ -1641,11 +1757,7 @@ const MODULES = [
                 { label: 'Relaying', value: d.relaying,
                     tip: 'Right now. Duels whose game messages pass through the '
                         + 'server instead of going peer to peer. Click for the last 24 h.',
-                    open: () => showGaugeCharts({
-                        label: 'Relaying',
-                        charts: [['Relayed duels', 'chart-req', one('g:relaying'),
-                            fmtNum, true, d.relaying]],
-                    }) },
+                    open: () => showGaugeCharts(relaying, 'stats') },
                 { label: 'Friendships active | pending',
                     value: fmtNum(d.friendships) + ' | ' + fmtNum(d.friendships_pending), wide: true },
                 { label: 'Scores stored', value: d.scores_total },
@@ -2149,6 +2261,83 @@ function sortable(table, id) {
 }
 
 const boxes = {};
+const refreshBtn = {};
+
+// ------------------------------------------------------- scroll and flash
+//
+// A refresh rebuilds a card's contents, and a rebuilt scroll box starts at
+// the top - which on a tile that redraws every second puts everything below
+// the fold out of reach. Where each scroll region was left is remembered
+// here and put back after the rebuild.
+//
+// The offsets are recorded as the scrolling happens, not read off the DOM at
+// refresh time: a tab click changes the open tab BEFORE it asks for the
+// refresh, so a reading taken then would carry one tab's offset into
+// another. Key is card + open tab + the region's position, so every tab
+// keeps its own place and a tab opened for the first time starts at the top.
+const scrollAt = {};
+
+// Every scroll box a card or a popup owns, in document order: the body
+// itself (which scrolls when it holds no .pane) and the panes and tab panels
+// inside it - the height model in admin.css. One render builds the same list
+// as the last, so the position in it is the identity.
+function scrollBoxes(root) {
+    return [root, ...root.querySelectorAll('.pane, .tabpanel')];
+}
+
+function scrollKey(root) {
+    return root._sid + '|' + (tabState[root._sid] || '');
+}
+
+// scroll does not bubble, so this listens in the capture phase for the whole
+// page rather than binding one listener per rebuilt pane.
+document.addEventListener('scroll', (e) => {
+    const root = e.target.closest && e.target.closest('.card-body, .modal-body');
+    if (!root || !root._sid) return;
+    const i = scrollBoxes(root).indexOf(e.target);
+    if (i < 0) return;
+    const at = scrollAt[scrollKey(root)] || (scrollAt[scrollKey(root)] = []);
+    at[i] = e.target.scrollTop;
+}, true);
+
+function restoreScroll(root) {
+    const at = root._sid ? scrollAt[scrollKey(root)] : null;
+    if (!at) return;
+    scrollBoxes(root).forEach((b, i) => { if (at[i]) b.scrollTop = at[i]; });
+}
+
+// Every refresh flashes the button that stands for it, so an automatic one
+// looks like the click that would have done the same and a tile visibly says
+// it is keeping itself up to date. Restarting the animation needs the class
+// off, a reflow, and the class on again.
+function flash(btn) {
+    if (!btn) return;
+    btn.classList.remove('flashing');
+    void btn.offsetWidth;
+    btn.classList.add('flashing');
+}
+
+// A popup opened from a card FOLLOWS that card: the same interval, off the
+// same one clock, and the same flash on its own refresh button. It is
+// dropped when the overlay closes, and the clock stops while the page is
+// hidden, so an open graph never polls behind a background tab.
+const followers = [];
+
+function follows(overlay, srcId, load) {
+    const f = { srcId, load, due: 0 };
+    followers.push(f);
+    const stop = overlay._stop;
+    overlay._stop = () => {
+        const i = followers.indexOf(f);
+        if (i >= 0) followers.splice(i, 1);
+        if (stop) stop();
+    };
+}
+
+// The gauges each card last built, by card id. A gauge popup redraws from
+// this rather than from the object it was opened with, so the reading it
+// shows is the one on the bubble behind it.
+const lastGauges = {};
 
 // Cards on the global interval. Cards with an 'every' of their own are
 // not listed; the rest refresh on page load or on their refresh button.
@@ -2190,6 +2379,24 @@ function tick() {
             refreshModule(m.id);
         }
     }
+    // The popups those cards own ride the same tick, so a graph and the tile
+    // it came from ask in one turn and the batcher answers both at once.
+    for (const f of followers.slice()) {
+        const secs = periodOf(f.srcId);
+        if (secs <= 0) {
+            f.due = 0;
+        } else if (!f.due) {
+            f.due = now + secs * 1000;
+        } else if (f.due <= now) {
+            f.due = now + secs * 1000;
+            f.load();
+        }
+    }
+}
+
+function periodOf(id) {
+    const m = MODULES.find((x) => x.id === id);
+    return m ? period(m) : 0;
 }
 
 function stopIntervals() {
@@ -2203,6 +2410,9 @@ function applyIntervals() {
     stopIntervals();
     for (const id of Object.keys(nextDue)) {
         delete nextDue[id];
+    }
+    for (const f of followers) {
+        f.due = 0;
     }
     // Nobody is reading a background tab, and a poll nobody reads still costs
     // a PHP worker that a client is queueing for. The browser tells us when
@@ -2224,6 +2434,11 @@ document.addEventListener('visibilitychange', () => {
         for (const m of MODULES) {
             if (period(m) > 0) {
                 refreshModule(m.id);
+            }
+        }
+        for (const f of followers) {
+            if (periodOf(f.srcId) > 0) {
+                f.load();
             }
         }
     }
@@ -2249,8 +2464,10 @@ function intervalControl(key, title, slim) {
 
 function refreshModule(id) {
     const mod = MODULES.find((m) => m.id === id);
-    mod.refresh(boxes[id]).catch((e) => {
-        boxes[id].replaceChildren(el('p', 'error', 'Error: ' + e.message));
+    const box = boxes[id];
+    flash(refreshBtn[id]);
+    Promise.resolve(mod.refresh(box)).then(() => restoreScroll(box)).catch((e) => {
+        box.replaceChildren(el('p', 'error', 'Error: ' + e.message));
     });
 }
 
@@ -2273,9 +2490,11 @@ function buildCards() {
         if (m.every) head.append(intervalControl(m.every, m.title + ' refresh interval', true));
         head.append(btn);
         const box = el('div', 'card-body');
+        box._sid = m.id;
         card.append(head, box);
         views[m.view || 'dash'].append(card);
         boxes[m.id] = box;
+        refreshBtn[m.id] = btn;
     }
 }
 

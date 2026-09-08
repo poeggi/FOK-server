@@ -95,7 +95,9 @@ additive.
   opened to be assigned or dropped, players by disputed-claim count,
   recent ledger entries and an on-demand chain verify), server
   performance and diagnostics - live gauges including what requests
-  waited for a free PHP worker, what each script costs in worker time,
+  waited for a free PHP worker, what the database costs in waiting for
+  the single writer and in running the statement, what each script costs
+  in worker time,
   CPU and queries read over everything kept or the last hour or the last
   minute, each script's last 24 hours graphed, host
   capabilities and per-hour load, and a button that clears the traffic
@@ -339,9 +341,25 @@ trigger the sweep no longer makes someone wait for it. Measured on a
 the database (61 %) past the answer. It buys latency and predictability
 only - the worker is held either way, so the ceiling above is unmoved.
 
-For the writer itself, what counts is how often a request takes the lock,
-not how long it waits, so nothing that dies within seconds is kept in the
-database any more. The signal mailbox, the relay hub, the presence-counter
+Every database access is timed as well, and the two costs are kept apart
+where they can be. A BEGIN IMMEDIATE does nothing but take the single
+writer, so its whole duration is a WAIT; every other statement is timed as
+work of its own. SQLite does not report how long its busy handler slept
+inside an ordinary statement, so a bare write that waited counts the wait
+as part of its duration - but the explicit acquisitions are where a real
+stall happens, and they are what every contended path takes. The DB wait
+gauge carries the mean and the worst of both, graphs them over the window
+the tile is set to, and lists the five slowest accesses of the last 24
+hours with the statement, the script and the player. Under the list is the
+number of times the housekeeping asked for the writer and stepped aside
+instead of queueing for it (Db::tryWrite). The readings accumulate in the
+request and are booked once after the response, like every other gauge,
+and what opening the connection costs is left out of them: five PRAGMAs
+and a schema read that every request pays identically would be the mean.
+
+For the writer itself, the lever is how OFTEN a request takes the lock
+rather than how long any one wait turns out to be, so nothing that dies
+within seconds is kept in the database any more. The signal mailbox, the relay hub, the presence-counter
 cache and the request counters all live in APCu shared memory: the mailbox
 and the hub because a long poll asks them "anything for me?" every 20 ms -
 every 2 ms for the hub, which no query could carry - the counters because

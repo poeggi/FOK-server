@@ -29,6 +29,9 @@ final class Db
         return self::$bootUs;
     }
 
+    /** How long a contended write waits for the single writer, in ms. */
+    private const BUSY_MS = 4000;
+
     public static function get(): PDO
     {
         if (self::$pdo === null) {
@@ -61,7 +64,7 @@ final class Db
             // higher ceiling here and Db::retry() on the writes that matter;
             // still low enough that a real database stall frees workers
             // rather than pinning the whole pool.
-            $pdo->exec('PRAGMA busy_timeout = 4000');
+            $pdo->exec('PRAGMA busy_timeout = ' . self::BUSY_MS);
             $pdo->exec('PRAGMA foreign_keys = ON');
             self::migrate($pdo);
             // Everything above is the price of having a connection at all,
@@ -130,6 +133,59 @@ final class Db
      * 500 the caller would otherwise get. Read paths do not need this: in
      * WAL a reader never blocks and is never blocked.
      */
+    /**
+     * A write that is worth SKIPPING rather than waiting for. Takes the
+     * single writer WITHOUT waiting and answers false when another request
+     * holds it; the caller does that task on its next turn instead.
+     *
+     * Housekeeping is the caller. It runs in a deferred tail on some
+     * client's worker, so waiting out busy_timeout (4 s) would pin a worker
+     * the pool of ~20 needs, to do work that is due again on the very next
+     * request anyway. Skipping costs nothing; waiting costs the one resource
+     * this host is short of.
+     *
+     * BEGIN IMMEDIATE takes the lock up front rather than on the first write
+     * inside, so the answer is known before any of the work is done, and the
+     * whole task commits once instead of taking and releasing the writer per
+     * statement. The timeout is zeroed for that one attempt only: inside the
+     * transaction the lock is already ours and nothing waits.
+     *
+     * The lock is database-wide - SQLite has exactly one writer - so this
+     * says "somebody else is writing", never "somebody else is writing THIS
+     * table". Must not be called inside another transaction.
+     */
+    public static function tryWrite(callable $fn): bool
+    {
+        $pdo = self::get();
+        $pdo->exec('PRAGMA busy_timeout = 0');
+        try {
+            $pdo->exec('BEGIN IMMEDIATE');
+        } catch (PDOException $e) {
+            if (!self::isLocked($e)) {
+                throw $e;
+            }
+            // The one number that says the contention was real rather than
+            // theoretical: somebody wanted the writer and did without it.
+            Load::tick('db_skip');
+            return false;
+        } finally {
+            $pdo->exec('PRAGMA busy_timeout = ' . self::BUSY_MS);
+        }
+        try {
+            $fn();
+        } catch (Throwable $e) {
+            // SQLite rolls back by itself on some faults, so a bare ROLLBACK
+            // can throw "no transaction is active" over the real error.
+            try {
+                $pdo->exec('ROLLBACK');
+            } catch (PDOException $ignored) {
+            }
+            throw $e;
+        }
+        $pdo->exec('COMMIT');
+        return true;
+    }
+
     public static function retry(callable $fn, int $tries = 3): mixed
     {
         for ($attempt = 1; ; $attempt++) {
