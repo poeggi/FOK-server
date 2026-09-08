@@ -244,8 +244,8 @@ What limits this server, in order:
    wait=N) holds one worker for the whole hold, and this host serves
    about 20 at once (measured against live: 20 parallel 6 s holds are
    absorbed with no queueing at all, 22 queue exactly one). No PHP
-   setting changes that. Thousands of IDLE clients on the 30 s heartbeat
-   are cheap (~170 short req/s at 5000 clients); thousands matchmaking at
+   setting changes that. Thousands of IDLE clients on the 60 s heartbeat
+   are cheap (~85 short req/s at 5000 clients); thousands matchmaking at
    once are not - that is ~1 held worker each, and the reason
    FOK_POLL_WAIT_MAX and relay_max_duels exist. Those cap one hold and
    one feature; `hold_max_workers` (default 12, see Holds) caps their
@@ -341,8 +341,9 @@ and the hub because a long poll asks them "anything for me?" every 20 ms -
 every 2 ms for the hub, which no query could carry - the counters because
 they took the lock once per request to add one to a number (they are now
 accumulated in memory and folded into the counters table once a minute,
-see Counters). What is left on a hello is the heartbeat write itself,
-which is irreducible - it IS the heartbeat.
+see Counters). Presence lives there too: a beat, from any endpoint, is
+one shared-memory store, and the database sees a session - one write when
+a player arrives and one when the fold finds them gone (see Presence).
 
 That makes shared memory load-bearing rather than an optimization, and it
 is treated as such: the signal mailbox and the relay hub both live there
@@ -469,7 +470,7 @@ host-level. If this outgrows shared hosting, fix workers first.
                         payloads carry the player profile - see docs/API.md)
 
 Signals are delivered through the recipient's next hello or poll.php poll.
-Clients poll slowly (~30 s) when idle and fast (~1-2 s) while
+Clients poll slowly (~60 s) when idle and fast (~1-2 s) while
 matchmaking/signaling. Two further signal types are server-generated and
 rejected (400) if a client sends them, but every client must HANDLE them:
 'friend' (a request/acceptance/expiry notification) and 'undelivered' (a

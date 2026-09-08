@@ -65,7 +65,7 @@ function poll(string $action): ?array
         case 'stats':
             return AdminData::stats();
         case 'conns':
-            return ['now' => time(), 'online_window' => FOK_ONLINE_WINDOW,
+            return ['now' => time(), 'online_window' => FOK_ONLINE_WINDOW + FOK_BEAT_JITTER,
                 'conns' => ConnTrack::listPresence()];
         case 'duels':
             return ['now' => time(), 'duels' => ConnTrack::listDuels(),
@@ -77,7 +77,7 @@ function poll(string $action): ?array
         case 'load_min':
             return AdminData::minutes();
         case 'caps':
-            return ['now' => time()] + Caps::get();
+            return ['now' => time()] + Caps::withRequest(Caps::get());
         default:
             return null;
     }
@@ -216,12 +216,12 @@ switch ($action) {
     case 'users':
         $total = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
         $st = $db->query('SELECT id, name, ip, first_seen, last_seen, hello_count, latency, debug, debug_active FROM players ORDER BY last_seen DESC LIMIT 200');
-        $users = array_map(static function (array $u) {
+        $users = Presence::overlay(array_map(static function (array $u) {
             $u['debug'] = (int)$u['debug'] === 1;
             $u['debug_active'] = (int)$u['debug_active'] === 1;
             return $u;
-        }, $st->fetchAll());
-        Util::jsonOut(['ok' => true, 'total' => $total, 'online_window' => FOK_ONLINE_WINDOW,
+        }, $st->fetchAll()));
+        Util::jsonOut(['ok' => true, 'total' => $total, 'online_window' => FOK_ONLINE_WINDOW + FOK_BEAT_JITTER,
             'now' => time(), 'users' => $users]);
 
     case 'delete_player':
@@ -353,7 +353,7 @@ switch ($action) {
 
     case 'caps_refresh':
         requirePost();   // re-assessment is a write
-        Util::jsonOut(['ok' => true, 'now' => time()] + Caps::refresh());
+        Util::jsonOut(['ok' => true, 'now' => time()] + Caps::withRequest(Caps::refresh()));
 
     // ---- server log ----
     case 'log':

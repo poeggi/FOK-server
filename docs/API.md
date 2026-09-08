@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.4", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.5", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -33,7 +33,9 @@ is safe to talk to; a client may read the MINOR to tell whether an
 optional feature (e.g. the peer-net hint, added in 3.1, tournament mode,
 added in 4.1, self-reported networks, added in 4.2, the tournament round
 ladder and its round breaks, added in 4.3, or batched ICE candidates, the
-queue-wait figure and the hold decision, added in 4.4) is available.
+queue-wait figure and the hold decision, added in 4.4) is available, and
+which heartbeat the server expects: 60 s from 4.5, which also counts every
+request as a beat, 30 s before it (see Pacing).
 
 A MINOR is also RE-RELEASED when a later server on the SAME `api` string
 gains an optional flag or field that an earlier server of that MINOR does
@@ -465,7 +467,7 @@ Request:
                                   while the QR/add-friend screen is open -
                                   incoming friend requests are then accepted
                                   immediately (see Friendships). Expires
-                                  ~60 s after the last flagged hello; a
+                                  ~120 s after the last flagged hello; a
                                   hello without the flag clears it.
       "debug": true,              optional bool: whether the client IS in
                                   debug mode right now (absent means it is
@@ -496,7 +498,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.4",               contract version, see Versioning
+      "api": "4.5",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a PHP
@@ -508,7 +510,7 @@ Response:
       },                          See Pacing below.
       "debug": false,             the server's instruction: the client MUST
                                   honour it (see Debug mode below)
-      "online": 3,                players seen in the last 60 s
+      "online": 3,                players seen in the last 120 s
       "playing": 2,               players currently in 1:1 games
       "registered": 17,           total known player IDs
       "signals": [                pending messages for "id", oldest first
@@ -570,7 +572,7 @@ only ever spoken one family has exactly one network, and a pair that never
 overlaps - one on cellular, one behind iCloud Private Relay - is genuinely
 not in the same room and still has the join code.
 
-The announce window is deliberately wider than the 60 s presence window: a
+The announce window is deliberately wider than the 120 s presence window: a
 host waiting in a lobby is a background tab or a phone with the screen off
 as often as not, and browsers throttle background timers to about one a
 minute.
@@ -580,8 +582,12 @@ minute.
 The beat is part of the contract. Three constants, stated here and not on
 the wire, the same for every client:
 
-    heartbeat   send hello every 30 s while online. Half the 60 s online
-                window, so one missed beat never reads as offline.
+    heartbeat   send hello every 60 s while online. Half the 120 s online
+                window, so one missed beat never reads as offline. The
+                server checks the window with one second of grace, so a
+                beat that lands the odd second late still counts. Against
+                a server reporting `api` 4.4 or older, beat every 30 s:
+                its window is 60 s.
     poll wait   ask poll.php for `wait` of up to 9 s, the longest hold it
                 serves; anything shorter is served as asked. A shorter hold
                 re-arms more often, and cuts how long a pushed event or a
@@ -684,11 +690,16 @@ Rules:
 
 - Signals are DRAINED on delivery: each message is returned exactly once.
   The client must process every element of `signals` immediately.
-- Cadence: send hello every ~30 s, always. It is the heartbeat, not a
-  fast poll; use /api/poll.php for the fast signaling window.
-- While a 1:1 game is running, keep sending `duel_with` at least every
-  60 s (the duel counts as over when neither peer refreshed it within
-  60 s).
+- Cadence: send hello every ~60 s, always (see Pacing). hello is a
+  complementary keepalive and only that. Every request a client makes is
+  a beat (4.5) - poll.php included - so hello is the beat a client sends
+  when it has nothing else to say: it keeps the player online and drains
+  whatever the mailbox holds by then. Nothing time-critical rides on it -
+  a signal or a tournament event that matters now reaches a client
+  through /api/poll.php, and hello merely catches what a client with no
+  poll running would otherwise see a minute late.
+- While a 1:1 game is running, send `duel_with` in every hello (the duel
+  counts as over when neither peer refreshed it within 120 s).
 
 ## Debug mode
 
@@ -701,7 +712,7 @@ Two separate bits are involved, and they are deliberately independent:
 - **The instruction**, `debug` in the hello RESPONSE. What the server
   wants. The client MUST honour it: `true` turns its debug mode on,
   `false` turns it off again. It arrives on the next hello (so up to
-  ~30 s after an operator sets it), never sooner.
+  ~60 s after an operator sets it), never sooner.
 - **The report**, `debug` in the hello REQUEST. What the client IS
   actually doing. Send `true` in every hello while debug mode is on,
   whatever turned it on.
@@ -729,6 +740,10 @@ an active handshake, loop `wait=9` requests back-to-back and a relayed
 signal reaches you in ~20 ms plus network, instead of a full poll
 interval. Without `wait` it degrades to the plain cheap poll (one indexed
 read, 204).
+
+A poll is a beat (4.5): like every other request it refreshes the
+caller's presence, so a client looping poll.php stays online whether or
+not its hello is on time.
 
 `wait` is a REQUEST, not a promise. A held request occupies one of the
 server's limited workers, so there is a budget for how many may be held
@@ -891,11 +906,11 @@ it into the peer's mailbox when a friend request is created for them or
 their request gets accepted. It arrives like any other signal (hello or
 poll.php, long-poll included), so an online client learns of a request
 within its poll cadence; an offline client finds the pending entry via
-friend.php list on next start (mailbox signals expire after 30 s).
+friend.php list on next start (mailbox signals expire after 120 s).
 
 The 'undelivered' signal is the FAILURE RECEIPT for a connection attempt.
 An invite / invite-relay / accept / accept-relay that nobody picks up
-before it expires (signal_ttl, 30 s) is a failed attempt, so the sender
+before it expires (signal_ttl, 120 s) is a failed attempt, so the sender
 is told instead of waiting forever on the ok:true it got. It is addressed
 "from" the peer that never collected the message and names the lost
 "type". Treat it as "this attempt is dead": stop waiting, tell the user,
@@ -1122,7 +1137,7 @@ friend list; the hello `friends` field tells A whether B is online):
     1. A -> signal {type: "invite", to: B, payload: {"profile": ...}};
        A starts polling poll.php (~1 s). B's UI can now show who is
        asking, with name and snake look.
-    2. B sees the invite in its hello poll (within ~30 s; within ~1 s if
+    2. B sees the invite in its hello poll (within ~60 s; within ~1 s if
        B is on the multiplayer screen and therefore polling poll.php).
        UI asks the user. B -> signal accept with B's profile (or
        decline, ending the flow).
@@ -1149,7 +1164,7 @@ friend list; the hello `friends` field tells A whether B is online):
        and the level begins exactly then (music, READY/GO, first tick).
        From here ALL game traffic flows peer-to-peer (see FOK-snake
        docs/multiplayer-server-prompt.md for the tick sync protocol).
-       Clients keep the normal slow hello heartbeat (~30 s) with
+       Clients keep the normal slow hello heartbeat (~60 s) with
        duel_with set, so the server can count running games.
     7. The further halts of the run - next level, respawn, resume from
        pause - are settled between the peers. start.php still accepts
@@ -1327,10 +1342,12 @@ it later without any server change:
 
 Notes:
 
-- Undelivered signals expire after 30 s. Signals only reliably arrive
-  fast while the recipient is actively polling (multiplayer screen open);
-  an idle client on the 30 s hello cadence can miss the window. When a
-  connection-establishing message dies that way the sender is told - see
+- Undelivered signals expire after 120 s (signal_ttl) - the same window a
+  recipient counts as online for, so a signal to an online client is late
+  at worst, never lost. It arrives fast while the recipient is actively
+  polling (multiplayer screen open); an idle client on the 60 s hello
+  cadence gets it on its next beat. When a connection-establishing
+  message expires unread the sender is told - see
   the 'undelivered' receipt above - so an invite either goes through or
   fails loudly. Everything else (ice, ices, chat, bye) expires silently:
   those belong to a handshake the client is already timing out on its own.
@@ -2040,7 +2057,7 @@ tournament.php request, or any participant's poll.php or hello.
 So the mailbox drain a participant makes anyway is what keeps the clock
 moving, and whatever a deadline produces - a settled result, the next
 roles sheet - is in that same answer. With a held poll that is about 9 s
-at worst; with hello alone, about 30 s. Nothing is added to the wire for
+at worst; with hello alone, about 60 s. Nothing is added to the wire for
 it, and a client never calls `state` for timekeeping: `state` is for a
 reload, a rejoin, or genuine doubt that an event was missed, and nothing
 else.
@@ -2235,7 +2252,7 @@ Eight clients polling `state` once a second would cost more server egress
 every second than the whole tournament costs in pushed events.
 
 So the RATE has no tournament term in it at all. The only periodic
-requests are the ones a client already makes: hello every ~30 s (a
+requests are the ones a client already makes: hello every ~60 s (a
 108-byte response, 122 with `tourneys`), and back-to-back poll.php long
 polls during a signaling window, which answer 204 in about 196 bytes of
 headers when nothing is pending. `orphan` is separately capped at one

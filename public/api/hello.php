@@ -10,7 +10,9 @@ require_once __DIR__ . '/../src/Tournament.php';
 require_once __DIR__ . '/../src/Pace.php';
 
 /**
- * Heartbeat and poll endpoint, the client's single periodic request.
+ * The heartbeat: the beat a client sends when it has nothing else to say
+ * (every request is a beat, see Presence), and the slow drain of its
+ * mailbox.
  * POST {
  *   "id": "8-hex",
  *   "name": "PLAYER",           optional, display name; recorded and shown

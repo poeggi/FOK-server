@@ -6,83 +6,297 @@ require_once __DIR__ . '/Util.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Signals.php';
 require_once __DIR__ . '/ConnTrack.php';
+require_once __DIR__ . '/Caps.php';
 
+/**
+ * Who is here. Presence is volatile - it is worth nothing FOK_ONLINE_WINDOW
+ * seconds after the last beat - so it lives in APCu shared memory, one
+ * entry per player, and the database sees a SESSION, not a heartbeat: one
+ * write when a player arrives (touch finds no live entry) and one when the
+ * fold finds the entry gone stale (see fold). A rename is written through
+ * on the spot - a name is identity, not presence. Every request a client
+ * makes is a beat, poll.php included; what a beat costs is one
+ * shared-memory store.
+ *
+ * The entry carries everything that is only true while the player is
+ * here: the last beat, the address of the moment, latency, the auto-accept
+ * flag, the client's own debug report, the operator's debug wish (cached
+ * from the row, so a hello reads no row at all) and the networks the
+ * player has been seen on, one per address family (see seenOn). The player
+ * ROW is the durable record - first seen, last session, name, the wish,
+ * the friend ban - and is read about somebody who is not here.
+ *
+ * There is no database transport to fall back to, exactly as for the
+ * mailbox and the connection tracking (see Signals, ConnTrack): a host
+ * without usable APCu answers 503 and raises a perf alert.
+ *
+ * Keys carry the environment namespace (FOK_APCU_NS): one FPM pool can
+ * serve live and staging, and a staging test client must not read as
+ * online on live.
+ */
 final class Presence
 {
-    /** How stale a player_nets row may get before a hello rewrites it. */
+    /** One entry per player who has been here lately; the shape is on entryOf. */
+    private const PREFIX = FOK_APCU_NS . 'p:';
+
+    /** The fold's own rate marker, outside the entry prefix so a scan never sees it. */
+    private const FOLD_KEY = FOK_APCU_NS . 'p-fold';
+
+    /**
+     * How long an entry outlives its last beat in shared memory. Long on
+     * purpose: the entry is what the fold writes back to the row, and the
+     * fold runs on the next request, whenever that is - a quiet server must
+     * not lose the stamp of the last player to leave. The fold drops what it
+     * has written, so on a busy server a stale entry lives for seconds.
+     */
+    private const KEEP = 86400;
+
+    /** The fold runs at most this often, in one worker (see fold). */
+    private const FOLD_EVERY = 30;
+
+    /** How stale an observed network may get before a beat rewrites it. */
     private const NET_REFRESH_AFTER = 60;
 
     /**
-     * Shared-memory slot for the presence counters (see counts()). They are
-     * counted out of the players and duels tables and handed to every client
-     * on every hello, so the slot carries the environment namespace (see
-     * FOK_APCU_NS): one FPM pool serving both docroots would otherwise let
-     * live report staging's test clients as the players online, and back.
+     * Shared-memory slot for the presence counters (see counts()). Handed to
+     * every client on every hello, so it is never counted per request.
      */
     private const COUNTS_KEY = FOK_APCU_NS . 'counts';
 
     /**
-     * Records the heartbeat and returns whether the server wants this
-     * client in debug mode. $debugActive is what the client REPORTS it is
-     * doing; null leaves the record alone (non-hello endpoints).
+     * Records a beat and returns whether the server wants this client in
+     * debug mode. $debugActive is what the client REPORTS it is doing; null
+     * leaves the entry alone (non-hello endpoints), as does every other
+     * optional argument.
      *
-     * The wish rides back on the same RETURNING as the registration check:
-     * every hello goes through here, so reading it separately would put a
-     * second query on the one path that must stay cheapest.
+     * A beat that finds no live entry opens a session: the one write a
+     * player's arrival costs. The row is upserted - an unknown id registers
+     * in silence - and the name and the wish ride back on the same
+     * RETURNING, into the entry, where every later beat reads them.
      */
     public static function touch(string $id, string $ip, ?int $latency = null, ?string $name = null, ?bool $autoAccept = null, ?bool $debugActive = null): bool
     {
+        self::mustHaveApcu();
         $now = time();
-        // null leaves accept_until untouched (non-hello endpoints); hello
-        // always passes a bool, so leaving the screen clears the flag.
-        $acceptUntil = $autoAccept === null ? null
-            : ($autoAccept ? $now + FOK_AUTO_ACCEPT_WINDOW : 0);
-        $active = $debugActive === null ? null : (int)$debugActive;
-        // Every request of every client lands here, which makes it the write
-        // most likely to be the one that finds the writer taken. The whole
-        // statement is re-runnable: every value it sets is absolute, and an
-        // attempt that lost the writer wrote nothing at all - so hello_count
-        // still moves by one per hello.
-        $row = Db::retry(static function () use ($id, $ip, $now, $latency, $name, $acceptUntil, $active): array {
+        $e = self::entryOf($id);
+        if ($e === null || (int)$e['seen'] < Util::since(FOK_ONLINE_WINDOW, $now)) {
+            // A stale entry the fold has not reached carries the last
+            // session's latency; it rides into this write, so a quiet
+            // server loses nothing of that session either.
+            $row = self::open($id, $ip, $now, $name, $e['lat'] ?? null);
+            $e = [
+                'seen' => $now,
+                'start' => $now,
+                'ip' => $ip,
+                'lat' => null,
+                'name' => $row['name'],
+                'accept' => 0,
+                'dbg' => false,
+                'wish' => (int)$row['debug'] === 1,
+                'nets' => [],
+            ];
+            // Nobody may watch their own first hello report zero online, so
+            // an arrival drops the counters cache. The beats that are
+            // virtually all the traffic leave it alone.
+            self::flushCounts();
+        }
+        $e['seen'] = $now;
+        $e['ip'] = $ip;
+        if ($latency !== null) {
+            $e['lat'] = $latency;
+        }
+        if ($name !== null && $name !== $e['name']) {
+            // Identity, not presence: a rename reaches the row at once, so
+            // everything read about this player off the row - an alert, the
+            // admin, an offline friend's roster - agrees with the entry.
+            Db::retry(static function () use ($id, $name): void {
+                Db::get()->prepare('UPDATE players SET name = ? WHERE id = ?')->execute([$name, $id]);
+            });
+            $e['name'] = $name;
+        }
+        if ($autoAccept !== null) {
+            $e['accept'] = $autoAccept ? $now + FOK_AUTO_ACCEPT_WINDOW + FOK_BEAT_JITTER : 0;
+        }
+        if ($debugActive !== null) {
+            $e['dbg'] = $debugActive;
+        }
+        self::seenOnEntry($e, $ip, true, $now);
+        self::store($id, $e);
+        return (bool)$e['wish'];
+    }
+
+    /** The session-start write: registers or refreshes the row, once per session. */
+    private static function open(string $id, string $ip, int $now, ?string $name, ?int $latency): array
+    {
+        return Db::retry(static function () use ($id, $ip, $now, $name, $latency): array {
             $st = Db::get()->prepare(
-                'INSERT INTO players (id, ip, ipnet, first_seen, last_seen, hello_count, latency, name, accept_until, debug_active)
-                 VALUES (?, ?, ?, ?, ?, 1, ?, ?, COALESCE(?, 0), COALESCE(?, 0))
-                 ON CONFLICT (id) DO UPDATE SET ip = excluded.ip, ipnet = excluded.ipnet, last_seen = excluded.last_seen,
-                     hello_count = hello_count + 1,
-                     latency = COALESCE(excluded.latency, players.latency),
+                'INSERT INTO players (id, ip, ipnet, first_seen, last_seen, hello_count, name, latency)
+                 VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                 ON CONFLICT (id) DO UPDATE SET ip = excluded.ip, ipnet = excluded.ipnet,
+                     last_seen = excluded.last_seen, hello_count = hello_count + 1,
                      name = COALESCE(excluded.name, players.name),
-                     accept_until = COALESCE(?, players.accept_until),
-                     debug_active = COALESCE(?, players.debug_active)
-                 RETURNING first_seen = last_seen AS registered, debug'
+                     latency = COALESCE(excluded.latency, players.latency)
+                 RETURNING name, debug'
             );
-            $st->execute([$id, $ip, Util::ipNet($ip), $now, $now, $latency, $name, $acceptUntil, $active, $acceptUntil, $active]);
+            $st->execute([$id, $ip, Util::ipNet($ip), $now, $now, $name, $latency]);
             $row = $st->fetch();
             // An INSERT ... RETURNING is a write: finish it before anything
             // else touches the database, this retry included (see Db).
             $st->closeCursor();
             return $row;
         });
-        self::seenOn($id, $ip);
-        // Nobody may watch their own first hello report zero online, so a
-        // registration drops the cache. The repeat heartbeats that are
-        // virtually all the traffic leave it alone.
-        if ((int)$row['registered'] === 1) {
-            self::flushCounts();
-        }
-        return (int)$row['debug'] === 1;
     }
 
     /**
-     * Records a NETWORK this player is on, one row per address family (see
-     * Util::ipNet and Db steps 28/29).
+     * The one write a session's END costs. Runs in the deferred tail of a
+     * request (see Util::bumpNow), at most every FOLD_EVERY seconds and in
+     * one worker: the shared-memory add succeeds for one caller. It walks
+     * the entries, and each one whose beat is older than every window that
+     * still reads it - the online window, and the announce window while a
+     * lobby host is matched on its networks - has its stamp and latency
+     * written to the row and is dropped.
      *
-     * The player row keeps a single ipnet, which is the network the LAST
-     * request came in on. That is not the same as the networks the player
+     * Both halves are guarded against a player who came back between the
+     * scan and the write: the row never moves backwards, and a fresh entry
+     * under the same key stays.
+     */
+    public static function fold(): void
+    {
+        if (!Caps::apcu() || apcu_add(self::FOLD_KEY, 1, self::FOLD_EVERY) !== true) {
+            return;
+        }
+        $now = time();
+        $keep = max(FOK_ONLINE_WINDOW, Settings::int('tournament_announce_window'));
+        $cut = Util::since($keep, $now);
+        $ended = [];
+        foreach (self::all() as $id => $e) {
+            if ((int)$e['seen'] < $cut) {
+                $ended[(string)$id] = $e;
+            }
+        }
+        if ($ended === []) {
+            return;
+        }
+        Db::retry(static function () use ($ended): void {
+            $st = Db::get()->prepare(
+                'UPDATE players SET last_seen = ?, latency = ? WHERE id = ? AND last_seen <= ?'
+            );
+            foreach ($ended as $id => $e) {
+                $st->execute([(int)$e['seen'], $e['lat'], $id, (int)$e['seen']]);
+            }
+        });
+        foreach ($ended as $id => $e) {
+            $cur = apcu_fetch(self::PREFIX . $id);
+            if (is_array($cur) && (int)$cur['seen'] === (int)$e['seen']) {
+                apcu_delete(self::PREFIX . $id);
+            }
+        }
+    }
+
+    /** Test-suite only: lifts the fold's rate gate and folds. */
+    public static function foldNow(): void
+    {
+        if (Caps::apcu()) {
+            apcu_delete(self::FOLD_KEY);
+        }
+        self::fold();
+    }
+
+    /**
+     * One player's entry, or null when there is none. Shape:
+     * {seen, start, ip, lat, name, accept, dbg, wish, nets:{family:{net, seen, src}}}
+     * - seen is the last beat, start the session's first; accept is the
+     * moment the auto-accept flag lapses (0 = off); dbg is the client's own
+     * report and wish the operator's; nets is one network per address
+     * family with the moment it was seen and whether it was observed ('o')
+     * or claimed ('c').
+     */
+    public static function entryOf(string $id): ?array
+    {
+        if (!Caps::apcu()) {
+            return null;
+        }
+        $e = apcu_fetch(self::PREFIX . $id);
+        return is_array($e) ? $e : null;
+    }
+
+    /**
+     * The entries of a set of ids, keyed by id, in one fetch. An id with no
+     * entry is simply absent.
+     * @param list<string> $ids
+     * @return array<string, array>
+     */
+    private static function entriesOf(array $ids): array
+    {
+        if ($ids === [] || !Caps::apcu()) {
+            return [];
+        }
+        $hit = apcu_fetch(array_map(static fn(string $i): string => self::PREFIX . $i, $ids));
+        $out = [];
+        if (is_array($hit)) {
+            $cut = strlen(self::PREFIX);
+            foreach ($hit as $k => $v) {
+                if (is_array($v)) {
+                    $out[substr((string)$k, $cut)] = $v;
+                }
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Every entry, keyed by id. A scan, so only the counts (cached), the
+     * admin cards and the fold ask for it. An id of nothing but digits is a
+     * valid id and PHP makes it an INTEGER array key, so every caller casts
+     * the key back before passing it on.
+     * @return array<string, array>
+     */
+    private static function all(): array
+    {
+        if (!Caps::apcu()) {
+            return [];
+        }
+        $out = [];
+        $cut = strlen(self::PREFIX);
+        foreach (new APCUIterator('/^' . preg_quote(self::PREFIX, '/') . '/') as $e) {
+            if (is_array($e['value'])) {
+                $out[substr($e['key'], $cut)] = $e['value'];
+            }
+        }
+        return $out;
+    }
+
+    private static function store(string $id, array $e): void
+    {
+        apcu_store(self::PREFIX . $id, $e, self::KEEP);
+    }
+
+    private static function mustHaveApcu(): void
+    {
+        static $ok = null;
+        if ($ok === true) {
+            return;
+        }
+        if ($ok === null) {
+            $ok = Caps::apcu();
+        }
+        if ($ok !== true) {
+            Alerts::raise('perf', 'Presence is unavailable: APCu is not usable on this host. '
+                . 'Presence has no database transport by design - every player-facing '
+                . 'endpoint stays down until shared memory works.');
+            Util::fail('service unavailable', 503);
+        }
+    }
+
+    /**
+     * Records a NETWORK this player is on, one per address family (see
+     * Util::ipNet).
+     *
+     * The address of the moment is not the same as the networks the player
      * can be reached on: a dual-stack client picks a family per connection,
-     * so the same device answers from a v4 address one minute and out of its
-     * v6 /64 the next, and whichever one the player row happens to hold is
-     * the one the tournament announce compares. Keeping both is what lets
-     * two devices in one room match when they did not pick the same family.
+     * so the same device answers from a v4 address one minute and out of
+     * its v6 /64 the next. Keeping one network per family is what lets two
+     * devices in one room match when they did not pick the same family.
      *
      * $observed says whether the server SAW this address (a REMOTE_ADDR,
      * which is evidence) or whether the client reported it about itself (a
@@ -90,53 +304,49 @@ final class Presence
      * observation that is still doing work, and may not be rewritten faster
      * than an observation would be; that is the whole trust model, and it
      * is here rather than at the caller so no future caller can skip it.
-     *
-     * READ BEFORE WRITE, deliberately: this runs on every hello, and hello
-     * is the one request every client makes forever. The row only changes
-     * when the player actually moved network, so the common case must not
-     * reach for the single SQLite writer at all - it costs one indexed
-     * point lookup on the primary key instead. REFRESH_AFTER bounds how
-     * stale `seen` may get; the announce reads it, so it may not drift.
+     * NET_REFRESH_AFTER bounds how stale `seen` may get; the announce reads
+     * it, so it may not drift.
      */
     public static function seenOn(string $id, string $ip, bool $observed = true): void
     {
+        $e = self::entryOf($id);
+        if ($e !== null && self::seenOnEntry($e, $ip, $observed, time())) {
+            self::store($id, $e);
+        }
+    }
+
+    /** The rules of seenOn, applied to an entry in hand; true when it changed. */
+    private static function seenOnEntry(array &$e, string $ip, bool $observed, int $now): bool
+    {
         $info = Util::ipInfo($ip);
         if ($info['family'] === 0) {
-            return;   // nothing we can compare later, so nothing worth storing
+            return false;   // nothing we can compare later, so nothing worth storing
         }
         $net = Util::ipNet($ip);
-        $now = time();
         $src = $observed ? 'o' : 'c';
-        $st = Db::get()->prepare('SELECT net, seen, src FROM player_nets WHERE id = ? AND family = ?');
-        $st->execute([$id, $info['family']]);
-        $row = $st->fetch();
-        $st->closeCursor();
-        if ($row !== false) {
-            $fresh = (int)$row['seen'] > $now - self::NET_REFRESH_AFTER;
-            if ($fresh && (string)$row['net'] === $net && (string)$row['src'] === $src) {
-                return;   // nothing would change
+        $cur = $e['nets'][$info['family']] ?? null;
+        if ($cur !== null) {
+            $fresh = (int)$cur['seen'] > $now - self::NET_REFRESH_AFTER;
+            if ($fresh && (string)$cur['net'] === $net && (string)$cur['src'] === $src) {
+                return false;   // nothing would change
             }
             if (!$observed) {
                 // What we saw ourselves outranks what we were told, for as
                 // long as the announce would still act on it.
-                if ((string)$row['src'] === 'o'
-                    && (int)$row['seen'] > $now - Settings::int('tournament_announce_window')) {
-                    return;
+                if ((string)$cur['src'] === 'o'
+                    && (int)$cur['seen'] > $now - Settings::int('tournament_announce_window')) {
+                    return false;
                 }
                 // And a claim cannot be churned: one write per family per
                 // refresh interval, so a client cannot sweep networks by
                 // reporting a different one on every heartbeat.
                 if ($fresh) {
-                    return;
+                    return false;
                 }
             }
         }
-        Db::retry(static function () use ($id, $info, $net, $now, $src): void {
-            Db::get()->prepare(
-                'INSERT INTO player_nets (id, family, net, seen, src) VALUES (?, ?, ?, ?, ?)
-                 ON CONFLICT (id, family) DO UPDATE SET net = excluded.net, seen = excluded.seen, src = excluded.src'
-            )->execute([$id, $info['family'], $net, $now, $src]);
-        });
+        $e['nets'][$info['family']] = ['net' => $net, 'seen' => $now, 'src' => $src];
+        return true;
     }
 
     /**
@@ -173,25 +383,84 @@ final class Presence
     }
 
     /**
-     * Every network the player has been seen on recently - what "the same
-     * line" has to mean for a dual-stack household (see seenOn). Ordered so
-     * the caller's own current network, which the caller passes in, can be
-     * folded in by the caller itself.
+     * Every network the player has been seen on since $since - what "the
+     * same line" has to mean for a dual-stack household (see seenOn). The
+     * caller folds its own current network in itself.
      * @return string[]
      */
     public static function netsOf(string $id, int $since): array
     {
-        $st = Db::get()->prepare('SELECT net FROM player_nets WHERE id = ? AND seen > ?');
-        $st->execute([$id, $since]);
-        $out = array_map(static fn(array $r): string => (string)$r['net'], $st->fetchAll());
-        $st->closeCursor();
+        $out = [];
+        foreach (self::entryOf($id)['nets'] ?? [] as $n) {
+            if ((int)$n['seen'] > $since) {
+                $out[] = (string)$n['net'];
+            }
+        }
         return $out;
     }
 
-    /** Admin-set: what the server WANTS the client to do (see touch). */
+    /**
+     * Which of $ids are present and share one of $nets: the lobby announce
+     * (see Tournament::announce). Answered from the entries alone, so
+     * announcing never reads a row. An id whose player has never set a name
+     * maps to null, and is still perfectly announceable.
+     * @param list<string> $ids
+     * @param list<string> $nets
+     * @return array<string, ?string> id => name
+     */
+    public static function hostsOn(array $ids, array $nets, int $since): array
+    {
+        $out = [];
+        foreach (self::entriesOf($ids) as $id => $e) {
+            if ((int)$e['seen'] <= $since) {
+                continue;
+            }
+            foreach ($e['nets'] as $n) {
+                if ((int)$n['seen'] > $since && in_array((string)$n['net'], $nets, true)) {
+                    $out[(string)$id] = $e['name'];
+                    break;
+                }
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Test-suite only: backdates a player's beat and its networks (one
+     * family, or all of them with the beat), so a test reaches the windows
+     * without sleeping.
+     */
+    public static function age(string $id, int $secs, ?int $family = null): void
+    {
+        $e = self::entryOf($id);
+        if ($e === null) {
+            return;
+        }
+        $t = time() - $secs;
+        if ($family === null) {
+            $e['seen'] = $t;
+        }
+        foreach ($e['nets'] as $f => $n) {
+            if ($family === null || (int)$f === $family) {
+                $e['nets'][$f]['seen'] = $t;
+            }
+        }
+        self::store($id, $e);
+    }
+
+    /**
+     * Admin-set: what the server WANTS the client to do (see touch). The
+     * row is the record and the entry is what the next hello reads, so a
+     * player who is here learns of it on that hello.
+     */
     public static function setDebug(string $id, bool $on): void
     {
         Db::get()->prepare('UPDATE players SET debug = ? WHERE id = ?')->execute([(int)$on, $id]);
+        $e = self::entryOf($id);
+        if ($e !== null) {
+            $e['wish'] = $on;
+            self::store($id, $e);
+        }
     }
 
     /** Forces the next counts() to recount (see the caching there). */
@@ -202,19 +471,20 @@ final class Presence
 
     public static function isAutoAccepting(string $id): bool
     {
-        $st = Db::get()->prepare('SELECT accept_until FROM players WHERE id = ?');
-        $st->execute([$id]);
-        $until = (int)$st->fetchColumn();
-        $st->closeCursor();
-        return $until > time();
+        return (int)(self::entryOf($id)['accept'] ?? 0) > time();
     }
 
+    /**
+     * The duel heartbeat, on the duels table. Not shared memory: a claim's
+     * integrity window reads duels.last_seen (see Items::matchDeadline), so
+     * this is the one row write a beat inside a 1:1 keeps.
+     */
     public static function touchDuel(string $id, string $peer): void
     {
         [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
         $now = time();
         // Both peers of every duel write this on every heartbeat, so it is
-        // the second-most contended write there is. Re-running it is exact:
+        // the most contended write there is. Re-running it is exact:
         // last_seen is set, not accumulated.
         $started = Db::retry(static function () use ($a, $b, $now): bool {
             $st = Db::get()->prepare(
@@ -234,25 +504,44 @@ final class Presence
         }
     }
 
-    /** @return array map of id => [online: bool, latency: ?int, name: ?string] */
+    /**
+     * Online / latency / name for a set of ids: the entries answer for
+     * whoever is here, the rows for the rest - the name of an offline
+     * friend is still a name. An id nobody has ever seen is absent.
+     * @param list<string> $ids
+     * @return array<string, array{online: bool, latency: ?int, name: ?string}>
+     */
     public static function infoOf(array $ids): array
     {
         if ($ids === []) {
             return [];
         }
-        $ph = implode(',', array_fill(0, count($ids), '?'));
-        $st = Db::get()->prepare("SELECT id, last_seen, latency, name FROM players WHERE id IN ($ph)");
-        $st->execute($ids);
-        $cutoff = time() - FOK_ONLINE_WINDOW;
+        $cut = Util::since(FOK_ONLINE_WINDOW);
+        $entries = self::entriesOf($ids);
         $out = [];
-        foreach ($st->fetchAll() as $row) {
-            $online = (int)$row['last_seen'] > $cutoff;
-            $out[$row['id']] = [
+        $missing = [];
+        foreach ($ids as $id) {
+            $e = $entries[$id] ?? null;
+            if ($e === null) {
+                $missing[] = $id;
+                continue;
+            }
+            $online = (int)$e['seen'] >= $cut;
+            $out[$id] = [
                 'online' => $online,
                 // A latency is only meaningful while the friend is online.
-                'latency' => $online && $row['latency'] !== null ? (int)$row['latency'] : null,
-                'name' => $row['name'],
+                'latency' => $online && $e['lat'] !== null ? (int)$e['lat'] : null,
+                'name' => $e['name'],
             ];
+        }
+        if ($missing !== []) {
+            $ph = implode(',', array_fill(0, count($missing), '?'));
+            $st = Db::get()->prepare("SELECT id, name FROM players WHERE id IN ($ph)");
+            $st->execute($missing);
+            foreach ($st->fetchAll() as $row) {
+                $out[(string)$row['id']] = ['online' => false, 'latency' => null, 'name' => $row['name']];
+            }
+            $st->closeCursor();
         }
         return $out;
     }
@@ -273,8 +562,8 @@ final class Presence
         if ($ids === []) {
             return [];
         }
-        $st = Db::get()->prepare('SELECT a, b FROM duels WHERE last_seen > ?');
-        $st->execute([time() - FOK_DUEL_WINDOW]);
+        $st = Db::get()->prepare('SELECT a, b FROM duels WHERE last_seen >= ?');
+        $st->execute([Util::since(FOK_DUEL_WINDOW)]);
         $busy = [];
         foreach ($st->fetchAll() as $row) {
             $busy[(string)$row['a']] = true;
@@ -284,27 +573,92 @@ final class Presence
     }
 
     /**
+     * Everyone here, newest beat first, for the Connections card - with a
+     * short tail so one that just dropped stays visible (gone=true) for
+     * FOK_DUEL_LINGER seconds. Clients in a 1:1 are listed here too;
+     * presence is the full picture, and the Duels card breaks out those
+     * in a duel phase (see ConnTrack::listDuels).
+     * @return list<array{id: string, name: ?string, ip: string, latency: ?int, last_seen: int, gone: bool}>
+     */
+    public static function recent(int $limit = 200): array
+    {
+        $now = time();
+        $shown = Util::since(FOK_ONLINE_WINDOW + FOK_DUEL_LINGER, $now);
+        $online = Util::since(FOK_ONLINE_WINDOW, $now);
+        $out = [];
+        foreach (self::all() as $id => $e) {
+            if ((int)$e['seen'] < $shown) {
+                continue;
+            }
+            $out[] = [
+                'id' => (string)$id,
+                'name' => $e['name'],
+                'ip' => (string)$e['ip'],
+                'latency' => $e['lat'] === null ? null : (int)$e['lat'],
+                'last_seen' => (int)$e['seen'],
+                'gone' => (int)$e['seen'] < $online,
+            ];
+        }
+        usort($out, static fn(array $a, array $b): int => $b['last_seen'] <=> $a['last_seen']);
+        return array_slice($out, 0, $limit);
+    }
+
+    /**
+     * Lays what is true right now over rows read from the players table:
+     * the admin lists are read out of the durable record, and for a player
+     * who is here the record holds the session, not the moment. Rows keep
+     * their keys, so the shape is the caller's; they are re-ordered by the
+     * beat afterwards.
+     * @param list<array<string, mixed>> $rows each with an 'id'
+     * @return list<array<string, mixed>>
+     */
+    public static function overlay(array $rows): array
+    {
+        $cut = Util::since(FOK_ONLINE_WINDOW);
+        $entries = self::entriesOf(array_map(static fn(array $r): string => (string)$r['id'], $rows));
+        foreach ($rows as &$r) {
+            $e = $entries[(string)$r['id']] ?? null;
+            if ($e === null) {
+                continue;
+            }
+            $r['last_seen'] = (int)$e['seen'];
+            $r['ip'] = (string)$e['ip'];
+            $r['name'] = $e['name'];
+            if (array_key_exists('latency', $r)) {
+                $r['latency'] = $e['lat'] === null ? null : (int)$e['lat'];
+            }
+            if (array_key_exists('debug_active', $r)) {
+                $r['debug_active'] = (bool)$e['dbg'];
+            }
+            if (array_key_exists('accept_until', $r)) {
+                $r['accept_until'] = (int)$e['accept'];
+            }
+            if (array_key_exists('online', $r)) {
+                $r['online'] = (int)$e['seen'] >= $cut;
+            }
+        }
+        unset($r);
+        usort($rows, static fn(array $a, array $b): int => (int)$b['last_seen'] <=> (int)$a['last_seen']);
+        return $rows;
+    }
+
+    /**
      * Peer-net hint: at the moment a 1:1 pairing is confirmed (an accepted
      * invite, a fresh quick match) and BEFORE the P2P handshake, tell each
      * side the other's server-observed IP plus its own, so that two peers on
      * the same address family can try a direct connection first (see the
-     * 'peer-net' signal in docs/API.md). Both IPs are read from the players
-     * table - each side just touched its own row, so both are current. A
-     * side the server has never seen is skipped: nothing to announce.
+     * 'peer-net' signal in docs/API.md). Both addresses come from the
+     * entries - each side just beat, so both are current - and a side the
+     * server has never seen is skipped: nothing to announce.
      */
     public static function announceNet(string $a, string $b): void
     {
-        $st = Db::get()->prepare('SELECT id, ip FROM players WHERE id IN (?, ?)');
-        $st->execute([$a, $b]);
-        $ip = [];
-        foreach ($st->fetchAll() as $row) {
-            $ip[$row['id']] = (string)$row['ip'];
-        }
-        if (!isset($ip[$a], $ip[$b])) {
+        $entries = self::entriesOf([$a, $b]);
+        if (!isset($entries[$a], $entries[$b])) {
             return;
         }
-        $na = Util::ipInfo($ip[$a]);
-        $nb = Util::ipInfo($ip[$b]);
+        $na = Util::ipInfo((string)$entries[$a]['ip']);
+        $nb = Util::ipInfo((string)$entries[$b]['ip']);
         self::sendNet($a, $b, $na, $nb);
         self::sendNet($b, $a, $nb, $na);
     }
@@ -326,8 +680,8 @@ final class Presence
      * Removes a player and everything about them that is only PRESENCE: the
      * friendships (each friend gets a best-effort 'friend' {event:"expired"}
      * signal, and one that is offline reconciles its list against friend.php
-     * on next start), the networks they were seen on, the connection state,
-     * and the player row itself.
+     * on next start), the entry, the connection state, and the player row
+     * itself.
      *
      * What it deliberately leaves is property and history - items, the
      * config vault, the career stats, the scores. An id belongs to the
@@ -349,17 +703,20 @@ final class Presence
             Signals::send($id, $other, 'friend', json_encode(['event' => 'expired', 'from' => $id]));
         }
         $db->prepare('DELETE FROM friends WHERE a = ? OR b = ?')->execute([$id, $id]);
-        $db->prepare('DELETE FROM player_nets WHERE id = ?')->execute([$id]);
         $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
+        if (Caps::apcu()) {
+            apcu_delete(self::PREFIX . $id);
+        }
         ConnTrack::forget($id);
-        // registered and online are derived from the players table and
-        // cached (see counts), so the dashboard must not keep showing a
-        // player that is gone until the TTL lapses.
+        // registered and online are cached (see counts), so the dashboard
+        // must not keep showing a player that is gone until the TTL lapses.
         self::flushCounts();
     }
 
     /**
-     * Removes players not seen for player_ttl_days (0 disables expiry).
+     * Removes players not seen for player_ttl_days (0 disables expiry). The
+     * row's last_seen is the session the fold wrote back, which is as
+     * precise as a yearly sweep needs.
      * @return int number of players removed
      */
     public static function expireStale(): int
@@ -372,7 +729,7 @@ final class Presence
         $st->execute([time() - $days * 86400]);
         $expired = array_column($st->fetchAll(), 'id');
         foreach ($expired as $id) {
-            self::forget($id);
+            self::forget((string)$id);
         }
         return count($expired);
     }
@@ -380,14 +737,14 @@ final class Presence
     /**
      * Every presence figure the server publishes, cached in shared memory for
      * FOK_COUNTS_TTL seconds and served through counts() and families().
-     * Every hello returns some of these, so counting rows here would make a
+     * Every hello returns some of these, so counting here would make a
      * heartbeat cost more as the player base grows - the one thing that must
-     * not happen. Nobody needs an exact count (online is a 60 s window).
+     * not happen. Nobody needs an exact count (online is a 120 s window).
      * The recompute is unlocked: racing requests write the same numbers.
      *
-     * The cache lives in shared memory because a five-second cache has no
-     * business in a durable single-writer database: it used to be a row that
-     * every hello read and every registration deleted.
+     * Online and the family split are one pass over the entries; registered
+     * is the one count still taken from a table, and playing from the duels
+     * that refreshed within their window.
      */
     private static function population(): array
     {
@@ -397,28 +754,31 @@ final class Presence
         if ($ok && is_array($hit)) {
             return $hit;
         }
-        // Online, registered and the family split are the same table, so one
-        // pass yields all of them. The family test is a string one because
-        // the column holds REMOTE_ADDR as it arrived: a colon is what tells
-        // the two apart, bar the v4-mapped form, which is a v4 client.
-        $players = $db->prepare(
-            "SELECT SUM(CASE WHEN last_seen > ? THEN 1 ELSE 0 END) AS online,
-                    SUM(CASE WHEN last_seen > ? AND ip LIKE '%:%'
-                              AND ip NOT LIKE '::ffff:%' THEN 1 ELSE 0 END) AS online6,
-                    COUNT(*) AS registered FROM players"
-        );
-        $players->execute([$now - FOK_ONLINE_WINDOW, $now - FOK_ONLINE_WINDOW]);
-        $prow = $players->fetch();
-        $players->closeCursor();
-        $duels = $db->prepare('SELECT COUNT(*) FROM duels WHERE last_seen > ?');
-        $duels->execute([$now - FOK_DUEL_WINDOW]);
+        $cut = Util::since(FOK_ONLINE_WINDOW, $now);
+        $online = 0;
+        $online6 = 0;
+        foreach (self::all() as $e) {
+            if ((int)$e['seen'] < $cut) {
+                continue;
+            }
+            $online++;
+            // A colon is what tells the families apart, bar the v4-mapped
+            // form, which is a v4 client.
+            $ip = (string)$e['ip'];
+            if (str_contains($ip, ':') && !str_starts_with($ip, '::ffff:')) {
+                $online6++;
+            }
+        }
+        $registered = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
+        $duels = $db->prepare('SELECT COUNT(*) FROM duels WHERE last_seen >= ?');
+        $duels->execute([Util::since(FOK_DUEL_WINDOW, $now)]);
         $duelsN = (int)$duels->fetchColumn();
         $duels->closeCursor();
         $out = [
-            'online' => (int)$prow['online'],
+            'online' => $online,
             'playing' => 2 * $duelsN,
-            'registered' => (int)$prow['registered'],
-            'online_v6' => (int)$prow['online6'],
+            'registered' => $registered,
+            'online_v6' => $online6,
         ];
         // The TTL is the cache's own, so there is no stored timestamp to
         // compare against and no sweep to run.

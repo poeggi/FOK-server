@@ -135,7 +135,6 @@ final class Housekeeping
                 // the sweep cannot describe different rows.
                 self::counted($db, 'starts', 'reaped', Starts::pruneable($db, $now * 1000)),
                 self::counted($db, 'matches', 'reaped', Items::pruneableMatches($db, $now * 1000)),
-                self::line($db, 'player_nets', 'orphan', $orphan('player_nets', 'id')),
                 self::line($db, 'friends', 'orphan',
                     'SELECT COUNT(*) FROM friends WHERE a NOT IN (SELECT id FROM players)
                         OR b NOT IN (SELECT id FROM players)'),

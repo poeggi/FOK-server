@@ -98,6 +98,29 @@ final class Caps
         return ($c['apcu'] ?? false) === true;
     }
 
+    /**
+     * The transport check, appended at answer time and never stored. HTTP/2
+     * is negotiated per connection, so it is a property of the request in
+     * hand, not of the host: the stored assessment is seeded by whichever
+     * request comes first after a deploy, and CI's curl speaks HTTP/1.1.
+     * The operator's own browser is the probe - it takes h2 whenever the
+     * vhost offers it. Apache's mod_http2 reports the protocol both ways.
+     */
+    public static function withRequest(array $caps): array
+    {
+        $proto = (string)($_SERVER['SERVER_PROTOCOL'] ?? '');
+        $h2 = $proto === 'HTTP/2.0' || (($_SERVER['HTTP2'] ?? '') === 'on');
+        $caps['checks'][] = [
+            'key' => 'http2',
+            'label' => 'HTTP/2',
+            'value' => ($h2 ? 'on' : 'off') . ' (this request: ' . ($proto === '' ? 'unknown' : $proto) . ')',
+            'status' => $h2 ? 'good' : 'bad',
+            'note' => $h2 ? ''
+                : 'a held poll and the requests beside it each cost a connection; the vhost owns the h2 switch',
+        ];
+        return $caps;
+    }
+
     private static function assess(): array
     {
         $checks = [];

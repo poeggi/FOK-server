@@ -3,14 +3,15 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Holds.php';
+require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Tournament.php';
 
 /**
  * Fast, cheap signal poll for the matchmaking/signaling window.
  * GET /api/poll.php?id=<8-hex>[&wait=<seconds>]
- *   -> 204 No Content        nothing pending (empty body, indexed reads
- *                            only, no database writes)
+ *   -> 204 No Content        nothing pending (empty body; the hold reads
+ *                            shared memory only)
  *   -> 200 {"ok":true,"signals":[...]}   pending messages, drained on read
  *
  * With wait > 0 (long poll, capped by FOK_POLL_WAIT_MAX) the
@@ -21,10 +22,11 @@ require_once __DIR__ . '/../src/Tournament.php';
  * keeps concurrent handshakes from exhausting the shared-hosting FPM
  * worker pool between them - past it a poll answers 204 without waiting.
  *
- * Unlike hello.php this does NOT touch presence or counters. It is not
- * needed during gameplay: game traffic and the 1 Hz alive check run
- * in-band over the peer-to-peer DataChannel; the server only sees the
- * slow hello heartbeat (with duel_with) every ~30 s.
+ * A poll is a beat like any other request: it refreshes presence (one
+ * shared-memory store, see Presence) and nothing else - no counters, no
+ * row. It is not needed during gameplay: game traffic and the 1 Hz alive
+ * check run in-band over the peer-to-peer DataChannel; the server only
+ * sees the slow hello heartbeat (with duel_with) every ~60 s.
  */
 Util::cors();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'GET') {
@@ -36,6 +38,9 @@ if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
 Util::noteCaller($id);
+// Every request is a beat (see Presence): a client looping this poll
+// cannot read as offline for want of a hello.
+Presence::touch($id, Util::clientIp());
 // A tournament participant's poll carries that tournament's deadlines, and
 // it does so HERE, before the hold: what a deadline produces lands in the
 // mailbox this request is about to drain. Once per request, never inside

@@ -127,14 +127,14 @@ final class Items
     /**
      * How long a match outlives the last sign of life from its duel: the
      * window in which the duel still counts as running (FOK_DUEL_WINDOW, the
-     * same one the Duels card and the online counts use) plus the operator's
-     * grace on top. Both peers heartbeat this pair every 30 s, so the grace
-     * is what a claim gets AFTER the duel is over, not a budget the duel
-     * itself has to fit inside.
+     * same one the Duels card and the online counts use, grace second
+     * included) plus the operator's grace on top. Both peers heartbeat this
+     * pair every 60 s, so the grace is what a claim gets AFTER the duel is
+     * over, not a budget the duel itself has to fit inside.
      */
     private static function windowMs(): int
     {
-        return FOK_DUEL_WINDOW * 1000 + Settings::int('match_open_max_ms');
+        return (FOK_DUEL_WINDOW + FOK_BEAT_JITTER) * 1000 + Settings::int('match_open_max_ms');
     }
 
     /**

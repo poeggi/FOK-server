@@ -461,10 +461,12 @@ final class AdminData
             return null;
         }
         $now = time();
+        // What is true right now is in the entry; the row holds the session.
+        $e = Presence::entryOf($id);
         $duel = ConnTrack::stateOf($id);
         if ($duel !== null) {
             $duel['age'] = $now - $duel['updated'];
-            $duel['live'] = $duel['updated'] > $now - FOK_CONN_TTL;
+            $duel['live'] = $duel['updated'] >= Util::since(FOK_CONN_TTL, $now);
         }
         $rate = Relay::rateDetail($id);
         $queue = Matchmaking::stateOf($id);
@@ -481,22 +483,24 @@ final class AdminData
         $stats = PStats::get($id);
         return [
             'now' => $now,
-            'online_window' => FOK_ONLINE_WINDOW,
+            // The window as it is checked, grace second included, so the
+            // card and the server agree on who is online.
+            'online_window' => FOK_ONLINE_WINDOW + FOK_BEAT_JITTER,
             'names' => (object)self::namesFor([
                 (string)($duel['peer'] ?? ''), (string)($queue['matched_with'] ?? ''),
             ]),
             'client' => [
                 'id' => $p['id'],
-                'name' => $p['name'],
-                'ip' => $p['ip'],
+                'name' => $e['name'] ?? $p['name'],
+                'ip' => $e['ip'] ?? $p['ip'],
                 'first_seen' => (int)$p['first_seen'],
-                'last_seen' => (int)$p['last_seen'],
+                'last_seen' => (int)($e['seen'] ?? $p['last_seen']),
                 'hello_count' => (int)$p['hello_count'],
-                'latency' => $p['latency'] === null ? null : (int)$p['latency'],
-                'online' => (int)$p['last_seen'] > $now - FOK_ONLINE_WINDOW,
+                'latency' => $e !== null ? $e['lat'] : ($p['latency'] === null ? null : (int)$p['latency']),
+                'online' => $e !== null && (int)$e['seen'] >= Util::since(FOK_ONLINE_WINDOW, $now),
                 'debug' => (int)$p['debug'] === 1,
-                'debug_active' => (int)$p['debug_active'] === 1,
-                'accept_until' => (int)$p['accept_until'],
+                'debug_active' => $e !== null ? (bool)$e['dbg'] : (int)$p['debug_active'] === 1,
+                'accept_until' => (int)($e['accept'] ?? $p['accept_until']),
                 'friend_ban_until' => (int)$p['friend_ban_until'],
                 'duel' => $duel,
                 'relay_rate' => $rate,

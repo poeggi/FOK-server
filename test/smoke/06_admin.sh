@@ -349,6 +349,7 @@ else
     expect "capabilities assessed" '"checks"' "$R"
     expect "assessment is for this release" "\"version\":\"$VER\"" "$R"
     expect "capabilities name the shared memory the hub needs" '"key":"apcu"' "$R"
+    expect "capabilities report the transport this request came over" '"key":"http2"' "$R"
     R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=caps_refresh")
     expect "caps_refresh via GET rejected" '405' "$R"
     R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=caps_refresh")
@@ -362,10 +363,10 @@ else
     expect "it reports the duel rows a sweep would reap" '"name":"duels","rows":' "$R"
     # The card exists to prove there are none of these, and a deployment with
     # real players has a row count nothing can predict - so the assertion is
-    # that both orphan lines read zero, not what stands beside them. Anything
+    # that the orphan line reads zero, not what stands beside it. Anything
     # else means a removal path skipped Presence::forget.
     ORPH=$(grep -o '"loose":0,"policy":"orphan"' <<< "$R" | wc -l | tr -d ' ')
-    expect "and nothing orphaned by a player removal" "2" "$ORPH"
+    expect "and nothing orphaned by a player removal" "1" "$ORPH"
     expect "while what a returning player owns is kept, not swept" '"policy":"kept"' "$R"
 
     R=$(curl -s -b "$COOKIES" -X POST -d 'chat_max_len=10' "$BASE/admin/api.php?action=settings_save")
@@ -495,14 +496,14 @@ else
     setting signal_ttl 1
     R=$(sig "$ID3" "$ID4" invite 'anyone?')
     expect "invite to the fresh friend accepted" '"ok":true' "$R"
-    sleep 2
+    sleep 3
     R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID4")
     expect "an expired invite is not delivered" '204' "$R"
     R=$(hello "$ID3")
     expect "the inviter is told the invite went undelivered" '"type":"undelivered"' "$R"
     expect "the receipt names the peer" "\"from\":\"$ID4\"" "$R"
     expect "the receipt names the lost message type" 'invite' "$R"
-    setting signal_ttl 30
+    setting signal_ttl 120
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID3\",\"action\":\"remove\",\"peer\":\"$ID4\"}" "$BASE/api/friend.php" > /dev/null
 

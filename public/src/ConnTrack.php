@@ -25,9 +25,8 @@ require_once __DIR__ . '/Relay.php';
  * relay hub (see Signals, RelayStore) - a host with no usable APCu shows an
  * empty Duels card rather than a stale one.
  *
- * Presence - every online client, dueling or not - is a separate list,
- * listPresence, and stays on the players table: presence is durable, has no
- * TTL of its own and is written by the hello the client already sends.
+ * Presence - every online client, dueling or not - is Presence's own list
+ * (see Presence::recent); listPresence hands it through for the card.
  */
 final class ConnTrack
 {
@@ -205,37 +204,13 @@ final class ConnTrack
     }
 
     /**
-     * Presence for the Connections card: every client that is here, newest
-     * first, with a short tail so one that just dropped stays visible
-     * (gone=true) for FOK_DUEL_LINGER seconds. Clients in a 1:1 are listed
-     * here too - presence is the full picture; the Duels card (listDuels)
-     * additionally breaks out those in a duel phase.
+     * The Connections card's list (see Presence::recent).
      * @return array [{id, name, ip, latency, last_seen, gone}]
      */
     public static function listPresence(int $limit = 200): array
     {
-        $db = Db::get();
-        $now = time();
-        $st = $db->prepare(
-            'SELECT id, name, ip, latency, last_seen
-               FROM players
-              WHERE last_seen > ?
-              ORDER BY last_seen DESC LIMIT ' . $limit
-        );
-        $st->execute([$now - FOK_ONLINE_WINDOW - FOK_DUEL_LINGER]);
-        $out = [];
-        foreach ($st->fetchAll() as $r) {
-            $out[] = [
-                'id' => $r['id'],
-                'name' => $r['name'],
-                'ip' => $r['ip'],
-                'latency' => $r['latency'] === null ? null : (int)$r['latency'],
-                'last_seen' => (int)$r['last_seen'],
-                'gone' => (int)$r['last_seen'] < $now - FOK_ONLINE_WINDOW,
-            ];
-        }
-        $st->closeCursor();
-        return $out;
+        require_once __DIR__ . '/Presence.php';
+        return Presence::recent($limit);
     }
 
     /**
@@ -253,7 +228,7 @@ final class ConnTrack
         $now = time();
         $live = [];
         foreach (self::entries() as $id => $e) {
-            if ($e['peer'] === null || $e['updated'] <= $now - FOK_CONN_TTL - FOK_DUEL_LINGER) {
+            if ($e['peer'] === null || $e['updated'] <= Util::since(FOK_CONN_TTL + FOK_DUEL_LINGER, $now)) {
                 continue;
             }
             $age = $now - $e['updated'];
@@ -263,7 +238,7 @@ final class ConnTrack
                 if ($age > FOK_DUEL_LINGER) {
                     continue;
                 }
-            } elseif ($age > FOK_CONN_TTL) {
+            } elseif ($age > FOK_CONN_TTL + FOK_BEAT_JITTER) {
                 // A live phase that stopped refreshing (no bye reached us):
                 // treat the stale entry as ended and give it the same tail.
                 $e['state'] = 'ended';
@@ -329,19 +304,11 @@ final class ConnTrack
         if ($ids === []) {
             return [];
         }
-        $st = Db::get()->prepare(
-            'SELECT id, name, latency FROM players
-              WHERE id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')'
-        );
-        $st->execute($ids);
+        require_once __DIR__ . '/Presence.php';
         $out = [];
-        foreach ($st->fetchAll() as $r) {
-            $out[$r['id']] = [
-                'name' => $r['name'],
-                'latency' => $r['latency'] === null ? null : (int)$r['latency'],
-            ];
+        foreach (Presence::infoOf($ids) as $id => $i) {
+            $out[(string)$id] = ['name' => $i['name'], 'latency' => $i['latency']];
         }
-        $st->closeCursor();
         return $out;
     }
 

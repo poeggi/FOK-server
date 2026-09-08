@@ -209,6 +209,15 @@ ok(!isset($info['cccccccc']), 'unknown player not in info map');
 ok(Presence::infoOf([]) === [], 'empty friend list is fine');
 ok($info['aaaaaaaa']['latency'] === null, 'no latency before first report');
 
+// The window as the server checks it: FOK_ONLINE_WINDOW plus the jitter
+// second, so a beat that lands one second late still counts and nothing
+// reads as gone before 121 s.
+Presence::age('aaaaaaaa', FOK_ONLINE_WINDOW + FOK_BEAT_JITTER);
+ok(Presence::infoOf(['aaaaaaaa'])['aaaaaaaa']['online'] === true, 'a beat one second late still reads as online');
+Presence::age('aaaaaaaa', FOK_ONLINE_WINDOW + FOK_BEAT_JITTER + 1);
+ok(Presence::infoOf(['aaaaaaaa'])['aaaaaaaa']['online'] === false, 'one second past the grace it reads as offline');
+Presence::touch('aaaaaaaa', '1.2.3.9');
+
 // Presence: latency reports stick and average
 Presence::touch('aaaaaaaa', '1.2.3.9', 40);
 Presence::touch('bbbbbbbb', '5.6.7.8', 20);
@@ -279,6 +288,49 @@ Presence::touch('bbbbbbbb', '5.6.7.8', null, null, false);
 ok(!Presence::isAutoAccepting('bbbbbbbb'), 'hello without the flag clears auto-accept');
 Presence::touch('bbbbbbbb', '5.6.7.8');
 ok(!Presence::isAutoAccepting('bbbbbbbb'), 'null leaves the cleared flag untouched');
+
+// Sessions: the row is written when a beat finds no live entry and when the
+// fold finds the entry stale - never per beat. hello_count counts sessions.
+$rowOf = static function (string $id): array {
+    $st = Db::get()->prepare('SELECT hello_count, last_seen, name, latency FROM players WHERE id = ?');
+    $st->execute([$id]);
+    $r = $st->fetch();
+    $st->closeCursor();
+    return $r === false ? [] : $r;
+};
+Presence::touch('5e550001', '1.2.3.4', 30, 'SESSA');
+Presence::touch('5e550001', '1.2.3.4', 35, 'SESSB');
+Presence::touch('5e550001', '1.2.3.4');
+ok((int)$rowOf('5e550001')['hello_count'] === 1 && $rowOf('5e550001')['name'] === 'SESSB',
+    'repeat beats write no row, and a rename is written through');
+ok(Presence::entryOf('5e550001')['lat'] === 35 && Presence::entryOf('5e550001')['name'] === 'SESSB',
+    'while the entry carries the latest latency and name');
+Presence::age('5e550001', FOK_ONLINE_WINDOW + FOK_BEAT_JITTER + 1);
+Presence::touch('5e550001', '1.2.3.5');
+ok((int)$rowOf('5e550001')['hello_count'] === 2, 'a beat past the window opens a new session, which is the row write');
+ok($rowOf('5e550001')['name'] === 'SESSB' && Presence::entryOf('5e550001')['name'] === 'SESSB',
+    'and starts from the name the row kept');
+$far = max(FOK_ONLINE_WINDOW, Settings::int('tournament_announce_window')) + FOK_BEAT_JITTER + 1;
+Presence::touch('5e550001', '1.2.3.5', 44);
+Presence::age('5e550001', $far);
+Db::get()->prepare('UPDATE players SET last_seen = ? WHERE id = ?')->execute([time() - $far - 5, '5e550001']);
+Presence::foldNow();
+ok(Presence::entryOf('5e550001') === null, 'the fold drops an entry older than every window that reads it');
+$r = $rowOf('5e550001');
+ok(abs((int)$r['last_seen'] - (time() - $far)) <= 1 && (int)$r['latency'] === 44,
+    'and writes its last beat and latency to the row');
+Presence::touch('5e550002', '1.2.3.6');
+Presence::age('5e550002', $far);
+Presence::fold();
+ok(Presence::entryOf('5e550002') !== null, 'the fold runs at most once per interval');
+Presence::foldNow();
+ok(Presence::entryOf('5e550002') === null, 'and folds once the interval has passed');
+Presence::touch('5e550003', '1.2.3.7');
+Presence::foldNow();
+ok(Presence::entryOf('5e550003') !== null, 'a live entry is never folded');
+Presence::forget('5e550001');
+Presence::forget('5e550002');
+Presence::forget('5e550003');
 
 // Existence feedback (see Friends::exists, friend.php): true once a player
 // row exists, false for an id never seen. Backs the exists:false reply that
@@ -579,9 +631,13 @@ ok(Presence::touch('eeeeeeee', '1.2.3.4') === false, 'debug is off for a new pla
 Presence::setDebug('eeeeeeee', true);
 ok(Presence::touch('eeeeeeee', '1.2.3.4') === true, 'the server hands the wish back on hello');
 $dbgOf = function (string $id): array {
-    $st = Db::get()->prepare('SELECT debug, debug_active FROM players WHERE id = ?');
+    $st = Db::get()->prepare('SELECT debug FROM players WHERE id = ?');
     $st->execute([$id]);
-    return $st->fetch();
+    $row = $st->fetch();
+    $st->closeCursor();
+    // The wish is the row's; the client's own report lives in the entry.
+    $row['debug_active'] = (int)(Presence::entryOf($id)['dbg'] ?? false);
+    return $row;
 };
 ok((int)$dbgOf('eeeeeeee')['debug_active'] === 0, 'the wish alone does not mark the client active');
 Presence::touch('eeeeeeee', '1.2.3.4', null, null, null, true);
@@ -616,7 +672,9 @@ ok(count(Signals::take('bbbbbbbb')) === FOK_MAILBOX_CAP, 'capped mailbox drains 
 // UNDELIVERED must fail loudly back to the sender, never just evaporate.
 // sweepNow() only lifts the sweep's once-a-second rate gate; the receipt
 // itself is produced by the ordinary sweep inside take().
-Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'invite', 'old', FOK_SIGNAL_TTL + 1);
+Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'invite', 'old', FOK_SIGNAL_TTL + FOK_BEAT_JITTER);
+ok(count(Signals::take('bbbbbbbb')) === 1, 'a signal as old as the window and its grace is still delivered');
+Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'invite', 'old', FOK_SIGNAL_TTL + FOK_BEAT_JITTER + 1);
 ok(Signals::take('bbbbbbbb') === [], 'expired signal not delivered');
 Signals::sweepNow();
 $receipt = Signals::take('aaaaaaaa');
@@ -627,7 +685,7 @@ ok(str_contains($receipt[0]['payload'], '"type":"invite"'), 'receipt names the l
 
 // Signals: the receipt must survive a FULL mailbox - a flood must not be
 // able to swallow the one message that says the connection failed.
-Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'invite', 'old', FOK_SIGNAL_TTL + 1);
+Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'invite', 'old', FOK_SIGNAL_TTL + FOK_BEAT_JITTER + 1);
 for ($i = 0; $i < FOK_MAILBOX_CAP; $i++) {
     Signals::send('cccccccc', 'aaaaaaaa', 'ice', "flood$i");
 }
@@ -639,14 +697,14 @@ ok(count(array_filter($flooded, static fn(array $s) => $s['type'] === 'undeliver
 Signals::take('bbbbbbbb');
 
 // Signals: an expiring message nobody waits on generates no receipt
-Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'ice', 'old', FOK_SIGNAL_TTL + 1);
+Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'ice', 'old', FOK_SIGNAL_TTL + FOK_BEAT_JITTER + 1);
 ok(Signals::take('bbbbbbbb') === [], 'expired ice not delivered');
 Signals::sweepNow();
 ok(Signals::take('aaaaaaaa') === [], 'no receipt for an expired ice candidate');
 
 // Signals: an expired message must not wake a long poll (any() and take()
 // have to agree on the TTL, or poll.php answers 200 with an empty list)
-Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'ice', 'old', FOK_SIGNAL_TTL + 1);
+Signals::sendAged('aaaaaaaa', 'bbbbbbbb', 'ice', 'old', FOK_SIGNAL_TTL + FOK_BEAT_JITTER + 1);
 ok(!Signals::any('bbbbbbbb'), 'expired signal does not count as pending');
 Signals::take('bbbbbbbb');
 
@@ -781,9 +839,11 @@ ok(duelOf('bbbbbbbb')['mode'] === 'relay', 'the peer side sees the mid-burst upg
 
 // ConnTrack: a duel that goes quiet (no bye reached us) is shown as ended
 // for the linger window, then drops off.
-connPoke('aaaaaaaa', ['updated' => time() - FOK_CONN_TTL - 1]);
+connPoke('aaaaaaaa', ['updated' => time() - FOK_CONN_TTL - FOK_BEAT_JITTER]);
+ok(duelOf('aaaaaaaa')['state'] !== 'ended', 'a heartbeat one second late is not a quiet duel');
+connPoke('aaaaaaaa', ['updated' => time() - FOK_CONN_TTL - FOK_BEAT_JITTER - 1]);
 ok(duelOf('aaaaaaaa')['state'] === 'ended', 'a quiet duel reads as ended');
-connPoke('aaaaaaaa', ['updated' => time() - FOK_CONN_TTL - FOK_DUEL_LINGER - 1]);
+connPoke('aaaaaaaa', ['updated' => time() - FOK_CONN_TTL - FOK_BEAT_JITTER - FOK_DUEL_LINGER - 1]);
 ok(duelOf('aaaaaaaa') === [], 'past the linger the quiet duel drops off the card');
 ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
 ConnTrack::forget('aaaaaaaa');
@@ -1921,21 +1981,13 @@ ok(Tournament::announce('72000008', '203.0.113.10') === [],
 Presence::touch('7200000d', '2a01:db8:9:9:cafe::7');
 ok(count(Tournament::announce('7200000d', '198.51.100.4')) >= 1,
     'a joiner asking from its other family is still matched on the network it shares');
-// Proof that the two above are served by player_nets and not by the player
-// row: the row holds the LAST family only, so an ipv4 match off it is not
-// possible. One row per family is also the whole bound on the table's size.
+// Proof that both networks are kept in the presence entry, one per family
+// - which is also the whole bound on what one player can occupy.
 $netsOf = static function (string $id): array {
-    $st = Db::get()->prepare('SELECT family, net FROM player_nets WHERE id = ? ORDER BY family');
-    $st->execute([$id]);
-    $rows = $st->fetchAll();
-    $st->closeCursor();
-    return array_column($rows, 'net', 'family');
+    $nets = Presence::entryOf($id)['nets'] ?? [];
+    ksort($nets);
+    return array_map(static fn(array $n): string => (string)$n['net'], $nets);
 };
-$st = Db::get()->prepare('SELECT ipnet FROM players WHERE id = ?');
-$st->execute([$dual]);
-$dualRow = (string)$st->fetchColumn();
-$st->closeCursor();
-ok($dualRow === '2a01:db8:9:9::/64', 'the player row itself only remembers the last family');
 ok($netsOf($dual) === [4 => '203.0.113.9', 6 => '2a01:db8:9:9::/64'],
     'both networks are kept, one row per family');
 Presence::touch($dual, '203.0.113.55');
@@ -1947,9 +1999,7 @@ ok($netsOf($dual) === [4 => '203.0.113.55', 6 => '2a01:db8:9:9::/64'],
 // The window is deliberately wider than presence: a host waiting in a lobby
 // is a background tab, and those are throttled to about one hello a minute.
 $age = static function (string $id, int $secs): void {
-    $t = time() - $secs;
-    Db::get()->prepare('UPDATE players SET last_seen = ? WHERE id = ?')->execute([$t, $id]);
-    Db::get()->prepare('UPDATE player_nets SET seen = ? WHERE id = ?')->execute([$t, $id]);
+    Presence::age($id, $secs);
 };
 $age($dual, 300);
 ok(Tournament::announce('72000006', '2a01:db8:9:9:beef::2') === [],
@@ -1998,8 +2048,7 @@ Presence::claim($claimer, ['198.51.100.78']);
 ok($netsOf($claimer) === [4 => '198.51.100.77', 6 => '2a01:db8:11:11::/64'],
     'nor can a claim be rewritten faster than an observation would be');
 // Once it has gone stale it may be corrected - a real client does move.
-Db::get()->prepare('UPDATE player_nets SET seen = ? WHERE id = ? AND family = 4')
-    ->execute([time() - 120, $claimer]);
+Presence::age($claimer, 120, 4);
 Presence::claim($claimer, ['198.51.100.78']);
 ok($netsOf($claimer) === [4 => '198.51.100.78', 6 => '2a01:db8:11:11::/64'],
     'a stale claim is replaced by the next one the client sends');
@@ -2016,9 +2065,8 @@ ok(count(Tournament::announce('72000012', '198.51.100.78')) === 0,
 // of the announce entirely - it is doing no work by then - may a claim take
 // the row. This is the boundary that decides whether telling the server
 // "I am on /64 X" can put you in a stranger's room.
-$ageNet = static function (string $id, int $family, int $secs) use ($claimer): void {
-    Db::get()->prepare('UPDATE player_nets SET seen = ? WHERE id = ? AND family = ?')
-        ->execute([time() - $secs, $id, $family]);
+$ageNet = static function (string $id, int $family, int $secs): void {
+    Presence::age($id, $secs, $family);
 };
 $ageNet($claimer, 6, 120);
 Presence::claim($claimer, ['2a01:db8:99:99::5']);
@@ -2115,7 +2163,8 @@ ok($v5['cursor'] === 'final', 'both of two players reach the final');
 // was dealt, which is the millisecond the report above dealt it, so any
 // positive threshold is a race with the clock rather than a test.
 Settings::set('tournament_walkover_ms', 0);
-Db::get()->prepare('UPDATE players SET last_seen = 1 WHERE id = ? OR id = ?')->execute($v);
+Presence::age($v[0], FOK_ONLINE_WINDOW + FOK_BEAT_JITTER + 1);
+Presence::age($v[1], FOK_ONLINE_WINDOW + FOK_BEAT_JITTER + 1);
 $v5 = Tournament::view($v[0], $tid5);
 ok($v5['bracket'][0]['state'] === 'void' && $v5['bracket'][0]['winner'] === null,
     'a final neither side could play is voided, never replayed');
@@ -2323,10 +2372,7 @@ Items::mint('hk110001', 'crown', 'box');
 Presence::forget('hk110001');
 ok(Presence::infoOf(['hk110001']) === [], 'forget removes the player row');
 ok(!Friends::isFriend('hk110001', 'hk220002'), 'and the friendships with it');
-$st = Db::get()->prepare('SELECT COUNT(*) FROM player_nets WHERE id = ?');
-$st->execute(['hk110001']);
-ok((int)$st->fetchColumn() === 0, 'and the networks it was seen on');
-$st->closeCursor();
+ok(Presence::entryOf('hk110001') === null, 'and the presence entry, networks included');
 ok(Vault::peek('hk110001') !== null, 'but the config backup outlives the player row');
 ok(PStats::get('hk110001')['games'] === 3, 'and so do the career stats');
 ok(count(Items::owned('hk110001')) === 1, 'and the wardrobe: an id comes back with its client');
@@ -2384,7 +2430,7 @@ foreach ($hk['tables'] as $t) {
 }
 ok($rep['items']['loose'] >= 1 && $rep['items']['policy'] === 'kept',
     'the report calls the wardrobe of a departed player kept, not stale');
-ok($rep['player_nets']['loose'] === 0 && $rep['friends']['loose'] === 0,
+ok(!isset($rep['player_nets']) && $rep['friends']['loose'] === 0,
     'and finds no orphans, because there is only one removal path');
 ok(isset($rep['starts']) && isset($rep['matches']),
     'the card accounts for every table the sweep touches');

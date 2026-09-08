@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 40;
+    private const SCHEMA_VERSION = 41;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -625,6 +625,12 @@ final class Db
             // linger as a key no release knows (config export/import
             // rejects unknown keys).
             $pdo->exec("DELETE FROM settings WHERE key = 'start_lead_min_ms'");
+        }
+        if ($v < 41) {
+            // The networks a player is seen on ride in the presence entry
+            // in shared memory (see Presence::seenOn); nothing reads the
+            // table.
+            $pdo->exec('DROP TABLE IF EXISTS player_nets');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

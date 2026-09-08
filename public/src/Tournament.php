@@ -1546,8 +1546,8 @@ final class Tournament
     /**
      * Open lobbies whose host is on ANY network the caller is on - the whole
      * of the "announced on the local network" mechanism. Everyone else joins
-     * by code, and the code is the capability. Served by idx_player_nets_net,
-     * so a hello that asks stays flat-cost.
+     * by code, and the code is the capability. Served from the hosts'
+     * presence entries in one fetch, so a hello that asks stays flat-cost.
      *
      * Three things had to be true before two devices in one room could match,
      * and each of them broke this feature on its own:
@@ -1568,9 +1568,9 @@ final class Tournament
      * And the host has to still count as present. That window is its own
      * setting rather than FOK_ONLINE_WINDOW: a host waiting in a lobby is a
      * BACKGROUND tab or a phone with the screen off as often as not, and a
-     * browser throttles background timers to about one a minute - right at
-     * the edge of the 60s presence window, so the lobby flickered in and out
-     * of the announce while it stayed perfectly joinable by code.
+     * browser throttles background timers to about one a minute, so its
+     * beats arrive late and thin; the announce must not flicker with them
+     * while the lobby stays perfectly joinable by code.
      */
     public static function announce(string $id, string $ip): array
     {
@@ -1585,26 +1585,13 @@ final class Tournament
         $nets = Presence::netsOf($id, $since);
         $nets[] = Util::ipNet($ip);
         $nets = array_values(array_unique($nets));
-        // One query for all the open lobbies at once, and only about their
+        // One fetch for all the open lobbies at once, and only about their
         // hosts: which of them is present and shares a network with the
-        // caller, and what it is called. The lobbies themselves come from the
-        // OPEN index, a small card per lobby, so answering this never
-        // deserialises a running bracket.
+        // caller, and what it is called (see Presence::hostsOn). The lobbies
+        // themselves come from the OPEN index, a small card per lobby, so
+        // answering this never deserialises a running bracket.
         $hosts = array_values(array_unique(array_column($lobbies, 'host')));
-        $st = Db::get()->prepare(
-            'SELECT p.id, p.name
-             FROM player_nets hn
-             JOIN players p ON p.id = hn.id
-             WHERE hn.id IN (' . self::marks($hosts) . ')
-               AND hn.net IN (' . self::marks($nets) . ')
-               AND hn.seen > ? AND p.last_seen > ?
-             GROUP BY p.id'
-        );
-        $st->execute([...$hosts, ...$nets, $since, $since]);
-        $names = [];
-        foreach ($st->fetchAll() as $row) {
-            $names[(string)$row['id']] = $row['name'];
-        }
+        $names = Presence::hostsOn($hosts, $nets, $since);
         $max = Settings::int('tournament_max_players');
         // Freshest first, and never more than a screenful.
         usort($lobbies, static fn(array $a, array $b): int => $b['updated'] <=> $a['updated']);

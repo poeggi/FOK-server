@@ -120,7 +120,10 @@ final class Signals
         if (self::pending($to) >= Settings::int('mailbox_cap')) {
             return false;
         }
-        $ttl = Settings::int('signal_ttl');
+        // Plus the grace second every heartbeat window carries: a signal
+        // lives exactly as long as its recipient counts as online, so a
+        // beat that lands late never finds its mailbox swept (Util::since).
+        $ttl = Settings::int('signal_ttl') + FOK_BEAT_JITTER;
         $now = time();
         $seq = apcu_inc(self::seqKey($to), 1, $ok, self::SEQ_TTL);
         $stored = apcu_store(
@@ -194,7 +197,7 @@ final class Signals
             apcu_store(self::ackKey($to), $hi, self::SEQ_TTL);
             return false;
         }
-        $cut = time() - Settings::int('signal_ttl');
+        $cut = Util::since(Settings::int('signal_ttl'));
         $prefix = self::msgPrefix($to);
         for ($seq = $lo + 1; $seq <= $hi; $seq++) {
             $v = apcu_fetch($prefix . sprintf('%012d', $seq), $ok);
@@ -228,7 +231,7 @@ final class Signals
     {
         self::mustHaveApcu();
         self::sweep();
-        $cut = time() - Settings::int('signal_ttl');
+        $cut = Util::since(Settings::int('signal_ttl'));
         $prefix = self::msgPrefix($to);
         // Deliver the window (ack, hi]. hi is read BEFORE draining, so
         // everything at or below it is accounted for afterwards - delivered
@@ -333,7 +336,7 @@ final class Signals
                     ]),
                     'c' => $now,
                 ],
-                Settings::int('signal_ttl')
+                Settings::int('signal_ttl') + FOK_BEAT_JITTER
             );
         }
     }
@@ -357,7 +360,7 @@ final class Signals
     public static function sendAged(string $from, string $to, string $type, string $payload, int $ageSec): void
     {
         $created = time() - $ageSec;
-        $ttl = Settings::int('signal_ttl');
+        $ttl = Settings::int('signal_ttl') + FOK_BEAT_JITTER;
         $seq = apcu_inc(self::seqKey($to), 1, $ok, self::SEQ_TTL);
         // The entry keeps a live cache TTL even though its stamp is old:
         // take() filters on the stamp, which is what the contract is about.

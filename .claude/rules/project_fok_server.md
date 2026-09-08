@@ -22,13 +22,18 @@ contract and must stay in step.
 
 ## Pacing
 
-hello `pace` is {hold} only. Heartbeat 30 s, poll wait 9 s and the 100 ms
-request gap are contract constants in docs/API.md (Pacing) - a number
+hello `pace` is {hold} only. Heartbeat 60 s (API 4.5; a client beats 30 s
+against an older server), poll wait 9 s and the 100 ms request gap are
+contract constants in docs/API.md (Pacing) - a number
 that never changes belongs in the contract, not on the wire; LESS
 mechanism, not more. Do not re-add pace_hello_ms / pace_gap_ms (removed;
 stale settings rows for them are harmless, Settings::all() iterates DEFS)
 or a spread/jitter field (pace.spread_ms was withdrawn: per-session
-jitter only pays at a client count this host will not see).
+jitter only pays at a client count this host will not see). Every window
+a heartbeat keeps alive - online, duel, auto-accept, conn TTL, signal TTL
+- is 120 s and is checked through Util::since with FOK_BEAT_JITTER (1 s)
+of grace, so nothing reads as gone before 121 s. A smoke that changes
+signal_ttl puts back the DEFS default, or it pins staging.
 tourney_after_step_ms (100) staggers the follow-up calls a pushed
 tournament event provokes, per RECIPIENT, capped at the client's 1000 ms
 guard. Per recipient, not per event: one transition pushes several events
@@ -79,6 +84,14 @@ the ceiling - so:
   both be handed one. The undelivered-invite receipt is a separate watch
   entry that must be deleted only AFTER the expiry check - deleting it
   for a message dropped as expired destroys the evidence.
+- PRESENCE itself (Presence.php): one entry per player, and every request
+  a beat, poll.php included. The row sees a SESSION: one upsert when a
+  beat finds no live entry, one write-back by the rate-gated fold (the
+  deferred tail of Util::bumpNow) once the entry is older than every
+  window that reads it; a rename is written through, identity not being
+  presence. The duel heartbeat stays a row write (item claims
+  read duels.last_seen). player_nets is gone (schema 41); the networks
+  ride in the entry.
 - Presence::counts cache.
 - Request COUNTERS are write-behind (Counters.php): apcu_inc per minute,
   a closed minute folded into the durable table in one upsert. Gotchas:
@@ -184,8 +197,9 @@ the host clears with `continue`, and the break clears itself on a TTL so
 a host who closed the browser cannot wedge it. The HOST leaving a running
 tournament ABANDONS it for everyone; a guest's identical `leave` is a
 forfeit - the server is the only thing that tells them apart. ANNOUNCE IS
-BY NETWORK PER FAMILY (player_nets, one row per family, matched within
-tournament_announce_window 180 s), because on a dual-stack LAN the host
+BY NETWORK PER FAMILY (the presence entry, one network per family,
+matched within tournament_announce_window 180 s), because on a dual-stack
+LAN the host
 and joiner never share an address; hello's optional "nets" is a CLAIM,
 never evidence (a claim never displaces a live observation and cannot be
 rewritten faster than 60 s). GET /api/net.php is the field check for "my

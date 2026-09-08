@@ -443,7 +443,7 @@ function renderClientBody(body, overlay, d, reload) {
     kv('IP (last known)', c.ip);
     kv('First seen', fmtTime(c.first_seen));
     kv('Last seen', fmtTime(c.last_seen) + ' (' + ago(c.last_seen) + ')');
-    kv('Hellos', c.hello_count);
+    kv('Sessions', c.hello_count);
     kv('Latency', c.latency === null ? '-' : c.latency + ' ms');
     kv('Debug', debugLabel(c));
 

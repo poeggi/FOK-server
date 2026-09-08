@@ -145,6 +145,17 @@ final class Util
         ) !== false;
     }
 
+    /**
+     * The oldest stamp that still counts as within $window seconds of $now:
+     * the window plus the jitter second a late beat may take. Every "still
+     * here" test compares >= this, so none of them reads a client, a duel
+     * or a signal as gone before the window and its grace have both passed.
+     */
+    public static function since(int $window, ?int $now = null): int
+    {
+        return ($now ?? time()) - $window - FOK_BEAT_JITTER;
+    }
+
     public static function nowMs(): int
     {
         return (int)round(microtime(true) * 1000);
@@ -504,6 +515,9 @@ final class Util
         // write per minute rather than one per request (see Counters).
         require_once __DIR__ . '/Counters.php';
         $reqPerMin = Counters::hit($metric);
+        // The session fold rides here too, rate-gated inside (see Presence).
+        require_once __DIR__ . '/Presence.php';
+        Presence::fold();
         // Threshold checks are cheap but not free; sample every 25 requests.
         // The > 0 guard matters: a miss must not read as "every request".
         if ($reqPerMin > 0 && $reqPerMin % 25 === 0) {

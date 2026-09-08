@@ -48,6 +48,10 @@ expect "net diagnostic names the network" '"net":' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"}" "$BASE/api/hello.php")
 expect "hello registers" "$(strict '"registered":1')" "$R"
 expect "hello online" "$(strict '"online":1')" "$R"
+# A poll is a beat too (4.5): a client that only ever polls is online.
+curl -s -o /dev/null "$BASE/api/poll.php?id=$ID2"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"}" "$BASE/api/hello.php")
+expect "a poll counts as a beat" "$(strict '"online":2')" "$R"
 expect "hello carries api version" '"api":' "$R"
 # 4.4, both additive. q_ms is this request's own queue wait - the client
 # reads it to know not to anchor its clock against a busy moment. pace

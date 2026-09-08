@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.4.17';
+const FOK_SERVER_VERSION = '1.4.18';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -120,7 +120,7 @@ const FOK_SERVER_VERSION = '1.4.17';
 // already requires an absent one to be treated as the client's own default -
 // which for the beat IS the contract's constant, and for a jitter budget is
 // no jitter. A client that read them keeps working exactly as before.
-const FOK_API_VERSION = '4.4';
+const FOK_API_VERSION = '4.5';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
@@ -160,20 +160,31 @@ ini_set('error_log', FOK_ERROR_LOG);
 // first), so an unrotated log is never loaded whole.
 const FOK_LOG_TAIL_BYTES = 131072;
 
-// A player counts as online while its last heartbeat is within this window.
-const FOK_ONLINE_WINDOW = 60;
+// A player counts as online while its last heartbeat is within this window:
+// twice the 60 s beat the contract asks for (docs/API.md, Pacing), so one
+// missed beat never reads as offline.
+const FOK_ONLINE_WINDOW = 120;
+// A beat that lands the odd second late still counts. Every window below
+// that a heartbeat keeps alive is checked against the window PLUS this
+// second (Util::since), never against the window alone, so nothing reads
+// as gone before 121 s.
+const FOK_BEAT_JITTER = 1;
 // How long the QR-screen auto-accept flag a hello may set stays valid, so a
-// scanned invite is accepted without a manual tap (see Presence). A protocol/
-// UX constant, not an operator knob.
-const FOK_AUTO_ACCEPT_WINDOW = 60;
+// scanned invite is accepted without a manual tap (see Presence). Every
+// hello re-arms it, so it is the online window: one missed beat does not
+// close the screen. A protocol/UX constant, not an operator knob.
+const FOK_AUTO_ACCEPT_WINDOW = 120;
 // Presence counters are cached this long: every hello returns them, so
 // they must never be counted per request (see Presence::counts).
 const FOK_COUNTS_TTL = 5;
-// A duel counts as running while either peer refreshed it within this window.
-const FOK_DUEL_WINDOW = 60;
+// A duel counts as running while either peer refreshed it within this
+// window; the refresh is duel_with on the heartbeat, so it is the online
+// window.
+const FOK_DUEL_WINDOW = 120;
 // A tracked connection state (see ConnTrack) goes stale after this long
-// without a signaling or duel event: the client reads as idle again.
-const FOK_CONN_TTL = 60;
+// without a signaling or duel event: the client reads as idle again. The
+// duel event is the heartbeat, so this is the online window too.
+const FOK_CONN_TTL = 120;
 // The admin dashboard keeps a client on its Duels / Connections cards this
 // long AFTER its liveness lapses (a duel went quiet, a client dropped), so
 // a just-ended entry does not blink out the instant it stops refreshing.
@@ -182,8 +193,8 @@ const FOK_DUEL_LINGER = 10;
 // FOK_RELAY_TRACK_THROTTLE and FOK_POLL_CHECK_USEC_APCU below go with it.
 // How long a pair holds its relay slot after its last message through the
 // hub. A relaying duel refreshes this many times a second, so the window
-// only has to outlast a pause (level transition, backgrounded tab) - keep
-// it well above the ~30 s hello cadence or a live duel loses its slot.
+// only has to outlast a pause (level transition, backgrounded tab), or a
+// live duel loses its slot.
 const FOK_RELAY_WINDOW = 90;
 // A relayed pair's tracked connection is only a liveness marker for the
 // admin cards and the duel cap, both read over FOK_RELAY_WINDOW, so
@@ -191,10 +202,12 @@ const FOK_RELAY_WINDOW = 90;
 // already give: it is refreshed at most this often per pair - well under
 // the window it feeds.
 const FOK_RELAY_TRACK_THROTTLE = 10;
-// Undelivered signaling messages expire after this many seconds. A
-// connection attempt that dies this way is reported back to its sender
+// Undelivered signaling messages expire after this many seconds: the
+// online window, so a signal to a client that still counts as online is
+// late at worst, never lost (an idle client drains only on its heartbeat).
+// A connection attempt that dies this way is reported back to its sender
 // (see Signals::expire), so an invite never just evaporates.
-const FOK_SIGNAL_TTL = 30;
+const FOK_SIGNAL_TTL = 120;
 const FOK_SIGNAL_MAX_PAYLOAD = 16384;
 // Max candidates in one batched 'ices' signal (see docs/API.md). The point
 // of the type is that ONE request carries a side's whole trickle, and a side
