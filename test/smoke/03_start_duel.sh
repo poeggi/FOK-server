@@ -322,6 +322,16 @@ curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"auto_
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
 expect "request pending after QR screen closed" '"state":"pending"' "$R"
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php" > /dev/null
+
+# 4.9: the poll arms it too, so the QR screen needs no hello beside the poll
+# it is already holding.
+curl -s "$BASE/api/poll.php?id=$ID2&aa=1" > /dev/null
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
+expect "the poll arms auto-accept as a hello does" '"state":"accepted"' "$R"
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"auto_accept\":false}" "$BASE/api/hello.php" > /dev/null
+R=$(curl -s "$BASE/api/poll.php?id=$ID2&aa=nonsense")
+expect "a bogus arm flag is refused" '"error":"invalid aa"' "$R"
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 curl -s "$BASE/api/poll.php?id=$ID1" > /dev/null
 

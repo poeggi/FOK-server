@@ -205,6 +205,15 @@ expect "both ends leave nobody playing" "$(strict '"playing":0')" "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"duel_end\":\"nothex\"}" "$BASE/api/hello.php")
 expect "a malformed duel_end is refused" '"error":"invalid duel_end"' "$R"
 
+# 4.9: the same end, stated on the poll the client is already holding.
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"duel_with\":\"$ID2\"}" "$BASE/api/hello.php" > /dev/null
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"duel_with\":\"$ID1\"}" "$BASE/api/hello.php")
+expect "a duel announced again, for the poll to end" "$(strict '"playing":2')" "$R"
+curl -s "$BASE/api/poll.php?id=$ID1&de=$ID2" > /dev/null
+curl -s "$BASE/api/poll.php?id=$ID2&de=$ID1" > /dev/null
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"}" "$BASE/api/hello.php")
+expect "the poll ends a duel as a hello does" "$(strict '"playing":0')" "$R"
+
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"latency\":31}" "$BASE/api/hello.php" > /dev/null
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends_since\":0}" "$BASE/api/hello.php")
 expect "the friend reads online" "\"$ID2\":{\"online\":true" "$R"
@@ -249,4 +258,35 @@ R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&fs=$PAT")
 expect "a poll with nothing pending still answers 204" '204' "$R"
 R=$(curl -s "$BASE/api/poll.php?id=$ID1&fs=nonsense")
 expect "a bogus cursor is refused" '"error":"invalid fs"' "$R"
+
+# 4.9: the last three answers a screen holding this poll needed a hello for.
+# fl and tl answer AT ONCE: the body proves the answer, the clock proves the
+# poll did not wait out the hold it asked for.
+T0=$(date +%s)
+R=$(curl -s "$BASE/api/poll.php?id=$ID1&fl=1&wait=5")
+expect "the poll serves the whole roster" '"friends":[' "$R"
+expect "the counters ride the roster" '"online":' "$R"
+expect "so does the hold decision" '"pace":{' "$R"
+expect "and it answers instead of holding for the wait" 'fast' "$([ $(( $(date +%s) - T0 )) -lt 3 ] && echo fast || echo slow)"
+T0=$(date +%s)
+R=$(curl -s "$BASE/api/poll.php?id=$ID1&tl=1&wait=5")
+expect "the poll serves the tournament announce" '"tourneys":' "$R"
+expect "and answers at once for that too" 'fast' "$([ $(( $(date +%s) - T0 )) -lt 3 ] && echo fast || echo slow)"
+R=$(curl -s "$BASE/api/poll.php?id=$ID1&fl=nonsense")
+expect "a bogus flag is refused" '"error":"invalid fl"' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID1&fl=1")
+expect "every body carries the contract version" '"api":"' "$R"
+expect "and the server's debug instruction" '"debug":' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID1&de=nonsense")
+expect "a bogus duel end is refused" '"error":"invalid de"' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID1&db=nonsense")
+expect "a bogus debug report is refused" '"error":"invalid db"' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&wait=1")
+expect "a poll asking for none of them still answers 204" '204' "$R"
+# The contract promises any hold up to 9 s (the default ask is 5): a longer
+# ask is served as the cap, measured in whole seconds with room on each side.
+T0=$(date +%s)
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&wait=20")
+expect "a hold past the cap still answers 204" '204' "$R"
+expect "and is held for the cap, not the ask" 'capped' "$(D=$(( $(date +%s) - T0 )); [ $D -ge 8 ] && [ $D -le 12 ] && echo capped || echo "held ${D}s")"
 

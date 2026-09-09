@@ -23,10 +23,12 @@ The three levers, already reasoned through - do not re-derive:
 
 1. Fewer requests in flight per client. SPENT (gap_ms plus the roster
    folded onto hello, so the background gate is one request).
-2. Shorter worker occupancy (FOK_POLL_WAIT_MAX). The only lever with room
-   left, but it buys queue time by raising request count - the trade
-   settled when Holds.php admission control shipped. Reopen only with the
-   trigger above in hand.
+2. Shorter worker occupancy. The only lever with room left, but it buys
+   queue time by raising request count - the trade settled when Holds.php
+   admission control shipped. The contract's default hold is 5 s and
+   the cap (FOK_POLL_WAIT_MAX) stays 9: what the client asks for is
+   where this lever is pulled, the cap only bounds it. Reopen the cap
+   only with the trigger above in hand.
 3. More workers. NOT ours - shared-host pool (~20). Same wall that killed
    SSE.
 
@@ -48,13 +50,37 @@ Reading caveats:
   its own queue wait.
 - Nor can a client's own siblings: twelve of one client's requests in
   flight on a single HTTP/2 connection all read 1 ms.
-- What is left for a tens-of-ms row is the machine we share, and it is
-  NARROWED, not known. Six and twelve in flight leave our own pool
+- A row of ~130 ms is THE POOL GROWING BY ONE CHILD, and it reproduces on
+  demand. Measured against live on 2026-09-09: hold N long polls open
+  (poll.php?wait=) and read `q_ms` off hello.php beside them. Six
+  concurrent short requests with no holds read 1 ms each, so concurrency
+  by itself is free. What costs is a level the pool has not served
+  before: the one request that takes concurrency to a new high-water mark
+  waits while a child is forked, and every request behind it - and every
+  repeat of that level afterwards - reads 1 ms. Holds 0 and 2: 1 ms.
+  Holds 4: 129. Holds 6: 134. Holds 9: 129, then 1 on the repeat. A HELD
+  POLL is therefore what provokes it: it occupies a child for its whole
+  wait, so it is the thing that raises the mark.
+- Which request pays the fork is an accident of arrival order, so the
+  SCRIPT on such a row says nothing about that script. A screen that puts
+  one request beside the poll it holds is simply where a session first
+  reaches a new mark, and the row names whichever of the two arrived
+  second. That is how the friends screen came to be reported as slow on
+  2026-09-09 (friend.php, 132 ms, depth 2): its roster read travels
+  beside the held poll, and friend.php itself answers at the round-trip
+  floor.
+- The Worker column is worth reading first. The mark names the process
+  incarnation (the id plus its start time out of /proc/self/stat): a
+  bare process id comes round on this host often enough that a fresh
+  child would read as reused, which is the one answer that column must
+  never give.
+- What is left for a row in the TENS of ms is the machine we share, and
+  it is NARROWED, not known. Six and twelve in flight leave our own pool
   nowhere near its ~20 ceiling, so it is not a worker of ours. The two
   candidates left are a cold filesystem lookup (Apache walks the
   directory and parses .htaccess on every request, and a dentry miss on
   shared storage costs tens of ms) and a wait for a CPU slice (one CFS
-  period is ~24-48 ms). Both are binary, which is why the readings are
+  period is ~24-48 ms). Both are binary, which is why those readings are
   1 ms or ~30 ms with nothing between, and neither can be reproduced
   from outside: hammering keeps the cache warm and the process
   runnable. To tell them apart, record sys_getloadavg per core on the

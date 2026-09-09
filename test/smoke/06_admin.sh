@@ -300,6 +300,19 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=users")
     expect "a client debugging by itself still reports active" '"debug":false,"debug_active":true' "$R"
 
+    # 4.9: the instruction reaches a client that only polls. A poll naming a
+    # state the server disagrees with is answered instead of held, and the
+    # client's own next report is what settles it again.
+    R=$(curl -s "$BASE/api/poll.php?id=$ID1&db=1&wait=3")
+    expect "a poll reporting a stale debug state is answered at once" '"debug":false' "$R"
+    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&db=1&wait=1")
+    expect "but a standing disagreement is not answered twice" '204' "$R"
+    curl -s "$BASE/api/poll.php?id=$ID1&db=0" > /dev/null
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=users")
+    expect "and the poll carries the client's report back" '"debug":false,"debug_active":false' "$R"
+    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&db=0&wait=1")
+    expect "an agreeing report holds as any other poll does" '204' "$R"
+
     # Client details popup: one condensed view of everything about an id.
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=client&id=$ID1")
     expect "client details returned" '"client":' "$R"

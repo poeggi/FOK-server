@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.8", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.9", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -35,7 +35,11 @@ added in 4.1, self-reported networks, added in 4.2, the tournament round
 ladder and its round breaks, added in 4.3, batched ICE candidates, the
 queue-wait figure and the hold decision, added in 4.4, friend presence
 deltas, added in 4.6, the announced end of a duel and private duels,
-added in 4.7, or replacing the tournament you host, added in 4.8) is
+added in 4.7, replacing the tournament you host, added in 4.8, or the
+poll carrying the whole beat - auto-accept, the roster, the tournament
+announce, the announced end of a duel, the debug report, and `api` and
+the debug instruction on every body it sends, with a 5 s default
+hold - added in 4.9) is
 available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
@@ -470,7 +474,10 @@ Request:
                                   incoming friend requests are then accepted
                                   immediately (see Friendships). Expires
                                   ~120 s after the last flagged hello; a
-                                  hello without the flag clears it.
+                                  hello without the flag clears it. Since
+                                  4.9 poll.php's `aa=1` arms it too, so a
+                                  client already holding a poll needs no
+                                  hello for it.
       "debug": true,              optional bool: whether the client IS in
                                   debug mode right now (absent means it is
                                   not). See Debug mode below.
@@ -500,7 +507,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.8",               contract version, see Versioning
+      "api": "4.9",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a PHP
@@ -641,16 +648,33 @@ minute.
 The beat is part of the contract. Three constants, stated here and not on
 the wire, the same for every client:
 
-    heartbeat   send hello every 60 s while online. Half the 120 s online
-                window, so one missed beat never reads as offline. The
-                server checks the window with one second of grace, so a
-                beat that lands the odd second late still counts. Against
-                a server reporting `api` 4.4 or older, beat every 30 s:
-                its window is 60 s.
-    poll wait   ask poll.php for `wait` of up to 9 s, the longest hold it
-                serves; anything shorter is served as asked. A shorter hold
-                re-arms more often, and cuts how long a pushed event or a
-                tournament deadline can wait for the next poll.
+    heartbeat   hello every 60 s, from a client that has nothing else in
+                flight. Half the 120 s online window, so one missed beat
+                never reads as offline. The server checks the window with
+                one second of grace, so a beat that lands the odd second
+                late still counts. Against a server reporting `api` 4.4
+                or older, beat every 30 s: its window is 60 s.
+                EVERY request is a beat (4.5), poll.php included. A client
+                looping a poll is therefore already beating, and a hello
+                beside it is a second request in flight for nothing (see
+                the gap below). From 4.9 the poll carries everything the
+                SERVER has to say unasked - `api` and `debug` on every
+                body it sends, the pace and the counters beside them - so
+                nothing a client cannot see coming rides on a hello. Two
+                readings stay hello's and are NOT on the poll: `now` and
+                `q_ms`. The clock source is t.txt, and a client that
+                wants either asks with a hello. What is left is what the
+                client itself knows is due and the server cannot: a
+                rename, a latency reading, its `nets`, and `duel_with`
+                during a game, where nothing is holding a poll anyway.
+                Send a hello for those. Otherwise the poll is the beat.
+    poll wait   ask poll.php for `wait` of 5 s. The server serves any
+                hold up to 9 s, the longest it keeps a worker for, so a
+                client may ask for more; anything shorter is served as
+                asked. A shorter hold re-arms more often, and cuts how
+                long a pushed event, a tournament deadline or a withdrawn
+                `pace.hold` can wait for the next poll; a longer one keeps
+                a worker for longer.
     gap         keep at least 100 ms between any two requests THIS client
                 has in flight, whichever endpoints they are. It separates a
                 client's own requests from each other - a client that fires
@@ -668,12 +692,27 @@ the wire, the same for every client:
                 each other - BOTH pay the full queue wait rather than one
                 of them paying it. Keep at most ONE request in flight
                 besides a parked poll, exempt or not.
+                That allowance is not free either. A parked poll owns a
+                PHP worker for its whole wait, so the request sent beside
+                it can be the one that takes the host to a concurrency it
+                has not served before, and it then waits for a worker to
+                be created - about 130 ms on the deployment this contract
+                is written for, once, and not again at that level.
+                Folding a request into the poll always beats sending it
+                beside the poll. The clock probe is the exception, and not
+                a small one: t.txt is stamped by Apache and never starts
+                PHP, so it can never take the host to a concurrency it has
+                not served and has nothing to gain by waiting. Do NOT
+                serialise the clock sweep behind a held poll - it would buy
+                nothing and pay for it in stale anchors.
 
     screen tick The lobby, friends, MY ID and tournament-lobby screens
                 refresh out of the poll they are already holding: `fs`
                 makes it carry the friend delta, the presence counters and
-                the hold decision (4.6), so those screens send no hello of
-                their own and the 60 s beat is the only one left. Against
+                the hold decision (4.6), and `aa` / `fl` / `tl` carry the
+                last three answers those screens needed a hello for (4.9).
+                Against a 4.9 server they send nothing beside the poll at
+                all - not even the 60 s beat, because the poll is one. Against
                 a server older than 4.6 there is no delta: fall back to
                 `friends` on hello at the screen's own tick, and feature-
                 detect on the response, never on the version.
@@ -758,11 +797,12 @@ Rules:
 
 - Signals are DRAINED on delivery: each message is returned exactly once.
   The client must process every element of `signals` immediately.
-- Cadence: send hello every ~60 s, always (see Pacing). hello is a
-  complementary keepalive and only that. Every request a client makes is
-  a beat (4.5) - poll.php included - so hello is the beat a client sends
-  when it has nothing else to say: it keeps the player online and drains
-  whatever the mailbox holds by then. Nothing time-critical rides on it -
+- Cadence: hello every ~60 s from a client with nothing else in flight
+  (see Pacing). hello is a complementary keepalive and only that. Every
+  request a client makes is a beat (4.5) - poll.php included - so hello is
+  the beat a client sends when it has nothing else to say: it keeps the
+  player online and drains whatever the mailbox holds by then. A client
+  looping a poll is already beating and owes no hello for presence. Nothing time-critical rides on it -
   a signal or a tournament event that matters now reaches a client
   through /api/poll.php, and hello merely catches what a client with no
   poll running would otherwise see a minute late.
@@ -782,7 +822,10 @@ first of them is not the heartbeat:
   peer's request being slow does not delay the other's side of it.
 - **`duel_with` on hello REFRESHES it**, once a beat, which is what holds
   the offer up for as long as the match runs.
-- **`duel_end` on hello CLEARS it**, naming the peer just left. An end for
+- **`duel_end` on hello CLEARS it**, naming the peer just left. Since 4.9
+  poll.php's `de=` says the same thing, which is where a client that
+  returns to a screen holding a poll can say it without a second request.
+  An end for
   a peer the server does not have the caller playing is ignored, so an end
   overtaken by the next pairing cannot cancel it - and one hello may carry
   `duel_end` and `duel_with` together, because the end is applied first.
@@ -812,13 +855,17 @@ in the field without asking its user to do anything.
 
 Two separate bits are involved, and they are deliberately independent:
 
-- **The instruction**, `debug` in the hello RESPONSE. What the server
-  wants. The client MUST honour it: `true` turns its debug mode on,
-  `false` turns it off again. It arrives on the next hello (so up to
-  ~60 s after an operator sets it), never sooner.
-- **The report**, `debug` in the hello REQUEST. What the client IS
-  actually doing. Send `true` in every hello while debug mode is on,
-  whatever turned it on.
+- **The instruction**, `debug` in the hello RESPONSE and (4.9) on every
+  poll answer with a body. What the server wants. The client MUST
+  honour it: `true` turns its debug mode on, `false` turns it off
+  again. It arrives on the client's next hello, or on the next poll
+  that reports `db` - answered at once when the two differ (see
+  poll.php), so within one hold period - and never sooner than the
+  client's next request.
+- **The report**, `debug` in the hello REQUEST and `db` on the poll
+  (4.9). What the client IS actually doing. Send `true` in every
+  hello, and `db=1` on every poll, while debug mode is on, whatever
+  turned it on.
 
 They differ legitimately, and the admin view names each case: `pending`
 is an instruction the client has not picked up yet, and `self` is a
@@ -831,7 +878,8 @@ only carries the bit.
 
 ## GET /api/poll.php - fast signal poll
 
-    GET /api/poll.php?id=c0ffee42[&wait=9][&fs=<cursor>]
+    GET /api/poll.php?id=c0ffee42[&wait=5][&fs=<cursor>]
+                     [&aa=1][&fl=1][&tl=1][&de=<8-hex>][&db=0|1]
 
     -> 204 No Content                          nothing pending
     -> 200 {"ok":true,"signals":[...]}         pending messages, drained
@@ -839,14 +887,71 @@ only carries the bit.
 With `wait` (seconds, capped server-side at 9) this is a LONG POLL: the
 server holds the request open and answers the moment a signal arrives,
 checking every 20 ms. This is the lowest-latency delivery path - during
-an active handshake, loop `wait=9` requests back-to-back and a relayed
-signal reaches you in ~20 ms plus network, instead of a full poll
-interval. Without `wait` it degrades to the plain cheap poll (one indexed
-read, 204).
+an active handshake, loop `wait=5` requests back-to-back (the default
+hold, see Pacing; anything up to 9 is served) and a relayed signal
+reaches you in ~20 ms plus network, instead of a full poll interval.
+Without `wait` it degrades to the plain cheap poll (one indexed read,
+204).
 
 A poll is a beat (4.5): like every other request it refreshes the
 caller's presence, so a client looping poll.php stays online whether or
-not its hello is on time.
+not its hello is on time - and needs no hello to stay online at all.
+
+Every answer WITH A BODY carries `api` and `debug` (4.9), beside the
+`signals` array:
+
+      "api": "4.9",             the contract version, re-read here for
+                                the same reason hello carries it: it
+                                un-latches a client after a rollback
+      "debug": false,           the server's debug instruction for this
+                                client, exactly as hello answers it
+
+Those two travel server to client ONLY. A client cannot know either is
+due, so it can never be its job to ask - which is what makes a poll a
+complete beat rather than most of one. `now` and `q_ms` are NOT here:
+they are readings, and hello's (see Pacing).
+
+`aa`, `fl`, `tl`, `de` and `db` (4.9) carry what a screen holding this
+poll would otherwise send a hello for. Each is the hello field of the
+same name, on the request the client is already making:
+
+    aa=1        arm auto-accept for ~120 s, as hello's `auto_accept`
+                does. A poll can only ARM it; only a hello clears it
+                early, and it expires on its own either way.
+    fl=1        answer `friends`, the whole roster, as hello's
+                `friends_list` does.
+    tl=1        answer `tourneys`, the local tournament announce, as
+                hello's `tourneys` does.
+    de=<8-hex>  the peer this client has just STOPPED playing, as hello's
+                `duel_end` does (4.7). The screen a client returns to
+                after a match is one holding this poll, so state it here
+                and the WATCH row goes down with the match.
+    db=0|1      what this client reports its OWN debug mode to be, as
+                hello's `debug` does. ABSENT IS NOT FALSE here: a poll
+                that did not mention it is not a client saying no, so
+                absence changes nothing.
+
+`fl` and `tl` ANSWER AT ONCE - a screen that just opened is not waiting
+for a signal that is not coming - so a poll carrying either is a 200 with
+`wait` effectively ignored. Either of them, and `fs`, also brings the
+presence counters and `pace`: `pace.hold` is how the server withdraws
+holding, and a client that has stopped beating has to be able to hear
+that.
+
+A poll that sends `db` also answers at once when the server's `debug`
+instruction differs from what that `db` reported - a 204 has no body to
+carry an instruction in, so an operator would otherwise lose reach to
+exactly the client that is polling quietly. It settles itself: act on the
+instruction, report the new state with `db` on the next poll, and the
+holds resume. It happens at most once per hold period, because a
+disagreement may legitimately STAND - an instruction of false against a
+client whose user turned debug on locally - and a client that re-arms the
+moment it is answered would otherwise never hold again. A client that
+never sends `db` is never woken this way and behaves as it always did.
+
+Feature-detect `fl` and `tl` on the response, never on the version.
+`aa`, `de` and `db` are not visible in a 204, so a client that intends to
+stop beating for them gates on `api` >= 4.9.
 
 `wait` is a REQUEST, not a promise. A held request occupies one of the
 server's limited workers, so there is a budget for how many may be held
@@ -2126,8 +2231,9 @@ tournament.php request, or any participant's poll.php or hello.
 
 So the mailbox drain a participant makes anyway is what keeps the clock
 moving, and whatever a deadline produces - a settled result, the next
-roles sheet - is in that same answer. With a held poll that is about 9 s
-at worst; with hello alone, about 60 s. Nothing is added to the wire for
+roles sheet - is in that same answer. With a held poll that is one hold
+at worst - 5 s, or up to 9 s for a client asking for the longest hold;
+with hello alone, about 60 s. Nothing is added to the wire for
 it, and a client never calls `state` for timekeeping: `state` is for a
 reload, a rejoin, or genuine doubt that an event was missed, and nothing
 else.

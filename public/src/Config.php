@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.7.1';
+const FOK_SERVER_VERSION = '1.8.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -116,7 +116,7 @@ const FOK_SERVER_VERSION = '1.7.1';
 // already requires an absent one to be treated as the client's own default -
 // which for the beat IS the contract's constant, and for a jitter budget is
 // no jitter. A client that read them keeps working exactly as before.
-const FOK_API_VERSION = '4.8';
+const FOK_API_VERSION = '4.9';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
@@ -237,9 +237,10 @@ const FOK_MAX_INPUTS = 262144;
 // end-of-game replay upload is anywhere near this.
 const FOK_MAX_BODY = FOK_MAX_INPUTS + 16384;
 // Max seconds a long poll (poll.php / relay.php) holds the request open.
-// Coupled to the client (it sends wait=9) and the FPM worker model, and kept
-// under the max_execution_time backstop (api/.user.ini) - a design constant,
-// not a runtime knob.
+// The contract's default hold is 5 s (docs/API.md, Pacing) and a client may
+// ask for up to this. Coupled to the FPM worker model, and kept under the
+// max_execution_time backstop (api/.user.ini) - a design constant, not a
+// runtime knob.
 const FOK_POLL_WAIT_MAX = 9;
 // Long-poll mailbox check interval. The hold duration cap is FOK_POLL_WAIT_MAX;
 // it must stay small enough that concurrent handshakes cannot exhaust the
@@ -263,7 +264,7 @@ const FOK_POLL_CHECK_USEC_APCU = 2000;
 // stops budgeting holds altogether.
 const FOK_HOLD_MAX_WORKERS = 12;
 
-// The client's own beat - the 30 s heartbeat, the 9 s poll wait and the
+// The client's own beat - the 60 s heartbeat, the 5 s poll wait and the
 // 100 ms gap between its own requests - is stated in docs/API.md (Pacing)
 // and is not a setting here: nothing about it follows load, and a number
 // that never changes belongs in the contract, not on the wire. The one

@@ -25,7 +25,8 @@ contract and must stay in step.
 ## Pacing
 
 hello `pace` is {hold} only. Heartbeat 60 s (API 4.5; a client beats 30 s
-against an older server), poll wait 9 s and the 100 ms request gap are
+against an older server), poll wait 5 s (up to 9 s served) and the
+100 ms request gap are
 contract constants in docs/API.md (Pacing) - a number
 that never changes belongs in the contract, not on the wire; LESS
 mechanism, not more. Do not re-add pace_hello_ms / pace_gap_ms (removed;

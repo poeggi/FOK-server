@@ -144,7 +144,11 @@ major. Every minor since is additive; docs/API.md carries them one by one.
         poll.php      fast signal poll, 204 when idle (matchmaking,
                       tournaments); carries the friend delta, the counters
                       and the hold decision when asked, and wakes on a
-                      friend transition
+                      friend transition. Carries the whole beat for a
+                      screen holding it: arming auto-accept, the roster,
+                      the tournament announce, the announced end of a duel,
+                      and the api string and debug instruction on every
+                      body it sends
         friend.php    friendship handshake: request/accept/remove/list
         tournament.php
                       tournament mode: one POST with an action switch

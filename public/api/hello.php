@@ -50,7 +50,8 @@ require_once __DIR__ . '/../src/Pace.php';
  * pending signaling messages for the caller (drained on read) and, when a
  * cursor is sent, what changed about the caller's ACCEPTED friends since
  * it - the server names them, the caller never does.
- * Clients send this every ~30s; fast polling belongs to poll.php.
+ * Clients send this every ~60 s when nothing else is in flight (docs/API.md,
+ * Pacing); fast polling belongs to poll.php.
  */
 Util::cors();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {

@@ -492,20 +492,49 @@ final class Util
      * it had not. A worker that PHP has just started pays for its own
      * startup before it can answer, and that cost lands in the queue
      * reading as though the pool had been busy - so a list of the worst
-     * readings has to be able to tell the two apart.
+     * readings has to be able to tell the two apart. On this host that is
+     * the LARGEST reading there is: the pool grows by forking a child, the
+     * request that takes concurrency to a new high-water mark waits about
+     * 130 ms for the fork, and every request behind it waits one.
      *
-     * The mark is per process id and it expires, which makes this a proxy
-     * and not a fact: a child recycled onto a process id whose mark is
-     * still standing reads as reused. It is accurate enough for the only
-     * question being asked of it, which is whether a pool is forever
-     * spawning or never does.
+     * The mark names the process INCARNATION - the id together with the
+     * moment the kernel started it - because a process id on its own comes
+     * round, and a child that inherits a marked id reports the very thing
+     * this column exists to catch as its opposite. A host that hides /proc
+     * leaves the id standing alone, and with it the proxy.
      */
     private static function claimWorker(): bool
     {
         if (!function_exists('apcu_add')) {
             return false;
         }
-        return apcu_add(self::WORKER_KEY . getmypid(), 1, self::WORKER_TTL) === true;
+        return apcu_add(self::WORKER_KEY . self::workerTag(), 1, self::WORKER_TTL) === true;
+    }
+
+    /**
+     * This process, told apart from the next one to carry its id: field 22
+     * of /proc/self/stat is the moment the kernel started it, in ticks
+     * since boot. The command name in field 2 may itself hold spaces and
+     * brackets, so the fields are counted from the LAST closing bracket
+     * rather than from the start of the line. Shared hosting may refuse
+     * /proc - Util::cores meets the same wall - and then the id is all
+     * there is to go on.
+     */
+    private static function workerTag(): string
+    {
+        $pid = (string)getmypid();
+        $stat = @file_get_contents('/proc/self/stat');
+        if (!is_string($stat)) {
+            return $pid;
+        }
+        $tail = strrchr($stat, ')');
+        if ($tail === false) {
+            return $pid;
+        }
+        // The state (field 3) is the first field after the bracket, so the
+        // start time is the twentieth of what follows it.
+        $f = preg_split('/\s+/', trim(substr($tail, 1)));
+        return isset($f[19]) && ctype_digit($f[19]) ? $pid . ':' . $f[19] : $pid;
     }
 
     /**

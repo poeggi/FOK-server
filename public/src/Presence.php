@@ -483,8 +483,9 @@ final class Presence
 
     /**
      * Admin-set: what the server WANTS the client to do (see touch). The
-     * row is the record and the entry is what the next hello reads, so a
-     * player who is here learns of it on that hello.
+     * row is the record and the entry is what the next beat reads - a
+     * hello, or a poll that reports its own state - so a player who is
+     * here learns of it on that request.
      */
     public static function setDebug(string $id, bool $on): void
     {
