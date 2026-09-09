@@ -160,11 +160,12 @@ final class Tournament
     /**
      * Work a transition wants done but must not do while it holds the lock:
      * anything that can WAIT. The SQLite writer parks a caller for up to
-     * busy_timeout, which is longer than the lock's own TTL - so a
-     * transition that writes under the lock can outlive its lease, and the
-     * next worker would take the tournament out from under it. Locks here
-     * are therefore held for shared memory only, and the counters and alerts
-     * a transition leaves behind run once it is released.
+     * busy_timeout, and Db::retry makes three such attempts - the same
+     * order as the lock's own 5 s TTL - so a transition that writes under
+     * the lock can outlive its lease, and the next worker would take the
+     * tournament out from under it. Locks here are therefore held for
+     * shared memory only, and the counters and alerts a transition leaves
+     * behind run once it is released.
      *
      * Ordered, and run after the events flush: an operator's alert follows
      * the clients being told, never precedes it.

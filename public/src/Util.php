@@ -34,6 +34,18 @@ final class Util
             // go on to retry. Running it here piles more writes onto the
             // jammed writer and logs a second fault for work nobody awaits.
             self::$deferred = [];
+            // What the database cost is still booked, because this is the
+            // request that cost the most: a write that ran out of
+            // busy_timeout is the largest access there is, and the gauge
+            // that exists to show it must not be the one thing that misses
+            // it. Load::flush writes to shared memory only, so it is the
+            // one piece of the queue above that cannot make a jammed writer
+            // any worse.
+            require_once __DIR__ . '/Load.php';
+            try {
+                Load::flush();
+            } catch (Throwable $ignored) {
+            }
             if (!headers_sent()) {
                 self::jsonOut(['ok' => false, 'error' => 'server fault'], 500);
             }

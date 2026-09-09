@@ -29,8 +29,22 @@ final class Db
         return self::$bootUs;
     }
 
-    /** How long a contended write waits for the single writer, in ms. */
-    private const BUSY_MS = 4000;
+    /**
+     * How long a contended write waits for the single writer, in SECONDS.
+     *
+     * Seconds because that is the unit PDO takes: the sqlite driver hands
+     * PDO::ATTR_TIMEOUT straight to sqlite3_busy_timeout as lval * 1000,
+     * with no statement to parse, where the PRAGMA of the same name costs
+     * a prepare and a step to reach the same C call.
+     *
+     * A contended write that runs out of it throws SQLITE_BUSY. Nothing
+     * catches that per-statement, so it surfaces as the generic 500
+     * "server fault" and the write is simply lost - a dropped signal or
+     * game message. Hence both the high ceiling and Db::retry() on the
+     * writes that matter; still low enough that a real database stall
+     * frees workers rather than pinning the whole pool.
+     */
+    private const BUSY_SEC = 1;
 
     public static function get(): PDO
     {
@@ -48,6 +62,7 @@ final class Db
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                 PDO::ATTR_STATEMENT_CLASS => [LoadStatement::class],
+                PDO::ATTR_TIMEOUT => self::BUSY_SEC,
             ]);
             $pdo->exec('PRAGMA journal_mode = WAL');
             // NORMAL (vs the WAL default FULL) drops the fsync on every
@@ -57,14 +72,6 @@ final class Db
             // only the last transaction (monitoring counters), never corrupt
             // the file, and never on a mere application crash.
             $pdo->exec('PRAGMA synchronous = NORMAL');
-            // A contended write waits at most this long for the lock, then
-            // throws SQLITE_BUSY. Nothing catches that per-statement, so it
-            // surfaces as the generic 500 "server fault" and the write is
-            // simply lost - a dropped signal or game message. Hence both the
-            // higher ceiling here and Db::retry() on the writes that matter;
-            // still low enough that a real database stall frees workers
-            // rather than pinning the whole pool.
-            $pdo->exec('PRAGMA busy_timeout = ' . self::BUSY_MS);
             $pdo->exec('PRAGMA foreign_keys = ON');
             self::migrate($pdo);
             // Everything above is the price of having a connection at all,
@@ -118,7 +125,7 @@ final class Db
      * fetchColumn(), fetch() - leaves the statement open, which keeps this
      * connection on a read snapshot. If another connection commits while that
      * snapshot is held, the next write here fails with SQLITE_BUSY IMMEDIATELY
-     * (measured: 0.3 ms with busy_timeout at 4000). The busy handler is
+     * (measured: 0.3 ms, however large busy_timeout is). The busy handler is
      * deliberately not called, because waiting cannot refresh a stale
      * snapshot - only ending the read can. So neither busy_timeout nor
      * retry() below can do anything about it, and a duel where both peers
@@ -139,7 +146,7 @@ final class Db
      * holds it; the caller does that task on its next turn instead.
      *
      * Housekeeping is the caller. It runs in a deferred tail on some
-     * client's worker, so waiting out busy_timeout (4 s) would pin a worker
+     * client's worker, so waiting out busy_timeout (1 s) would pin a worker
      * the pool of ~20 needs, to do work that is due again on the very next
      * request anyway. Skipping costs nothing; waiting costs the one resource
      * this host is short of.
@@ -157,7 +164,7 @@ final class Db
     public static function tryWrite(callable $fn): bool
     {
         $pdo = self::get();
-        $pdo->exec('PRAGMA busy_timeout = 0');
+        $pdo->setAttribute(PDO::ATTR_TIMEOUT, 0);
         try {
             $pdo->exec('BEGIN IMMEDIATE');
         } catch (PDOException $e) {
@@ -169,7 +176,7 @@ final class Db
             Load::tick('db_skip');
             return false;
         } finally {
-            $pdo->exec('PRAGMA busy_timeout = ' . self::BUSY_MS);
+            $pdo->setAttribute(PDO::ATTR_TIMEOUT, self::BUSY_SEC);
         }
         try {
             $fn();

@@ -2631,7 +2631,7 @@ ok(FriendFeed::pending($me, $cur) === true, 'a friend transition wakes the held 
 // ---- Housekeeping asks for the writer, it never waits for it ---------
 // The hourly pass runs in a deferred tail on some client's worker, so a task
 // that cannot have the single writer is skipped and done next time instead
-// of sitting out busy_timeout (4 s) with a worker in its hand.
+// of sitting out busy_timeout (1 s) with a worker in its hand.
 ok(Db::tryWrite(static function (): void {
     Db::get()->prepare(
         "INSERT INTO counters (bucket, metric, value) VALUES ('meta', 'trylock', 1)
