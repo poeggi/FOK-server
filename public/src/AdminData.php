@@ -10,7 +10,6 @@ require_once __DIR__ . '/Matchmaking.php';
 require_once __DIR__ . '/Relay.php';
 require_once __DIR__ . '/Load.php';
 require_once __DIR__ . '/Vault.php';
-require_once __DIR__ . '/PStats.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Ledger.php';
 require_once __DIR__ . '/Items.php';
@@ -540,7 +539,6 @@ final class AdminData
         $scores = self::one($db, 'SELECT COUNT(*) c, MAX(score) best FROM scores WHERE player_id = ?', $id);
         $mailbox = Signals::pending($id);
         $backup = Vault::peek($id);
-        $stats = PStats::get($id);
         return [
             'now' => $now,
             // The window as it is checked, grace second included, so the
@@ -572,7 +570,6 @@ final class AdminData
                 'backup' => $backup === null ? null
                     : ['updated' => $backup['updated'], 'bytes' => strlen($backup['payload']),
                         'enrolled' => $backup['enrolled']],
-                'stats' => $stats,
             ],
         ];
     }

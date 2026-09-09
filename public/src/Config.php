@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.6.1';
+const FOK_SERVER_VERSION = '1.6.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -12,12 +12,9 @@ const FOK_SERVER_VERSION = '1.6.1';
 // detect optional features. A string, so major/minor split on the dot.
 // v2: friendship-gated status and invites, ms hello.now, friend
 // notifications, relay fallback.
-// v3: start.php requires epoch + reason + pts. A start is now issued for
-// EVERY halt of the run (see Starts::REASONS), peers name the one they
+// v3: start.php requires epoch + reason + pts. Peers name the start they
 // mean instead of racing for it, and an unsynced client is turned away
-// rather than let into a desynced game. The staleness half of that gate
-// applies only where play BEGINS (first/rematch, see Starts::
-// SYNC_GATED_REASONS); the in-run halts let the client resync as it goes.
+// rather than let into a desynced game.
 // v3.1: additive 'peer-net' direct-connection hint (see docs/API.md). The
 // major stays 3, so v3 clients interoperate and simply ignore it.
 // v3.2: additive relay piggyback. POST /api/relay.php accepts an optional
@@ -35,7 +32,6 @@ const FOK_SERVER_VERSION = '1.6.1';
 // left at once instead of waiting out its own liveness timeout - the
 // relay's answer to a P2P DataChannel close. Major stays 3; a client that
 // does not read "gone" simply keeps timing out as before.
-// v3.4: additive per-player stats. New GET/POST /api/stats.php lets a client
 // save cumulative gameplay counters (games, levels cleared, furthest level,
 // deaths, duels, playtime) and read them back to restore progress on another
 // device (see docs/API.md). Self-reported, stored monotonically. The same 3.4
@@ -240,8 +236,6 @@ const FOK_MAX_INPUTS = 262144;
 // other fields. In-game messages are one MTU (1280 B); only the
 // end-of-game replay upload is anywhere near this.
 const FOK_MAX_BODY = FOK_MAX_INPUTS + 16384;
-// Chat messages are hard-capped much lower than SDP payloads.
-const FOK_CHAT_MAX_LEN = 120;
 // Max seconds a long poll (poll.php / relay.php) holds the request open.
 // Coupled to the client (it sends wait=9) and the FPM worker model, and kept
 // under the max_execution_time backstop (api/.user.ini) - a design constant,
@@ -282,15 +276,6 @@ const FOK_HOLD_MAX_WORKERS = 12;
 // seconds, on purpose: the point is to de-stack the burst, not to make the
 // last seat wait for its data.
 const FOK_TOURNEY_AFTER_STEP_MS = 100;
-
-// The pair clock cross-check (see Skew, start.php `resync`). Both peers
-// prove their clock against the SAME start, so the difference between their
-// two proofs bounds how far apart their anchors are - the one clock error
-// the server can see and neither client can. Gross on purpose: it must pass
-// a healthy pair on asymmetric paths, and it only ever asks for a re-anchor.
-// 120 ms is ~7 ticks at 60 Hz, well above the few ms a synced pair shows and
-// well below the tens of ms a sync taken inside the ICE burst costs.
-const FOK_START_PAIR_SKEW_MS = 120;
 
 // Default players in one tournament (admin-configurable, see Settings).
 // The default follows the HOST, not taste: measured, this deployment serves

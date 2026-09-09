@@ -24,12 +24,8 @@ final class Settings
         'hold_max_workers' => [FOK_HOLD_MAX_WORKERS, 'Max FPM workers held by long polls at once (0 = unlimited)'],
         'score_rate_max' => [FOK_SCORE_RATE_MAX, 'Max score submissions per window'],
         'score_rate_window' => [FOK_SCORE_RATE_WINDOW, 'Score submission window (seconds)'],
-        'chat_max_len' => [FOK_CHAT_MAX_LEN, 'Max chat message bytes'],
         'start_lead_ms' => [1000, 'Lead time for server-issued starts (ms)'],
         'start_sync_max_age_ms' => [2000, 'Reject a start whose sync proof is older than (ms)'],
-        // The pair cross-check (see Skew). A tolerance, not a gate: past it
-        // the pair is ASKED to re-anchor, never refused. 0 turns it off.
-        'start_pair_skew_ms' => [FOK_START_PAIR_SKEW_MS, 'Ask a pair to resync when their two clock proofs disagree by more than (ms, 0 = off)'],
         // The client's own request gap (docs/API.md, Pacing) spaces the
         // requests a client decides to make; this spaces the ones a broadcast
         // provokes from everyone at once (after_ms, see Tournament::flush).

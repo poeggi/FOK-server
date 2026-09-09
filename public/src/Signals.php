@@ -54,7 +54,7 @@ final class Signals
     // have made that same peer parse an array as one candidate and lose the
     // ones it DID have. The array is bounded in signal.php; its contents stay
     // opaque here, like every other payload.
-    public const TYPES = ['invite', 'invite-relay', 'accept', 'accept-relay', 'decline', 'offer', 'answer', 'ice', 'ices', 'bye', 'chat', 'watch'];
+    public const TYPES = ['invite', 'invite-relay', 'accept', 'accept-relay', 'decline', 'offer', 'answer', 'ice', 'ices', 'bye', 'watch'];
 
     // Types that establish a connection: the sender is waiting for an
     // answer, so it MUST be told when one of these expires undelivered.

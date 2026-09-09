@@ -34,13 +34,13 @@ if [ "${#S1}" -eq 13 ]; then echo "ok   start pts is milliseconds"; else echo "F
 
 # The start is what ANNOUNCES the duel. No hello has carried duel_with for
 # this pair, so anything seen here came from the two start.php calls above.
-hello_friends() { # id peer
+hello_friends() { # id (the peer is whoever the delta names)
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"friends\":[\"$2\"]}" "$BASE/api/hello.php"
+        -d "{\"id\":\"$1\",\"friends_since\":0}" "$BASE/api/hello.php"
 }
 R=$(hello_friends "$ID1" "$ID2")
 expect "the start announced the duel, with no heartbeat involved" \
-    "$(strict "\"friends_playing\":[\"$ID2\"]")" "$R"
+    "$(strict "\"$ID2\":{\"online\":true,\"playing\":true")" "$R"
 expect "and both peers announced their own side" "$(strict '"playing":2')" "$R"
 
 # Private ON THE START, so the very first record of the duel is private
@@ -51,7 +51,7 @@ R=$(start_req_private "$ID2" "$ID1" 0 first "$(now_ms)")
 expect "a private start still issues the start" '"start_pts":' "$R"
 R=$(hello_friends "$ID1" "$ID2")
 expect "a duel made private on the start is never attributed" \
-    "$(strict '"friends_playing":[]')" "$R"
+    "$(strict "\"$ID2\":{\"online\":true,\"playing\":false")" "$R"
 expect "while still being counted" "$(strict '"playing":2')" "$R"
 
 # The flag is a property of the duel, not a latch: the next request that
@@ -60,7 +60,7 @@ curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\",\"duel_with\":\"$ID1\"}" "$BASE/api/hello.php" > /dev/null
 R=$(hello_friends "$ID1" "$ID2")
 expect "and a beat without the flag makes it public again" \
-    "$(strict "\"friends_playing\":[\"$ID2\"]")" "$R"
+    "$(strict "\"$ID2\":{\"online\":true,\"playing\":true")" "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\",\"peer\":\"$ID1\",\"epoch\":0,\"reason\":\"first\",\"pts\":$(now_ms),\"duel_private\":\"yes\"}" \
@@ -72,38 +72,36 @@ expect "a non-boolean duel_private is refused" '"error":"invalid duel_private"' 
 R=$(start_req "$ID2" "$ID1" 0 first "$(now_ms)")
 expect "a late peer re-asking the same epoch gets the same start" "\"start_pts\":$S1" "$R"
 
-# Every halt of the run is its own epoch.
-R=$(start_req "$ID1" "$ID2" 1 respawn "$(now_ms)")
-expect "a respawn issues a new start" '"start_pts":' "$R"
-expect "the new start echoes its epoch" '"epoch":1' "$R"
-R=$(start_req "$ID1" "$ID2" 2 resume "$(now_ms)")
-expect "a resume from pause issues a start" '"epoch":2' "$R"
+# A rematch names epoch 0 exactly as the first start did, so the REASON is
+# what says "a new game, not the one you already issued us".
+R=$(start_req "$ID1" "$ID2" 0 rematch "$(now_ms)")
+expect "a rematch at the same epoch gets a moment of its own" '"start_pts":' "$R"
+if [ "$(echo "$R" | grep -oE '"start_pts":[0-9]+' | cut -d: -f2)" != "$S1" ]; then
+    echo "ok   which is not the first start's"
+else
+    echo "FAIL a rematch was handed the first start's moment"; fail=1
+fi
+R=$(start_req "$ID2" "$ID1" 0 rematch "$(now_ms)")
+expect "and the peer joins that one, not the first" '"start_pts":' "$R"
 
-# A peer left behind WITHIN a run is told loudly, not handed a start it would
-# misplace. A begin-play reason (first/rematch) is exempt - it resets the line
-# instead (see the relay-rematch test below) - so this probes with 'level'.
-R=$(start_req "$ID2" "$ID1" 0 level "$(now_ms)")
-expect "a stale in-run epoch is refused" 'stale epoch' "$R"
+# The in-run halts are settled peer-to-peer and the server no longer knows
+# the words for them.
+R=$(start_req "$ID1" "$ID2" 0 level "$(now_ms)")
+expect "an in-run reason is not a reason any more" 'invalid reason' "$R"
 
 # The sync gate: a start is a moment on the shared clock. pts is required
-# for every reason and can never be in the future.
+# and can never be in the future or stale - every start begins play.
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"epoch\":3,\"reason\":\"level\"}" "$BASE/api/start.php")
+    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"epoch\":3,\"reason\":\"first\"}" "$BASE/api/start.php")
 expect "a start without a sync proof is refused" 'pts required' "$R"
-R=$(start_req "$ID1" "$ID2" 3 level "$(( $(now_ms) + 60000 ))")
+R=$(start_req "$ID1" "$ID2" 3 first "$(( $(now_ms) + 60000 ))")
 expect "a start with a future pts is bogus" 'bogus pts' "$R"
-# A STALE proof is refused only where play BEGINS (first/rematch): the
-# pair must enter the run aligned there.
 R=$(start_req "$ID1" "$ID2" 3 rematch "$(( $(now_ms) - 120000 ))")
-expect "a stale sync proof is refused where play begins" 'stale pts' "$R"
-# The in-run halts are permissive: the pair is already synced, so a stale
-# proof does NOT block a resume - the client resyncs as it goes.
-R=$(start_req "$ID1" "$ID2" 3 level "$(( $(now_ms) - 120000 ))")
-expect "a stale sync proof does not block an in-run start" '"start_pts":' "$R"
+expect "a stale sync proof is refused" 'stale pts' "$R"
 R=$(start_req "$ID1" "$ID2" 3 nonsense "$(now_ms)")
 expect "an unknown start reason is refused" 'invalid reason' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"epoch\":-1,\"reason\":\"level\",\"pts\":$(now_ms)}" "$BASE/api/start.php")
+    -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"epoch\":-1,\"reason\":\"first\",\"pts\":$(now_ms)}" "$BASE/api/start.php")
 expect "a negative epoch is refused" 'invalid epoch' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
@@ -288,24 +286,26 @@ curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 # line must not survive to refuse their next match: without the handshake
 # reset in signal.php this 409s for a full five minutes.
 start_req "$ID1" "$ID2" 0 first "$(now_ms)" > /dev/null
-start_req "$ID1" "$ID2" 1 level "$(now_ms)" > /dev/null
 sig "$ID1" "$ID2" invite 'rematch please' > /dev/null
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 R=$(start_req "$ID1" "$ID2" 0 first "$(now_ms)")
 expect "a rematch after a peer-to-peer bye still gets a start" '"start_pts":' "$R"
 # Quick match has no invite at all: the offer is what opens that pairing.
-start_req "$ID1" "$ID2" 1 level "$(now_ms)" > /dev/null
 sig "$ID1" "$ID2" offer 'sdp-rematch' > /dev/null
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 R=$(start_req "$ID1" "$ID2" 0 first "$(now_ms)")
 expect "an offer opens a fresh epoch line too (quick match)" '"start_pts":' "$R"
-# A RELAY rematch reuses the hub with NO new offer, so nothing calls
-# Starts::forget - the begin-play reason itself must reset the stale line or
-# the pair 409s until it ages out. Advance the pair, then a 'rematch' at
-# epoch 0 with no handshake in between still gets a start, and the peer joins.
-start_req "$ID1" "$ID2" 3 level "$(now_ms)" > /dev/null
+# A RELAY rematch reuses the hub with NO new offer, so nothing clears the
+# line for it. The REASON is what separates it from the first start the pair
+# already has, and both peers land on the one moment.
+PREV=$(echo "$R" | grep -oE '"start_pts":[0-9]+' | cut -d: -f2)
 R=$(start_req "$ID1" "$ID2" 0 rematch "$(now_ms)")
-expect "a relay rematch resets a stale epoch line with no handshake" '"start_pts":' "$R"
+expect "a relay rematch gets a start with no handshake at all" '"start_pts":' "$R"
+if [ "$(echo "$R" | grep -oE '"start_pts":[0-9]+' | cut -d: -f2)" != "$PREV" ]; then
+    echo "ok   and it is a new moment, not the one before it"
+else
+    echo "FAIL the relay rematch was handed the previous start"; fail=1
+fi
 R=$(start_req "$ID2" "$ID1" 0 rematch "$(now_ms)")
 expect "and the peer joins the reset line" '"start_pts":' "$R"
 sig "$ID1" "$ID2" bye '' > /dev/null
@@ -325,33 +325,6 @@ curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"actio
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 curl -s "$BASE/api/poll.php?id=$ID1" > /dev/null
 
-# --- API 4.4 on the start answer.
-#
-# q_ms is this request's own queue wait; resync is the PAIR CROSS-CHECK - the
-# server compares the two clock proofs of the SAME start, which is the one
-# clock error neither client can see for itself. It is a hint: the start is
-# issued either way, because two healthy peers on very asymmetric paths would
-# fail the same comparison honestly.
-# A fresh pair is NOT the way to isolate this: a start registers its caller
-# (Presence::touch), so two new ids would move the player counts the admin
-# suite asserts on. Drain instead. A verdict is sticky until the side it was
-# left for asks again, and the deliberately bogus proofs above leave one; two
-# starts on epochs of their own collect whatever is pending without ever
-# pairing up (one caller per epoch is never compared against anything).
-start_req "$ID1" "$ID2" 897 level "$(now_ms)" > /dev/null
-start_req "$ID2" "$ID1" 898 level "$(now_ms)" > /dev/null
-R=$(start_req "$ID1" "$ID2" 900 level "$(now_ms)")
+# --- API 4.4 on the start answer: q_ms is this request's own queue wait.
+R=$(start_req "$ID1" "$ID2" 900 first "$(now_ms)")
 expect "a start carries the queue figure" '"q_ms":' "$R"
-expect "the first caller of a start is not judged alone" '"resync":false' "$R"
-R=$(start_req "$ID2" "$ID1" 900 level "$(( $(now_ms) - 3000 ))")
-expect "a pair whose two clock proofs disagree is asked to resync" '"resync":true' "$R"
-expect "and is given its start regardless - it is a hint, not a refusal" '"start_pts":' "$R"
-# The verdict is for BOTH sides: the one already answered collects it next time.
-R=$(start_req "$ID1" "$ID2" 901 level "$(now_ms)")
-expect "the peer already answered collects the verdict on its next start" '"resync":true' "$R"
-R=$(start_req "$ID1" "$ID2" 902 level "$(now_ms)")
-expect "and is not nagged about it twice" '"resync":false' "$R"
-# Two anchors that agree say nothing at all.
-R=$(start_req "$ID2" "$ID1" 903 level "$(now_ms)")
-R=$(start_req "$ID1" "$ID2" 903 level "$(now_ms)")
-expect "a pair whose clocks agree is left alone" '"resync":false' "$R"

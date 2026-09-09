@@ -123,7 +123,7 @@ additive.
   is a log line too. Alerts are local-only in the admin UI for now;
   delivery backends (Telegram/SMS/Email) are a marked TODO there.
 - Runtime configuration: thresholds and abuse caps (admin lockout, mailbox
-  cap, score throttle, chat length, alert limits) are editable in the
+  cap, score throttle, alert limits) are editable in the
   admin config card and take effect immediately; code constants are only
   the defaults.
 
@@ -149,17 +149,15 @@ additive.
         friend.php    friendship handshake: request/accept/remove/list
         match.php     quick-match queue (pair with anyone waiting)
         start.php     server-issued absolute start PTS per pair, where play
-                      BEGINS (first/rematch; the in-run halts are settled
-                      P2P); also hands each peer the match id + its own
-                      secret, and is where a duel is announced
+                      BEGINS (first/rematch; the halts within a run are
+                      settled P2P); also hands each peer the match id + its
+                      own secret, and is where a duel is announced
         items.php     item registry: list/mint/seed/claim - server-owned
                       item ownership, transfers attested by both peers
         relay.php     in-duel message relay (P2P fallback), long-polled
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
         backup.php    GET/POST client config backup and restore, token-secured
-        stats.php     GET/POST per-player gameplay stats (self-reported,
-                      monotonic: games, levels, deaths, duels, playtime)
         .user.ini     PHP limits for the API only (see Capacity below)
       debug/          client debug-report drop -> 4-digit PIN (1 day, 8 MB)
       admin/          session-protected admin UI + JSON API
@@ -424,14 +422,13 @@ host-level. If this outgrows shared hosting, fix workers first.
     POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
                           "duel_private":bool?, "duel_end":"deadbeef"?,
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,
-                          "friends":[...]?, "friends_since":ms?,
-                          "tourneys":bool?, "nets":[ip,...]?}
+                          "friends_since":ms?, "tourneys":bool?,
+                          "nets":[ip,...]?}
       -> {"ok":true,"api":"4.7","now":ms,"debug":bool,"online":n,"playing":n,
           "registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
-          "friends_online":{...}?, "friends_latency":{...}?,
-          "friends_name":{...}?, "friends_delta":{...}?, "tourneys":[...]?}
-         (friends_* only real for accepted friends; tourneys lists the open
+          "friends_delta":{...}?, "tourneys":[...]?}
+         (the delta only ever names accepted friends; tourneys lists the open
           lobbies hosted on one of the caller's own networks. duel_with sets
           the duel and duel_end clears it - see docs/API.md, Announcing a
           duel - and a duel_private one is counted but never attributed)
@@ -452,15 +449,13 @@ host-level. If this outgrows shared hosting, fix workers first.
       -> {"ok":true,"waiting":true}
        | {"ok":true,"matched":"...","role":"...","peer_name":"..."}
     POST /api/start.php  {"id":"cafe0001","peer":"deadbeef","epoch":n,
-                          "reason":"first|level|respawn|resume|rematch",
+                          "reason":"first|rematch",
                           "pts":ms, "duel_private":bool?}
       -> {"ok":true,"start_pts":ms,"epoch":n,"now":ms,
-          "q_ms":ms,"resync":bool,
-          "mid":"<32-hex>","secret":"<32-hex>"}
-         identical for both peers; both name the same epoch, so the answer
-         does not depend on when either asks. 409 if the caller is behind,
-         400 if its pts is missing or in the future; a stale pts is
-         refused only for a start that begins play (first/rematch).
+          "q_ms":ms,"mid":"<32-hex>","secret":"<32-hex>"}
+         identical for both peers; both name the same epoch and reason, so
+         the answer does not depend on when either asks. 400 if its pts is
+         missing, in the future or stale.
          Both peers calling it is also what ANNOUNCES the duel, so a
          friend is offered the feed from the moment play begins rather
          than from the next heartbeat; duel_private keeps it counted but
@@ -497,12 +492,12 @@ host-level. If this outgrows shared hosting, fix workers first.
                           "platform"?,"pts"?}
       -> {"ok":true,"rank":n,"top":bool}   (no name -> ANONYMOUS; completed =
          cleared the final level; platform = pc|mobile|tv|console, optional)
-    POST /api/signal.php {"id","to","type":"invite|invite-relay|accept|accept-relay|decline|offer|answer|ice|ices|bye|chat","payload"}
+    POST /api/signal.php {"id","to","type":"invite|invite-relay|accept|accept-relay|decline|offer|answer|ice|ices|bye|watch","payload"}
          (the -relay types set the no-P2P bit: honored when either side sends it;
           'ices' (4.4) carries a JSON ARRAY of candidates - one request instead
           of the trickle burst, see docs/API.md)
-      -> {"ok":true}   (chat payloads capped at 120 bytes; matchmaking
-                        payloads carry the player profile - see docs/API.md)
+      -> {"ok":true}   (matchmaking payloads carry the player profile,
+                        see docs/API.md)
 
 Signals are delivered through the recipient's next hello or poll.php poll.
 Clients poll slowly (~60 s) when idle and fast (~1-2 s) while

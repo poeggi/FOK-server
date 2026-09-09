@@ -16,7 +16,7 @@ require_once __DIR__ . '/Items.php';
  *
  * The test for anything listed here is that a reader must be UNABLE to
  * reach the row, not merely unlikely to. That rules out the three tables it
- * would be easiest to sweep and wrong to: vault, pstats and items outlive
+ * would be easiest to sweep and wrong to: vault and items outlive
  * their owner's player row BY DESIGN. An id is minted by the client and
  * kept forever, a player row is only presence, and touch() re-registers an
  * unknown id in silence - so a player who comes back after the TTL took
@@ -142,7 +142,6 @@ final class Housekeeping
                         OR b NOT IN (SELECT id FROM players)'),
                 self::line($db, 'items', 'kept', $orphan('items', 'owner')),
                 self::line($db, 'vault', 'kept', $orphan('vault', 'id')),
-                self::line($db, 'pstats', 'kept', $orphan('pstats', 'id')),
             ],
         ];
     }

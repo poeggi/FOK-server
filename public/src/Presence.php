@@ -673,31 +673,6 @@ final class Presence
     }
 
     /**
-     * Which of $ids may be watched right now - the "is playing" half of the
-     * friends list, so a tournament host can see who is actually free to
-     * join. Off the ENTRIES, not the duels table: this and the friend delta
-     * are two ways of asking one question, and a client that asked the older
-     * way would otherwise learn about a private duel the delta hides (see
-     * spectateEndsAt). It costs one bulk fetch and no database read at all.
-     *
-     * @param list<string> $ids
-     * @return list<string> the subset of $ids that is spectatable
-     */
-    public static function playingOf(array $ids): array
-    {
-        if ($ids === []) {
-            return [];
-        }
-        $now = Util::nowMs();
-        $entries = self::entriesOf($ids);
-        return array_values(array_filter(
-            $ids,
-            static fn(string $i): bool => isset($entries[$i])
-                && self::spectateEndsAt($entries[$i]) > $now
-        ));
-    }
-
-    /**
      * Everyone here, newest beat first, for the Connections card - with a
      * short tail so one that just dropped stays visible (gone=true) for
      * FOK_DUEL_LINGER seconds. Clients in a 1vs1 are listed here too;

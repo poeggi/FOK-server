@@ -29,21 +29,27 @@ require_once __DIR__ . '/Stats.php';
  */
 final class Starts
 {
-    // Every one of these halts or restarts the run. Recorded per pair for
-    // the admin view; the lead time does not depend on which it is.
-    public const REASONS = ['first', 'level', 'respawn', 'resume', 'rematch'];
+    // Every start BEGINS play. The halts within a run - next level, respawn,
+    // resume from pause - are settled peer-to-peer over the DataChannel and
+    // never reach the server, so both of these mint a match of their own and
+    // both must prove a fresh sync (see start.php).
+    public const REASONS = ['first', 'rematch'];
 
-    // A start that BEGINS play - the first of a connection, or a rematch
-    // on it - must prove a fresh sync so the pair enters the run aligned.
-    // The in-run halts (level/respawn/resume) are exempt from the staleness
-    // half of the gate: the pair is already synced from that first start,
-    // and turning one away over a stale proof would break a live duel for
-    // nothing but FPM queue delay. See start.php.
-    public const SYNC_GATED_REASONS = ['first', 'rematch'];
+    // How long a stored start can still be THIS start. Both peers ask within
+    // milliseconds of the DataChannel opening on their end, and the lead is a
+    // second, so anything older belongs to the pair's PREVIOUS match - and
+    // handing its moment to a new game would begin that game in the past.
+    //
+    // This is what the epoch's ordering used to do. It cannot any more: a
+    // rematch names epoch 0 exactly as a first start does, and with the in-run
+    // halts gone nothing ever advances the epoch above it, so "a higher stored
+    // epoch" - the old test for a leftover line - can no longer happen.
+    private const PAIR_WINDOW_MS = 5000;
 
-    // A pair's start is forgotten this long after it passed. Only the
-    // stale-epoch guard depends on the row, and a peer that far behind is
-    // gone, not late.
+    // How long the ROW itself is kept, which is a different question and a
+    // much longer one: matchInfo reads the pair's mid off it with no window
+    // at all, and an item claim may attest against that match well after the
+    // duel goes quiet. Housekeeping's horizon, not the pairing window.
     private const KEEP_MS = 300000;
 
     // One predicate for the sweep and for the card that promises it; they
@@ -69,11 +75,11 @@ final class Starts
     }
 
     /**
-     * Drops start rows the stale-epoch guard can no longer reach. Nothing
-     * depends on the deletion being prompt - request() already treats a row
-     * older than KEEP_MS as absent - so this is ordinary housekeeping on the
-     * hour (see Housekeeping), not a whole-table DELETE under the writer lock
-     * on the path that issues starts.
+     * Drops start rows nothing can reach any more. Nothing depends on the
+     * deletion being prompt - request() stopped treating them as this pair's
+     * start long before, at PAIR_WINDOW_MS - so this is ordinary housekeeping
+     * on the hour (see Housekeeping), not a whole-table DELETE under the
+     * writer lock on the path that issues starts.
      */
     public static function prune(PDO $db, int $nowMs): int
     {
@@ -93,67 +99,59 @@ final class Starts
     }
 
     /**
-     * The pair's start row, treating one older than KEEP_MS as absent.
+     * The pair's start row, treating one outside the pairing window as absent.
      *
      * @return array<string, mixed>|false
      */
     private static function read(PDO $db, string $a, string $b, int $nowMs): array|false
     {
         $st = $db->prepare(
-            'SELECT epoch, start_pts, mid FROM starts WHERE a = ? AND b = ? AND start_pts >= ?'
+            'SELECT epoch, reason, start_pts, mid FROM starts
+              WHERE a = ? AND b = ? AND start_pts >= ?'
         );
-        $st->execute([$a, $b, $nowMs - self::KEEP_MS]);
+        $st->execute([$a, $b, $nowMs - self::PAIR_WINDOW_MS]);
         $row = $st->fetch();
         $st->closeCursor();
         return $row;
     }
 
     /**
-     * What the stored row alone already decides, wrapped in a one-element
-     * array so a refusal (a null answer) stays distinguishable from "nothing
-     * decided yet". Null means this caller has to issue the start itself.
+     * The start this caller is asking about, if the stored row already IS it -
+     * the second peer of a pair, or either peer asking again. Null means the
+     * caller has to issue one.
+     *
+     * Three things have to agree, and each rules out a different way of being
+     * handed the wrong moment. The EPOCH, so the two peers are naming one
+     * start. The REASON, because a rematch names epoch 0 just as the first
+     * start did and is the only thing on the wire that says "a new game, not
+     * the one you have" - a relay rematch reuses the hub with no new offer,
+     * so nothing clears the old row for it (see signal.php). And the WINDOW
+     * on read(), which catches the case neither covers: a rematch after a
+     * rematch, identical in both fields.
      *
      * @param array<string, mixed>|false $row
-     * @return array{0:?int}|null
+     * @return array{0:int}|null
      */
-    private static function settled(array|false $row, int $epoch, bool $begin): ?array
+    private static function settled(array|false $row, int $epoch, string $reason): ?array
     {
         if ($row === false) {
             return null;
         }
-        $stored = (int)$row['epoch'];
-        // Identical answer however late this peer is: the whole point of
-        // naming the epoch.
-        if ($stored === $epoch) {
+        if ((int)$row['epoch'] === $epoch && (string)$row['reason'] === $reason) {
             return [(int)$row['start_pts']];
-        }
-        // A peer behind the pair's epoch WITHIN a run must not be handed a
-        // start from the wrong origin, so 409 it. But a start that BEGINS
-        // play (first/rematch) is epoch 0 on a fresh connection: a higher
-        // stored epoch there is a leftover line from a torn-down one - and a
-        // relay rematch reuses the hub with no new offer, so nothing calls
-        // Starts::forget to clear it (see signal.php). That stranded the
-        // rematch at a 409 until the row aged out. Reset the line for a
-        // begin-play reason rather than refuse the new game; the second
-        // peer's identical begin then reads the fresh row and both stay
-        // aligned.
-        if ($stored > $epoch && !$begin) {
-            return [null];
         }
         return null;
     }
 
     /**
-     * The pair's start PTS for $epoch: issued on first request, repeated
-     * verbatim to the second peer. Returns null if the pair has already
-     * moved PAST $epoch, which means the caller is behind and must not be
-     * handed a start at all (the endpoint answers 409).
+     * The pair's start PTS for this (epoch, reason): issued on the first
+     * request, repeated verbatim to the second peer. Every start begins play,
+     * so every one of them mints the pair a fresh match.
      */
-    public static function request(string $id, string $peer, int $epoch, string $reason): ?int
+    public static function request(string $id, string $peer, int $epoch, string $reason): int
     {
         [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
         $db = Db::get();
-        $begin = in_array($reason, self::SYNC_GATED_REASONS, true);
         // Before any lock is taken: the first settings read of a request can
         // load the whole overrides table, and under the lock every other
         // writer on the server would be waiting for that too.
@@ -168,12 +166,12 @@ final class Starts
         // decides the answer. Both peers ask about the same start and every
         // repeat of either lands here, so this is the common case by far -
         // and none of it writes anything.
-        $settled = self::settled(self::read($db, $a, $b, Util::nowMs()), $epoch, $begin);
+        $settled = self::settled(self::read($db, $a, $b, Util::nowMs()), $epoch, $reason);
         if ($settled !== null) {
             return $settled[0];
         }
 
-        return Db::retry(static function () use ($db, $a, $b, $epoch, $reason, $begin, $lead): ?int {
+        return (int)Db::retry(static function () use ($db, $a, $b, $epoch, $reason, $lead): int {
             $db->exec('BEGIN IMMEDIATE');
             try {
                 // The clock is read AFTER the lock: what was spent waiting for
@@ -183,22 +181,18 @@ final class Starts
                 // established that there was work to do; the peer may have
                 // done it since, and then ITS start is the one both must get.
                 $row = self::read($db, $a, $b, $now);
-                $settled = self::settled($row, $epoch, $begin);
+                $settled = self::settled($row, $epoch, $reason);
                 if ($settled !== null) {
                     $db->exec('COMMIT');
                     return $settled[0];
                 }
                 $startPts = $now + $lead;
 
-                // Where play BEGINS (first/rematch), mint a fresh match here,
-                // in this same transaction, so it is atomic with the start row
-                // and both peers read one consistent mid (see
-                // Items::openMatch). An in-run halt carries the pair's open
-                // match forward untouched - one match spans every level of a
-                // duel.
-                $mid = $begin
-                    ? Items::openMatch($db, $a, $b, $now)['mid']
-                    : ($row !== false ? (string)$row['mid'] : '');
+                // Every start begins play, so every one mints a fresh match -
+                // here, in this same transaction, so it is atomic with the
+                // start row and both peers read one consistent mid (see
+                // Items::openMatch).
+                $mid = Items::openMatch($db, $a, $b, $now)['mid'];
 
                 $db->prepare(
                     'INSERT INTO starts (a, b, start_pts, created, epoch, reason, mid)
@@ -207,16 +201,13 @@ final class Starts
                          created = excluded.created, epoch = excluded.epoch,
                          reason = excluded.reason, mid = excluded.mid'
                 )->execute([$a, $b, $startPts, $now, $epoch, $reason, $mid]);
-                if ($begin) {
-                    // One duel, counted INSIDE the transaction that mints its
-                    // match rather than by taking the writer a second time the
-                    // moment this one lets go. Reached exactly once per duel,
-                    // because a repeat request for the same epoch is answered
-                    // from the stored row above. Only the START is countable:
-                    // the server does not reliably learn that a match ended
-                    // (see forget).
-                    Stats::bumpIn($db, ['duel_started' => 1]);
-                }
+                // One duel, counted INSIDE the transaction that mints its
+                // match rather than by taking the writer a second time the
+                // moment this one lets go. Reached exactly once per duel,
+                // because a repeat request is answered from the stored row
+                // above. Only the START is countable: the server does not
+                // reliably learn that a match ended (see forget).
+                Stats::bumpIn($db, ['duel_started' => 1]);
                 $db->exec('COMMIT');
                 return $startPts;
             } catch (Throwable $e) {

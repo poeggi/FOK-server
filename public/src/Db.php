@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 42;
+    private const SCHEMA_VERSION = 43;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -90,7 +90,7 @@ final class Db
     // table (see Signals, RelayStore, ConnTrack and Matchmaking).
     private const COUNTED = ['players', 'scores', 'duels',
         'counters', 'alerts', 'settings', 'admin_fails', 'friends',
-        'starts', 'pstats', 'items', 'matches', 'ledger', 'item_disputes'];
+        'starts', 'items', 'matches', 'ledger', 'item_disputes'];
 
     /**
      * How many rows the database holds, over every table above. One statement
@@ -765,6 +765,13 @@ final class Db
             // never deleted). It also covers findings raised BEFORE this
             // step, which have no row here and never will.
             $pdo->exec('ALTER TABLE players ADD COLUMN claims_disputed_seen INTEGER NOT NULL DEFAULT 0');
+        }
+        if ($v < 43) {
+            // Self-reported per-player gameplay stats. The table's only
+            // writer was the POST in api/stats.php and no client ever sent
+            // one, so it has always been empty; cross-device progress
+            // travels through the config vault (backup.php) instead.
+            $pdo->exec('DROP TABLE IF EXISTS pstats');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

@@ -31,12 +31,10 @@ require_once __DIR__ . '/../public/src/ConnTrack.php';
 require_once __DIR__ . '/../public/src/Caps.php';
 require_once __DIR__ . '/../public/src/Holds.php';
 require_once __DIR__ . '/../public/src/Pace.php';
-require_once __DIR__ . '/../public/src/Skew.php';
 require_once __DIR__ . '/../public/src/RelayStore.php';
 require_once __DIR__ . '/../public/src/Relay.php';
 require_once __DIR__ . '/../public/src/Load.php';
 require_once __DIR__ . '/../public/src/Vault.php';
-require_once __DIR__ . '/../public/src/PStats.php';
 require_once __DIR__ . '/../public/src/Debug.php';
 require_once __DIR__ . '/../public/src/Ledger.php';
 require_once __DIR__ . '/../public/src/Items.php';
@@ -245,8 +243,6 @@ ok(count($list) === 1 && $list[0]['state'] === 'pending' && $list[0]['outgoing']
     'peer sees the incoming request');
 ok(Friends::accept('bbbbbbbb', 'aaaaaaaa'), 'peer accepts the request');
 ok(Friends::isFriend('aaaaaaaa', 'bbbbbbbb'), 'accepted friendship recognized both ways');
-ok(Friends::acceptedOf('aaaaaaaa', ['bbbbbbbb', 'cccccccc']) === ['bbbbbbbb' => true],
-    'acceptedOf filters to recorded friends');
 Friends::remove('bbbbbbbb', 'aaaaaaaa');
 ok(!Friends::isFriend('aaaaaaaa', 'bbbbbbbb'), 'removal deletes the friendship');
 $r1 = Friends::request('11117777', '22227777');
@@ -515,32 +511,34 @@ Db::get()->prepare('UPDATE starts SET start_pts = ? WHERE a = ? AND b = ?')
 $late = Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first');
 ok($late === $passed, 'a late peer gets the same start, already in the past');
 
-// Every halt of the run is a new epoch, and a new epoch is a new moment.
-$s4 = Starts::request('aaaaaaaa', 'bbbbbbbb', 1, 'respawn');
-ok($s4 > Util::nowMs(), 'a new epoch issues a fresh start');
-ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 1, 'respawn') === $s4, 'the peer joins the new epoch');
+// Only play BEGINNING is asked about now; the halts within a run are settled
+// peer-to-peer and the server does not know the words for them.
+ok(Starts::REASONS === ['first', 'rematch'], 'a start begins play, or it is not a start');
 
-// A peer left behind WITHIN a run is told so, never handed a start it would
-// misplace. An in-run reason (level/respawn/resume) is gated; a begin-play
-// reason is exempt (see the reset test below), so this probes with 'level'.
-ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'level') === null, 'a stale in-run epoch is refused');
+// A rematch names epoch 0 exactly as the first start did, so the REASON is
+// the only thing on the wire saying "a new game, not the one you issued us".
+// A relay rematch reuses the hub with no new offer, so nothing clears the
+// line for it (see signal.php) - without this it would read back the moment
+// the pair already played to.
+$again = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'rematch');
+ok(is_int($again) && $again !== $passed, 'a rematch at the same epoch is a moment of its own');
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'rematch') === $again, 'and the peer joins that one');
 
 $startRow = (function (): array {
     $st = Db::get()->prepare('SELECT epoch, reason FROM starts WHERE a = ? AND b = ?');
     $st->execute(['aaaaaaaa', 'bbbbbbbb']);
     return $st->fetch();
 })();
-ok((int)$startRow['epoch'] === 1 && $startRow['reason'] === 'respawn', 'the pair records epoch and reason');
-ok(in_array('resume', Starts::REASONS, true), 'a resume from pause is a start reason');
+ok((int)$startRow['epoch'] === 0 && $startRow['reason'] === 'rematch',
+    'the pair records the epoch and reason its start was named with');
 
-// A start that BEGINS play (first/rematch) must never be refused by a stale
-// epoch line left over from a torn-down connection: a relay rematch reuses the
-// hub with no new offer, so nothing calls Starts::forget (see signal.php), and
-// the pair would otherwise sit at a 409 until the row aged out. The pair is at
-// epoch 1 here; a fresh 'rematch' at epoch 0 RESETS the line rather than 409.
-$reset = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'rematch');
-ok(is_int($reset) && $reset > Util::nowMs(), 'a begin-play start resets a stale epoch line instead of 409');
-ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'rematch') === $reset, 'and the peer joins the reset line');
+// The window is the third guard, for the case the other two cannot see: a
+// rematch after a rematch, identical in both fields. Age the row past it and
+// the pair gets a new moment rather than the one that has already passed.
+Db::get()->prepare('UPDATE starts SET start_pts = ? WHERE a = ? AND b = ?')
+    ->execute([Util::nowMs() - 60000, 'aaaaaaaa', 'bbbbbbbb']);
+$fresh = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'rematch');
+ok($fresh > Util::nowMs(), 'a start older than the pairing window is not this start');
 
 // The epoch counts halts within ONE connection, so the pair's next duel
 // opens at epoch 0 again instead of being refused forever. The reset hangs
@@ -551,10 +549,11 @@ Starts::forget('aaaaaaaa', 'bbbbbbbb');
 $again = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'first');
 ok($again > Util::nowMs(), 'a rematch on a fresh epoch line gets a start');
 // Pair-scoped: bye is not friendship-gated, so a stranger saying bye must
-// not reach a duel it has nothing to do with.
-Starts::request('aaaaaaaa', 'bbbbbbbb', 1, 'level');
+// not reach a duel it has nothing to do with. The pair's peer still joining
+// the SAME moment is what says the row survived.
 Starts::forget('aaaaaaaa', 'cccccccc');
-ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'level') === null, "a stranger's bye leaves the pair's epoch alone");
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first') === $again,
+    "a stranger's bye leaves the pair's start alone");
 
 // A row past the keep window is one no stale-epoch guard can reach any more,
 // so request() answers as if it were not there - which is what lets the
@@ -1047,42 +1046,6 @@ ok(Vault::peek('aaaaaaaa')['payload'] === 'reenrolled', 'the payload survives th
 ok(Vault::resetToken('cccccccc') === false, 'reset is a no-op for an id with no backup');
 Db::get()->exec('DELETE FROM vault');
 
-// PStats: per-player self-reported gameplay stats - monotonic, capped and
-// write-throttled (see PStats, api/stats.php).
-Db::get()->exec('DELETE FROM pstats');
-$ps = PStats::submit('e1e1e1e1',
-    ['games' => 5, 'levels' => 10, 'best_level' => 3, 'deaths' => 4,
-     'duels' => 2, 'duels_won' => 1, 'play_seconds' => 600]);
-ok($ps['games'] === 5 && $ps['best_level'] === 3, 'first submit stores and echoes the counters');
-ok(PStats::get('e1e1e1e1')['games'] === 5, 'get reads the stored stats');
-ok(PStats::get('a5a5a5a5')['games'] === 0 && PStats::get('a5a5a5a5')['updated'] === 0,
-    'an id with nothing stored reads as zeros');
-// Age the row past the write throttle so the next submit persists.
-$age = static function (string $id): void {
-    Db::get()->prepare('UPDATE pstats SET updated = ? WHERE id = ?')->execute([time() - 60, $id]);
-};
-$age('e1e1e1e1');
-$ps = PStats::submit('e1e1e1e1', ['games' => 1, 'best_level' => 2]);
-ok($ps['games'] === 5 && $ps['best_level'] === 3, 'a lower submit never lowers the stored totals');
-$age('e1e1e1e1');
-$ps = PStats::submit('e1e1e1e1', ['games' => 9, 'best_level' => 2]);
-ok($ps['games'] === 9 && PStats::get('e1e1e1e1')['games'] === 9, 'a higher field grows and persists');
-ok($ps['best_level'] === 3, 'a field is held while another in the same submit grows');
-$age('e1e1e1e1');
-$ps = PStats::submit('e1e1e1e1', ['best_level' => 500, 'play_seconds' => 5000000000]);
-ok($ps['best_level'] === 99, 'best_level is clamped to 99, not rejected');
-ok($ps['play_seconds'] === FOK_PSTATS_SECONDS_MAX, 'play_seconds is clamped to its cap');
-$age('e1e1e1e1');
-$ps = PStats::submit('e1e1e1e1', ['deaths' => 'x', 'duels' => -3, 'duels_won' => 7]);
-ok($ps['deaths'] === 4 && $ps['duels'] === 2, 'malformed and negative fields are ignored');
-ok($ps['duels_won'] === 7, 'a valid field still applies when a sibling is malformed');
-// Write throttle: a second submit within the window echoes but does not persist.
-PStats::submit('f0f0f0f0', ['games' => 1]);
-$ps = PStats::submit('f0f0f0f0', ['games' => 2]);
-ok($ps['games'] === 2, 'a throttled submit still echoes the merged value');
-ok(PStats::get('f0f0f0f0')['games'] === 1, 'the throttled growth is not yet persisted');
-Db::get()->exec('DELETE FROM pstats');
-
 // Debug: a bundle gets a 4-digit PIN, retrievable, purged after the TTL.
 $dbgCount = static function (string $pin): int {
     $s = Db::get()->prepare('SELECT COUNT(*) FROM debug WHERE pin = ?');
@@ -1145,8 +1108,8 @@ ok(Auth::login('u', 'p', '9.9.9.6'), 'other IP unaffected by lockout');
 
 // Settings: defaults fall through, overrides stick
 ok(Settings::int('mailbox_cap') === FOK_MAILBOX_CAP, 'setting falls back to default');
-Settings::set('chat_max_len', 99);
-ok(Settings::int('chat_max_len') === 99, 'setting override readable');
+Settings::set('ices_max', 99);
+ok(Settings::int('ices_max') === 99, 'setting override readable');
 $all = Settings::all();
 ok(is_string($all[0]['label']) && $all[0]['label'] !== '', 'settings carry labels');
 $threw = false;
@@ -1160,22 +1123,22 @@ ok($threw, 'unknown setting rejected');
 // The overrides are cached in shared memory: a settings read sits on nearly
 // every path, and the table behind it changes only when an operator saves.
 // The save is what drops the cache, so a stale value cannot outlive it.
-Settings::int('chat_max_len');
+Settings::int('ices_max');
 ok(is_array(apcu_fetch(FOK_APCU_NS . 'cfg')), 'a settings read caches the overrides');
-Settings::set('chat_max_len', 77);
+Settings::set('ices_max', 77);
 ok(apcu_fetch(FOK_APCU_NS . 'cfg') === false, 'and a save drops that cache');
-ok(Settings::int('chat_max_len') === 77, 'so the next read answers with the saved value');
+ok(Settings::int('ices_max') === 77, 'so the next read answers with the saved value');
 
 // A row IS the override, so saving the default removes it: an install that
 // wrote every key once (a config export/import roundtrip does) would
 // otherwise answer today's default forever, whatever the code later says.
-Settings::set('chat_max_len', FOK_CHAT_MAX_LEN);
+Settings::set('ices_max', FOK_ICES_MAX);
 $st = Db::get()->prepare('SELECT COUNT(*) FROM settings WHERE key = ?');
-$st->execute(['chat_max_len']);
+$st->execute(['ices_max']);
 $rows = (int)$st->fetchColumn();
 $st->closeCursor();
 ok($rows === 0, 'saving the default keeps no row');
-ok(Settings::int('chat_max_len') === FOK_CHAT_MAX_LEN, 'and the default is what reads back');
+ok(Settings::int('ices_max') === FOK_ICES_MAX, 'and the default is what reads back');
 
 // The capability assessment is cached the same way and keyed by release, so
 // a deploy re-probes a host that may have changed under it.
@@ -2444,51 +2407,18 @@ ok(Pace::forTier(Pace::TIER_DUEL)['hold'] === true,
 apcu_delete(new APCUIterator('/^fok:hold:/'));
 Settings::set('hold_max_workers', FOK_HOLD_MAX_WORKERS);
 
-// The pair clock cross-check (Skew). One caller's figure means nothing; the
-// DIFFERENCE between the pair's two is the only clock error the server can
-// see - and it is a hint, never a refusal (start.php issues the start either
-// way; that half is in the smoke suite).
-apcu_delete(new APCUIterator('/^fok:skew:/'));
-ok(Skew::note('sk110001', 'sk220002', 0, 40) === false,
-    'the first caller of a start has nothing to be compared against');
-ok(Skew::note('sk110001', 'sk220002', 0, 900) === false,
-    'a retry from the same client is not compared against itself');
-ok(Skew::note('sk220002', 'sk110001', 0, 55) === false,
-    'two anchors a few ms apart agree');
-ok(Skew::wanted('sk110001') === false, 'so nobody is asked to re-anchor');
-// The peers reversed: the pair key must not depend on who asked first.
-apcu_delete(new APCUIterator('/^fok:skew:/'));
-ok(Skew::note('sk220002', 'sk110001', 1, 30) === false, 'the other side may open the epoch');
-ok(Skew::note('sk110001', 'sk220002', 1, 900) === true,
-    'and a pair whose proofs disagree grossly is told to re-anchor');
-ok(Skew::wanted('sk220002') === true,
-    'the caller already answered picks the verdict up on its next start');
-ok(Skew::wanted('sk220002') === false, 'delivered once, then it stops nagging');
-// The epoch scopes it: the next halt is its own comparison.
-ok(Skew::note('sk110001', 'sk220002', 2, 900) === false,
-    'a new epoch starts the comparison over');
-Settings::set('start_pair_skew_ms', 0);
-apcu_delete(new APCUIterator('/^fok:skew:/'));
-ok(Skew::note('sk110001', 'sk220002', 3, 10) === false
-    && Skew::note('sk220002', 'sk110001', 3, 9000) === false,
-    'and the tolerance switched off compares nothing at all');
-Settings::set('start_pair_skew_ms', FOK_START_PAIR_SKEW_MS);
-apcu_delete(new APCUIterator('/^fok:skew:/'));
-
 // Housekeeping: one removal path, and only rows no reader can reach go.
 Presence::touch('hk110001', '9.9.9.11');
 Presence::touch('hk220002', '9.9.9.12');
 Friends::request('hk110001', 'hk220002');
 Friends::accept('hk220002', 'hk110001');
 Vault::backup('hk110001', '{"cfg":1}', null);
-PStats::submit('hk110001', ['games' => 3]);
 Items::mint('hk110001', 'crown', 'box');
 Presence::forget('hk110001');
 ok(Presence::infoOf(['hk110001']) === [], 'forget removes the player row');
 ok(!Friends::isFriend('hk110001', 'hk220002'), 'and the friendships with it');
 ok(Presence::entryOf('hk110001') === null, 'and the presence entry, networks included');
 ok(Vault::peek('hk110001') !== null, 'but the config backup outlives the player row');
-ok(PStats::get('hk110001')['games'] === 3, 'and so do the career stats');
 ok(count(Items::owned('hk110001')) === 1, 'and the wardrobe: an id comes back with its client');
 
 Presence::touchDuel('hk220002', 'hk330003');
@@ -2710,8 +2640,6 @@ ok((FriendFeed::delta($me, 0)['rows'][$f2]['playing'] ?? null) === false,
     'a private duel never reads as playing to a friend');
 ok(FriendFeed::delta($me, $cur)['rows'] === [],
     'and entering one announces nothing, so no held poll wakes for it');
-ok(Presence::playingOf([$f2]) === [],
-    'the older friends_playing answer hides it too, so neither way leaks it');
 ok((int)(apcu_fetch(FOK_APCU_NS . 'p:' . $f2)['duel'] ?? 0) > 0,
     'the duel itself is recorded exactly as a public one is');
 

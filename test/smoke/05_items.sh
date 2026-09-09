@@ -101,10 +101,10 @@ expect "a client cannot mint under the legacy origin" '"error":"invalid origin"'
 R=$(items "{\"id\":\"$ID1\",\"action\":\"list\"}")
 expect "the minted instance is in its owner's wardrobe" "\"uid\":\"$U1\"" "$R"
 
-# --- The match. A claim only exists inside one, and a match is minted where
-# play BEGINS - so the duel start is what hands each side its own secret. Two
-# begins in a row, at epochs nothing else in the suite uses: each must mint
-# its own match, and the in-run halt after them must carry the second forward.
+# --- The match. A claim only exists inside one, and every start begins play,
+# so the duel start is what hands each side its own secret. Two starts in a
+# row, at epochs nothing else in the suite uses: each mints a match of its
+# own, and the second peer of one joins the match it already minted.
 R=$(start_req "$ID1" "$ID2" 7 first "$(now_ms)")
 MIDOLD=$(field "$R" mid)
 S1=$(start_req "$ID1" "$ID2" 8 first "$(now_ms)")
@@ -131,8 +131,8 @@ else
     echo "FAIL the second begin reused the first match: '$MID' vs '$MIDOLD'"
     fail=1
 fi
-R=$(start_req "$ID1" "$ID2" 9 level "$(now_ms)")
-expect "an in-run halt carries the same match forward" "\"mid\":\"$MID\"" "$R"
+R=$(start_req "$ID1" "$ID2" 8 first "$(now_ms)")
+expect "asking again for the same start reads back the same match" "\"mid\":\"$MID\"" "$R"
 
 # --- Claims. The direction rule first: from == caller means "I lost it", and
 # nobody lies to lose an item, so it settles on the spot.

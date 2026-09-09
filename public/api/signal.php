@@ -13,11 +13,11 @@ require_once __DIR__ . '/../src/Relay.php';
  * Matchmaking / WebRTC signaling relay.
  * POST {"id": sender, "to": recipient,
  *       "type": one of Signals::TYPES (invite, invite-relay, accept,
- *         accept-relay, decline, offer, answer, ice, ices, bye, chat) - the
+ *         accept-relay, decline, offer, answer, ice, ices, bye) - the
  *         reserved 'friend' and 'undelivered' types are server-generated
  *         and rejected here,
  *       "payload": string, opaque to the server (SDP/ICE/profile JSON;
- *         plain text capped at chat_max_len for chat, else max 16 KB),
+ *         max 16 KB),
  *       "pts": int ms on the shared clock (optional but expected once the
  *         client is time-synced; future-dated values are rejected + logged)}
  *
@@ -46,8 +46,7 @@ Util::noteCaller($id);
 if (!is_string($type) || !in_array($type, Signals::TYPES, true)) {
     Util::fail('invalid type');
 }
-$max = $type === 'chat' ? Settings::int('chat_max_len') : FOK_SIGNAL_MAX_PAYLOAD;
-if (!is_string($payload) || strlen($payload) > $max) {
+if (!is_string($payload) || strlen($payload) > FOK_SIGNAL_MAX_PAYLOAD) {
     Util::fail('invalid payload');
 }
 // 'ices' (4.4) is the one payload with a shape, because its whole reason for

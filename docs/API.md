@@ -50,7 +50,13 @@ per-session jitter offset that bought nothing a client could not get from
 the request gap and `after_ms`, both of which act where the requests
 actually stack - and later the interval fields of `pace` (`hello_ms`,
 `poll_ms`, `gap_ms`), which had only ever carried the constants the contract
-states under Pacing. So the version says what the contract
+states under Pacing. 4.7 carries the same kind of withdrawal, of everything
+no client had ever reached for: hello's `friends` id list with its
+`friends_online` / `friends_latency` / `friends_name` / `friends_playing`
+maps, superseded by the delta and now simply not answered; start.php's
+`resync` and the pair cross-check behind it; the `chat` signal type, which
+was only ever reserved; and `GET`/`POST` /api/stats.php, whose table no
+client ever wrote. So the version says what the contract
 PERMITS, not what the server in front of you implements. FEATURE-DETECT
 every optional field - ask for it, use it when the answer carries it, fall
 back when it does not - and never gate an optional feature on the MINOR. The
@@ -64,7 +70,7 @@ works when it is not.
 - Every response contains `"ok": true` or `"ok": false`. On failure the
   object is `{"ok": false, "error": "<short reason>"}` with an HTTP status
   of 400 (bad input), 403 (not friends, see signal.php), 404 (unknown),
-  405 (wrong method), 409 (caller is behind, see start.php), 413 (request
+  405 (wrong method), 413 (request
   body over ~272 KB, only a score submission ever comes close), 429 (rate
   cap, see below), 503 (relay busy) or 500 (server fault). Clients must
   treat any non-`ok` answer as a soft failure: log it, back off, never
@@ -226,9 +232,6 @@ The rule:
 - When a response reports a non-trivial `q_ms` (see hello.php and
   start.php), the host is busy right now: defer the sync rather than bake
   that congestion into the offset.
-- When start.php answers `resync: true`, the server has seen this pair's
-  two clocks disagree. Re-anchor before the next start.
-
 Both clients now share a PTS base accurate to roughly rtt/2 (a few ms
 on typical connections) - enough for frame- and audio-level sync. The
 server does zero per-client work for any of this, which is what makes it
@@ -250,8 +253,8 @@ sync's.
 
 ### Using PTS
 
-- EVERY message the peers exchange (DataChannel game packets, chat,
-  and the pts field on server signals) carries the sender's current
+- EVERY message the peers exchange (DataChannel game packets and the
+  pts field on server signals) carries the sender's current
   PTS, so the receiver can order events and measure staleness.
 - Field size: a full PTS is unix milliseconds - 13 decimal digits,
   41 bits today (48 bits is safe for centuries; always below JS's
@@ -289,8 +292,9 @@ sync's.
 
 A client MAY measure its latency to the server and report it via hello's
 `latency` field (integer ms). The server keeps the last value per player
-and uses it for display only: the admin UI, and friends - see hello's
-`friends_latency`, which is null for a friend that never reported.
+and uses it for display only: the admin UI, and friends - see the
+`latency` in a friend delta, which is null for a friend that never
+reported.
 Nothing in gameplay reads it; the start lead is a flat figure (see
 start.php). A client that never reports loses nothing. One that does
 must follow the procedure below - a wrong figure is worse than none,
@@ -320,49 +324,39 @@ keeps the last value).
           "reason": "first", "pts": 1784190295120,
           "duel_private": false}
       -> {"ok":true, "start_pts": 1784190295323, "epoch": 0,
-          "now": 1784190295123, "q_ms": 0, "resync": false,
+          "now": 1784190295123, "q_ms": 0,
           "mid": "<32-hex>", "secret": "<32-hex>"}
 
-The server owns the clock, so it owns the moment play BEGINS. In practice
-that is the first start and a rematch; the halts within a run are settled
-peer-to-peer over the DataChannel and never reach the server, which still
-accepts them as reasons:
+The server owns the clock, so it owns the moment play BEGINS - and that
+is the only moment it is asked about. There are two reasons:
 
 | `reason`  | when                                  |
 |-----------|---------------------------------------|
 | `first`   | first start of a match                |
-| `level`   | next level                            |
-| `respawn` | after a death, before play resumes    |
-| `resume`  | coming back from a pause              |
 | `rematch` | replaying against the same peer       |
 
-`first` and `rematch` are the ones a client sends. The other three are
-accepted and behave as described, but a boundary inside an ongoing match
-is the pair's own business - the server neither sees it nor needs to.
+The halts WITHIN a run - the next level, a respawn, coming back from a
+pause - are settled peer-to-peer over the DataChannel and never reach the
+server. A boundary inside an ongoing match is the pair's own business.
 Peers never pick the moment play BEGINS themselves.
 
-**Both peers call it, and both name the same `epoch`.** The epoch counts
-halts within the current connection: it starts at 0 and increments by one
-per halt. Deterministic lockstep means both peers count identically
-without either being authoritative, so they arrive at the same number by
-themselves. The peer that asks first causes the start to be issued; the
-second gets the IDENTICAL value back.
+**Both peers call it, and both name the same `epoch` and `reason`.** The
+peer that asks first causes the start to be issued; the second gets the
+IDENTICAL value back, however late it is - it then knows exactly how late
+and can fast-forward. That is what makes the answer independent of WHEN
+each peer asks.
 
-Naming the epoch is what makes the answer independent of WHEN each peer
-asks. A late peer receives the same `start_pts`, possibly already in the
-past - it then knows exactly how late it is and can fast-forward. This
-matters most for mid-game halts: a pause or a respawn is noticed by one
-peer first, and the other only learns of it over the DataChannel, so it
-asks late by definition.
+A rematch names `epoch: 0` exactly as a first start does, so `reason` is
+what tells the server the pair wants a NEW moment rather than the one it
+already issued them. A stored start also ages out of the pairing window
+after a few seconds, which covers a rematch that repeats both fields.
 
-The server never pushes a start. The peers agree over the DataChannel
-(or the relay) that a halt happened and which epoch it is; the server is
-asked only for its timing.
+The server never pushes a start. The peers agree over the DataChannel (or
+the relay) that play is beginning; the server is asked only for its
+timing.
 
-- `epoch`: integer 0..1000000, REQUIRED. A peer that has fallen BEHIND
-  the pair's epoch gets **409** `stale epoch` and must resynchronise its
-  game state rather than start from a wrong origin.
-- `reason`: one of the table above, REQUIRED.
+- `epoch`: integer 0..1000000, REQUIRED. Both peers name the same one.
+- `reason`: one of the two above, REQUIRED.
 - `pts`: the caller's own current PTS, REQUIRED - the proof it is synced
   (see below).
 - `duel_private` (4.7, ADDITIVE): this duel is counted but never
@@ -377,21 +371,13 @@ asked only for its timing.
   before any PHP ran, in ms; normally 0. A non-trivial figure says the host
   was busy serving this very request, so the round trip around it is not a
   clean sample - see the clock-anchor rule above.
-- `resync` (4.4, ADDITIVE): true when the server has seen this pair's two
-  clocks disagree by more than it can account for (see the pair cross-check
-  below). Re-anchor before the next start. It is a HINT, never a rejection,
-  and a client that ignores it works exactly as before.
 - `mid`, `secret` (contract 4.0, ADDITIVE): the pair's match id and the
   CALLER'S OWN per-match secret - never the peer's, each side gets only
   its own. They exist so a client can attest item transfers to
-  /api/items.php; see the Item registry below. A start that BEGINS play
-  (`first`, `rematch`) mints a fresh match, and the in-run halts (`level`,
-  `respawn`, `resume`) carry that same one forward, so ONE match spans a
-  whole duel and both peers read the same `mid`. A client on an older
-  contract simply ignores both fields. `mid` is `""` only in the
-  degenerate case of an in-run start with no begin behind it, which a
-  real duel never reaches; treat an empty `mid` as "no item claims
-  possible for now" rather than an error.
+  /api/items.php; see the Item registry below. Every start begins play, so
+  every one mints a fresh match and both peers read the same `mid` for the
+  duel it opens. A client on an older contract simply ignores both
+  fields.
 
 The lead time is chosen by the server and is the same for every pair:
 1000 ms (`start_lead_ms`, admin-configurable). It depends on nothing a
@@ -412,15 +398,13 @@ this beyond the normal handshake.
 start is a moment on that clock, so a client that cannot place itself on
 it is turned away rather than let into a desynced game:
 
-- ahead of the server -> **400** `bogus pts` (zero tolerance, logged),
-  for EVERY reason;
-- absent -> **400** `pts required`, for EVERY reason;
+- ahead of the server -> **400** `bogus pts` (zero tolerance, logged);
+- absent -> **400** `pts required`;
 - older than `start_sync_max_age_ms` (default 2 s) -> **400**
-  `stale pts` (resync via t.txt and retry) - but ONLY for a start that
-  BEGINS play (`first`, `rematch`). The in-run halts (`level`, `respawn`,
-  `resume`) are exempt: the pair is already synced from its first start,
-  so a stale proof does not block them and the client may resync as it
-  goes. A `pts` in the future is still `bogus` even in-run.
+  `stale pts` (resync via t.txt and retry).
+
+All three apply to every start, because every start begins play and a
+pair has to enter its run aligned.
 
 Be aware of what this does and does not prove. What reaches the server is
 `pts + one-way delay + any clock error`, and those cannot be separated
@@ -433,23 +417,6 @@ is the contract; WHEN to sweep is the client's business, bounded only by
 these gates.
 
 ##### The pair cross-check (4.4)
-
-There is one thing the server can see that neither client can. Both peers
-prove their clock against the SAME start, so their two proofs are
-comparable even though neither is interpretable alone. For each caller the
-server forms `server receive time - reported pts` - one-way delay plus
-signed clock error, still inseparable - and compares the pair's two
-figures. Their DIFFERENCE bounds how far apart the two anchors are, and
-past a tolerance (`start_pair_skew_ms`) the answer carries
-`resync: true`.
-
-It is as gross as the gate above and for the same reason, and it is a hint
-rather than a refusal: a genuinely healthy pair on very asymmetric paths
-would otherwise be locked out of its own match. The second caller learns it
-in its own response; the first has already been answered by the time the
-disagreement is visible, so its copy waits for its next start - which is
-soon enough: `resync: true` is the one moment the server asks for a
-fresh anchor before the next start.
 
 ### Server-side PTS validation
 
@@ -551,11 +518,6 @@ Response:
       "signals": [                pending messages for "id", oldest first
         {"from": "deadbeef", "type": "invite", "payload": "", "created": 1784182410}
       ],
-      "friends_online": {"deadbeef": true},  only when "friends" was sent
-      "friends_latency": {"deadbeef": 31},   ms while online, else null
-      "friends_name": {"deadbeef": "KAI"},   last reported display name
-      "friends_playing": ["deadbeef"],       accepted friends who may be
-                                             watched NOW
       "friends_delta": {                     only when "friends_since" was
         "deadbeef": {"online": true,         sent: each accepted friend
                      "playing": false,       whose state changed after the
@@ -578,28 +540,11 @@ Response:
       ]
     }
 
-`friends` and `friends_*` are two different things and the names are
-close enough to hurt: `friends_online` / `friends_latency` / `friends_name`
-/ `friends_playing` report STATUS for ids the request already named in
-`friends`, while `friends` in the response is the ROSTER - who the caller's
-friends are at all, including requests still pending, requests the caller
-sent out, and names for ids the client has never seen. The maps cannot
-carry the roster, which is the only reason friend.php list exists as a
-separate call.
-
-The friends_* fields are AUTHORIZATION-GATED: real values are served only
-for ids with an ACCEPTED friendship to the caller (see Friendships);
-any other id reads as offline/null and never appears in friends_playing,
-so possessing an id alone reveals nothing.
-
-`friends_playing` lists the accepted friends whose duel may be WATCHED
-right now. Online is not the same as available - a friend mid-duel cannot
-take an invite or join a lobby - so show them as busy rather than inviting
-them. A friend in a PRIVATE duel is not in this list and not in the
-`playing` flag of a delta: the duel is counted, never attributed (see
-Announcing a duel). So the list answers "can I ask for a feed", not "is
-this person in a game", and there is no way to ask the second question
-about a named person.
+`friends` in the response is the ROSTER - who the caller's friends are at
+all, including requests still pending, requests the caller sent out, and
+names for ids the client has never seen. Presence is a different question
+and a different shape: it comes from the delta below, which the caller asks
+for with a cursor and never with a list of ids.
 
 ### Friend presence deltas (`friends_since`, 4.6)
 
@@ -627,10 +572,13 @@ Response, on both endpoints:
     "friends_at": 1784182417123,  the cursor for the NEXT read
     "friends_more": false         true: rows are still pending
 
-`playing` is the same answer `friends_playing` gives: a duel that may be
-watched, so a private one reads false (see Announcing a duel). It flips
-with the same freshness `online` has - on the announcement, or when the
-duel window lapses.
+`playing` means a duel that may be WATCHED, so a private one reads false
+(see Announcing a duel) - it answers "can I ask for a feed", not "is this
+person in a game", and there is no way to ask the second question about a
+named person. It flips with the same freshness `online` has: on the
+announcement, or when the duel window lapses. The whole answer is
+AUTHORIZATION-GATED - only ACCEPTED friendships appear at all, so
+possessing an id reveals nothing.
 
 The cursor:
 
@@ -850,7 +798,7 @@ has.
 `duel_private` marks a duel that is COUNTED but never ATTRIBUTED: it is in
 the `playing` figure, holds the duel window, gets the same patience under
 load and reaches the operator's dashboard exactly like any other, and it is
-absent from `friends_playing` and reads `playing: false` in a delta. It
+absent from a delta's `playing`. It
 rides start.php and hello alike, and it is a property of the duel rather
 than a latch: state it on every request that holds the duel up, because
 leaving it off makes the duel public again from that request on.
@@ -1055,7 +1003,6 @@ Types (fixed set, anything else is rejected):
     ices      SEVERAL ICE candidates (4.4)        payload: JSON ARRAY of RTCIceCandidate,
               see "Batching ICE candidates"                max 24 entries
     bye       leave / abort the session           payload: ""
-    chat      text message (max 120 bytes total)  payload: plain text
     watch     ask a peer to feed you a match      payload: JSON {"nid": <node id>,
               (spectating, see Tournament mode)                  "tid": <32-hex>}
     friend    RESERVED - server-generated only    payload: JSON {"event":
@@ -1345,9 +1292,8 @@ friend list; the hello `friends` field tells A whether B is online):
        normal slow heartbeat (~60 s) carries duel_with afterwards to
        hold it up (see Announcing a duel).
     7. The further halts of the run - next level, respawn, resume from
-       pause - are settled between the peers. start.php still accepts
-       them as reasons with the next epoch (see start.php for the epoch
-       rules), and none of them calls for a sweep.
+       pause - are settled between the peers over the DataChannel. The
+       server is not told and none of them calls for a sweep.
     8. Either side sends bye (via the DataChannel if open, and via
        signal as fallback) to end the session, and each side tells the
        server with a hello carrying duel_end: a bye that went over the
@@ -1505,45 +1451,6 @@ relay.php long poll is the session. The same 1 s in-band ping and ~3 s
 timeout apply, carried as relay messages; a 429/503 or repeated
 transport errors end the match the same way "connection lost" does.
 
-## Live chat (prepared, not yet implemented)
-
-The architecture reserves a chat path for both phases; clients may ship
-it later without any server change:
-
-- Before the DataChannel is open (invite pending, lobby): the "chat"
-  signal type relays a plain-text message between the two IDs. The
-  server hard-rejects payloads over 120 bytes.
-- During a duel: chat rides in-band on the open DataChannel like every
-  other game message, e.g. {"t": "chat", "text": "..."}. Clients
-  enforce the same 120-byte cap on send AND on receive (a hostile peer
-  is not bound by our client code).
-- Render received chat as plain text only, never HTML. Rate-limit
-  display client-side (e.g. drop to 1 message/s) to keep spam from
-  affecting gameplay.
-
-Notes:
-
-- Undelivered signals expire after 120 s (signal_ttl) - the same window a
-  recipient counts as online for, so a signal to an online client is late
-  at worst, never lost. It arrives fast while the recipient is actively
-  polling (multiplayer screen open); an idle client on the 60 s hello
-  cadence gets it on its next beat. When a connection-establishing
-  message expires unread the sender is told - see
-  the 'undelivered' receipt above - so an invite either goes through or
-  fails loudly. Everything else (ice, ices, chat, bye) expires silently:
-  those belong to a handshake the client is already timing out on its own.
-- Use a public STUN server (e.g. stun:stun.l.google.com:19302) in the
-  RTCPeerConnection config. There is NO TURN server: this server forwards
-  the signaling (SDP/ICE) and nothing else, and sees no game traffic once
-  the DataChannel is open. When P2P cannot connect, WebRTC is ABANDONED
-  rather than relayed - the duel falls back to relay.php and plain HTTP
-  messages (see "Relay fallback"). "P2P failed" is the switch to the hub,
-  not the end of the match; only a failing relay ends it.
-- Signaling payloads fit the 16 KB limit. Send the FIRST ICE candidate
-  as its own `ice` signal and batch the rest into `ices` (4.4): the cost
-  on this host is per request, not per byte. See "Batching ICE
-  candidates".
-
 ## Stats backup / restore
 
 A client can back its OWN config up to the server and restore it on another
@@ -1610,48 +1517,6 @@ the same `snake-fok-backup.json` the game imports through its normal file
 restore - and (b) RESET the token, so the client re-enrolls on its next
 backup (a fresh token is minted; the data is kept). These paths live only
 behind /admin.
-
-## Per-player stats
-
-Added in contract 3.4 (additive). A client saves its cumulative gameplay
-counters and reads them back to restore progress on another device. Unlike the
-config backup above, these are PARSED - typed integers the server aggregates
-and the admin dashboard shows.
-
-    GET  /api/stats.php?id=c0ffee42
-      -> 200 {"ok": true, "stats": {...}, "updated": <unix seconds>}
-    POST /api/stats.php {"id": "c0ffee42", "stats": {...}}
-      -> 200 {"ok": true, "stats": {...}, "updated": <unix seconds>}
-
-`stats` is an object of counters; all fields are optional ints >= 0:
-
-    {
-      "games":        142,   games played
-      "levels":       310,   levels cleared (cumulative)
-      "best_level":   17,    furthest level reached (0..99)
-      "deaths":       190,   deaths
-      "duels":        44,    1vs1 duels played
-      "duels_won":    21,    1vs1 duels won
-      "play_seconds": 86400  total playtime, seconds
-    }
-
-Send your RUNNING TOTALS (the whole counter, not a delta). The server keeps
-each field's high-water mark:
-
-- Stored MONOTONICALLY - a submitted value never lowers the stored one, so a
-  stale or replaying device cannot roll the totals back. Send at the end of a
-  run or session, not per frame.
-- Each field is hard-capped (counts at 1e9, `best_level` at 99, `play_seconds`
-  at ~4e9); an over-cap value is CLAMPED, not rejected, so a client never gets
-  stuck. A malformed field is ignored; the rest still apply.
-- The response echoes the resulting stats (with any unsent fields at their
-  stored value). GET returns all zeros for an id with nothing stored yet.
-- These are SELF-REPORTED (no token, no server authority): knowing an id (they
-  are shared during a duel) lets anyone raise a counter up to its cap, never
-  lower or corrupt it. They are progress / vanity figures, not a trust signal.
-- Writes are throttled per id: a submission within a few seconds of the last
-  stored one is accepted and echoed but persists on the next submission (your
-  totals are cumulative, so nothing is lost), keeping the single writer clear.
 
 ## Item registry
 
@@ -1920,8 +1785,8 @@ recipient may honour or ignore.
 undelivered gets no 'undelivered' signal. Failing to get a feed is not a
 failed connection - the scoreboard keeps updating either way.
 
-Outside a tournament, who is worth asking comes from `friends_playing` or a
-delta's `playing` (see Announcing a duel). That answer is only as fresh as
+Outside a tournament, who is worth asking comes from a delta's `playing`
+(see Announcing a duel). That answer is only as fresh as
 the announcements behind it: it is the two peers stating the edges of their
 own match, plus a 91 s window for the client that stops stating anything.
 Nothing else on the server observes a duel, so a feed can always be gone by

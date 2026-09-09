@@ -16,18 +16,18 @@ NOW_MS=$(echo "$R" | grep -oE '"t":[0-9]+' | cut -d: -f2)
 if [ "${#NOW_MS}" -eq 13 ]; then echo "ok   time is in milliseconds"; else echo "FAIL time not ms: $NOW_MS"; fail=1; fi
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"synced\",\"pts\":$NOW_MS}" "$BASE/api/signal.php")
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"synced\",\"pts\":$NOW_MS}" "$BASE/api/signal.php")
 expect "signal with valid pts" '"ok":true' "$R"
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 
 FUTURE_MS=$((NOW_MS + 60000))
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"cheat\",\"pts\":$FUTURE_MS}" "$BASE/api/signal.php")
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"cheat\",\"pts\":$FUTURE_MS}" "$BASE/api/signal.php")
 expect "future pts rejected as bogus" 'bogus pts' "$R"
 
 NEAR_MS=$((NOW_MS + 2000))
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"early\",\"pts\":$NEAR_MS}" "$BASE/api/signal.php")
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"early\",\"pts\":$NEAR_MS}" "$BASE/api/signal.php")
 expect "near-future pts also rejected (zero tolerance)" 'bogus pts' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
@@ -37,8 +37,8 @@ expect "future pts rejected on scores" 'bogus pts' "$R"
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"name\":\"SMOKE ONE\"}" "$BASE/api/hello.php" > /dev/null
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"name\":\"SMOKE TWO\"}" "$BASE/api/hello.php" > /dev/null
 
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\"]}" "$BASE/api/hello.php")
-expect "friend status gated before friendship" "\"$ID2\":false" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends_since\":0}" "$BASE/api/hello.php")
+if [[ "$R" != *"\"$ID2\""* ]]; then echo "ok   an id with no friendship is absent from the delta entirely"; else echo "FAIL a non-friend appeared in the delta: $R"; fail=1; fi
 
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"play?\"}" "$BASE/api/signal.php")
@@ -116,15 +116,11 @@ R=$(curl -s "$BASE/api/poll.php?id=$ID2")
 expect "no-p2p invite delivered" '"type":"invite-relay"' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"gl hf\"}" "$BASE/api/signal.php")
-expect "chat signal accepted" '"ok":true' "$R"
-curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"gone\"}" "$BASE/api/signal.php")
+expect "a retired signal type is refused" '"error":"invalid type"' "$R"
 
-LONG=$(printf 'x%.0s' $(seq 1 121))
-R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"$LONG\"}" "$BASE/api/signal.php")
-expect "chat over 120 bytes rejected" '"error":"invalid payload"' "$R"
-
+# An SDP offer is the reason the payload cap is 16 KB at all.
+LONG=$(printf 'x%.0s' $(seq 1 4096))
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"offer\",\"payload\":\"$LONG\"}" "$BASE/api/signal.php")
 expect "offer allows large payload" '"ok":true' "$R"
@@ -186,14 +182,14 @@ expect "duel counted" "$(strict '"playing":2')" "$R"
 
 # Each of them may be watched, and the answer is the same either way it is
 # asked - the delta and the older map cannot disagree about a private duel.
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\"]}" "$BASE/api/hello.php")
-expect "a friend in a duel may be watched" "$(strict "\"friends_playing\":[\"$ID2\"]")" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends_since\":0}" "$BASE/api/hello.php")
+expect "a friend in a duel may be watched" "$(strict "\"$ID2\":{\"online\":true,\"playing\":true")" "$R"
 
 # Private: counted, never attributed.
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"duel_with\":\"$ID1\",\"duel_private\":true}" "$BASE/api/hello.php")
 expect "a private duel still counts" "$(strict '"playing":2')" "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\"]}" "$BASE/api/hello.php")
-expect "but is never attributed to the player" "$(strict '"friends_playing":[]')" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends_since\":0}" "$BASE/api/hello.php")
+expect "but is never attributed to the player" "$(strict "\"$ID2\":{\"online\":true,\"playing\":false")" "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"duel_with\":\"$ID1\"}" "$BASE/api/hello.php")
 
 # The announced end, and the guard that keeps a late one from cancelling the
@@ -202,21 +198,18 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"d
 expect "an end naming another peer is ignored" "$(strict '"playing":2')" "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"duel_end\":\"$ID1\"}" "$BASE/api/hello.php")
 expect "an announced end drops the player at once" "$(strict '"playing":1')" "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\"]}" "$BASE/api/hello.php")
-expect "and takes the spectate offer with it" "$(strict '"friends_playing":[]')" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends_since\":0}" "$BASE/api/hello.php")
+expect "and takes the spectate offer with it" "$(strict "\"$ID2\":{\"online\":true,\"playing\":false")" "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"duel_end\":\"$ID2\"}" "$BASE/api/hello.php")
 expect "both ends leave nobody playing" "$(strict '"playing":0')" "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"duel_end\":\"nothex\"}" "$BASE/api/hello.php")
 expect "a malformed duel_end is refused" '"error":"invalid duel_end"' "$R"
 
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"latency\":31}" "$BASE/api/hello.php" > /dev/null
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\",\"aaaa0000\"]}" "$BASE/api/hello.php")
-expect "friends online reported" "\"$ID2\":true" "$R"
-expect "unknown friend offline" '"aaaa0000":false' "$R"
-FL=$(echo "$R" | grep -o '"friends_latency":{[^}]*}')
-expect "friend latency reported" "\"$ID2\":31" "$FL"
-FN=$(echo "$R" | grep -o '"friends_name":{[^}]*}')
-expect "friend name reported" "\"$ID2\":\"SMOKE TWO\"" "$FN"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends_since\":0}" "$BASE/api/hello.php")
+expect "the friend reads online" "\"$ID2\":{\"online\":true" "$R"
+expect "with the latency it reported" '"latency":31' "$R"
+expect "and the name it goes by" '"name":"SMOKE TWO"' "$R"
 
 # The whole roster on the heartbeat a screen showing it was sending anyway,
 # byte for byte what friend.php `list` returns (4.4 re-release).
@@ -238,9 +231,11 @@ expect "the delta says whether more is pending" '"friends_more":false' "$R"
 FAT=$(echo "$R" | grep -oE '"friends_at":[0-9]+' | cut -d: -f2)
 if [ "${#FAT}" -eq 13 ]; then echo "ok   the cursor is a millisecond stamp"; else echo "FAIL friends_at not ms: $FAT"; fail=1; fi
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"friends_since\":$FAT,\"friends\":[\"$ID2\"]}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID1\",\"friends_since\":$FAT}" "$BASE/api/hello.php")
 expect "a second read finds nothing changed" '"friends_delta":{}' "$R"
-if [[ "$R" != *'"friends_online"'* ]]; then echo "ok   the delta replaces the status maps"; else echo "FAIL friends_online served beside the delta: $R"; fail=1; fi
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\",\"aaaa0000\"]}" "$BASE/api/hello.php")
+if [[ "$R" != *'"friends_'* ]]; then echo "ok   naming ids is answered with nothing at all"; else echo "FAIL a friends list was still answered: $R"; fail=1; fi
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends_since\":-1}" "$BASE/api/hello.php")
 expect "a negative cursor is refused" '"error":"invalid friends_since"' "$R"
 

@@ -32,11 +32,9 @@ require_once __DIR__ . '/../src/Pace.php';
  *                               screen is open (auto-accepts requests)
  *   "debug": bool,              optional, whether the client IS in debug
  *                               mode (absent means it is not)
- *   "friends_since": int ms     optional, 4.6: answer with the caller's
+ *   "friends_since": int ms     the cursor: answer with the caller's
  *                               accepted friends whose presence changed
- *                               after this cursor (0 = all of them), and
- *                               ignore "friends"
- *   "friends": ["8-hex", ...]   optional, ids to check
+ *                               after it (0 = all of them)
  *   "friends_list": bool        optional, return the caller's WHOLE roster
  *                               (the same array friend.php `list` returns)
  *                               so a screen showing it needs no second
@@ -49,9 +47,9 @@ require_once __DIR__ . '/../src/Pace.php';
  *                               too - see Presence::claim
  * }
  * Returns presence counters, the server's debug wish for this client,
- * pending signaling messages for the caller (drained on read) and, for
- * requested friends, online/latency/name plus friends_playing - all filled
- * ONLY for ids with an ACCEPTED friendship to the caller.
+ * pending signaling messages for the caller (drained on read) and, when a
+ * cursor is sent, what changed about the caller's ACCEPTED friends since
+ * it - the server names them, the caller never does.
  * Clients send this every ~30s; fast polling belongs to poll.php.
  */
 Util::cors();
@@ -148,18 +146,6 @@ if ($duelWith !== null) {
 // deletes what it returns, so a Util::fail() after it would drop the
 // caller's pending invites for good.
 $wantRoster = !empty($body['friends_list']);
-$friends = null;
-if (isset($body['friends'])) {
-    $friends = $body['friends'];
-    if (!is_array($friends) || count($friends) > FOK_MAX_FRIENDS) {
-        Util::fail('invalid friends');
-    }
-    foreach ($friends as $f) {
-        if (!Util::isValidId($f)) {
-            Util::fail('invalid friends');
-        }
-    }
-}
 $since = $body['friends_since'] ?? null;
 if ($since !== null && (!is_int($since) || $since < 0)) {
     Util::fail('invalid friends_since');
@@ -211,23 +197,6 @@ if ($since !== null) {
     $out['friends_delta'] = (object)$delta['rows'];
     $out['friends_at'] = $delta['at'];
     $out['friends_more'] = $delta['more'];
-} elseif ($friends !== null) {
-    // Status is only served for ACCEPTED friendships; everything else
-    // reads as offline/unknown so mere possession of an id leaks nothing.
-    $accepted = Friends::acceptedOf($id, $friends);
-    $info = Presence::infoOf(array_keys($accepted));
-    $out['friends_online'] = new stdClass();
-    $out['friends_latency'] = new stdClass();
-    $out['friends_name'] = new stdClass();
-    foreach ($friends as $f) {
-        $out['friends_online']->$f = $info[$f]['online'] ?? false;
-        $out['friends_latency']->$f = $info[$f]['latency'] ?? null;
-        $out['friends_name']->$f = $info[$f]['name'] ?? null;
-    }
-    // Online is not the same as available: a friend already in a duel cannot
-    // take an invite or join a lobby, and saying so up front is the
-    // difference between a considered invite and a wasted one.
-    $out['friends_playing'] = Presence::playingOf(array_keys($accepted));
 }
 
 // The roster itself, which is not what the status maps above it are. Those

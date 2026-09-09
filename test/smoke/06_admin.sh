@@ -399,12 +399,12 @@ else
     expect "and nothing orphaned by a player removal" "1" "$ORPH"
     expect "while what a returning player owns is kept, not swept" '"policy":"kept"' "$R"
 
-    R=$(curl -s -b "$COOKIES" -X POST -d 'chat_max_len=10' "$BASE/admin/api.php?action=settings_save")
+    R=$(curl -s -b "$COOKIES" -X POST -d 'ices_max=1' "$BASE/admin/api.php?action=settings_save")
     expect "settings saved" '"ok":true' "$R"
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$ID2\",\"to\":\"$ID1\",\"type\":\"chat\",\"payload\":\"12345678901\"}" "$BASE/api/signal.php")
-    expect "lowered chat cap applies live" '"error":"invalid payload"' "$R"
-    curl -s -b "$COOKIES" -X POST -d 'chat_max_len=120' "$BASE/admin/api.php?action=settings_save" > /dev/null
+        -d "{\"id\":\"$ID2\",\"to\":\"$ID1\",\"type\":\"ices\",\"payload\":\"[1,2]\"}" "$BASE/api/signal.php")
+    expect "a lowered cap applies live" '"error":"invalid payload"' "$R"
+    curl -s -b "$COOKIES" -X POST -d "ices_max=24" "$BASE/admin/api.php?action=settings_save" > /dev/null
 
     R=$(curl -s -b "$COOKIES" -X POST -d 'admin_max_fails=notanumber' "$BASE/admin/api.php?action=settings_save")
     expect "bad setting value rejected" '"error":"invalid value' "$R"
@@ -538,7 +538,7 @@ else
         -d "{\"id\":\"$ID3\",\"action\":\"remove\",\"peer\":\"$ID4\"}" "$BASE/api/friend.php" > /dev/null
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=config_export")
-    expect "config export" '"chat_max_len"' "$R"
+    expect "config export" '"ices_max"' "$R"
     R=$(curl -s -b "$COOKIES" -X POST --data-urlencode "config=$R" "$BASE/admin/api.php?action=config_import")
     expect "config import roundtrip" '"ok":true' "$R"
     R=$(curl -s -b "$COOKIES" -X POST --data-urlencode 'config={"nope":1}' "$BASE/admin/api.php?action=config_import")

@@ -269,7 +269,7 @@ window after the match ended.
   wrong about the other costs somebody an item. Do not merge them.
 - `duel_private` (hello and start.php alike) is COUNTED, never ATTRIBUTED: in
   the playing figure, holding the duel window, on the operator's dashboard,
-  and absent from friends_playing and from a delta's playing. A property of
+  and absent from a delta's playing. A property of
   the duel, not a latch - stated on every request that holds the duel up, so
   omitting it makes the duel public again from that request on.
 - The transition fan-out keys on what a FRIEND can see (playing && !private),
@@ -283,6 +283,16 @@ window after the match ended.
   private ones included. So the duels table is now read by the item registry
   and the housekeeping and by NOTHING else, and touchDuel's upsert no longer
   reads a row back.
+- EVERY start begins play (REASONS is first/rematch and nothing else), so
+  every one mints a fresh match. A rematch names epoch 0 exactly as a first
+  start does, so the epoch's ORDERING can no longer tell a leftover line
+  from a live one - what does is the pair of (epoch, reason) plus a
+  PAIR_WINDOW_MS (5 s) freshness window on the read. Before 1.6.0 the
+  staleness test relied on in-run halts advancing the epoch, which the
+  client stopped sending in 2026-09; a relay rematch inside KEEP_MS was
+  therefore being handed the PREVIOUS match's start_pts. The row is still
+  kept KEEP_MS (5 min) because matchInfo reads its mid with no window and a
+  claim attests against that match long after the duel goes quiet.
 - Cost added to start.php: one duels upsert on a latency-sensitive endpoint
   that already takes the writer for Starts::request. The local smoke is
   single-threaded and proves nothing about it - watch for INSERT INTO duels
@@ -365,21 +375,33 @@ must be case-insensitive (HTTP/2 lowercases header names).
   stores stay, being shared with the other environment. Persistent PDO
   stays off: Db::close() only drops the reference.
 
-## Known dead weight (assessed only - no removal decided)
+## Known dead weight
 
-Ranked by cost against what the live client actually uses: (1) start.php
-in-run reasons level/respawn/resume + Skew.php + `resync` +
-start_pair_skew_ms - the client sends only first/rematch (level/respawn/
-resume are P2P boundaries) and reads `resync` only to widen a rematch
-sweep; (2) the relay - the client uses it ONLY behind its RELAY ONLY
-toggle, not as an automatic fallback; removal is a MAJOR contract
-change, check the admin 'relaying' gauge first; (3) stats.php + PStats +
-the pstats table - no client call; (4) the chat signal type +
-chat_max_len - no client chat; (5) ~36 of 59 settings are contract
-numbers read at one site (no wire cost, admin clutter only). Used and
-fine: q_ms, pace.hold, nets (Presence::announceNet reads them),
-after_ms, friends_latency, backup.php, debug/submit.php, time.php (t.txt
-fallback), net.php.
+REMOVED in 1.6.0, all of it surface no client ever reached for, and all of
+it a withdrawal on the SAME contract minor (4.7) - the version says what the
+contract PERMITS, not what the server implements, so dropping what nothing
+asks for does not move it:
+
+- hello's `friends` id list and the `friends_online` / `friends_latency` /
+  `friends_name` / `friends_playing` maps. The delta (4.6) is the only way
+  to ask now. `Presence::playingOf` and `Friends::acceptedOf` went with it,
+  having had no other caller.
+- start.php's in-run reasons (level/respawn/resume), `Skew.php`, `resync`
+  and start_pair_skew_ms - see Duel announcement for what replaced the
+  epoch's staleness test.
+- the `chat` signal type, chat_max_len and FOK_CHAT_MAX_LEN.
+- stats.php, PStats and the pstats table (schema 43 drops it).
+
+LEFT, and why: the relay - the client uses it behind its RELAY ONLY toggle,
+so it is the only way to play without WebRTC; removal is a MAJOR contract
+change and the admin 'relaying' gauge decides it, not a survey. And ~36 of
+59 settings are contract numbers read at one site: no wire cost, admin
+clutter only, and turning them into constants would churn the config
+export/import path for nothing.
+
+Used and fine: q_ms, pace.hold, nets (Presence::announceNet reads them),
+after_ms, the delta's latency, backup.php, debug/submit.php, time.php
+(t.txt fallback), net.php.
 
 ## Open
 

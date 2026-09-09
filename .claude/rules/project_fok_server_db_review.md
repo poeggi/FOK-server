@@ -1,13 +1,9 @@
 # DB access review: outcome and the deliberately-left-alone list
 
 The review's actionable findings are all shipped (see
-project_fok_server_db_plan.md for the design decisions). One deliberate
-non-fix on top: `PStats::submit`'s game-end write is wrapped in Db::retry
-(a BUSY past busy_timeout was a 500 in front of the player), but its
-read-modify-write race was left alone ON PURPOSE and must not be "fixed"
-later - the merge only ever raises a value and the next submission
-recomputes from the client's cumulative totals, so a lost increment heals
-itself.
+project_fok_server_db_plan.md for the design decisions). Its one deliberate
+non-fix, the read-modify-write race in `PStats::submit`, is moot: PStats and
+the pstats table were removed in 1.6.0 (no client ever called stats.php).
 
 ## Closed by decision - do not reopen without a new reason
 
@@ -27,8 +23,8 @@ itself.
 ## Must stay in SQLite
 
 players, friends, scores, items, ledger, matches (secrets), vault,
-pstats, settings/caps as source of truth, alerts rows, counters
-hour/total buckets.
+settings/caps as source of truth, alerts rows, counters hour/total
+buckets.
 
 ## The underlying model
 
