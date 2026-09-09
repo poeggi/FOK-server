@@ -322,7 +322,7 @@ final class Tournament
      * BEGIN IMMEDIATE was buying here - handing the same join code to two
      * lobbies is the one thing a lobby's whole identity rests on.
      */
-    public static function create(string $host, bool $stakes): array
+    public static function create(string $host, bool $stakes, bool $replace = false): array
     {
         if (!TourneyStore::usable()) {
             // Tournament state has no database fallback by design, so this is
@@ -338,15 +338,29 @@ final class Tournament
         // fair rather than merely deterministic.
         $tid = bin2hex(random_bytes(16));
         $seed = bin2hex(random_bytes(16));
-        if (!TourneyStore::claimHost($host, $tid)) {
-            return ['ok' => false, 'error' => 'already hosting', 'http' => 409];
-        }
         // Creating is cheap for the host and costly for everyone it can
         // announce to, so it is rate-limited off the host's own last create.
         $wait = TourneyStore::createWait($host);
+        if ($replace) {
+            // The host has one already and has answered for it: end that one
+            // and carry on. One call, because a client that had to leave and
+            // then create can lose the second half and hold neither. Which is
+            // also why the cooldown is charged BEFORE anything is ended - a
+            // replace refused after the abort would do exactly that.
+            if ($wait > 0) {
+                return self::cooldown($wait);
+            }
+            $held = TourneyStore::hostedBy($host);
+            if ($held !== null) {
+                self::abort($held, 'host opened a new one');
+            }
+        }
+        if (!TourneyStore::claimHost($host, $tid)) {
+            return ['ok' => false, 'error' => 'already hosting', 'http' => 409];
+        }
         if ($wait > 0) {
             TourneyStore::releaseHost($host);
-            return ['ok' => false, 'error' => 'create cooldown', 'http' => 429, 'retry_after' => $wait];
+            return self::cooldown($wait);
         }
         $code = self::newCode($tid);
         if ($code === null) {
@@ -375,6 +389,12 @@ final class Tournament
             'stakes' => $stakes,
             'max' => Settings::int('tournament_max_players'),
         ];
+    }
+
+    /** @return array{ok:bool,error:string,http:int,retry_after:int} */
+    private static function cooldown(int $wait): array
+    {
+        return ['ok' => false, 'error' => 'create cooldown', 'http' => 429, 'retry_after' => $wait];
     }
 
     private static function newCode(string $tid): ?string
@@ -1675,6 +1695,217 @@ final class Tournament
         unset($row);
         usort($out, static fn(array $a, array $b): int => $b['since'] <=> $a['since']);
         return $out;
+    }
+
+    /**
+     * One tournament in full, for the popup the admin card opens. Inert in
+     * the same way listLive is - no lock, no deadline run - so the operator
+     * reads what the tournament IS rather than what looking at it would make
+     * it become. That is also what makes the wait worth showing: a lapsed
+     * deadline says nobody has come to collect it, deadlines being settled by
+     * a seated player's own request and by nothing else (see pulse).
+     */
+    public static function detail(string $tid): ?array
+    {
+        if (!TourneyStore::usable()) {
+            return null;
+        }
+        $t = TourneyStore::get($tid);
+        if ($t === null) {
+            return null;
+        }
+        $now = time();
+        $cur = $t['data']['cursor'] ?? null;
+        $ids = array_column($t['players'], 'id');
+        $info = Presence::infoOf($ids);
+        // The name and the online verdict come from infoOf, which falls back
+        // to the players table; the raw beat is only in the entry.
+        $entries = Presence::entriesOf($ids);
+        $playing = [];
+        $node = $cur === null || self::isClosed($t, $cur) ? null : self::node($t, $cur);
+        if ($node !== null) {
+            foreach ([$node['a'], $node['b']] as $seat) {
+                $pid = self::idOfSeat($t, $seat);
+                if ($pid !== null) {
+                    $playing[$pid] = true;
+                }
+            }
+        }
+        $players = [];
+        foreach ($t['players'] as $p) {
+            $pid = (string)$p['id'];
+            $seen = $entries[$pid]['seen'] ?? null;
+            $players[] = [
+                'id' => $pid,
+                'name' => $info[$pid]['name'] ?? null,
+                'host' => $pid === $t['host'],
+                // A lobby has not seated anybody yet, and carries -1.
+                'seat' => (int)$p['seat'] < 0 ? null : (int)$p['seat'],
+                'forfeited' => (bool)$p['forfeited'],
+                'online' => (bool)($info[$pid]['online'] ?? false),
+                'last_seen' => $seen === null ? null : max(0, $now - (int)$seen),
+                'playing' => isset($playing[$pid]),
+            ];
+        }
+        $nodes = [];
+        foreach (['schedule', 'bracket'] as $list) {
+            foreach ($t['data'][$list] as $n) {
+                $nid = (string)$n['nid'];
+                $r = $t['data']['results'][$nid] ?? null;
+                $nodes[] = [
+                    'nid' => $nid,
+                    'round' => (int)$n['round'],
+                    'a' => self::idOfSeat($t, $n['a']),
+                    'b' => self::idOfSeat($t, $n['b']),
+                    'state' => self::stateOf($t, $nid),
+                    'winner' => $r === null ? null : self::idOfSeat($t, $r['winner']),
+                    'draw' => $r !== null && (bool)$r['draw'],
+                    'current' => $nid === $cur,
+                ];
+            }
+        }
+        return [
+            'tid' => (string)$t['tid'],
+            'code' => (string)$t['code'],
+            'host' => (string)$t['host'],
+            'state' => (string)$t['state'],
+            'round' => (int)$t['round'],
+            'stakes' => (bool)$t['stakes'],
+            'since' => (int)$t['created'],
+            'now' => $now,
+            'cursor' => $cur,
+            'players' => $players,
+            'nodes' => $nodes,
+        ] + self::waitingOn($t);
+    }
+
+    /**
+     * What the tournament is sitting on, how long it has sat there, and how
+     * much of its deadline is left. A NEGATIVE wait_left_ms is the reading
+     * that matters: the deadline lapsed and the tournament is still in that
+     * state, so nothing has asked since. A lapsed 'match' does not settle by
+     * itself either way - a walkover also needs one of the two players to be
+     * offline, which the player rows say.
+     */
+    private static function waitingOn(array $t): array
+    {
+        $none = ['wait' => null, 'wait_for_ms' => null, 'wait_left_ms' => null];
+        if ($t['state'] !== 'running') {
+            return $none;
+        }
+        $nowMs = Util::nowMs();
+        $waiting = static fn(string $what, int $at, int $window): array
+            => ['wait' => $what, 'wait_for_ms' => $nowMs - $at,
+                'wait_left_ms' => $at + $window - $nowMs];
+        $gate = $t['data']['gate'] ?? null;
+        if ($gate !== null) {
+            return $waiting('break', (int)$gate['at'], Settings::int('tournament_break_ttl_ms'));
+        }
+        $cur = $t['data']['cursor'] ?? null;
+        $r = $cur === null || self::isClosed($t, $cur) ? null
+            : ($t['data']['results'][$cur] ?? null);
+        if ($r !== null) {
+            if ($r['state'] === 'held' && $r['reports'] !== []) {
+                $one = reset($r['reports']);
+                return $waiting('result', (int)$one['at'], Settings::int('tournament_result_ms'));
+            }
+            return $waiting('match', (int)$r['dealt'], Settings::int('tournament_walkover_ms'));
+        }
+        // The cursor is on a closed node and has not moved past it, so the
+        // bracket is blocked on a frozen one - the cut cannot be taken while a
+        // node has no result. A frozen node is CLOSED, which is why the cursor
+        // sits on it rather than going null, and it has no deadline at all:
+        // only an operator clears it.
+        foreach (['schedule', 'bracket'] as $list) {
+            foreach ($t['data'][$list] as $n) {
+                if (self::stateOf($t, $n['nid']) === 'frozen') {
+                    return ['wait' => 'frozen'] + $none;
+                }
+            }
+        }
+        return $none;
+    }
+
+    /**
+     * Ends the tournaments nobody is at any more.
+     *
+     * Every other deadline here is settled by a SEATED player's own request
+     * (see pulse), which is exactly why an abandoned tournament has none:
+     * with nobody asking, the break never continues, the walkover never
+     * fires, and the tournament stands until its entry expires an hour later
+     * - still listed on the dashboard, still holding its host's
+     * one-per-host claim. This is the one deadline ANY request may settle,
+     * because it is the only one whose subject is the absence of the players.
+     *
+     * The test is PRESENCE, not activity. A long match transitions rarely and
+     * must never be swept out from under two people sitting in front of it,
+     * so what counts is the NEWEST beat among the seats: every request is a
+     * beat, and tournament_idle_ttl is above the online window, so a player
+     * merely between heartbeats is never gone. A tournament whose seats have
+     * no entry left at all is gone by the same test, having no beat at all.
+     *
+     * Rate-gated by the caller (Util::bumpNow), which is also what keeps this
+     * out of the request that pays for it: at most one sweep every
+     * tournament_sweep_secs, and the cards it reads carry no bracket.
+     */
+    public static function sweep(): void
+    {
+        if (!TourneyStore::usable()) {
+            return;
+        }
+        $cards = TourneyStore::liveCards();
+        if ($cards === []) {
+            return;
+        }
+        $ids = [];
+        foreach ($cards as $card) {
+            foreach ($card['ids'] as $pid) {
+                $ids[] = (string)$pid;
+            }
+        }
+        // One bulk fetch for every seat of every tournament, not one per
+        // tournament: the same shape the friend delta holds itself to.
+        $entries = Presence::entriesOf(array_values(array_unique($ids)));
+        $now = time();
+        $idle = Settings::int('tournament_idle_ttl');
+        foreach ($cards as $card) {
+            $seen = 0;
+            foreach ($card['ids'] as $pid) {
+                $seen = max($seen, (int)($entries[(string)$pid]['seen'] ?? 0));
+            }
+            if ($now - $seen < $idle) {
+                continue;
+            }
+            self::abort((string)$card['tid'], 'everyone left');
+        }
+    }
+
+    /**
+     * Ends it for everyone, without being one of its players. The same
+     * transition the host's own "end for all" makes (see leave), because to a
+     * client it is the same thing: the tournament stops where it stands and
+     * every screen says so. $reason is what those screens are told, so the two
+     * callers - an operator on the dashboard, a host replacing this lobby with
+     * a new one - do not both read as the first. Idempotent: a tournament
+     * already over has nothing to end.
+     */
+    public static function abort(string $tid, string $reason = 'ended by the operator'): ?array
+    {
+        return self::mutate($tid, static function (array &$t) use ($reason): array {
+            if ($t['state'] === 'done' || $t['state'] === 'abandoned') {
+                return ['ok' => true];
+            }
+            $played = $t['state'] === 'running';
+            $t['state'] = 'abandoned';
+            $t['data']['cursor'] = null;
+            self::event($t, self::lobby($t, $reason));
+            if ($played) {
+                // Matches were played, so it leaves the same stats trace a
+                // finished tournament does; an untouched lobby does not.
+                self::record($t);
+            }
+            return ['ok' => true];
+        });
     }
 
     /** @param list<mixed> $values */

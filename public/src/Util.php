@@ -18,6 +18,10 @@ final class Util
     // so a worker killed mid-request cannot leave a count high for good.
     private const FLIGHT_PREFIX = 'fok:flight:';
     private const FLIGHT_TTL = FOK_POLL_WAIT_MAX + 60;
+    // The gate for the abandoned-tournament sweep. Bare prefix like the rest
+    // of the tournament keys: none of it comes from or goes back into the
+    // database, so it is left un-namespaced on purpose (see Config.php).
+    private const TSWEEP_KEY = 'fok:tsweep';
 
     /**
      * Keeps the "every response is JSON with ok" contract when something
@@ -565,12 +569,42 @@ final class Util
         if ($reqPerMin > 0 && $reqPerMin % 25 === 0) {
             self::watch($reqPerMin);
         }
+        // Tournaments nobody is at any more. Not on the hourly gate: an hour
+        // is longer than the thing it is cleaning up stands for, and not on
+        // pulse either, because pulse needs a SEATED player to ask and the
+        // whole condition here is that none of them do (see
+        // Tournament::sweep). Its own gate, and it is taken HERE so that the
+        // ordinary request does not even include the tournament code.
+        self::sweepTourneys();
         // The hourly work is NOT on that sample. The count it reads is per
         // MINUTE, so a server that never sees 25 requests inside one minute
         // never reaches it - and then the expiry, the sweeps, the gauge
         // samples and the counter pruning never run at all. Its gate is one
         // shared-memory add of its own (see hourly).
         self::hourly();
+    }
+
+    /**
+     * The gate for the abandoned-tournament sweep: at most one every
+     * tournament_sweep_secs across the whole server, claimed with the same
+     * apcu_add() the tournament store uses for every other claim. 0 is a
+     * sweep on every request, which is what a test wants and what a host with
+     * no shared memory gets anyway (nothing to sweep without it).
+     *
+     * The dashboard is excluded: reading the tournaments must not be what
+     * ends one, which is the promise Tournament::listLive and ::detail make.
+     */
+    private static function sweepTourneys(): void
+    {
+        if (self::isAdminScript() || !function_exists('apcu_add')) {
+            return;
+        }
+        $gap = Settings::int('tournament_sweep_secs');
+        if ($gap > 0 && !apcu_add(self::TSWEEP_KEY, 1, $gap)) {
+            return;
+        }
+        require_once __DIR__ . '/Tournament.php';
+        Tournament::sweep();
     }
 
     /**

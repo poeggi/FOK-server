@@ -30,6 +30,8 @@ else
     expect "a gauge opens its own last 24 h" 'showGaugeCharts' "$JS_ASSET"
     expect "a bubble shortens a count that would not fit" 'function fmtNum' "$JS_ASSET"
     expect "a frozen instance is resolved from the card it is listed on" 'function showItem' "$JS_ASSET"
+    expect "a tournament is read and ended from the card it is listed on" 'function showTourney' "$JS_ASSET"
+    expect "and the class is taken off again on its own" '_flashOff' "$JS_ASSET"
     CSS_ASSET=$(curl -s "$BASE/assets/admin.css?v=$VER")
     expect "hidden class wins the cascade" 'display: none !important' "$CSS_ASSET"
     expect "the header stacks instead of breaking on a phone" '@media (max-width: 560px)' "$CSS_ASSET"
@@ -59,6 +61,15 @@ else
     else
         echo "FAIL button.small should be declared once, found $N"
         fail=1
+    fi
+    # iOS Safari suppresses CSS animations under Reduce Motion and in Low
+    # Power Mode, so the refresh flash must not BE an animation: the class
+    # paints the lit state and the fade back is the decoration on top.
+    expect "the refresh flash is painted by a class" 'button.flashing {' "$CSS_ASSET"
+    if [[ "$CSS_ASSET" != *"ctl-flash"* ]]; then
+        echo "ok   so a device that drops animations still shows it"
+    else
+        echo "FAIL the flash still depends on the ctl-flash animation"; fail=1
     fi
     # NOTE: the admin JS is deliberately NOT grepped for source strings. Those
     # checks ("function X exists", "id: 'conns'", "every: '...'") coupled the

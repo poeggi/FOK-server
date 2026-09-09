@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.7", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.8", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -34,8 +34,9 @@ optional feature (e.g. the peer-net hint, added in 3.1, tournament mode,
 added in 4.1, self-reported networks, added in 4.2, the tournament round
 ladder and its round breaks, added in 4.3, batched ICE candidates, the
 queue-wait figure and the hold decision, added in 4.4, friend presence
-deltas, added in 4.6, or the announced end of a duel and private duels,
-added in 4.7) is available, and
+deltas, added in 4.6, the announced end of a duel and private duels,
+added in 4.7, or replacing the tournament you host, added in 4.8) is
+available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
 
@@ -499,7 +500,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.7",               contract version, see Versioning
+      "api": "4.8",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a PHP
@@ -1831,15 +1832,21 @@ two reports agree, when one is enough, and when they contradict each other
   break between rounds): still `running`, but with `cursor` null and
   `break` set.
 - `done`: the final has been settled.
-- `abandoned`: the host left the lobby, or nobody started it within
-  `tournament_join_ttl` (15 min).
+- `abandoned`: the host left the lobby or ended it for everyone, nobody
+  started it within `tournament_join_ttl` (15 min), or none of its players
+  had been seen for `tournament_idle_ttl` (3 min) and the server ended it
+  (4.8). The last one is why a client that goes away and comes back may
+  find a `lobby` event saying `abandoned` with no one having pressed
+  anything: every request is a beat, so a tournament reads as abandoned
+  only when nobody at it has made ANY request for that long.
 
 ### Requests
 
 Always POST, always `{"id": "<8-hex>", "action": "..."}` plus the action's
 fields:
 
-    create    {id, stakes?}          -> {ok, tid, code, stakes, max}
+    create    {id, stakes?, replace?}
+                                     -> {ok, tid, code, stakes, max}
     join      {id, tid}  or  {id, code}
                                      -> {ok, ...lobby fields}
     leave     {id, tid}              -> {ok}
@@ -1860,6 +1867,16 @@ it - item transfers go through the item registry exactly as in any duel.
 
 A host may hold one open-or-running tournament at a time (409), and may
 create one every `tournament_create_cooldown` (429 with `retry_after`).
+
+`replace` (4.8, default false) is the answer to that 409: it ends the
+tournament the caller is hosting - exactly as their own `leave` would -
+and opens the new one in the same call. Its players get the usual `lobby`
+event, with `reason` "host opened a new one". Ask the player first: a
+running tournament ends for everyone, not just for its host. The create
+cooldown is charged BEFORE anything is ended, so a `replace` answered 429
+leaves the tournament it would have replaced standing. A client that would
+rather send `leave` and then `create` may still do so; `replace` exists so
+that one cannot end up holding neither, having lost the second half.
 
 `join` is idempotent: joining a lobby you are already in returns the lobby
 rather than an error, so a client that lost the first response just asks

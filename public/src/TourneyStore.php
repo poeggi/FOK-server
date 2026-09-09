@@ -34,6 +34,9 @@ require_once __DIR__ . '/Caps.php';
  *   - IN:    player id -> the running tournament they are seated in, so a
  *            mailbox drain can find the tournament whose deadlines it
  *            carries without scanning (see Tournament::pulse)
+ *   - LIVE:  a card per open-or-running tournament holding its tid and its
+ *            seats, so the abandoned-tournament sweep can ask whether anyone
+ *            is still there without deserialising a single bracket
  *
  * apcu_add() is the primitive that replaces BEGIN IMMEDIATE for all of them:
  * it writes only if the key is absent, so a claim is atomic against every
@@ -47,6 +50,7 @@ final class TourneyStore
     private const CD   = 'fok:tcd:';
     private const OPEN = 'fok:topen:';
     private const IN   = 'fok:tin:';
+    private const LIVE = 'fok:tlive:';
     private const LOCK = 'fok:tlock:';
 
     /**
@@ -141,6 +145,17 @@ final class TourneyStore
                 self::forgetRunning($pid, $tid);
             }
         }
+        // The sweep's card: both live states, because a lobby its host walked
+        // away from is as abandoned as a bracket nobody is playing, and both
+        // hold the one-per-host claim (see Tournament::sweep).
+        if ($state === 'open' || $state === 'running') {
+            apcu_store(self::LIVE . $tid, [
+                'tid' => $tid,
+                'ids' => array_column($t['players'], 'id'),
+            ], self::ttl($t));
+        } else {
+            apcu_delete(self::LIVE . $tid);
+        }
         if ($state === 'open') {
             apcu_store(self::CODE . $t['code'], $tid, self::ttl($t));
             apcu_store(self::OPEN . $tid, [
@@ -196,6 +211,13 @@ final class TourneyStore
         }
         apcu_store(self::HOST . $host, $tid, self::hostTtl());
         return true;
+    }
+
+    /** The live tournament $host is holding the one-per-host claim with. */
+    public static function hostedBy(string $host): ?string
+    {
+        $tid = apcu_fetch(self::HOST . $host);
+        return is_string($tid) ? $tid : null;
     }
 
     public static function releaseHost(string $host): void
@@ -276,6 +298,25 @@ final class TourneyStore
     {
         $out = [];
         foreach (new APCUIterator(self::rx(self::OPEN)) as $e) {
+            if (is_array($e['value'])) {
+                $out[] = $e['value'];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * A small card per open-or-running tournament: its tid and its seats, and
+     * nothing else. Deliberately not all(), for the reason openLobbies() is
+     * not: the sweep runs off ordinary client requests, and deserialising
+     * every bracket to ask "is anybody there" would be the expensive part.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public static function liveCards(): array
+    {
+        $out = [];
+        foreach (new APCUIterator(self::rx(self::LIVE)) as $e) {
             if (is_array($e['value'])) {
                 $out[] = $e['value'];
             }

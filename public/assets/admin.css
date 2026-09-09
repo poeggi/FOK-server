@@ -144,18 +144,32 @@ button.small {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    /* Only the fade back OUT of a flash: the flash itself must land whole
+       and at once, so button.flashing turns this off on the way in. */
+    transition: border-color 300ms ease-out, background-color 300ms ease-out;
 }
 
 /* Every refresh flashes its own button, so an automatic one looks like the
    click that would have done the same thing and a tile that keeps itself up
-   to date says so. One animation for the cards, the popups and the graphs -
-   whatever refreshes, this is what it looks like. */
-@keyframes ctl-flash {
-    from { border-color: var(--accent); background: rgba(61, 220, 132, 0.22); }
-    to { border-color: var(--border); background: var(--card); }
+   to date says so. One look for the cards, the popups and the graphs -
+   whatever refreshes, this is what it looks like.
+
+   The lit state is a plain CLASS and deliberately not an animation: iOS
+   Safari suppresses CSS animations under Reduce Motion and in Low Power
+   Mode, so an animated flash said nothing at all on an iPhone while working
+   on every other device. A class always paints.
+
+   transition: none is what makes it a FLASH: the button.small transition
+   would otherwise ease the colour in as well as out, and the class is taken
+   off again before an eased fade-in would have arrived anywhere - a flash
+   that never reaches its own colour. On is instant, off is the fade, and
+   under Reduce Motion the fade goes too and it is a clean on and off. */
+button.flashing {
+    border-color: var(--accent);
+    background: rgba(61, 220, 132, 0.22);
+    transition: none;
 }
-button.flashing { animation: ctl-flash 320ms ease-out; }
-@media (prefers-reduced-motion: reduce) { button.flashing { animation: none; } }
+@media (prefers-reduced-motion: reduce) { button.small { transition: none; } }
 
 /* Refresh-interval control: one in the top bar (global), one per card that
    carries its own interval, one in the client popup. */

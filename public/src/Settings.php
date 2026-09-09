@@ -94,6 +94,8 @@ final class Settings
         'tournament_walkover_ms' => [180000, 'An offline player forfeits the match in flight after (ms)'],
         'tournament_create_cooldown' => [10, 'Min seconds between one host creating tournaments'],
         'tournament_announce_window' => [180, 'Announce a lobby while its host was seen within (seconds)'],
+        'tournament_idle_ttl' => [180, 'End a tournament no player has been seen at for (seconds)'],
+        'tournament_sweep_secs' => [30, 'Min seconds between two sweeps for those (0 = every request)'],
         // The round ladder. The level a round is played at is its round
         // number, so a wider field reaches a deeper final; the cap is the
         // game's own last level. The break between two rounds is where the

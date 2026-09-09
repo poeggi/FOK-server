@@ -6,12 +6,11 @@ shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 Version 1.0.0 was the first stable release. The admin, relay and matchmaking
 surfaces are considered production-stable.
 
-Contract 4.2 is the current API line: 4.0 was the first MAJOR bump since
+Contract 4.8 is the current API line: 4.0 was the first MAJOR bump since
 3.x - the server now owns item-instance ownership (see Item registry below),
 and while the wire additions are backward-compatible, a client that carries
 items must speak the registry to play online, which is what makes it a
-major. 4.1 added tournament mode and 4.2 self-reported networks, both
-additive.
+major. Every minor since is additive; docs/API.md carries them one by one.
 
 ## What it does
 
@@ -147,6 +146,10 @@ additive.
                       and the hold decision when asked, and wakes on a
                       friend transition
         friend.php    friendship handshake: request/accept/remove/list
+        tournament.php
+                      tournament mode: one POST with an action switch
+                      (create/join/leave/start/state/result/...); the server
+                      orchestrates and settles, and carries no match traffic
         match.php     quick-match queue (pair with anyone waiting)
         start.php     server-issued absolute start PTS per pair, where play
                       BEGINS (first/rematch; the halts within a run are

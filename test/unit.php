@@ -1924,6 +1924,12 @@ $v2 = Tournament::view($q[0], $tid2);
 ok($v2['state'] === 'running' && $v2['bracket'][0]['state'] === 'frozen',
     'a frozen final blocks the tournament instead of crowning a guess');
 ok($v2['bracket'][0]['winner'] === null, 'and it has no winner at all');
+// A frozen node is CLOSED, so the cursor stays on it instead of going null.
+// The operator view has to read that as frozen and not as a match in flight,
+// which would show a walkover deadline that can never fire.
+$dz = Tournament::detail($tid2);
+ok($dz['cursor'] === 'final' && $dz['wait'] === 'frozen' && $dz['wait_left_ms'] === null,
+    'and the operator view calls it frozen, with no deadline behind it');
 
 // ---- The clock moves on a participant's mailbox drain -----------------
 // Nothing runs on a timer: a deadline fires on the next request that touches
@@ -1950,6 +1956,9 @@ foreach ($w as $p) {
     Signals::take($p);
 }
 ok(Tournament::report($x, $tid6, 'r1.1', 'win', [8, 2], null)['state'] === 'held', 'a lone win is held');
+$dh = Tournament::detail($tid6);
+ok($dh['wait'] === 'result' && $dh['wait_left_ms'] > 0,
+    'which the operator view reads as a result waiting on the other side');
 Tournament::pulse('79999999');
 Tournament::pulse($bystander);
 $raw = TourneyStore::get($tid6);
@@ -2001,6 +2010,14 @@ Tournament::pulse($x);
 Settings::set('tourney_after_step_ms', FOK_TOURNEY_AFTER_STEP_MS);
 ok(TourneyStore::get($tid6)['data']['results']['r1.2']['state'] === 'settled',
     'and the opponent\'s own drain settles it just the same');
+$drawn = null;
+foreach (Tournament::detail($tid6)['nodes'] as $n) {
+    if ($n['nid'] === 'r1.2') {
+        $drawn = $n;
+    }
+}
+ok($drawn['draw'] === true && $drawn['winner'] === null,
+    'a drawn node reads as a draw, not as one whose winner went missing');
 ok($ev(Signals::take($w[2])[0])['after_ms'] === 1000,
     'a wrong step cannot park a seat past the client\'s own 1000 ms cap');
 // A dangling index - the tournament it names is gone - is dropped by the
@@ -2270,6 +2287,9 @@ $v7 = Tournament::view($g[0], $tid7);
 ok($v7['break'] !== null && $v7['cursor'] === null, 'the tournament waits on the board');
 ok($v7['break']['wait'] === 60000 && $v7['break']['auto'] === 120000,
     'which tells the client both how long it must stay up and when it goes by itself');
+$d7 = Tournament::detail($tid7);
+ok($d7['wait'] === 'break' && $d7['wait_left_ms'] > 0 && $d7['cursor'] === null,
+    'and the operator view reads the break as the break, with its deadline');
 Settings::set('tournament_break_ttl_ms', 0);
 $v7 = Tournament::view($g[0], $tid7);
 ok($v7['break'] === null && $v7['cursor'] === 'final',
@@ -2297,6 +2317,118 @@ $v6 = Tournament::view($w[0], $tid6);
 ok($v6['schedule'][0]['state'] === 'settled' && $v6['schedule'][0]['winner'] === $p6[0],
     'and cannot re-decide, freeze or replay what is already closed');
 
+
+// ---- What an operator sees, and the way out ---------------------------
+// The admin popup reads a tournament without touching it, and ending one is
+// the release valve for a tournament nobody is asking about any more: its
+// deadlines are run by a seated player's own request, so one everybody
+// walked away from stands where it stopped.
+$a = ['78000001', '78000002'];
+foreach ($a as $i => $pid) {
+    Presence::touch($pid, '127.0.0.1', null, 'A' . $i);
+}
+Settings::set('tournament_create_cooldown', 0);
+$tid8 = Tournament::create($a[0], true)['tid'];
+Tournament::join($a[1], $tid8);
+$d8 = Tournament::detail($tid8);
+ok($d8['state'] === 'open' && $d8['stakes'] === true && count($d8['players']) === 2,
+    'a lobby reads back with its seats');
+ok($d8['players'][0]['host'] === true && $d8['players'][0]['seat'] === null,
+    'the host is named as such, and a lobby has seated nobody yet');
+ok($d8['players'][0]['name'] === 'A0' && $d8['players'][0]['online'] === true
+    && $d8['players'][0]['last_seen'] !== null, 'with the name and the beat behind the id');
+ok($d8['wait'] === null && $d8['nodes'] === [], 'and a lobby waits on nothing and has no matches');
+Tournament::start($a[0], $tid8);
+$d8 = Tournament::detail($tid8);
+ok($d8['state'] === 'running' && $d8['cursor'] === 'r1.1', 'once started it names the match in flight');
+ok(count(array_filter($d8['players'], static fn(array $p): bool => $p['playing'])) === 2,
+    'and says which of the seats are playing it');
+ok($d8['nodes'][0]['nid'] === 'r1.1' && $d8['nodes'][0]['current'] === true
+    && $d8['nodes'][0]['a'] !== null, 'the match list names the node and its two players');
+ok($d8['wait'] === 'match' && $d8['wait_left_ms'] > 0,
+    'a dealt match waits on the walkover window');
+// The reading an operator opens this for: the deadline ran out and the
+// tournament is still in that state, so nothing has come to collect it.
+$raw = TourneyStore::get($tid8);
+$raw['data']['results']['r1.1']['dealt'] -= Settings::int('tournament_walkover_ms') + 5000;
+TourneyStore::put($raw);
+$d8 = Tournament::detail($tid8);
+ok($d8['wait'] === 'match' && $d8['wait_left_ms'] < 0, 'a lapsed deadline reads as overdue');
+ok(TourneyStore::get($tid8)['data']['results']['r1.1']['dealt']
+    === $raw['data']['results']['r1.1']['dealt'], 'and reading it settled nothing');
+foreach ($a as $pid) {
+    Signals::take($pid);
+}
+ok(Tournament::abort($tid8)['ok'] === true, 'an operator ends it');
+$d8 = Tournament::detail($tid8);
+ok($d8['state'] === 'abandoned' && $d8['cursor'] === null && $d8['wait'] === null,
+    'which stops it where it stood');
+$told = Signals::take($a[1]);
+ok($told !== [] && json_decode($told[0]['payload'], true)['reason'] === 'ended by the operator',
+    'and every seat is told why');
+ok(Tournament::abort($tid8)['ok'] === true, 'ending it again is a no-op, not an error');
+ok(Tournament::abort(str_repeat('a', 32)) === null, 'and a tid that names nothing is no tournament');
+ok(Tournament::detail(str_repeat('a', 32)) === null, 'as it is for the read');
+ok(TourneyStore::hostedBy($a[0]) === null, 'the host is free again');
+Settings::set('tournament_create_cooldown', 10);
+
+// ---- A tournament nobody is at any more -------------------------------
+// The one deadline any request may settle, because it is the only one whose
+// subject is that no seated player is asking. The test is PRESENCE: a long
+// match transitions rarely and must never be swept away from two people
+// sitting in front of it.
+$k = ['7a000001', '7a000002'];
+foreach ($k as $pid) {
+    Presence::touch($pid, '127.0.0.1');
+}
+Settings::set('tournament_create_cooldown', 0);
+$tid9 = Tournament::create($k[0], false)['tid'];
+Tournament::join($k[1], $tid9);
+Tournament::sweep();
+ok(TourneyStore::get($tid9)['state'] === 'open', 'a lobby both players are at survives a sweep');
+Tournament::start($k[0], $tid9);
+$idle = Settings::int('tournament_idle_ttl');
+ok($idle > FOK_ONLINE_WINDOW,
+    'the idle window is wider than the online one, so a player between beats is never gone');
+Presence::age($k[0], $idle + 60);
+Tournament::sweep();
+ok(TourneyStore::get($tid9)['state'] === 'running',
+    'and one seat still beating keeps the whole tournament alive');
+Presence::age($k[1], $idle + 60);
+foreach ($k as $pid) {
+    Signals::take($pid);
+}
+Tournament::sweep();
+$t9 = TourneyStore::get($tid9);
+ok($t9['state'] === 'abandoned' && $t9['data']['cursor'] === null,
+    'with every seat gone it is ended where it stood');
+$why = Signals::take($k[1]);
+ok($why !== [] && json_decode($why[0]['payload'], true)['reason'] === 'everyone left',
+    'and whoever comes back is told why');
+ok(TourneyStore::hostedBy($k[0]) === null,
+    'which frees the host claim a dead tournament used to hold for an hour');
+$cards = array_column(TourneyStore::liveCards(), 'tid');
+ok(!in_array($tid9, $cards, true), 'and takes it off the index the sweep reads');
+// Idempotent: the second sweep finds nothing to do, and an abandoned entry
+// is not a live card any more.
+Tournament::sweep();
+ok(TourneyStore::get($tid9)['state'] === 'abandoned', 'a second sweep changes nothing');
+// A LOBBY nobody is at goes the same way: it is as abandoned as a bracket
+// nobody is playing, and it holds the same one-per-host claim.
+$kl = ['7a000003', '7a000004'];
+foreach ($kl as $pid) {
+    Presence::touch($pid, '127.0.0.1');
+}
+$tidL = Tournament::create($kl[0], false)['tid'];
+Tournament::join($kl[1], $tidL);
+foreach ($kl as $pid) {
+    Presence::age($pid, $idle + 60);
+}
+Tournament::sweep();
+ok(TourneyStore::get($tidL)['state'] === 'abandoned', 'an open lobby nobody is at goes too');
+ok(TourneyStore::byCode(Tournament::detail($tidL)['code']) === null,
+    'which puts its join code back into circulation');
+Settings::set('tournament_create_cooldown', 10);
 
 // ---- What outlives a tournament --------------------------------------
 // Tournament state is disposable and lives in shared memory, so these
@@ -2337,6 +2469,36 @@ ok(TourneyStore::byCode($c1['code'])['tid'] === $c1['tid'], 'the join code finds
 Tournament::leave('77000001', $c1['tid']);
 ok(TourneyStore::byCode($c1['code']) === null, 'and is released the moment it stops being open');
 ok(Tournament::create('77000001', false)['ok'] === true, 'as is the host, who can create again');
+// replace (4.8): the answer to that 409. One call, because a client that
+// had to leave and then create can lose the second half.
+$held = TourneyStore::hostedBy('77000001');
+Signals::take('77000001');
+$c1b = Tournament::create('77000001', false, true);
+ok($c1b['ok'] === true && $c1b['tid'] !== $held, 'replace opens a new one over the one held');
+ok(TourneyStore::get($held)['state'] === 'abandoned', 'ending the one it replaced');
+ok(TourneyStore::hostedBy('77000001') === $c1b['tid'], 'and the host claim names the new one');
+$why = Signals::take('77000001');
+ok($why !== [] && json_decode($why[0]['payload'], true)['reason'] === 'host opened a new one',
+    'and its players are told what ended it, not that an operator did');
+ok(Tournament::create('77000009', false, true)['ok'] === true,
+    'replace with nothing to replace is an ordinary create');
+Tournament::leave('77000001', $c1b['tid']);
+Tournament::leave('77000009', TourneyStore::hostedBy('77000009') ?? '');
+// And over a RUNNING one, which is the case that ends a tournament for
+// everybody rather than closing an untouched lobby.
+$rp = ['77000003', '77000004'];
+foreach ($rp as $pid) {
+    Presence::touch($pid, '127.0.0.1');
+}
+$tidR = Tournament::create($rp[0], false)['tid'];
+Tournament::join($rp[1], $tidR);
+Tournament::start($rp[0], $tidR);
+ok(TourneyStore::get($tidR)['state'] === 'running', 'a running tournament stands in the way');
+$c1c = Tournament::create($rp[0], false, true);
+ok($c1c['ok'] === true && TourneyStore::get($tidR)['state'] === 'abandoned',
+    'replace ends a running one too, not only an untouched lobby');
+ok(TourneyStore::runningFor($rp[1]) === null, 'and unseats everyone who was in it');
+Tournament::leave($rp[0], $c1c['tid']);
 // The TTL is the gap a tournament may go untouched, not a lifetime: every
 // transition re-stores it. The three states do not share one clock, because a
 // lobby, a bracket in play and a podium are worth keeping for different

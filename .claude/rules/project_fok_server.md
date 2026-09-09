@@ -315,8 +315,19 @@ seating/schedule/tie-break math (no DB, no clock, so unit-testable).
 hello/poll (a forged one would rewrite a bracket on someone else's
 screen); 'watch' IS client-sendable. DEADLINES ARE SETTLED LAZILY on the
 next request that touches the tournament - there is no cron - so a client
-that stops asking can hang a walkover forever; the client must poll state
-whenever a tournament is running and it is not in a match. Result ladder:
+that stops asking can hang a walkover for as long as it is there; the
+client must poll state whenever a tournament is running and it is not in a
+match. ONE deadline is different, because its subject is that nobody is
+asking: Tournament::sweep ends a tournament none of whose seats has been
+seen for tournament_idle_ttl (180 s, chosen to match tournament_walkover_ms
+and to sit above the 120 s online window). It rides the deferred tail of
+ANY client request (Util::bumpNow, gated by tournament_sweep_secs = 30 s,
+reading the small fok:tlive: cards rather than a bracket), and is excluded
+on the admin scripts - reading the dashboard must not be what ends a
+tournament, which is the promise listLive/detail make. The test is
+PRESENCE, never activity: a long match transitions rarely. Before 1.7.0
+nothing did this and an abandoned run stood for tournament_run_ttl (1 h),
+listed and holding its host's one-per-host claim. Result ladder:
 a reported LOSS settles at once, a lone win/draw is held
 ~tournament_result_ms, a contradiction FREEZES the node. A round is
 played at level = min(round, tournament_max_level=10) and that cap MUST

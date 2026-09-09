@@ -220,3 +220,125 @@ R=$(act "$ID1" leave "$T2")
 expect "leaving an abandoned lobby is a harmless no-op" '"ok":true' "$R"
 R=$(hellot "$ID1")
 expect "an abandoned lobby is no longer announced" '"tourneys":[]' "$R"
+
+# --- Replacing the one you host (4.8), and the operator's view of one.
+# The client offers "end that one and start a new one" where the plain create
+# is answered 409, so the server does both halves in one call: a client that
+# left and then created could lose the second half and hold neither. Kept to
+# ID1/ID2 like the rest of this file - the admin section that follows asserts
+# an exact registered count, and tournament.php registers whoever calls it.
+if [ "$ADMIN" -eq 1 ]; then
+    setting tournament_create_cooldown 0
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    expect "the host opens one more lobby" '"tid":' "$R"
+    T3=$(tfield "$R" tid)
+    R=$(tcode "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    expect "and a plain second create is refused" '409' "$R"
+    # The cooldown is charged before anything is ended, so a replace inside it
+    # is answered 429 with the tournament it would have replaced still there.
+    setting tournament_create_cooldown 10
+    R=$(tcode "{\"id\":\"$ID1\",\"action\":\"create\",\"replace\":true}")
+    expect "a replace inside the create cooldown is refused too" '429' "$R"
+    R=$(act "$ID1" state "$T3")
+    expect "and the one it would have replaced is untouched" '"state":"open"' "$R"
+    setting tournament_create_cooldown 0
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"replace\":true}")
+    expect "replace opens a new lobby over the one held" '"tid":' "$R"
+    T4=$(tfield "$R" tid)
+    if [ "$T4" = "$T3" ]; then echo "FAIL replace returned the same tid"; fail=1; fi
+    R=$(act "$ID2" join "$T3")
+    expect "and the one it replaced is gone" '"error":"no such tournament"' "$R"
+    setting tournament_create_cooldown 10
+
+    # The popup the Matches card opens: who is seated, what it is waiting on,
+    # and the button that ends one nobody is asking about any more.
+    R=$(act "$ID2" join "$T4")
+    expect "a guest joins the lobby the operator will look at" '"ok":true' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
+    expect "the admin card lists the tournament by its id" "\"tid\":\"$T4\"" "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=tourney&tid=$T4")
+    expect "an operator reads one tournament in full" '"ok":true' "$R"
+    expect "the read names its seats" '"players":[{' "$R"
+    expect "and says whether each is playing" '"playing":false' "$R"
+    expect "an open lobby is waiting on nothing" '"wait":null' "$R"
+    if [[ "$R" != *secret* ]]; then
+        echo "ok   and the read carries no match secret"
+    else
+        echo "FAIL a match secret leaked into the admin read: $R"; fail=1
+    fi
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=tourney&tid=nothex")
+    expect "a malformed tid is refused" '"error":"invalid tid"' "$R"
+    R=$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIES" \
+        "$BASE/admin/api.php?action=tourney&tid=$NOTID")
+    expect "a tid the store never held is a 404" '404' "$R"
+    R=$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIES" \
+        "$BASE/admin/api.php?action=tourney_abort&tid=$T4")
+    expect "ending one via GET rejected" '405' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST -d "tid=$T4" "$BASE/admin/api.php?action=tourney_abort")
+    expect "the operator ends the tournament" '"ok":true' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=tourney&tid=$T4")
+    expect "which stops it where it stood" '"state":"abandoned"' "$R"
+    R=$(act "$ID2" join "$T4")
+    expect "and nobody can join it again" '"error":"no such tournament"' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST -d "tid=$T4" "$BASE/admin/api.php?action=tourney_abort")
+    expect "ending it twice is a no-op, not an error" '"ok":true' "$R"
+else
+    echo "skip the replace and operator checks: both need admin"
+fi
+
+# --- The sweep for a tournament nobody is at. Its logic (who counts as gone,
+# which seat keeps it alive) is unit-tested against the presence entries; what
+# only real HTTP can show is the two things asserted here: that an ordinary
+# client request carries the sweep at all, and that an admin one does NOT -
+# reading the dashboard must never be what ends a tournament.
+if [ "$ADMIN" -eq 1 ]; then
+    setting tournament_create_cooldown 0
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    T5=$(tfield "$R" tid)
+    expect "one more lobby, to be swept" '"tid":' "$R"
+    setting tournament_sweep_secs 0
+    R=$(hellot "$ID2")
+    expect "a client request with nobody idle sweeps nothing" '"ok":true' "$R"
+    R=$(act "$ID1" state "$T5")
+    expect "and the lobby is still open" '"state":"open"' "$R"
+    # Everyone counts as gone from here on, so only the next request decides.
+    setting tournament_idle_ttl 0
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
+    expect "the dashboard still lists it" "\"tid\":\"$T5\"" "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=tourney&tid=$T5")
+    expect "so reading the card is not what ends one" '"state":"open"' "$R"
+    R=$(hellot "$ID2")
+    expect "a client request is" '"ok":true' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=tourney&tid=$T5")
+    expect "and the tournament nobody was at is ended" '"state":"abandoned"' "$R"
+    setting tournament_idle_ttl 180
+    setting tournament_sweep_secs 30
+    setting tournament_create_cooldown 10
+fi
+
+# The gate: at most one sweep every tournament_sweep_secs across the server,
+# so a busy minute cannot turn this into per-request work. Held first by an
+# ordinary request, then proven to hold by a lobby that survives a sweep it
+# would otherwise not have.
+if [ "$ADMIN" -eq 1 ]; then
+    setting tournament_sweep_secs 300
+    R=$(hellot "$ID2")
+    expect "a client request takes the sweep gate" '"ok":true' "$R"
+    setting tournament_create_cooldown 0
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    T6=$(tfield "$R" tid)
+    expect "a lobby opened behind the held gate" '"tid":' "$R"
+    setting tournament_idle_ttl 0
+    R=$(hellot "$ID2")
+    expect "a second client request inside the gate" '"ok":true' "$R"
+    R=$(act "$ID1" state "$T6")
+    expect "sweeps nothing, however idle everyone is" '"state":"open"' "$R"
+    setting tournament_sweep_secs 0
+    R=$(hellot "$ID2")
+    expect "and the request past the gate" '"ok":true' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=tourney&tid=$T6")
+    expect "is the one that ends it" '"state":"abandoned"' "$R"
+    setting tournament_idle_ttl 180
+    setting tournament_sweep_secs 30
+    setting tournament_create_cooldown 10
+fi

@@ -283,6 +283,18 @@ function disputeCell(id, n) {
     return td;
 }
 
+// A tournament id, clickable: opens the tournament popup, which is where one
+// is read in full and where an operator ends it. What uidCell is for a thing,
+// this is for a run.
+function tidCell(tid) {
+    const td = el('td', 'muted');
+    const s = el('span', 'id-link trunc', tid.slice(0, 8) + '..');
+    s.title = tid;
+    s.onclick = () => showTourney(tid);
+    td.append(s);
+    return td;
+}
+
 // A ledger party is an 8-hex player id (clickable) or empty / a digest.
 function partyCell(v, name) {
     if (typeof v === 'string' && v.length === 8) return idCell(v, name);
@@ -1631,6 +1643,152 @@ function renderItemBody(body, overlay, uid, d) {
     body.append(foot);
 }
 
+// What a running tournament can be sitting on, and what would end the wait.
+// Nothing here runs on a timer: a deadline is settled by a seated player's
+// own hello or poll, so one that has lapsed says nobody has asked since.
+const TWAIT = {
+    break: ['round break', 'the host has not pressed on'],
+    match: ['match in flight', 'a walkover also needs one of its two players offline'],
+    result: ['result held', 'one side has reported, the other has not'],
+    frozen: ['frozen match', 'the bracket cannot move past it until an operator clears it'],
+};
+
+// A tournament in full, opened from the Matches card: who is seated, who is
+// playing, what it is waiting on - and the one place an operator ends one.
+// Follows that card's interval, like every popup opened from a card.
+async function showTourney(tid) {
+    const { overlay, modal, head, title, name, body, close } = makeModal(tid);
+    modal.classList.add('wide');
+    title.append(el('span', 'modal-id', tid.slice(0, 8) + '..'));
+
+    body._sid = 'tourney';
+    const refresh = el('button', 'small refresh', 'refresh');
+    const load = async () => {
+        flash(refresh);
+        try {
+            const d = await api('tourney&tid=' + tid);
+            name.textContent = d.code;
+            renderTourneyBody(body, overlay, tid, d);
+            restoreScroll(body);
+        } catch (e) {
+            body.replaceChildren(el('p', 'error', 'Error: ' + e.message));
+        }
+    };
+    refresh.onclick = load;
+    head.append(title, refresh, close);
+    body.append(el('p', 'muted', 'Loading ...'));
+    document.body.append(overlay);
+    follows(overlay, 'duels', load);
+    await load();
+}
+
+// The tournament, then its seats, then its matches, then the way out. The
+// seats are the point: an operator reading this is asking who is still there.
+function renderTourneyBody(body, overlay, tid, d) {
+    body.replaceChildren();
+    const named = {};
+    for (const p of d.players) named[p.id] = p.name || '';
+    const who = (id) => (id === null ? '-' : id + (named[id] ? ' (' + named[id] + ')' : ''));
+
+    const tbl = el('table', 'kv');
+    const kv = (k, v) => { const r = el('tr'); r.append(el('td', 'kv-k', k), el('td', 'kv-v', v)); tbl.append(r); };
+    kv('TID', d.tid);
+    kv('Join code', d.code);
+    kv('Host', who(d.host));
+    kv('State', d.state + (d.wait === 'break' ? ' (break)' : ''));
+    kv('Round', d.round ? String(d.round) : 'not started');
+    kv('Stakes', d.stakes ? 'yes' : 'no');
+    kv('Opened', fmtTime(d.since) + ' (' + fmtMs((d.now - d.since) * 1000) + ' ago)');
+    if (d.wait) {
+        const w = TWAIT[d.wait] || [d.wait, ''];
+        const left = d.wait_left_ms;
+        kv('Waiting on', w[0] + (d.wait_for_ms === null ? '' : ', ' + fmtMs(d.wait_for_ms) + ' so far'));
+        kv('Deadline', left === null ? 'none - ' + w[1]
+            : (left > 0 ? 'in ' + fmtMs(left) : fmtMs(-left) + ' overdue') + ' - ' + w[1]);
+    }
+    body.append(tbl);
+
+    // The deadline has run out and the tournament is still in that state, so
+    // nothing has come to collect it. Say why: it looks like a fault and is
+    // not one.
+    if (d.wait_left_ms !== null && d.wait_left_ms <= 0) {
+        body.append(el('p', 'muted', 'A deadline is settled by a seated player asking - a '
+            + 'heartbeat or a poll - and by nothing else. One everybody left stands here '
+            + 'until its shared-memory entry expires, or until it is ended below.'));
+    }
+
+    body.append(el('h3', 'subhead', 'Seats'));
+    const pt = el('table');
+    pt.append(row(['ID', 'Name', 'Seat', 'Part', 'Doing', 'Last seen'], 'th'));
+    for (const p of d.players) {
+        const r = el('tr');
+        r.classList.add(p.online ? 'online' : 'gone');
+        const doing = p.forfeited ? ['error', 'forfeited']
+            : p.playing ? ['', 'playing'] : ['muted', 'waiting'];
+        r.append(idCell(p.id), el('td', '', p.name === null ? '-' : p.name),
+            el('td', 'muted', p.seat === null ? '-' : String(p.seat)),
+            el('td', 'muted', p.host ? 'host' : 'guest'),
+            el('td', doing[0], doing[1]),
+            el('td', p.online ? '' : 'muted',
+                p.last_seen === null ? 'never' : p.last_seen + ' s'));
+        pt.append(r);
+    }
+    body.append(pt);
+
+    if (d.nodes.length) {
+        body.append(el('h3', 'subhead', 'Matches'));
+        const nt = el('table');
+        nt.append(row(['Match', 'Round', 'A', 'B', 'State', 'Winner'], 'th'));
+        for (const n of d.nodes) {
+            const r = el('tr');
+            if (n.current) r.classList.add('online');
+            r.append(el('td', '', n.nid + (n.current ? ' *' : '')),
+                el('td', 'muted', String(n.round)),
+                n.a === null ? el('td', 'muted', '-') : idCell(n.a, named[n.a]),
+                n.b === null ? el('td', 'muted', '-') : idCell(n.b, named[n.b]),
+                el('td', n.state === 'frozen' ? 'error' : 'muted', n.state),
+                n.draw ? el('td', 'muted', 'draw')
+                    : n.winner === null ? el('td', 'muted', '-')
+                        : idCell(n.winner, named[n.winner]));
+            nt.append(r);
+        }
+        body.append(nt);
+    }
+
+    if (d.state !== 'open' && d.state !== 'running') {
+        body.append(el('p', 'muted', 'Over: it is kept only long enough for the screens '
+            + 'still showing it.'));
+        return;
+    }
+
+    // Arm-then-confirm in the card, never through confirm() - see the item
+    // popup for why a native dialog cannot be trusted here.
+    body.append(el('h3', 'subhead', 'End it'));
+    const note = el('p', 'modal-msg', 'Ends it for everyone, wherever it stands. '
+        + 'The players are told and cannot rejoin it.');
+    body.append(note);
+    const btn = el('button', 'small drop', 'end tournament');
+    let armed = false;
+    btn.onclick = async () => {
+        if (!armed) {
+            armed = true;
+            btn.textContent = 'confirm';
+            note.replaceChildren(el('span', '', 'Click again to end it.'));
+            return;
+        }
+        try {
+            await api('tourney_abort', { method: 'POST', body: form({ tid: tid }) });
+            closeModal(overlay);
+            refreshModule('duels');
+        } catch (e) {
+            armed = false;
+            btn.textContent = 'end tournament';
+            note.replaceChildren(el('span', 'error', 'Failed: ' + e.message));
+        }
+    };
+    body.append(btn);
+}
+
 // Status: what the registry HOLDS - the counters, the chain verify, and the
 // two exception lists (a frozen instance, a player whose claims keep being
 // disputed). The ledger itself is the other tab.
@@ -1956,7 +2114,7 @@ const MODULES = [
             if (!ts.length) box.append(el('p', 'muted', 'No tournaments running.'));
             else {
                 const table = el('table');
-                table.append(row(['Host', 'Name', 'Code', 'State', 'Round', 'Players',
+                table.append(row(['TID', 'Host', 'Name', 'Code', 'State', 'Round', 'Players',
                     'Matches', 'Stakes', 'Age'], 'th'));
                 for (const t of ts) {
                     const r = el('tr');
@@ -1964,7 +2122,8 @@ const MODULES = [
                     const state = el('td');
                     state.append(el('span', 'badge ' + (TSTATE[t.state] || t.state),
                         t.gated ? 'break' : t.state));
-                    r.append(idCell(t.host), el('td', '', t.host_name === null ? '-' : t.host_name),
+                    r.append(tidCell(t.tid), idCell(t.host),
+                        el('td', '', t.host_name === null ? '-' : t.host_name),
                         el('td', '', t.code));
                     r.append(state);
                     r.append(el('td', '', t.round || '-'));
@@ -1976,6 +2135,7 @@ const MODULES = [
                 }
                 box.append(table);
                 sortable(table, 'tourneys');
+                box.append(el('p', 'muted', 'Click a TID to read one, or to end it.'));
             }
         },
     },
@@ -2414,15 +2574,26 @@ function restoreScroll(root) {
     scrollBoxes(root).forEach((b, i) => { if (at[i]) b.scrollTop = at[i]; });
 }
 
+// How long a refresh button stays lit before it is let go. The fade back is
+// the CSS transition's, and runs after this.
+const FLASH_HOLD_MS = 180;
+
 // Every refresh flashes the button that stands for it, so an automatic one
 // looks like the click that would have done the same and a tile visibly says
-// it is keeping itself up to date. Restarting the animation needs the class
-// off, a reflow, and the class on again.
+// it is keeping itself up to date.
+//
+// The lit state is a class this puts on and takes off, NOT a CSS animation:
+// iOS Safari suppresses animations under Reduce Motion and in Low Power Mode,
+// and an iPhone with either of those on showed no flash at all while every
+// other device did. Restarting one that is still lit needs the class off, a
+// reflow, and the class on again.
 function flash(btn) {
     if (!btn) return;
     btn.classList.remove('flashing');
     void btn.offsetWidth;
     btn.classList.add('flashing');
+    clearTimeout(btn._flashOff);
+    btn._flashOff = setTimeout(() => btn.classList.remove('flashing'), FLASH_HOLD_MS);
 }
 
 // A popup opened from a card FOLLOWS that card: the same interval, off the

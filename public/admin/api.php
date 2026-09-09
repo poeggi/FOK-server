@@ -51,6 +51,15 @@ function requireId(string $src = 'GET'): string
     }
     return $id;
 }
+/** A validated 32-hex tournament id, from GET (default) or POST. */
+function requireTid(string $src = 'GET'): string
+{
+    $tid = (string)($src === 'POST' ? ($_POST['tid'] ?? '') : ($_GET['tid'] ?? ''));
+    if (preg_match('/^[0-9a-f]{32}$/', $tid) !== 1) {
+        Util::fail('invalid tid');
+    }
+    return $tid;
+}
 /**
  * The read-only payloads the dashboard polls, as data rather than as a
  * response. Several cards come due on the same tick, and an admin request
@@ -114,6 +123,7 @@ const AUDIT = [
     'config_import' => 'imported a settings file',
     'backup_create' => 'created a database backup',
     'backup_restore' => 'restored the database from an upload',
+    'tourney_abort' => 'ended the tournament',
 ];
 // The two that replace live state wholesale. A line in the log is not enough
 // for these: an operator must find them on the dashboard without going
@@ -124,7 +134,7 @@ if (isset(AUDIT[$action])) {
     // Whatever names the target of this call, in the order the actions pass
     // it. It is client input, so it is cut down to a printable subset and
     // capped - a crafted field must not be able to forge log lines of its own.
-    $target = (string)($_POST['id'] ?? $_POST['pins'] ?? $_GET['id'] ?? '');
+    $target = (string)($_POST['id'] ?? $_POST['tid'] ?? $_POST['pins'] ?? $_GET['id'] ?? '');
     $target = substr((string)preg_replace('/[^0-9a-zA-Z,_.-]/', '', $target), 0, 64);
     $what = AUDIT[$action] . ($target === '' ? '' : ' ' . $target);
     // Written when the response is on its way out, not here: an action that
@@ -302,6 +312,35 @@ switch ($action) {
     case 'alerts_seen':
         requirePost();
         Alerts::markSeen();
+        Util::jsonOut(['ok' => true]);
+
+    // ---- tournaments (see Tournament) ----
+    case 'tourney':
+        // One tournament in full, for the popup the Matches card opens: who
+        // is seated, who is playing, and what it is waiting on. Read-only,
+        // and inert - reading it runs no deadline (see Tournament::detail).
+        $d = Tournament::detail(requireTid());
+        if ($d === null) {
+            Util::fail('unknown tournament', 404);
+        }
+        Util::jsonOut(['ok' => true] + $d);
+
+    case 'tourney_abort':
+        // The operator ends it for everyone. The release valve for a
+        // tournament nobody is asking about any more: its deadlines are run
+        // by a seated player's own request, so one everybody walked away
+        // from stands where it stopped until its entry expires.
+        requirePost();
+        $res = Tournament::abort(requireTid('POST'));
+        if ($res === null) {
+            Util::fail('unknown tournament', 404);
+        }
+        if (($res['ok'] ?? false) !== true) {
+            // A transition is already in flight on this one (503 busy): the
+            // tournament is untouched, so this must not answer ok - the popup
+            // would close on a tournament it did not end.
+            Util::fail((string)($res['error'] ?? 'failed'), (int)($res['http'] ?? 500));
+        }
         Util::jsonOut(['ok' => true]);
 
     // ---- item registry (see Items, Ledger) ----
