@@ -179,7 +179,16 @@ so the popup reports the difference rather than showing an empty table. A claim 
 to somebody else is a STALE WARDROBE (a restored config backup or an
 unsynced duel loss): Alerts::note, never a raised item_counterfeit;
 nothing moves, the instance is never frozen, and the client drops it at
-its next list. A restore can never freeze an item. The `ledger` table is
+its next list. A restore can never freeze an item.
+
+`matches.closed` is written by NOTHING (since 1.6.1) and the column is left
+in the schema only because dropping one rebuilds a table on the money path.
+Whether a match is still being played is DERIVED from the duel heartbeat -
+Items::MATCH_LIVE_DUEL, shared by the sweep, the housekeeping card and
+Items::openMatches - because the server never reliably learns that a match
+ended: a bye travels over the open DataChannel and never arrives. A stored
+flag therefore only ever marked the endings that happened to pass through
+signaling, and the admin tile read high for every one that did not. The `ledger` table is
 audit-ONLY, never read to decide ownership. LIMIT: minting is still
 client-trusted (the coin economy is client-side), so items are conserved
 and auditable, NOT unforgeable - do not describe or extend the registry
@@ -373,6 +382,32 @@ after_ms, friends_latency, backup.php, debug/submit.php, time.php (t.txt
 fallback), net.php.
 
 ## Open
+
+- `starts` to APCu, no fallback. The row is TWO things: a disposable epoch
+  line (epoch, start_pts, reason - "dropping the row is always safe") and a
+  durable `mid`, which is the handle to the match secrets a claim attests
+  against. Only the second must survive, and it may be a denormalised copy -
+  `matches` already holds (mid, a, b, opened) with the matches_pair index,
+  so matchInfo could read the pair's newest match instead. That would leave
+  `starts` holding nothing durable and let the whole table move to shared
+  memory, taking the last SQL write off the signaling path (the reset at
+  invite/invite-relay/offer). Eviction is benign there, which is what makes
+  no-fallback the right shape: request() already treats a missing row as
+  fresh.
+  THE HARD PART, and why this is not done: the mint must stay in SQLite, so
+  splitting the epoch line off breaks an atomicity that is one transaction
+  today - the thing that guarantees both peers read the same mid and the
+  same start_pts. It needs a lock key via apcu_add plus whole-entry
+  read-modify-write, the shape TourneyStore already uses for the host claim.
+  The race it introduces is exactly what a single-threaded local smoke
+  cannot exercise, and the failure mode is two peers on different mids,
+  which costs a player an item. Do it as its own release, never folded into
+  another.
+  NOT a way out: putting the epoch on the match row and deleting `starts`.
+  A rematch is epoch 0 just like a first start (the in-run halts are P2P
+  now), so without the reset at a pairing BEGIN the two are
+  indistinguishable. The signaling reset is load-bearing; it can only be
+  moved off SQL, never removed.
 
 - tournament_create_cooldown is charged off the host's newest row with no
   state filter, so abandoning an open lobby locks the host out for the

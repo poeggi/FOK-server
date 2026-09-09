@@ -66,14 +66,24 @@ final class Items
 
     // ---- Matches (minted from Starts where play begins) -------------------
 
+    // What "this match is still being played" means, in one place. A duel
+    // that is still beating is the ONLY evidence the server has: it never
+    // reliably learns that a match ended, because a bye travels over the
+    // open DataChannel and never reaches it. So the sweep, the card that
+    // promises the sweep, and the count of open matches all ask this one
+    // question rather than reading a flag somebody remembered to set. The
+    // cut is the caller's: the sweep allows a claim's grace on top, the
+    // count of open matches does not.
+    private const MATCH_LIVE_DUEL =
+        'EXISTS (SELECT 1 FROM duels d
+                 WHERE ((d.a = matches.a AND d.b = matches.b)
+                     OR (d.a = matches.b AND d.b = matches.a))
+                   AND d.last_seen > ?)';
+
     // One predicate for the sweep and for the card that promises it; they
     // drift apart the moment there are two (see Housekeeping).
     private const MATCH_PRUNE_WHERE =
-        'FROM matches WHERE opened < ?
-          AND NOT EXISTS (SELECT 1 FROM duels d
-                          WHERE ((d.a = matches.a AND d.b = matches.b)
-                              OR (d.a = matches.b AND d.b = matches.a))
-                            AND d.last_seen > ?)';
+        'FROM matches WHERE opened < ? AND NOT ' . self::MATCH_LIVE_DUEL;
 
     /**
      * Mints a match for the ordered pair and returns its row. Called from
@@ -177,12 +187,21 @@ final class Items
         return $callerIsA ? (string)$row['sec_a'] : (string)$row['sec_b'];
     }
 
-    // Best-effort close, for forensics only (see Starts::forget). Never gates
-    // claim acceptance - the server does not reliably learn a match ended.
-    public static function closeMatch(PDO $db, string $a, string $b, int $now): void
+    /**
+     * How many matches are still being played, for the admin card. DERIVED
+     * from the duel heartbeat, never from a stored flag: the server does not
+     * reliably learn that a match ended, so a flag is only ever set for the
+     * endings that happen to pass through signaling and the count reads high
+     * for every P2P bye - which is all of them. The `closed` column it
+     * replaces is left in the schema and written by nothing.
+     */
+    public static function openMatches(PDO $db): int
     {
-        $db->prepare('UPDATE matches SET closed = ? WHERE a = ? AND b = ? AND closed = 0')
-            ->execute([$now, $a, $b]);
+        $st = $db->prepare('SELECT COUNT(*) FROM matches WHERE ' . self::MATCH_LIVE_DUEL);
+        $st->execute([Util::since(FOK_DUEL_WINDOW)]);
+        $n = (int)$st->fetchColumn();
+        $st->closeCursor();
+        return $n;
     }
 
     // ---- Registry reads and mints ----------------------------------------

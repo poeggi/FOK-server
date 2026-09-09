@@ -60,16 +60,11 @@ final class Starts
     public static function forget(string $id, string $peer): void
     {
         [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
-        // Every bye runs this, so it collides with the duel traffic it is
-        // ending. Both statements are re-runnable: one stamps a fixed time,
-        // the other removes a row.
+        // This runs on the signaling path, beside the pair's own start, so it
+        // is the write most likely to want the writer at the moment somebody
+        // else has it. One statement, and re-runnable: it removes a row.
         Db::retry(static function () use ($a, $b): void {
-            $db = Db::get();
-            // Best-effort: stamp the match closed for forensics. Claims are
-            // never gated on closed (the server does not reliably learn a
-            // match ended), so this only records the ends it happens to see.
-            Items::closeMatch($db, $a, $b, Util::nowMs());
-            $db->prepare('DELETE FROM starts WHERE a = ? AND b = ?')->execute([$a, $b]);
+            Db::get()->prepare('DELETE FROM starts WHERE a = ? AND b = ?')->execute([$a, $b]);
         });
     }
 

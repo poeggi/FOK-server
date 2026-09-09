@@ -1438,6 +1438,24 @@ $res = Items::claim('aa11aa11', $m3['mid'], $u3, 'aa11aa11', 'bb22bb22', 12, 0, 
 ok($res['ok'] && $res['state'] === 'settled',
     'while a duel still reporting in keeps its match claimable however long it has run');
 Items::openMatch($idb, 'cc33cc33', 'dd44dd44', Util::nowMs());
+
+// "Open" is DERIVED from the duel heartbeat, never from a stored flag. The
+// server does not reliably learn that a match ended - a bye goes peer to
+// peer - so a flag would only ever mark the endings that happen to pass
+// through signaling, and read high for every one that does not.
+$openBefore = Items::openMatches($idb);
+$oa = 'ab00ab00';
+$ob = 'cd00cd00';
+Items::openMatch($idb, $oa, $ob, Util::nowMs());
+ok(Items::openMatches($idb) === $openBefore,
+    'a match whose pair is not beating is not open, however it ended');
+Presence::touchDuel($oa, $ob);
+ok(Items::openMatches($idb) === $openBefore + 1,
+    'the duel heartbeat is what makes it open');
+Db::get()->prepare('UPDATE duels SET last_seen = ? WHERE a = ? AND b = ?')
+    ->execute([time() - FOK_DUEL_WINDOW - 60, min($oa, $ob), max($oa, $ob)]);
+ok(Items::openMatches($idb) === $openBefore,
+    'and a duel that stopped beating closes it with no write at all');
 $st = $idb->prepare('SELECT COUNT(*) FROM matches WHERE mid = ?');
 $st->execute([$m3['mid']]);
 ok((int)$st->fetchColumn() === 1, 'and the prune spares a match whose duel is alive');

@@ -99,7 +99,13 @@ if ($type === 'bye') {
 // one DELETE per duel setup, never per signal. Dropping the row is always
 // safe - the pair simply re-creates it on their next start - so erring
 // towards resetting costs nothing, while missing one costs the rematch.
-if ($type === 'invite' || $type === 'invite-relay' || $type === 'offer' || $type === 'bye') {
+//
+// 'bye' is deliberately NOT in that list. It is an END, and the three above
+// already cover every pairing that follows one; a bye that does reach the
+// server is the fallback case, where the pair re-handshakes through one of
+// them anyway. Resetting on it bought nothing and spent the writer at the
+// one moment the pair's own start.php wants it.
+if ($type === 'invite' || $type === 'invite-relay' || $type === 'offer') {
     Starts::forget($id, $to);
 }
 

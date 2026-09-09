@@ -392,7 +392,7 @@ final class AdminData
             'names' => (object)self::namesFor($parties),
             'items_total' => (int)$db->query('SELECT COUNT(*) FROM items')->fetchColumn(),
             'items_frozen' => (int)$db->query('SELECT COUNT(*) FROM items WHERE frozen = 1')->fetchColumn(),
-            'matches_open' => (int)$db->query('SELECT COUNT(*) FROM matches WHERE closed = 0')->fetchColumn(),
+            'matches_open' => Items::openMatches($db),
             'ledger_rows' => Ledger::rows($db),
             'ledger_max' => Settings::int('ledger_max_rows'),
             'recent' => $recent,
