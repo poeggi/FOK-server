@@ -140,7 +140,7 @@ function tourney_out(?array $res): never
 switch ($action) {
     case 'create':
         tourney_out(Tournament::create($id, ($body['stakes'] ?? false) === true,
-            ($body['replace'] ?? false) === true));
+            ($body['replace'] ?? false) === true, (int)($body['lvl'] ?? 1)));
         // no break - tourney_out never returns
 
     case 'join':

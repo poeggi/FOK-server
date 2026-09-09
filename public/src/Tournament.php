@@ -18,10 +18,11 @@ require_once __DIR__ . '/Stats.php';
  * authority on all of them and clients render what it says (see docs/API.md
  * "Tournament mode").
  *
- * The tournament also gets HARDER as it narrows: a round is played at the
- * level of its own number (see Bracket::level), so the size of the lobby is
- * what decides how deep the final gets. Between two rounds it stops on a
- * scoreboard and waits for the host to press on (see gated/proceed).
+ * The tournament also gets HARDER as it narrows: round 1 is played at the
+ * level the host chose and every round after it one deeper (see
+ * Bracket::level), so the size of the lobby is what decides how deep the
+ * final gets. Between two rounds it stops on a scoreboard and waits for the
+ * host to press on (see gated/proceed).
  *
  * IT CARRIES NO GAME TRAFFIC. Every match in a tournament is an ordinary P2P
  * duel between the two players the roles sheet names, and every spectator feed
@@ -305,6 +306,16 @@ final class Tournament
         return in_array(self::stateOf($t, $nid), self::DONE, true);
     }
 
+    /**
+     * The level this tournament's round 1 is played at. A tournament already
+     * in the store when this shipped has no 'lvl' of its own, and reads as 1
+     * so that it keeps the ladder it was created on rather than jumping.
+     */
+    private static function startLvl(array $t): int
+    {
+        return (int)($t['lvl'] ?? 1);
+    }
+
     /** Done, or frozen - either way the cursor may move past it. */
     private static function isClosed(array $t, string $nid): bool
     {
@@ -322,7 +333,8 @@ final class Tournament
      * BEGIN IMMEDIATE was buying here - handing the same join code to two
      * lobbies is the one thing a lobby's whole identity rests on.
      */
-    public static function create(string $host, bool $stakes, bool $replace = false): array
+    public static function create(string $host, bool $stakes, bool $replace = false,
+        int $lvl = 1): array
     {
         if (!TourneyStore::usable()) {
             // Tournament state has no database fallback by design, so this is
@@ -338,6 +350,11 @@ final class Tournament
         // fair rather than merely deterministic.
         $tid = bin2hex(random_bytes(16));
         $seed = bin2hex(random_bytes(16));
+        // The level round 1 is played at. Clamped rather than refused: it is
+        // a preference, and a client that asks for a level the game does not
+        // have wants the hardest one it does.
+        $cap = Settings::int('tournament_max_level');
+        $lvl = $lvl < 1 ? 1 : ($lvl > $cap ? $cap : $lvl);
         // Creating is cheap for the host and costly for everyone it can
         // announce to, so it is rate-limited off the host's own last create.
         $wait = TourneyStore::createWait($host);
@@ -376,6 +393,7 @@ final class Tournament
             'round' => 0,
             'seed' => $seed,
             'stakes' => $stakes,
+            'lvl' => $lvl,
             'created' => $now,
             'data' => self::emptyData(),
             'players' => [['id' => $host, 'seat' => -1, 'forfeited' => false, 'joined' => $now]],
@@ -387,6 +405,7 @@ final class Tournament
             'tid' => $tid,
             'code' => $code,
             'stakes' => $stakes,
+            'lvl' => $lvl,
             'max' => Settings::int('tournament_max_players'),
         ];
     }
@@ -1111,7 +1130,7 @@ final class Tournament
             'done' => $done,
             'next' => $next,
             'stage' => Bracket::stage($next, count($nodes)),
-            'lvl' => Bracket::level($next, Settings::int('tournament_max_level')),
+            'lvl' => Bracket::level($next, Settings::int('tournament_max_level'), self::startLvl($t)),
             'hm' => Bracket::hearts($nodes === [] ? '' : (string)$nodes[0]['nid']),
             'matches' => count($nodes),
             'of' => count($advancers),
@@ -1316,10 +1335,12 @@ final class Tournament
             'of' => $of,
             'nid' => $nid,
             'hm' => Bracket::hearts($nid),
-            // The level the match STARTS at: round 1 is level 1 and every
-            // round after it is one deeper (see Bracket::level), so the two
-            // players preset it exactly as they preset the hearts.
-            'lvl' => Bracket::level((int)$node['round'], Settings::int('tournament_max_level')),
+            // The level the match STARTS at: round 1 is the host's chosen
+            // level and every round after it is one deeper (see
+            // Bracket::level), so the two players preset it exactly as they
+            // preset the hearts.
+            'lvl' => Bracket::level((int)$node['round'], Settings::int('tournament_max_level'),
+                self::startLvl($t)),
             'stakes' => $t['stakes'],
             'players' => [$a, $b],
             'feeder' => $a,
@@ -1551,7 +1572,7 @@ final class Tournament
                 'nid' => $n['nid'],
                 'round' => (int)$n['round'],
                 'hm' => Bracket::hearts($n['nid']),
-                'lvl' => Bracket::level((int)$n['round'], $cap),
+                'lvl' => Bracket::level((int)$n['round'], $cap, self::startLvl($t)),
                 'players' => [self::idOfSeat($t, $n['a']), self::idOfSeat($t, $n['b'])],
                 'state' => $r === null ? 'pending' : $r['state'],
                 'winner' => $r === null || $r['winner'] === null ? null : self::idOfSeat($t, (int)$r['winner']),

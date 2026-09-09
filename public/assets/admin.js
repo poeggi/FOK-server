@@ -629,11 +629,15 @@ function renderLogs(box) {
     };
     bar.append(chip('all', 'All'), chip('warn', 'Warnings'), chip('error', 'Errors'), el('span', 'grow'));
     const clear = el('button', 'small', 'Clear');
-    clear.onclick = async () => {
-        if (!confirm('Clear the whole server log?')) return;
-        await api('log_clear', { method: 'POST' });
-        refreshModule('alerts');
-    };
+    clear.title = 'Erases every entry in the server log. Alerts, players, scores '
+        + 'and the item registry are not touched.';
+    clear.onclick = () => confirmModal('Clear log',
+        'This erases every entry in the server log, and there is no undo. Alerts, '
+        + 'players, scores and the item registry are not touched.',
+        'Erase the log', async () => {
+            await api('log_clear', { method: 'POST' });
+            refreshModule('alerts');
+        });
     bar.append(clear);
     box.append(bar);
 

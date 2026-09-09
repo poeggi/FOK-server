@@ -286,6 +286,30 @@ else
     echo "skip the replace and operator checks: both need admin"
 fi
 
+# --- The start level (4.9). The host picks the level round 1 is played at;
+# the ladder still climbs one per round from there, and a level the game does
+# not have is clamped rather than refused.
+if [ "$ADMIN" -eq 1 ]; then
+    setting tournament_create_cooldown 0
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"lvl\":4}")
+    expect "a create names the level its first round is played at" '"lvl":4' "$R"
+    TL=$(tfield "$R" tid)
+    R=$(act "$ID2" join "$TL")
+    expect "a guest joins the lobby that starts deeper" '"ok":true' "$R"
+    R=$(act "$ID1" start "$TL")
+    expect "the host starts it" '"ok":true' "$R"
+    R=$(act "$ID1" state "$TL")
+    expect "and the first match is dealt at the chosen level" '"lvl":4' "$R"
+    R=$(act "$ID1" leave "$TL")
+    setting tournament_max_level 6
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"lvl\":99}")
+    expect "a level past the last one the game has is clamped" '"lvl":6' "$R"
+    TL2=$(tfield "$R" tid)
+    R=$(act "$ID1" leave "$TL2")
+    setting tournament_max_level 10
+    setting tournament_create_cooldown 10
+fi
+
 # --- The sweep for a tournament nobody is at. Its logic (who counts as gone,
 # which seat keeps it alive) is unit-tested against the presence entries; what
 # only real HTTP can show is the two things asserted here: that an ordinary

@@ -296,18 +296,19 @@ final class Bracket
     }
 
     /**
-     * The level a round is played at: round 1 is level 1, and every round
-     * after it is one level harder. So the FIELD decides how far the game
-     * gets - a lobby of three plays a level-1 round and a level-2 final,
-     * where a full one reaches the final two levels deeper.
+     * The level a round is played at: round 1 is played at the level the
+     * host chose when creating the tournament, and every round after it is
+     * one level harder. So the FIELD decides how far the game gets - a lobby
+     * of three plays its start level and one above it, where a full one
+     * reaches the final two levels deeper.
      *
      * Capped, because the game runs out of levels. Above its last one a
      * level is not a harder board, it is a board the client does not have,
      * so the top round is played at the cap and stays there.
      */
-    public static function level(int $round, int $cap): int
+    public static function level(int $round, int $cap, int $start = 1): int
     {
-        $lvl = $round < 1 ? 1 : $round;
+        $lvl = ($round < 1 ? 1 : $round) + ($start < 1 ? 1 : $start) - 1;
         return $cap >= 1 && $lvl > $cap ? $cap : $lvl;
     }
 

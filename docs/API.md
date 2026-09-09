@@ -1950,8 +1950,8 @@ two reports agree, when one is enough, and when they contradict each other
 Always POST, always `{"id": "<8-hex>", "action": "..."}` plus the action's
 fields:
 
-    create    {id, stakes?, replace?}
-                                     -> {ok, tid, code, stakes, max}
+    create    {id, stakes?, replace?, lvl?}
+                                     -> {ok, tid, code, stakes, lvl, max}
     join      {id, tid}  or  {id, code}
                                      -> {ok, ...lobby fields}
     leave     {id, tid}              -> {ok}
@@ -1969,6 +1969,13 @@ and typed back in. Codes are unique among OPEN tournaments only, so they
 recycle. `stakes` (default false) declares that the matches are played for
 items; it is passed through to the clients and the server does not act on
 it - item transfers go through the item registry exactly as in any duel.
+
+`lvl` (4.9, default 1, clamped to 1..`tournament_max_level`) is the level
+ROUND 1 is played at; every round after it is one deeper, as always (see
+The round ladder). Absent reads as 1, which is what every client sent
+before the field existed. It rides the create's answer back, and nothing
+else carries it: a player who JOINS learns the level from the first `roles`
+sheet.
 
 A host may hold one open-or-running tournament at a time (409), and may
 create one every `tournament_create_cooldown` (429 with `retry_after`).
@@ -2053,17 +2060,20 @@ score difference (they have no score).
 
 ### The round ladder
 
-Round 1 is played at level 1, and every round after it one level deeper:
+Round 1 is played at the level the host chose, and every round after it
+one level deeper:
 
-    level = min(round, tournament_max_level)
+    level = min(start + round - 1, tournament_max_level)
 
+`start` is the create's `lvl`, 1 unless it said otherwise.
 `tournament_max_level` is 10, the game's last level - above it there is no
 harder board to reach, only one the client does not have, so a tournament
 deep enough to run off the end stays at the cap.
 
 Because `round` is the stage number, the FIELD decides how far the game
-gets. Three players play a level-1 round and a level-2 final; eight play a
-level-1 group stage, level-2 semi-finals and a level-3 final. Half the
+gets from the level it starts at. Three players play their start level and
+one above it; eight play a group stage, semi-finals one deeper and a final
+one deeper again. Half the
 field advances (see Standings and who advances), so a quarter-final needs
 eight advancers - a field of 16, above the default
 `tournament_max_players`.

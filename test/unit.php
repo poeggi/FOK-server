@@ -1735,13 +1735,18 @@ ok($b8[count($b8) - 1]['nid'] === 'final', 'the last node is the final');
 ok(Bracket::hearts('final') === 3 && Bracket::hearts('ko1.1') === 2,
     'only the final is played at 3 hearts');
 
-// The round ladder: a round is played at the level of its own number, so the
-// size of the lobby is what decides how deep the final gets - and it stops at
-// the last level the game actually has.
+// The round ladder: a round is played one level deeper than the one before
+// it, so the size of the lobby is what decides how deep the final gets - and
+// it stops at the last level the game actually has.
 ok(Bracket::level(1, 10) === 1 && Bracket::level(2, 10) === 2 && Bracket::level(4, 10) === 4,
     'each round is played one level deeper than the one before it');
 ok(Bracket::level(0, 10) === 1, 'and nothing is ever played below level 1');
 ok(Bracket::level(12, 10) === 10, 'the ladder stops at the last level the game has');
+// The start level the host picked is where that ladder begins.
+ok(Bracket::level(1, 10, 5) === 5 && Bracket::level(3, 10, 5) === 7,
+    'the ladder climbs from the level the host chose');
+ok(Bracket::level(2, 10, 0) === 2, 'a start below level 1 is read as 1');
+ok(Bracket::level(4, 10, 9) === 10, 'and the cap holds however high it starts');
 ok(Bracket::stage(1, 6) === 'group' && Bracket::stage(4, 1) === 'final'
     && Bracket::stage(3, 2) === 'semi' && Bracket::stage(2, 4) === 'quarter',
     'a stage is named after the number of matches in it');
@@ -2510,6 +2515,27 @@ ok(apcu_key_info($k2)['ttl'] === Settings::int('tournament_join_ttl'),
 Tournament::leave('77000002', $c2['tid']);
 ok(apcu_key_info($k2)['ttl'] === Settings::int('tournament_abandoned_ttl'),
     'and an abandoned one only long enough to tell the players who were in it');
+
+// The start level (4.9): the host picks what round 1 is played at and the
+// ladder climbs from there, so the field still decides how much deeper the
+// final gets.
+$sl = ['77000005', '77000006'];
+foreach ($sl as $pid) {
+    Presence::touch($pid, '127.0.0.1');
+}
+$cs = Tournament::create($sl[0], false, false, 5);
+ok($cs['lvl'] === 5, 'a create names the level its first round is played at');
+Tournament::join($sl[1], $cs['tid']);
+Tournament::start($sl[0], $cs['tid']);
+$vs = Tournament::view($sl[0], $cs['tid']);
+ok($vs['roles']['lvl'] === 5, 'and the first match is dealt at it');
+ok($vs['schedule'][0]['lvl'] === 5, 'as is the schedule the whole lobby reads');
+Tournament::leave($sl[0], $cs['tid']);
+ok(Tournament::create($sl[0], false, false, 99)['lvl'] === Settings::int('tournament_max_level'),
+    'a level past the last one the game has is clamped, not refused');
+Tournament::leave($sl[0], TourneyStore::hostedBy($sl[0]) ?? '');
+ok(Tournament::create($sl[0], false)['lvl'] === 1, 'and a create that says nothing starts at 1');
+Tournament::leave($sl[0], TourneyStore::hostedBy($sl[0]) ?? '');
 Settings::set('tournament_create_cooldown', 10);
 
 // The long-poll worker budget (Holds). Slots stand in for the OTHER workers
