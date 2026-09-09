@@ -61,7 +61,13 @@ jobs:
       # curl cannot reuse an FTP connection and the host rate-limits logins,
       # so the deploy needs lftp's pooled connections (tools/deploy.sh).
       - name: Install lftp
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+        # The runner image carries Google's Chrome apt source, and a hash
+        # mismatch on that mirror fails apt-get update for every package.
+        # lftp comes from Ubuntu's own archive, so the third-party source
+        # goes before the refresh rather than being trusted to be up.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*
+          sudo apt-get update -qq && sudo apt-get install -y -qq lftp
 
       - name: Deploy to staging
         run: bash tools/deploy.sh staging
