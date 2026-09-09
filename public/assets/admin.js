@@ -1706,9 +1706,8 @@ function renderItemStatus(box, d) {
     if (!d.frozen.length && !d.disputed.length) {
         view.append(el('p', 'muted', 'Nothing frozen, nothing left to review.'));
     }
-    view.append(el('p', 'muted', 'A frozen item is a claim the ladder judged as '
-        + 'tampering. This list is what has not been reviewed yet - click a '
-        + 'count to read the findings behind it. Match secrets not shown.'));
+    view.append(el('p', 'muted', 'Unreviewed only - click a count to read the '
+        + 'findings.'));
     box.append(view);
 }
 
