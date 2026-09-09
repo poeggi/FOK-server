@@ -31,7 +31,7 @@ $collapsible = count($scores) > $topN;
   <h1>FOK<span>-server</span></h1>
   <p>Central game server for <a href="https://poeggi.github.io/FOK-snake/">FOK Snake</a></p>
   <p class="stats"><span><?= $counts['online'] ?></span> online -
-    <span><?= $counts['playing'] ?></span> playing 1:1 -
+    <span><?= $counts['playing'] ?></span> playing 1vs1 -
     <span><?= $counts['registered'] ?></span> client ids</p>
   <p class="version muted"><?= htmlspecialchars($verline) ?></p>
 </header>

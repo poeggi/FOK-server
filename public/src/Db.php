@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 41;
+    private const SCHEMA_VERSION = 42;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -90,7 +90,7 @@ final class Db
     // table (see Signals, RelayStore, ConnTrack and Matchmaking).
     private const COUNTED = ['players', 'scores', 'duels',
         'counters', 'alerts', 'settings', 'admin_fails', 'friends',
-        'starts', 'pstats', 'items', 'matches', 'ledger'];
+        'starts', 'pstats', 'items', 'matches', 'ledger', 'item_disputes'];
 
     /**
      * How many rows the database holds, over every table above. One statement
@@ -738,6 +738,33 @@ final class Db
             // in shared memory (see Presence::seenOn); nothing reads the
             // table.
             $pdo->exec('DROP TABLE IF EXISTS player_nets');
+        }
+        if ($v < 42) {
+            // A tampering verdict is an EVENT, not a property of the
+            // instance it froze: resolving one clears frozen_why and may
+            // drop the row outright, so an instance cannot be the record of
+            // what was found on it. The per-player tally could say a finding
+            // existed and nothing could say which. This is where a finding
+            // lives now, and it outlives both the resolve and the instance.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS item_disputes (
+                id INTEGER PRIMARY KEY,
+                uid TEXT NOT NULL,
+                player TEXT NOT NULL,
+                why TEXT NOT NULL,
+                mid TEXT NOT NULL,
+                tick INTEGER NOT NULL,
+                created INTEGER NOT NULL,
+                seen INTEGER NOT NULL DEFAULT 0
+            )');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_disputes_player
+                        ON item_disputes (player, seen)');
+            // How many of this player's disputes an operator has reviewed.
+            // The tally beside it is the forensic record and never moves
+            // backwards; this is what takes a reviewed player off the queue
+            // without destroying what was found (the alerts model: seen,
+            // never deleted). It also covers findings raised BEFORE this
+            // step, which have no row here and never will.
+            $pdo->exec('ALTER TABLE players ADD COLUMN claims_disputed_seen INTEGER NOT NULL DEFAULT 0');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

@@ -45,6 +45,24 @@ final class Load
     // same floor Counters::worst applies to a queue wait).
     private const SLOW_FLOOR_US = 1000;
 
+    // The transaction currently open: who opened it, and how many bytes the
+    // write-ahead log held at the moment the writer was taken. Both are read
+    // on BEGIN IMMEDIATE and spent on COMMIT, which are the rare statements
+    // by construction (see txLabel).
+    private static ?string $txWho = null;
+    private static int $txWal = -1;
+
+    /**
+     * What one page costs the write-ahead log: the page itself plus a
+     * 24-byte frame header. Db never issues PRAGMA page_size, so the page is
+     * SQLite's default and this is fixed for the life of the file.
+     */
+    private const WAL_FRAME = 4096 + 24;
+
+    // Longest transaction name a COMMIT label carries, chosen so the whole
+    // label stays inside shortSql's 40 characters with the page count on it.
+    private const TX_WHO_MAX = 24;
+
     public static function tick(string $metric, int $n = 1): void
     {
         if ($n <= 0 || self::$untracked) {
@@ -102,20 +120,112 @@ final class Load
         if (self::$untracked || $us < 0) {
             return;
         }
-        $lock = stripos(ltrim($sql), 'BEGIN IMMEDIATE') === 0;
+        $head = ltrim($sql);
+        $lock = stripos($head, 'BEGIN IMMEDIATE') === 0;
+        $name = null;
         if ($lock) {
             self::$lockUs += $us;
             self::$lockN++;
             self::$lockMax = max(self::$lockMax, $us);
+            self::txOpened();
         } else {
             self::$sqlUs += $us;
             self::$sqlN++;
             self::$sqlMax = max(self::$sqlMax, $us);
+            if (stripos($head, 'COMMIT') === 0) {
+                $name = self::txLabel();
+            } elseif (stripos($head, 'ROLLBACK') === 0) {
+                self::$txWho = null;
+                self::$txWal = -1;
+            }
         }
         if ($us >= self::SLOW_FLOOR_US && $us > (int)(self::$slowest['us'] ?? 0)) {
-            self::$slowest = ['us' => $us, 'sql' => self::shortSql($sql), 'lock' => $lock];
+            self::$slowest = [
+                'us' => $us,
+                'sql' => self::shortSql($name ?? $sql),
+                'lock' => $lock,
+            ];
         }
         self::arm();
+    }
+
+    /** Remembers who took the writer and what the log looked like then. */
+    private static function txOpened(): void
+    {
+        self::$txWho = self::txCaller();
+        self::$txWal = self::walBytes();
+    }
+
+    /**
+     * A COMMIT as the worst list should show it: which transaction it was,
+     * and what it actually wrote. Both are the questions a bare "COMMIT" row
+     * cannot answer - every contended path ends in one, so the string alone
+     * says nothing about which of them was slow or why.
+     *
+     * The page count is the write-ahead log's growth over the transaction,
+     * in frames. It is exact rather than sampled: SQLite has exactly ONE
+     * writer, this transaction held it from the BEGIN IMMEDIATE that
+     * measured the first size to here, so nothing else can have appended in
+     * between.
+     *
+     * A log that SHRANK is the reading worth having. It means the commit
+     * crossed wal_autocheckpoint and paid for the checkpoint SQLite charges
+     * to whichever write happens to cross the line - so it is named 'ckpt'
+     * rather than counted, and a slow COMMIT is explained on sight instead
+     * of guessed at.
+     */
+    private static function txLabel(): string
+    {
+        $who = self::$txWho;
+        $was = self::$txWal;
+        self::$txWho = null;
+        self::$txWal = -1;
+        $out = 'COMMIT';
+        if ($who !== null) {
+            // The CALLER is what gets cut when a name is long, never the
+            // tail: shortSql trims from the right, and the pages are the
+            // half of this label that cannot be guessed from anywhere else.
+            $out .= ' ' . (strlen($who) > self::TX_WHO_MAX
+                ? substr($who, 0, self::TX_WHO_MAX - 1) . '~' : $who);
+        }
+        $now = $was < 0 ? -1 : self::walBytes();
+        if ($now >= 0) {
+            $out .= $now < $was ? ' ckpt' : ' ' . intdiv($now - $was, self::WAL_FRAME) . 'p';
+        }
+        return $out;
+    }
+
+    /**
+     * Which code opened this transaction, as Class::method. Read off the
+     * stack rather than passed in by the dozen call sites, so it cannot
+     * drift out of step with them - and the plumbing every transaction goes
+     * through is skipped, which is what turns a housekeeping COMMIT into the
+     * task that asked for it instead of into Db::tryWrite. A frame with no
+     * class is the script's own top level and is skipped with it.
+     */
+    private static function txCaller(): ?string
+    {
+        foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8) as $f) {
+            $cls = (string)($f['class'] ?? '');
+            if ($cls === '' || $cls === self::class || $cls === 'LoadPDO' || $cls === 'Db') {
+                continue;
+            }
+            return $cls . '::' . (string)($f['function'] ?? '?');
+        }
+        return null;
+    }
+
+    /**
+     * The write-ahead log's size in bytes, or -1 when there is none to read.
+     * A stat, and only on the two statements that bracket a transaction -
+     * the file is not opened and nothing is parsed.
+     */
+    private static function walBytes(): int
+    {
+        $wal = FOK_DB_FILE . '-wal';
+        clearstatcache(true, $wal);
+        $n = @filesize($wal);
+        return $n === false ? -1 : $n;
     }
 
     /**

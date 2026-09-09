@@ -13,6 +13,7 @@ require_once __DIR__ . '/Vault.php';
 require_once __DIR__ . '/PStats.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Ledger.php';
+require_once __DIR__ . '/Items.php';
 require_once __DIR__ . '/Signals.php';
 require_once __DIR__ . '/Counters.php';
 require_once __DIR__ . '/TourneyStore.php';
@@ -367,13 +368,19 @@ final class AdminData
                 'owner' => $r['owner'], 'name' => $r['name'], 'seq' => (int)$r['seq'],
                 'at' => (int)$r['frozen_at'], 'why' => (string)$r['frozen_why']];
         }
+        // The queue is what an operator has NOT reviewed, not everything that
+        // ever happened: the tally never moves backwards, so without the seen
+        // mark beside it a finding dealt with years ago sits here for good.
+        // What was found stays readable per player (see disputes below).
         $disputed = [];
         foreach ($db->query(
-            'SELECT id, name, claims_ok, claims_untagged, claims_disputed FROM players
-             WHERE claims_disputed > 0 ORDER BY claims_disputed DESC LIMIT 20'
+            'SELECT id, name, claims_ok, claims_untagged, claims_disputed, claims_disputed_seen
+               FROM players WHERE claims_disputed > claims_disputed_seen
+              ORDER BY claims_disputed - claims_disputed_seen DESC LIMIT 20'
         ) as $r) {
             $disputed[] = ['id' => $r['id'], 'name' => $r['name'], 'ok' => (int)$r['claims_ok'],
-                'untagged' => (int)$r['claims_untagged'], 'disputed' => (int)$r['claims_disputed']];
+                'untagged' => (int)$r['claims_untagged'], 'disputed' => (int)$r['claims_disputed'],
+                'open' => (int)$r['claims_disputed'] - (int)$r['claims_disputed_seen']];
         }
         $parties = [];
         foreach ($recent as $r) {
@@ -391,6 +398,42 @@ final class AdminData
             'recent' => $recent,
             'frozen' => $frozen,
             'disputed' => $disputed,
+        ];
+    }
+
+    /**
+     * Every tampering verdict recorded against one player, for the popup an
+     * operator opens off the review queue. `logged` is how many of the
+     * player's disputes this list can actually account for: a finding from
+     * before the log existed (schema 42) left nothing but the tally, and
+     * saying so is better than an empty list that reads like a bug.
+     *
+     * Read-only. Resolving is two separate acts and neither happens here:
+     * an instance still frozen is released through item_resolve, and the
+     * review itself through Items::reviewDisputes.
+     */
+    public static function disputes(string $player): ?array
+    {
+        $st = Db::get()->prepare(
+            'SELECT name, claims_ok, claims_untagged, claims_disputed, claims_disputed_seen
+               FROM players WHERE id = ?'
+        );
+        $st->execute([$player]);
+        $row = $st->fetch();
+        $st->closeCursor();
+        if ($row === false) {
+            return null;
+        }
+        $rows = Items::disputesOf($player);
+        return [
+            'id' => $player,
+            'name' => $row['name'],
+            'ok' => (int)$row['claims_ok'],
+            'untagged' => (int)$row['claims_untagged'],
+            'disputed' => (int)$row['claims_disputed'],
+            'reviewed' => (int)$row['claims_disputed_seen'],
+            'logged' => count($rows),
+            'disputes' => $rows,
         ];
     }
 
@@ -462,7 +505,7 @@ final class AdminData
 
     /**
      * Everything known about one client for the detail popup - identity,
-     * presence, its 1:1 state, relay/matchmaking/friend/score/mailbox
+     * presence, its 1vs1 state, relay/matchmaking/friend/score/mailbox
      * counters and its config backup. Null if the id is unknown. Read-only,
      * gathered from the tables each subsystem already keeps.
      */

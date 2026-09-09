@@ -8,6 +8,11 @@
 _srv_ms=$(curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2)
 SKEW=$(( _srv_ms - $(date +%s%3N) ))
 now_ms() { echo $(( $(date +%s%3N) + SKEW )); }
+start_req_private() { # id peer epoch reason pts
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5,\"duel_private\":true}" \
+        "$BASE/api/start.php"
+}
 start_req() { # id peer epoch reason pts
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$1\",\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5}" \
@@ -26,6 +31,41 @@ S1=$(grep -oE '"start_pts":[0-9]+' "$DATA/s1.json" | cut -d: -f2)
 S2=$(grep -oE '"start_pts":[0-9]+' "$DATA/s2.json" | cut -d: -f2)
 if [ -n "$S1" ] && [ "$S1" = "$S2" ]; then echo "ok   server-issued start identical for both peers"; else echo "FAIL start pts differ: $S1 vs $S2"; fail=1; fi
 if [ "${#S1}" -eq 13 ]; then echo "ok   start pts is milliseconds"; else echo "FAIL start pts not ms: $S1"; fail=1; fi
+
+# The start is what ANNOUNCES the duel. No hello has carried duel_with for
+# this pair, so anything seen here came from the two start.php calls above.
+hello_friends() { # id peer
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\",\"friends\":[\"$2\"]}" "$BASE/api/hello.php"
+}
+R=$(hello_friends "$ID1" "$ID2")
+expect "the start announced the duel, with no heartbeat involved" \
+    "$(strict "\"friends_playing\":[\"$ID2\"]")" "$R"
+expect "and both peers announced their own side" "$(strict '"playing":2')" "$R"
+
+# Private ON THE START, so the very first record of the duel is private
+# rather than public until the first beat.
+curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID2\",\"duel_end\":\"$ID1\"}" "$BASE/api/hello.php" > /dev/null
+R=$(start_req_private "$ID2" "$ID1" 0 first "$(now_ms)")
+expect "a private start still issues the start" '"start_pts":' "$R"
+R=$(hello_friends "$ID1" "$ID2")
+expect "a duel made private on the start is never attributed" \
+    "$(strict '"friends_playing":[]')" "$R"
+expect "while still being counted" "$(strict '"playing":2')" "$R"
+
+# The flag is a property of the duel, not a latch: the next request that
+# holds the duel up and omits it makes the duel public again.
+curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID2\",\"duel_with\":\"$ID1\"}" "$BASE/api/hello.php" > /dev/null
+R=$(hello_friends "$ID1" "$ID2")
+expect "and a beat without the flag makes it public again" \
+    "$(strict "\"friends_playing\":[\"$ID2\"]")" "$R"
+
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID2\",\"peer\":\"$ID1\",\"epoch\":0,\"reason\":\"first\",\"pts\":$(now_ms),\"duel_private\":\"yes\"}" \
+    "$BASE/api/start.php")
+expect "a non-boolean duel_private is refused" '"error":"invalid duel_private"' "$R"
 
 # The epoch is what makes the answer independent of WHEN a peer asks: the
 # same epoch must return the same moment however late the second one is.
@@ -243,7 +283,7 @@ expect "normal duel ends with bye" '"ok":true' "$R"
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 
 # --- A rematch after a PEER-TO-PEER bye. Once the DataChannel is open the
-# bye travels over it and never reaches the server (docs/API.md, the 1:1
+# bye travels over it and never reaches the server (docs/API.md, the 1vs1
 # flow), so nothing here says the duel ended. The pair's finished epoch
 # line must not survive to refuse their next match: without the handshake
 # reset in signal.php this 409s for a full five minutes.

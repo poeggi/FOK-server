@@ -28,6 +28,11 @@ require_once __DIR__ . '/Presence.php';
  *   every other reader uses, at the moment the delta is read. due() is what
  *   keeps that cheap: the earliest moment a lapse could change this caller's
  *   answer, so until then the fetch above is the entire read.
+ *
+ * Leaving a duel is BOTH: the client announces the teardown, and the shorter
+ * spectate window (FOK_DUEL_SEEN_WINDOW) catches the client that crashed
+ * instead. The transition is what makes the WATCH row go at the moment the
+ * match does; the lapse is only the backstop.
  */
 final class FriendFeed
 {
@@ -174,10 +179,13 @@ final class FriendFeed
                 continue;
             }
             // The moment each state expires. Both are the windows every other
-            // reader uses (Util::since), read from the other end.
+            // reader uses (Util::since), read from the other end. The
+            // spectate offer is asked for whole rather than rebuilt here, so
+            // a private duel - which has no expiry to wait for, because it
+            // was never offered - answers 0 and drops out of the due math
+            // with it (see Presence::spectateEndsAt).
             $offAt = ((int)$e['seen'] + FOK_ONLINE_WINDOW + FOK_BEAT_JITTER) * 1000;
-            $duel = (int)($e['duel'] ?? 0);
-            $endAt = $duel > 0 ? ($duel + FOK_DUEL_WINDOW + FOK_BEAT_JITTER) * 1000 : 0;
+            $endAt = Presence::spectateEndsAt($e);
             $online = $now < $offAt;
             $playing = $endAt > 0 && $now < $endAt;
             // What the current state has been true SINCE: the transition that

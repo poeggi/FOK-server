@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.6", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.7", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -33,8 +33,9 @@ is safe to talk to; a client may read the MINOR to tell whether an
 optional feature (e.g. the peer-net hint, added in 3.1, tournament mode,
 added in 4.1, self-reported networks, added in 4.2, the tournament round
 ladder and its round breaks, added in 4.3, batched ICE candidates, the
-queue-wait figure and the hold decision, added in 4.4, or friend presence
-deltas, added in 4.6) is available, and
+queue-wait figure and the hold decision, added in 4.4, friend presence
+deltas, added in 4.6, or the announced end of a duel and private duels,
+added in 4.7) is available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
 
@@ -315,14 +316,17 @@ keeps the last value).
 
 ### POST /api/start.php - server-issued start of play
 
-    POST {"id": "c0ffee42", "peer": "deadbeef", "epoch": 3,
-          "reason": "respawn", "pts": 1784190295120}
-      -> {"ok":true, "start_pts": 1784190295323, "epoch": 3,
+    POST {"id": "c0ffee42", "peer": "deadbeef", "epoch": 0,
+          "reason": "first", "pts": 1784190295120,
+          "duel_private": false}
+      -> {"ok":true, "start_pts": 1784190295323, "epoch": 0,
           "now": 1784190295123, "q_ms": 0, "resync": false,
           "mid": "<32-hex>", "secret": "<32-hex>"}
 
-The server owns the clock, so it owns EVERY moment play begins or
-resumes. A start is requested for each of these, not only the first:
+The server owns the clock, so it owns the moment play BEGINS. In practice
+that is the first start and a rematch; the halts within a run are settled
+peer-to-peer over the DataChannel and never reach the server, which still
+accepts them as reasons:
 
 | `reason`  | when                                  |
 |-----------|---------------------------------------|
@@ -332,8 +336,10 @@ resumes. A start is requested for each of these, not only the first:
 | `resume`  | coming back from a pause              |
 | `rematch` | replaying against the same peer       |
 
-Anything that halts or restarts the run goes through here. Peers never
-pick the moment themselves.
+`first` and `rematch` are the ones a client sends. The other three are
+accepted and behave as described, but a boundary inside an ongoing match
+is the pair's own business - the server neither sees it nor needs to.
+Peers never pick the moment play BEGINS themselves.
 
 **Both peers call it, and both name the same `epoch`.** The epoch counts
 halts within the current connection: it starts at 0 and increments by one
@@ -359,6 +365,11 @@ asked only for its timing.
 - `reason`: one of the table above, REQUIRED.
 - `pts`: the caller's own current PTS, REQUIRED - the proof it is synced
   (see below).
+- `duel_private` (4.7, ADDITIVE): this duel is counted but never
+  attributed, so no friend is offered a spectate link for it. Absent means
+  public, exactly as on hello - the flag is a property of the duel, stated
+  on every request that holds it up, not a latch set once (see Announcing
+  a duel).
 - `start_pts`: absolute, on the shared clock. Trigger everything
   (music, READY/GO, first tick) exactly then, via the local offset.
 - `now`: a free clock re-check.
@@ -455,7 +466,7 @@ rejects a pts too far in the PAST, but only for a start that begins play
 ## POST /api/hello.php - heartbeat and poll
 
 The single periodic request a client makes. It (a) registers/refreshes
-presence, (b) refreshes an ongoing 1:1 duel, and (c) delivers any pending
+presence, (b) refreshes an ongoing 1vs1 duel, and (c) delivers any pending
 matchmaking/signaling messages addressed to the caller.
 
 Request:
@@ -465,7 +476,15 @@ Request:
       "name": "KAI",              optional, display name (max 15 chars);
                                   recorded server-side and shown to
                                   accepted friends
-      "duel_with": "deadbeef",    optional, peer ID while a 1:1 game runs
+      "duel_with": "deadbeef",    optional, the peer while a 1vs1 game runs
+                                  - REFRESHES what start.php announced
+                                  (see Announcing a duel below)
+      "duel_private": false,      optional, 4.7: this duel counts in the
+                                  "playing" figure but is never attributed
+                                  to the caller, so no friend is offered a
+                                  spectate link for it
+      "duel_end": "deadbeef",     optional, 4.7: the peer the caller has
+                                  just STOPPED playing
       "latency": 23,              optional, measured latency in ms (see
                                   Latency measurement; display only, the
                                   server keeps the last value)
@@ -513,7 +532,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.6",               contract version, see Versioning
+      "api": "4.7",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a PHP
@@ -526,7 +545,8 @@ Response:
       "debug": false,             the server's instruction: the client MUST
                                   honour it (see Debug mode below)
       "online": 3,                players seen in the last 120 s
-      "playing": 2,               players currently in 1:1 games
+      "playing": 2,               players currently in 1vs1 games, private
+                                  ones included (see Announcing a duel)
       "registered": 17,           total known player IDs
       "signals": [                pending messages for "id", oldest first
         {"from": "deadbeef", "type": "invite", "payload": "", "created": 1784182410}
@@ -534,7 +554,8 @@ Response:
       "friends_online": {"deadbeef": true},  only when "friends" was sent
       "friends_latency": {"deadbeef": 31},   ms while online, else null
       "friends_name": {"deadbeef": "KAI"},   last reported display name
-      "friends_playing": ["deadbeef"],       accepted friends in a duel NOW
+      "friends_playing": ["deadbeef"],       accepted friends who may be
+                                             watched NOW
       "friends_delta": {                     only when "friends_since" was
         "deadbeef": {"online": true,         sent: each accepted friend
                      "playing": false,       whose state changed after the
@@ -571,9 +592,14 @@ for ids with an ACCEPTED friendship to the caller (see Friendships);
 any other id reads as offline/null and never appears in friends_playing,
 so possessing an id alone reveals nothing.
 
-`friends_playing` lists the accepted friends who are in a duel right now.
-Online is not the same as available - a friend mid-duel cannot take an
-invite or join a lobby - so show them as busy rather than inviting them.
+`friends_playing` lists the accepted friends whose duel may be WATCHED
+right now. Online is not the same as available - a friend mid-duel cannot
+take an invite or join a lobby - so show them as busy rather than inviting
+them. A friend in a PRIVATE duel is not in this list and not in the
+`playing` flag of a delta: the duel is counted, never attributed (see
+Announcing a duel). So the list answers "can I ask for a feed", not "is
+this person in a game", and there is no way to ask the second question
+about a named person.
 
 ### Friend presence deltas (`friends_since`, 4.6)
 
@@ -600,6 +626,11 @@ Response, on both endpoints:
     },
     "friends_at": 1784182417123,  the cursor for the NEXT read
     "friends_more": false         true: rows are still pending
+
+`playing` is the same answer `friends_playing` gives: a duel that may be
+watched, so a private one reads false (see Announcing a duel). It flips
+with the same freshness `online` has - on the announcement, or when the
+duel window lapses.
 
 The cursor:
 
@@ -786,8 +817,43 @@ Rules:
   a signal or a tournament event that matters now reaches a client
   through /api/poll.php, and hello merely catches what a client with no
   poll running would otherwise see a minute late.
-- While a 1:1 game is running, send `duel_with` in every hello (the duel
-  counts as over when neither peer refreshed it within 120 s).
+- While a 1vs1 game is running, send `duel_with` in every hello. It
+  refreshes a duel start.php has already put on record; it is not what
+  puts it there (see Announcing a duel below).
+
+### Announcing a duel
+
+A duel is stated the way being online is: an edge in, an edge out, and a
+window that expires when neither arrives. Three requests carry it, and the
+first of them is not the heartbeat:
+
+- **start.php SETS it.** Both peers call start.php at the moment play
+  begins, so the duel is on record from that moment rather than from
+  whichever beat happens next - and from two independent callers, so one
+  peer's request being slow does not delay the other's side of it.
+- **`duel_with` on hello REFRESHES it**, once a beat, which is what holds
+  the offer up for as long as the match runs.
+- **`duel_end` on hello CLEARS it**, naming the peer just left. An end for
+  a peer the server does not have the caller playing is ignored, so an end
+  overtaken by the next pairing cannot cancel it - and one hello may carry
+  `duel_end` and `duel_with` together, because the end is applied first.
+
+Absence clears NOTHING. A client that is closed mid-match never sends
+another request, so the end cannot be the absence of a field. What bounds
+that client is the window: the offer EXPIRES 91 s after the last
+`duel_with`, comfortably above the 60 s beat that refreshes it. The DUEL
+itself keeps the longer 120 s window, and an item claim's deadline is
+measured from that (see Item registry) - so neither the teardown
+announcement nor the shorter offer window ever shortens the window a claim
+has.
+
+`duel_private` marks a duel that is COUNTED but never ATTRIBUTED: it is in
+the `playing` figure, holds the duel window, gets the same patience under
+load and reaches the operator's dashboard exactly like any other, and it is
+absent from `friends_playing` and reads `playing: false` in a delta. It
+rides start.php and hello alike, and it is a property of the duel rather
+than a latch: state it on every request that holds the duel up, because
+leaving it off makes the duel public again from that request on.
 
 ## Debug mode
 
@@ -970,7 +1036,7 @@ Response: `{"ok": true}`
 
 Types (fixed set, anything else is rejected):
 
-    invite    ask "to" for a 1:1 game            payload: JSON {"profile": <profile>}
+    invite    ask "to" for a 1vs1 game            payload: JSON {"profile": <profile>}
               (requires an ACCEPTED friendship with "to", else 403)
     invite-relay  invite WITH the no-P2P bit set  payload: JSON {"profile": <profile>}
               (friendship gate + relay capacity
@@ -1028,7 +1094,7 @@ offer a retry. It is raised on the next mailbox read, so it arrives with
 the sender's next hello. The reverse does NOT hold: no receipt is not a
 delivery confirmation, only the absence of an expiry.
 
-The 'peer-net' signal is a DIRECT-CONNECTION HINT. The moment a 1:1
+The 'peer-net' signal is a DIRECT-CONNECTION HINT. The moment a 1vs1
 pairing is confirmed - a plain 'accept' of an invite, or a fresh quick
 match - and BEFORE the WebRTC offer/answer, the server drops one into
 BOTH mailboxes. It carries the peer's server-observed IP and address
@@ -1237,9 +1303,9 @@ gated name lookups do not apply; the pairing itself is the entitlement.
 
 `{"action": "cancel"}` leaves the queue (also automatic after 10 s
 without a seek poll). After a match both sides continue at step 3 of the
-1:1 flow below, with the "offerer" acting as A.
+1vs1 flow below, with the "offerer" acting as A.
 
-## 1:1 game flow (the intended sequence)
+## 1vs1 game flow (the intended sequence)
 
 Player A wants to play with player B (A knows B's ID, e.g. from the
 friend list; the hello `friends` field tells A whether B is online):
@@ -1274,17 +1340,22 @@ friend list; the hello `friends` field tells A whether B is online):
        and the level begins exactly then (music, READY/GO, first tick).
        From here ALL game traffic flows peer-to-peer (see FOK-snake
        docs/multiplayer-server-prompt.md for the tick sync protocol).
-       Clients keep the normal slow hello heartbeat (~60 s) with
-       duel_with set, so the server can count running games.
+       That start.php call is also what announces the duel, so it is
+       on record from this moment and not from the next beat; the
+       normal slow heartbeat (~60 s) carries duel_with afterwards to
+       hold it up (see Announcing a duel).
     7. The further halts of the run - next level, respawn, resume from
        pause - are settled between the peers. start.php still accepts
        them as reasons with the next epoch (see start.php for the epoch
        rules), and none of them calls for a sweep.
     8. Either side sends bye (via the DataChannel if open, and via
-       signal as fallback) to end the session. A rematch is a new
-       pairing: it re-runs the handshake from step 1 and opens a new
-       epoch line at 0 (the invite/offer is what resets it server-side,
-       precisely because a DataChannel bye never reaches the server).
+       signal as fallback) to end the session, and each side tells the
+       server with a hello carrying duel_end: a bye that went over the
+       DataChannel is the one end the server cannot see for itself. A
+       rematch is a new pairing: it re-runs the handshake from step 1
+       and opens a new epoch line at 0 (the invite/offer is what resets
+       it server-side, precisely because a DataChannel bye never
+       reaches the server).
 
 ## Relay fallback - when P2P cannot connect
 
@@ -1385,7 +1456,7 @@ delivery - it separates "waited in the mailbox" (a store/poll delay) from
 
 payload is opaque to the server (max 2 KB, defaults admin-configurable);
 seq is a server-assigned increasing number for ordering. Keep sending
-hello with duel_with during relayed games too. The concurrent-duel cap
+hello with duel_with during relayed games too, and duel_end when one ends. The concurrent-duel cap
 exists because every relayed duel holds server workers with its long
 polls - a capped, honest "busy" beats degrading the server for everyone.
 
@@ -1559,8 +1630,8 @@ and the admin dashboard shows.
       "levels":       310,   levels cleared (cumulative)
       "best_level":   17,    furthest level reached (0..99)
       "deaths":       190,   deaths
-      "duels":        44,    1:1 duels played
-      "duels_won":    21,    1:1 duels won
+      "duels":        44,    1vs1 duels played
+      "duels_won":    21,    1vs1 duels won
       "play_seconds": 86400  total playtime, seconds
     }
 
@@ -1848,6 +1919,13 @@ recipient may honour or ignore.
 `watch` is NOT in the receipt set: a spectator whose request expires
 undelivered gets no 'undelivered' signal. Failing to get a feed is not a
 failed connection - the scoreboard keeps updating either way.
+
+Outside a tournament, who is worth asking comes from `friends_playing` or a
+delta's `playing` (see Announcing a duel). That answer is only as fresh as
+the announcements behind it: it is the two peers stating the edges of their
+own match, plus a 91 s window for the client that stops stating anything.
+Nothing else on the server observes a duel, so a feed can always be gone by
+the time the request lands.
 
 ## Tournament mode
 

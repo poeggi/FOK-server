@@ -176,8 +176,38 @@ T1=$(date +%s)
 expect "long poll times out to 204" '204' "$R"
 if [ $((T1 - T0)) -ge 1 ]; then echo "ok   long poll held the request"; else echo "FAIL long poll returned too fast ($((T1 - T0))s)"; fail=1; fi
 
+# A duel is stated per player: each peer announces itself, so one peer having
+# said so counts one. The figure is cached, and every edge drops that cache -
+# so these assertions read back-to-back without waiting a window out.
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"duel_with\":\"$ID2\"}" "$BASE/api/hello.php")
+expect "the peer that announced is counted" "$(strict '"playing":1')" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"duel_with\":\"$ID1\"}" "$BASE/api/hello.php")
 expect "duel counted" "$(strict '"playing":2')" "$R"
+
+# Each of them may be watched, and the answer is the same either way it is
+# asked - the delta and the older map cannot disagree about a private duel.
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\"]}" "$BASE/api/hello.php")
+expect "a friend in a duel may be watched" "$(strict "\"friends_playing\":[\"$ID2\"]")" "$R"
+
+# Private: counted, never attributed.
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"duel_with\":\"$ID1\",\"duel_private\":true}" "$BASE/api/hello.php")
+expect "a private duel still counts" "$(strict '"playing":2')" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\"]}" "$BASE/api/hello.php")
+expect "but is never attributed to the player" "$(strict '"friends_playing":[]')" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"duel_with\":\"$ID1\"}" "$BASE/api/hello.php")
+
+# The announced end, and the guard that keeps a late one from cancelling the
+# pairing that replaced it.
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"duel_end\":\"aaaa0000\"}" "$BASE/api/hello.php")
+expect "an end naming another peer is ignored" "$(strict '"playing":2')" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"duel_end\":\"$ID1\"}" "$BASE/api/hello.php")
+expect "an announced end drops the player at once" "$(strict '"playing":1')" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\"]}" "$BASE/api/hello.php")
+expect "and takes the spectate offer with it" "$(strict '"friends_playing":[]')" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"duel_end\":\"$ID2\"}" "$BASE/api/hello.php")
+expect "both ends leave nobody playing" "$(strict '"playing":0')" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"duel_end\":\"nothex\"}" "$BASE/api/hello.php")
+expect "a malformed duel_end is refused" '"error":"invalid duel_end"' "$R"
 
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"latency\":31}" "$BASE/api/hello.php" > /dev/null
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"friends\":[\"$ID2\",\"aaaa0000\"]}" "$BASE/api/hello.php")

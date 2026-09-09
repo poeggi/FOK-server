@@ -6,21 +6,33 @@ require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/Starts.php';
 require_once __DIR__ . '/../src/Skew.php';
+require_once __DIR__ . '/../src/ConnTrack.php';
 
 /**
  * Server-issued start of play.
- * POST {"id": "8-hex", "peer": "8-hex", "epoch": <n>, "reason": "level",
- *       "pts": <ms>}
+ * POST {"id": "8-hex", "peer": "8-hex", "epoch": <n>, "reason": "first",
+ *       "pts": <ms>, "duel_private": <bool>}
  *   -> {"ok":true, "start_pts": <ms>, "epoch": <n>, "now": <ms>,
  *       "q_ms": <ms>, "resync": <bool>,        (both since API 4.4)
  *       "mid": "32-hex", "secret": "32-hex"}   (mid/secret since API 4.0)
  *
- * BOTH peers call this every time the run halts or restarts - first
- * start, next level, respawn, resume from pause - and each receives the
- * identical absolute start PTS. They NAME the start with a shared epoch
- * (see Starts), so the answer does not depend on when either one asks.
- * A peer that has fallen behind the pair's epoch gets 409 rather than a
- * start it would run from the wrong origin.
+ * BOTH peers call this at the match-IDENTITY moments - the first start
+ * and a rematch - and each receives the identical absolute start PTS.
+ * They NAME the start with a shared epoch (see Starts), so the answer
+ * does not depend on when either one asks. A peer that has fallen behind
+ * the pair's epoch gets 409 rather than a start it would run from the
+ * wrong origin.
+ *
+ * The halts WITHIN a run - next level, respawn, resume from pause - are
+ * settled peer-to-peer over the DataChannel and do not come here. The
+ * server still accepts them as reasons (Starts::REASONS), but no shipped
+ * client sends one.
+ *
+ * This is also where a duel is ANNOUNCED. Both peers call it at the
+ * moment play begins, which is what makes the announcement early and
+ * independent of either client's beat; the heartbeat's duel_with only
+ * refreshes it afterwards (see Presence::touchDuel, and docs/API.md
+ * under Announcing a duel).
  *
  * pts is the caller's own clock reading and is REQUIRED: a start is a
  * moment on the shared clock, so a client that cannot place it there
@@ -50,6 +62,14 @@ if (!is_int($epoch) || $epoch < 0 || $epoch > 1000000) {
 $reason = $body['reason'] ?? null;
 if (!is_string($reason) || !in_array($reason, Starts::REASONS, true)) {
     Util::fail('invalid reason');
+}
+
+// The same flag the heartbeat carries, read the same way: absent is
+// public, because the client states it on every request that holds the
+// duel up rather than latching it once (see docs/API.md).
+$duelPrivate = $body['duel_private'] ?? false;
+if (!is_bool($duelPrivate)) {
+    Util::fail('invalid duel_private');
 }
 
 // The sync gate. checkPts rejects a PTS ahead of the server (zero
@@ -82,6 +102,14 @@ $startPts = Starts::request($id, $peer, $epoch, $reason);
 if ($startPts === null) {
     Util::fail('stale epoch: the pair has already moved on', 409);
 }
+
+// AFTER the start is issued, never before: a 409 means this caller is not
+// in the pair's current run, and announcing a duel for it would offer
+// friends a feed of a match that is not being played. Both peers announce
+// their own side, so a friend of either sees it from here rather than up
+// to a beat later - and the pair that was refused announces nothing.
+Presence::touchDuel($id, $peer, $duelPrivate);
+ConnTrack::playing($id, $peer);
 
 // The pair cross-check (4.4, see Skew). Both peers prove their clock against
 // THIS start, so the difference between their two proofs bounds how far apart

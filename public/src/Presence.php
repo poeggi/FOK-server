@@ -100,6 +100,8 @@ final class Presence
                 // what a friend's cursor is compared against (see FriendFeed).
                 'chg' => Util::nowMs(),
                 'duel' => 0,
+                'dpeer' => null,
+                'dpriv' => false,
             ];
             $moved = true;
             // Nobody may watch their own first hello report zero online, so
@@ -231,12 +233,15 @@ final class Presence
 
     /**
      * One player's entry, or null when there is none. Shape:
-     * {seen, start, ip, lat, name, accept, dbg, wish, nets:{family:{net, seen, src}}}
+     * {seen, start, ip, lat, name, accept, dbg, wish, chg, duel, dpeer,
+     * dpriv, nets:{family:{net, seen, src}}}
      * - seen is the last beat, start the session's first; accept is the
      * moment the auto-accept flag lapses (0 = off); dbg is the client's own
-     * report and wish the operator's; nets is one network per address
-     * family with the moment it was seen and whether it was observed ('o')
-     * or claimed ('c').
+     * report and wish the operator's; chg is the last transition a friend's
+     * cursor is compared against; duel/dpeer/dpriv are the spectate offer
+     * (see touchDuel); nets is one network per address family with the
+     * moment it was seen and whether it was observed ('o') or claimed
+     * ('c').
      */
     public static function entryOf(string $id): ?array
     {
@@ -505,48 +510,124 @@ final class Presence
     /**
      * The duel heartbeat, on the duels table. Not shared memory: a claim's
      * integrity window reads duels.last_seen (see Items::matchDeadline), so
-     * this is the one row write a beat inside a 1:1 keeps.
+     * this is the one row write a beat inside a 1vs1 keeps.
+     *
+     * $private is the player's "make duels private" setting: the duel is
+     * real and counts everywhere, but no friend is offered a spectate link
+     * for it (see spectateEndsAt).
      */
-    public static function touchDuel(string $id, string $peer): void
+    public static function touchDuel(string $id, string $peer, bool $private = false): void
     {
         [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
         $now = time();
         // Both peers of every duel write this on every heartbeat, so it is
         // the most contended write there is. Re-running it is exact:
-        // last_seen is set, not accumulated.
-        $started = Db::retry(static function () use ($a, $b, $now): bool {
-            $st = Db::get()->prepare(
+        // last_seen is set, not accumulated, and nothing is read back.
+        Db::retry(static function () use ($a, $b, $now): void {
+            Db::get()->prepare(
                 'INSERT INTO duels (a, b, started, last_seen) VALUES (?, ?, ?, ?)
-                 ON CONFLICT (a, b) DO UPDATE SET last_seen = excluded.last_seen
-                 RETURNING started = last_seen'
-            );
-            $st->execute([$a, $b, $now, $now]);
-            // A duel starting is visible; the heartbeats keeping it alive
-            // are not.
-            $begun = (int)$st->fetchColumn() === 1;
-            $st->closeCursor();
-            return $begun;
+                 ON CONFLICT (a, b) DO UPDATE SET last_seen = excluded.last_seen'
+            )->execute([$a, $b, $now, $now]);
         });
-        if ($started) {
-            self::flushCounts();
-        }
-        // Playing rides the entry as well, because a friend delta may not
+        // The duel rides the entry as well, because a friend delta may not
         // read the duels table (see FriendFeed). Per player, not per pair:
-        // the row's first insert belongs to whichever peer got there first,
-        // and the other peer's friends have to hear about it too.
+        // the row belongs to the pair, and each peer's friends have to hear
+        // about that peer.
         $e = self::entryOf($id);
         if ($e === null) {
             return;
         }
-        $was = (int)($e['duel'] ?? 0) >= Util::since(FOK_DUEL_WINDOW, $now);
+        $wasLive = (int)($e['duel'] ?? 0) >= Util::since(FOK_DUEL_SEEN_WINDOW, $now);
+        $was = self::spectateEndsAt($e) > Util::nowMs();
         $e['duel'] = $now;
-        if (!$was) {
-            $e['chg'] = Util::nowMs();
+        $e['dpeer'] = $peer;
+        $e['dpriv'] = $private;
+        self::writeSpectate($id, $e, $was);
+        // Somebody entering a duel is what the playing figure counts, so the
+        // edge drops its cache - a private duel included, being counted like
+        // any other. The beats in between leave it alone, which is the whole
+        // point of caching it (see population).
+        if (!$wasLive) {
+            self::flushCounts();
+        }
+    }
+
+    /**
+     * The end of a duel, announced rather than waited out: the client says
+     * so the moment its session tears down, and the friend's WATCH row goes
+     * with it instead of standing until the window lapses.
+     *
+     * Only the SPECTATE OFFER ends here. The duel row keeps its own window
+     * on purpose - a claim legitimately arrives after the last tick, which
+     * is what match_open_max_ms is grace for, so tearing the row down at the
+     * teardown would close the window on the item the match was played for.
+     *
+     * $peer is what the caller thinks it is leaving. An end for somebody
+     * else is a late announcement overtaken by the next duel, and is
+     * dropped: the pairing the entry names is the one that is running.
+     */
+    public static function endDuel(string $id, string $peer): void
+    {
+        $e = self::entryOf($id);
+        if ($e === null || (int)($e['duel'] ?? 0) === 0) {
+            return;
+        }
+        if (($e['dpeer'] ?? null) !== null && $e['dpeer'] !== $peer) {
+            return;
+        }
+        $wasLive = (int)$e['duel'] >= Util::since(FOK_DUEL_SEEN_WINDOW);
+        $was = self::spectateEndsAt($e) > Util::nowMs();
+        $e['duel'] = 0;
+        $e['dpeer'] = null;
+        $e['dpriv'] = false;
+        self::writeSpectate($id, $e, $was);
+        if ($wasLive) {
+            self::flushCounts();
+        }
+    }
+
+    /**
+     * Stores an entry whose spectate offer just moved, and announces it when
+     * what a FRIEND can see changed - which is the offer, not the duel. A
+     * private duel therefore starts and ends in silence, and toggling the
+     * setting mid-match is an ordinary transition rather than a case of its
+     * own: all three ask the same question of the entry before and after.
+     */
+    private static function writeSpectate(string $id, array $e, bool $was): void
+    {
+        $nowMs = Util::nowMs();
+        $is = self::spectateEndsAt($e) > $nowMs;
+        if ($was !== $is) {
+            $e['chg'] = $nowMs;
         }
         self::store($id, $e);
-        if (!$was) {
-            FriendFeed::bump($id, (int)$e['chg']);
+        // After the store, never before it: what the announcement wakes is a
+        // poll that reads this entry.
+        if ($was !== $is) {
+            FriendFeed::bump($id, $nowMs);
         }
+    }
+
+    /**
+     * The moment this player stops being offered to friends as spectatable,
+     * in ms - 0 when there is nothing to offer. The one place the rule
+     * lives, so the delta, the roster and the counters cannot disagree
+     * about who may be watched.
+     *
+     * Two ways to be absent from it: no duel_with within
+     * FOK_DUEL_SEEN_WINDOW, and a duel the player marked private. A private
+     * duel is still a duel everywhere else - the row, the counters, the
+     * pace tier - it is only never attributed to a person.
+     *
+     * @param array $e a presence entry
+     */
+    public static function spectateEndsAt(array $e): int
+    {
+        $at = (int)($e['duel'] ?? 0);
+        if ($at <= 0 || !empty($e['dpriv'])) {
+            return 0;
+        }
+        return ($at + FOK_DUEL_SEEN_WINDOW + FOK_BEAT_JITTER) * 1000;
     }
 
     /**
@@ -592,35 +673,34 @@ final class Presence
     }
 
     /**
-     * Which of $ids are in a duel right now - the "is playing" half of the
+     * Which of $ids may be watched right now - the "is playing" half of the
      * friends list, so a tournament host can see who is actually free to
-     * join. Read off the duels table (a duel refreshes it every hello), and
-     * bounded by idx_duels_seen first, so the friend test only ever runs
-     * over the handful of duels currently live rather than over every duel
-     * ever played.
+     * join. Off the ENTRIES, not the duels table: this and the friend delta
+     * are two ways of asking one question, and a client that asked the older
+     * way would otherwise learn about a private duel the delta hides (see
+     * spectateEndsAt). It costs one bulk fetch and no database read at all.
      *
      * @param list<string> $ids
-     * @return list<string> the subset of $ids that is playing
+     * @return list<string> the subset of $ids that is spectatable
      */
     public static function playingOf(array $ids): array
     {
         if ($ids === []) {
             return [];
         }
-        $st = Db::get()->prepare('SELECT a, b FROM duels WHERE last_seen >= ?');
-        $st->execute([Util::since(FOK_DUEL_WINDOW)]);
-        $busy = [];
-        foreach ($st->fetchAll() as $row) {
-            $busy[(string)$row['a']] = true;
-            $busy[(string)$row['b']] = true;
-        }
-        return array_values(array_filter($ids, static fn(string $i): bool => isset($busy[$i])));
+        $now = Util::nowMs();
+        $entries = self::entriesOf($ids);
+        return array_values(array_filter(
+            $ids,
+            static fn(string $i): bool => isset($entries[$i])
+                && self::spectateEndsAt($entries[$i]) > $now
+        ));
     }
 
     /**
      * Everyone here, newest beat first, for the Connections card - with a
      * short tail so one that just dropped stays visible (gone=true) for
-     * FOK_DUEL_LINGER seconds. Clients in a 1:1 are listed here too;
+     * FOK_DUEL_LINGER seconds. Clients in a 1vs1 are listed here too;
      * presence is the full picture, and the Duels card breaks out those
      * in a duel phase (see ConnTrack::listDuels).
      * @return list<array{id: string, name: ?string, ip: string, latency: ?int, last_seen: int, gone: bool}>
@@ -688,7 +768,7 @@ final class Presence
     }
 
     /**
-     * Peer-net hint: at the moment a 1:1 pairing is confirmed (an accepted
+     * Peer-net hint: at the moment a 1vs1 pairing is confirmed (an accepted
      * invite, a fresh quick match) and BEFORE the P2P handshake, tell each
      * side the other's server-observed IP plus its own, so that two peers on
      * the same address family can try a direct connection first (see the
@@ -795,9 +875,11 @@ final class Presence
      * not happen. Nobody needs an exact count (online is a 120 s window).
      * The recompute is unlocked: racing requests write the same numbers.
      *
-     * Online and the family split are one pass over the entries; registered
-     * is the one count still taken from a table, and playing from the duels
-     * that refreshed within their window.
+     * Online, the family split and playing are one pass over the entries;
+     * registered is the one count still taken from a table. Playing counts
+     * PRIVATE duels too - hiding one from a friend's roster is not a reason
+     * to under-report how busy the server is - so it asks the entry for its
+     * duel stamp rather than for the spectate offer built on it.
      */
     private static function population(): array
     {
@@ -811,13 +893,18 @@ final class Presence
         // do (see docs/API.md, Friend presence on the poll).
         $db = Db::get();
         $cut = Util::since(FOK_ONLINE_WINDOW, $now);
+        $duelCut = Util::since(FOK_DUEL_SEEN_WINDOW, $now);
         $online = 0;
         $online6 = 0;
+        $playing = 0;
         foreach (self::all() as $e) {
             if ((int)$e['seen'] < $cut) {
                 continue;
             }
             $online++;
+            if ((int)($e['duel'] ?? 0) >= $duelCut) {
+                $playing++;
+            }
             // A colon is what tells the families apart, bar the v4-mapped
             // form, which is a v4 client.
             $ip = (string)$e['ip'];
@@ -826,13 +913,9 @@ final class Presence
             }
         }
         $registered = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
-        $duels = $db->prepare('SELECT COUNT(*) FROM duels WHERE last_seen >= ?');
-        $duels->execute([Util::since(FOK_DUEL_WINDOW, $now)]);
-        $duelsN = (int)$duels->fetchColumn();
-        $duels->closeCursor();
         $out = [
             'online' => $online,
-            'playing' => 2 * $duelsN,
+            'playing' => $playing,
             'registered' => $registered,
             'online_v6' => $online6,
         ];

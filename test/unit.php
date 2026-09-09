@@ -1489,6 +1489,49 @@ $st->closeCursor();
 ok((int)$thawed['frozen'] === 0 && (int)$thawed['frozen_at'] === 0 && $thawed['frozen_why'] === '',
     'the verdict is cleared along with the freeze it explained');
 ok(!Items::resolve($u4, 'aa11aa11'), 'an instance back in play cannot be resolved again');
+
+// A verdict is an EVENT, and the finding log is what survives the instance it
+// was found on: the resolve above cleared frozen_why, and dropping an instance
+// removes the row outright, so neither can be the record of what happened.
+$found = Items::disputesOf('bb22bb22');
+ok(count($found) === 2, 'each verdict is recorded against the player it was reached on');
+ok($found[0]['why'] === 'tag_invalid' && $found[0]['uid'] === $u4
+    && $found[0]['mid'] === $m4['mid'] && $found[0]['tick'] === 21,
+    'naming the verdict, the instance and the claim it was reached on');
+ok($found[0]['state'] === 'released',
+    'and it outlives the resolve, which is what the instance can no longer say');
+ok(Items::disputesOf('aa11aa11') === [],
+    'the player who did not make the claim has none');
+
+// Reviewing is an operator saying "I have read this", never a verdict undone:
+// it takes the player off the queue and moves no item and no tally.
+$queued = static fn(string $id): bool => in_array(
+    $id, array_column(AdminData::items()['disputed'], 'id'), true
+);
+ok($queued('bb22bb22'), 'an unreviewed finding puts the player on the review queue');
+$tallyBefore = $tally('bb22bb22');
+ok(Items::reviewDisputes('bb22bb22'), 'the operator marks them reviewed');
+ok(!$queued('bb22bb22'), 'which takes the player off the queue');
+ok($tally('bb22bb22') == $tallyBefore,
+    'while the tally itself never moves - it is the forensic record');
+ok(Items::disputesOf('bb22bb22')[0]['seen'] === true, 'and every finding is marked read');
+ok(!Items::reviewDisputes('bb22bb22'), 'a second review has nothing left to do');
+
+$d = AdminData::disputes('bb22bb22');
+ok($d !== null && $d['disputed'] === 2 && $d['reviewed'] === 2 && $d['logged'] === 2,
+    'the popup reads the tallies and the findings that account for them');
+ok(AdminData::disputes('ff00ff00') === null, 'and an unknown player has no popup at all');
+
+// A finding raised before the log existed leaves only its count, and the gap
+// is reported rather than shown as an empty list that reads like a bug.
+Db::get()->prepare('UPDATE players SET claims_disputed = claims_disputed + 1 WHERE id = ?')
+    ->execute(['bb22bb22']);
+$d = AdminData::disputes('bb22bb22');
+ok($d['disputed'] === 3 && $d['logged'] === 2,
+    'a dispute with no finding behind it is visible as the difference');
+ok($queued('bb22bb22'), 'and it puts the player back on the queue');
+ok(Items::reviewDisputes('bb22bb22') && !$queued('bb22bb22'),
+    'which the review clears too, having nothing else to go on');
 $st = $idb->prepare("SELECT from_id, to_id FROM ledger WHERE uid = ? AND kind = 'resolve'");
 $st->execute([$u4]);
 $verdicts = $st->fetchAll();
@@ -2281,7 +2324,7 @@ $totals = Stats::all();
 ok(($totals['tourney_created'] ?? 0) > 0, 'every created tournament is counted');
 ok(($totals['tourney_finished'] ?? 0) > 0, 'and so is every one that played out');
 ok(($totals['tourney_matches'] ?? 0) > 0, 'with the matches it actually played');
-ok(($totals['duel_started'] ?? 0) > 0, 'a 1:1 is counted where play begins');
+ok(($totals['duel_started'] ?? 0) > 0, 'a 1vs1 is counted where play begins');
 // A tournament lock is released by the worker that took it and by nobody
 // else: the lease is short so a dead worker frees the tournament, which
 // means it can also expire under a live one - and the next holder must not
@@ -2489,6 +2532,35 @@ ok(isset($rep['starts']) && isset($rep['matches']),
     'the card accounts for every table the sweep touches');
 ok($hk['db_size'] > 0, 'alongside the size of the file it is all in');
 
+// A COMMIT names its transaction and what it wrote, because every contended
+// path ends in one and the bare word says nothing about which was slow. The
+// caller comes off the stack, so this probe has to BE a class - a frame with
+// no class is the script's top level and is skipped.
+final class LoadTxProbe
+{
+    /** Brackets a real write the way a transaction does, at a nameable cost. */
+    public static function run(): void
+    {
+        Load::noteTime('BEGIN IMMEDIATE', 2000);
+        Db::retry(static function (): void {
+            Db::get()->prepare(
+                "INSERT INTO counters (bucket, metric, value) VALUES ('meta', 'txprobe', 1)
+                 ON CONFLICT (bucket, metric) DO UPDATE SET value = counters.value + 1"
+            )->execute();
+        });
+        Load::noteTime('COMMIT', 3000);
+    }
+}
+apcu_delete(new APCUIterator('/^' . preg_quote(FOK_APCU_NS . 'ct:worst:', '/') . '/'));
+Load::flush();
+LoadTxProbe::run();
+Load::flush();
+$txq = Counters::worstList('db_us')[0]['q'] ?? '';
+ok(str_starts_with($txq, 'COMMIT LoadTxProbe::run'),
+    'a COMMIT is named by the transaction that opened it, not by the plumbing');
+ok(preg_match('/ (\d+)p$/', $txq, $m) === 1 && (int)$m[1] >= 1,
+    'and carries the pages it appended to the write-ahead log');
+
 // Counters: the worst-case list the queue gauge shows under its graphs. It
 // keeps the worst of a window rather than the last of it, and ignores
 // anything too small to diagnose - without that floor an idle server would
@@ -2526,6 +2598,7 @@ function ffEntry(string $id, array $over = []): void
         'seen' => time(), 'start' => time(), 'ip' => '9.9.9.9', 'lat' => 20,
         'name' => 'srv-CI-' . $id, 'accept' => 0, 'dbg' => false,
         'wish' => false, 'nets' => [], 'chg' => 1, 'duel' => 0,
+        'dpeer' => null, 'dpriv' => false,
     ], 86400);
 }
 
@@ -2590,11 +2663,68 @@ Presence::touchDuel($f2, 'ff440004');
 ok(!isset(FriendFeed::delta($me, $d['at'])['rows'][$f2]),
     'the beats that keep the duel alive are not');
 
+// The end of a duel is ANNOUNCED, not waited out: the client says so when
+// the session tears down and the friend's row moves with it.
+ffEntry($f2, ['duel' => time(), 'dpeer' => 'ff440004']);
+$cur = Util::nowMs() - 1;
+Presence::endDuel($f2, 'ff440004');
+$d = FriendFeed::delta($me, $cur);
+ok(($d['rows'][$f2]['playing'] ?? null) === false, 'an announced end is a transition too');
+ok(($d['rows'][$f2]['online'] ?? null) === true, 'and leaves the player online');
+
+// A late end, overtaken by the next pairing, names a peer the player is no
+// longer playing - and must not cancel the duel that replaced it.
+ffEntry($f2, ['duel' => time(), 'dpeer' => 'ff770007']);
+Presence::endDuel($f2, 'ff440004');
+ok((FriendFeed::delta($me, 0)['rows'][$f2]['playing'] ?? null) === true,
+    'an end naming a peer the player already left is ignored');
+Presence::endDuel($f2, 'ff770007');
+ok((FriendFeed::delta($me, 0)['rows'][$f2]['playing'] ?? null) === false,
+    'while the end naming the current peer lands');
+
+// A PRIVATE duel is counted and never attributed: the player is playing,
+// and no friend is offered a spectate link for it.
+ffEntry($f1);
+ffEntry($f2);
+$cur = Util::nowMs() - 1;
+Presence::touchDuel($f2, 'ff440004', true);
+ok((FriendFeed::delta($me, 0)['rows'][$f2]['playing'] ?? null) === false,
+    'a private duel never reads as playing to a friend');
+ok(FriendFeed::delta($me, $cur)['rows'] === [],
+    'and entering one announces nothing, so no held poll wakes for it');
+ok(Presence::playingOf([$f2]) === [],
+    'the older friends_playing answer hides it too, so neither way leaks it');
+ok((int)(apcu_fetch(FOK_APCU_NS . 'p:' . $f2)['duel'] ?? 0) > 0,
+    'the duel itself is recorded exactly as a public one is');
+
+// Turning privacy on mid-match is an ordinary transition, in both
+// directions: the question asked is what a FRIEND can see, not what changed.
+ffEntry($f2, ['duel' => time(), 'dpeer' => 'ff440004']);
+$cur = Util::nowMs() - 1;
+Presence::touchDuel($f2, 'ff440004', true);
+ok((FriendFeed::delta($me, $cur)['rows'][$f2]['playing'] ?? null) === false,
+    'a public duel going private is announced as leaving');
+$cur = Util::nowMs() - 1;
+Presence::touchDuel($f2, 'ff440004', false);
+ok((FriendFeed::delta($me, $cur)['rows'][$f2]['playing'] ?? null) === true,
+    'and going public again is announced as entering');
+
+// The spectate offer expires on its OWN window, shorter than the duel's:
+// a client that crashed stops being offered well before it reads offline.
+ok(FOK_DUEL_SEEN_WINDOW < FOK_ONLINE_WINDOW,
+    'the spectate window is inside the online window, or a crash is invisible');
+ffEntry($f2, ['duel' => time() - FOK_DUEL_SEEN_WINDOW - 30]);
+$d = FriendFeed::delta($me, 0);
+ok(($d['rows'][$f2]['playing'] ?? null) === false,
+    'a duel nobody refreshed stops being offered');
+ok(($d['rows'][$f2]['online'] ?? null) === true,
+    'while the player is still inside the online window');
+
 // Derived, not pushed: going offline and leaving a duel are the absence of a
 // beat, so they are read off the windows against an older cursor.
 $old = Util::nowMs() - 60000;
 ffEntry($f1, ['seen' => time() - FOK_ONLINE_WINDOW - 30]);
-ffEntry($f2, ['duel' => time() - FOK_DUEL_WINDOW - 30]);
+ffEntry($f2, ['duel' => time() - FOK_DUEL_SEEN_WINDOW - 30]);
 $d = FriendFeed::delta($me, $old);
 ok(($d['rows'][$f1]['online'] ?? null) === false, 'a friend who stopped beating reads offline');
 ok($d['rows'][$f1]['latency'] === null, 'and reports no latency, being nowhere');

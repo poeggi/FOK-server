@@ -106,6 +106,7 @@ const AUDIT = [
     'debug_delete' => 'deleted debug datasets',
     'delete_score' => 'deleted score',
     'alerts_seen' => 'marked the alerts seen',
+    'disputes_review' => 'marked the item disputes reviewed of',
     'caps_refresh' => 're-assessed the host capabilities',
     'log_clear' => 'cleared the server log',
     'clear_stats' => 'cleared the traffic statistics',
@@ -327,6 +328,37 @@ switch ($action) {
             Util::fail('unknown item', 404);
         }
         Util::jsonOut(['ok' => true] + $item);
+
+    case 'disputes':
+        // Every tampering verdict recorded against one player, for the popup
+        // the review queue opens. Read-only; both ways of acting on one are
+        // separate cases (item_resolve for an instance still frozen,
+        // disputes_review for the review itself).
+        $pid = (string)($_GET['id'] ?? '');
+        if (!Util::isValidId($pid)) {
+            Util::fail('invalid id');
+        }
+        $d = AdminData::disputes($pid);
+        if ($d === null) {
+            Util::fail('unknown player', 404);
+        }
+        Util::jsonOut(['ok' => true] + $d);
+
+    case 'disputes_review':
+        // The operator has read this player's findings: take them off the
+        // queue. It does NOT undo a verdict or move an item - the tally is
+        // the forensic record and never moves backwards, and an instance
+        // still frozen is released through item_resolve, deliberately as a
+        // second decision.
+        requirePost();
+        $pid = (string)($_POST['id'] ?? '');
+        if (!Util::isValidId($pid)) {
+            Util::fail('invalid id');
+        }
+        if (!Items::reviewDisputes($pid)) {
+            Util::fail('nothing to review', 409);
+        }
+        Util::jsonOut(['ok' => true]);
 
     case 'item_resolve':
         // The operator's verdict on a frozen instance: hand it to a player, or

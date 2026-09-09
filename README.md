@@ -43,7 +43,7 @@ additive.
 - Global highscores: top 100 list. Submissions carry the deterministic
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
   be sanity-checked by re-simulation to prevent spoofing (validated flag).
-- 1:1 matchmaking hub: friends invite each other (gated by an accepted
+- 1vs1 matchmaking hub: friends invite each other (gated by an accepted
   friendship) or quick-match with anyone waiting; the server relays
   matchmaking and WebRTC signaling (SDP/ICE) through a store-and-forward
   mailbox and issues the shared level-start time. A connection attempt
@@ -83,7 +83,7 @@ additive.
   addresses the client reports about itself (hello "nets"), which rank
   below what the server saw for itself. The code remains the capability
   and the way in from anywhere else.
-- Connection tracking: per-client state of the current 1:1 connection -
+- Connection tracking: per-client state of the current 1vs1 connection -
   idle, inviting, invited, connecting or playing, with the peer and
   whether the pair runs p2p or relayed. Inferred from traffic the server
   relays anyway (invite handshake, ICE exchange, duel heartbeat, relay
@@ -92,8 +92,10 @@ additive.
 - Admin interface at /admin/: a one-screen dashboard - game statistics,
   players (registered users, top-100 management), connection state of
   every online client, matches, item registry (frozen instances, each
-  opened to be assigned or dropped, players by disputed-claim count,
-  recent ledger entries and an on-demand chain verify), server
+  opened to be assigned or dropped, a review queue of players with
+  unreviewed tampering verdicts, each opened to read the findings behind
+  the count and mark them reviewed, recent ledger entries and an
+  on-demand chain verify), server
   performance and diagnostics - live gauges including what requests
   waited for a free PHP worker, what the database costs in waiting for
   the single writer and in running the statement, what each script costs
@@ -146,9 +148,10 @@ additive.
                       friend transition
         friend.php    friendship handshake: request/accept/remove/list
         match.php     quick-match queue (pair with anyone waiting)
-        start.php     server-issued absolute start PTS per pair, for every
-                      halt of the run (first/level/respawn/resume/rematch);
-                      also hands each peer the match id + its own secret
+        start.php     server-issued absolute start PTS per pair, where play
+                      BEGINS (first/rematch; the in-run halts are settled
+                      P2P); also hands each peer the match id + its own
+                      secret, and is where a duel is announced
         items.php     item registry: list/mint/seed/claim - server-owned
                       item ownership, transfers attested by both peers
         relay.php     in-duel message relay (P2P fallback), long-polled
@@ -413,21 +416,25 @@ host-level. If this outgrows shared hosting, fix workers first.
 ## API sketch
 
     GET  /api/version.php
-      -> {"ok":true,"server":"<x.y.z>","api":"4.2","env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":"4.7","env":"live"}
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
     GET  /api/time.php
       -> {"ok":true,"t":<server ms>}   fallback clock source
     POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
+                          "duel_private":bool?, "duel_end":"deadbeef"?,
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,
-                          "friends":[...]?, "tourneys":bool?, "nets":[ip,...]?}
-      -> {"ok":true,"api":"4.2","now":ms,"debug":bool,"online":n,"playing":n,
+                          "friends":[...]?, "friends_since":ms?,
+                          "tourneys":bool?, "nets":[ip,...]?}
+      -> {"ok":true,"api":"4.7","now":ms,"debug":bool,"online":n,"playing":n,
           "registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_online":{...}?, "friends_latency":{...}?,
-          "friends_name":{...}?, "tourneys":[...]?}
+          "friends_name":{...}?, "friends_delta":{...}?, "tourneys":[...]?}
          (friends_* only real for accepted friends; tourneys lists the open
-          lobbies hosted on one of the caller's own networks)
+          lobbies hosted on one of the caller's own networks. duel_with sets
+          the duel and duel_end clears it - see docs/API.md, Announcing a
+          duel - and a duel_private one is counted but never attributed)
     GET  /api/net.php
       -> {"ok":true,"ip":"...","family":4|6|0,"net":"..."}
          (what network the server sees YOU on - open it on two devices to
@@ -446,7 +453,7 @@ host-level. If this outgrows shared hosting, fix workers first.
        | {"ok":true,"matched":"...","role":"...","peer_name":"..."}
     POST /api/start.php  {"id":"cafe0001","peer":"deadbeef","epoch":n,
                           "reason":"first|level|respawn|resume|rematch",
-                          "pts":ms}
+                          "pts":ms, "duel_private":bool?}
       -> {"ok":true,"start_pts":ms,"epoch":n,"now":ms,
           "q_ms":ms,"resync":bool,
           "mid":"<32-hex>","secret":"<32-hex>"}
@@ -454,8 +461,12 @@ host-level. If this outgrows shared hosting, fix workers first.
          does not depend on when either asks. 409 if the caller is behind,
          400 if its pts is missing or in the future; a stale pts is
          refused only for a start that begins play (first/rematch).
-         mid + secret (4.0, additive) are the pair's match id and the
-         CALLER'S OWN attestation secret, for item claims below; one match
+         Both peers calling it is also what ANNOUNCES the duel, so a
+         friend is offered the feed from the moment play begins rather
+         than from the next heartbeat; duel_private keeps it counted but
+         unattributed. mid + secret (4.0, additive) are the pair's match
+         id and the CALLER'S OWN attestation secret, for item claims
+         below; one match
          spans the whole duel and each side gets only its own secret.
          q_ms + resync (4.4, additive) are this request's own queue wait
          and the pair clock cross-check: both peers prove their clock

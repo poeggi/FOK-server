@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.5.3';
+const FOK_SERVER_VERSION = '1.6.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -120,7 +120,7 @@ const FOK_SERVER_VERSION = '1.5.3';
 // already requires an absent one to be treated as the client's own default -
 // which for the beat IS the contract's constant, and for a jitter budget is
 // no jitter. A client that read them keeps working exactly as before.
-const FOK_API_VERSION = '4.6';
+const FOK_API_VERSION = '4.7';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
@@ -179,8 +179,20 @@ const FOK_AUTO_ACCEPT_WINDOW = 120;
 const FOK_COUNTS_TTL = 5;
 // A duel counts as running while either peer refreshed it within this
 // window; the refresh is duel_with on the heartbeat, so it is the online
-// window.
+// window. This is the INTEGRITY clock: an item claim's window is measured
+// from the duel row it stamps (see Items::matchDeadline), so shortening it
+// shortens what an honest player gets after a real match ends.
 const FOK_DUEL_WINDOW = 120;
+// How long the SPECTATE OFFER outlives the last duel_with, on the presence
+// entry rather than the duel row (see Presence::touchDuel). A separate,
+// shorter clock on purpose: a friend is offered a WATCH row off this, and a
+// spectate link to a match that is over dies on "no feeder", so the answer
+// must go stale sooner than the duel does. One and a half beats - the client
+// stops polling inside a duel, so the 60 s hello is the only refresh, and
+// this is the smallest window a timely beat never falls outside of. Being
+// wrong here is cosmetic and the next beat repairs it; being wrong on the
+// window above costs somebody an item.
+const FOK_DUEL_SEEN_WINDOW = 90;
 // A tracked connection state (see ConnTrack) goes stale after this long
 // without a signaling or duel event: the client reads as idle again. The
 // duel event is the heartbeat, so this is the online window too.

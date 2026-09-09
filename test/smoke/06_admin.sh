@@ -181,6 +181,36 @@ else
     R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=items_verify")
     expect "the chain still verifies over both verdicts" '"verify":{"ok":true' "$R"
 
+    # The findings behind the tally. Both instances above have just left the
+    # frozen state - U4 handed to a player, U5 dropped - so this is also the
+    # proof that a finding outlives what it was found on.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=$ID2")
+    expect "a player's findings read back" '"why":"tag_invalid"' "$R"
+    expect "naming the instance the verdict was reached on" "\"uid\":\"$U4\"" "$R"
+    expect "and it survives the instance being released" '"state":"released"' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=$ID1")
+    expect "the other verdict is recorded against the other player" '"why":"contradiction"' "$R"
+    expect "and survives the instance being dropped entirely" '"state":"gone"' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=nothex")
+    expect "a malformed id is rejected" '"error":"invalid id"' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=00000000")
+    expect "a player the server never saw is a 404" '"error":"unknown player"' "$R"
+
+    # Reviewing is the operator saying it has been read: it clears the queue
+    # and moves nothing else.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes_review&id=$ID2")
+    expect "reviewing via GET rejected" '"error":"POST only"' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST -d "id=$ID2" "$BASE/admin/api.php?action=disputes_review")
+    expect "an operator marks a player's findings reviewed" '"ok":true' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=$ID2")
+    expect "the tally itself never moves backwards" "$(strict '"disputed":1')" "$R"
+    expect "only the reviewed mark catches up to it" "$(strict '"reviewed":1')" "$R"
+    R=$(curl -s -b "$COOKIES" -X POST -d "id=$ID2" "$BASE/admin/api.php?action=disputes_review")
+    expect "a second review has nothing left to do" '"error":"nothing to review"' "$R"
+    curl -s -b "$COOKIES" -X POST -d "id=$ID1" "$BASE/admin/api.php?action=disputes_review" > /dev/null
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=items")
+    expect "and a reviewed queue is an empty one" "$(strict '"disputed":[]')" "$R"
+
     # Connection tracker: the admin sees the state the signaling implies.
     # These types need no friendship, so they work after the unfriend above.
     curl -s -X POST -H 'Content-Type: application/json' \
@@ -264,7 +294,7 @@ else
     expect "client details returned" '"client":' "$R"
     expect "client details name the client" "$(strict "\"id\":\"$ID1\"")" "$R"
     expect "client details include presence" '"last_seen":' "$R"
-    expect "client details include the 1:1 state" '"duel":' "$R"
+    expect "client details include the 1vs1 state" '"duel":' "$R"
     expect "client details include the mailbox" '"mailbox":' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=client&id=nothex")
     expect "client details reject a malformed id" '"error":"invalid id"' "$R"

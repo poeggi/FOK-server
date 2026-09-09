@@ -8,7 +8,7 @@ require_once __DIR__ . '/Matchmaking.php';
 require_once __DIR__ . '/Relay.php';
 
 /**
- * Per-client state of the current 1:1 connection, one entry per player.
+ * Per-client state of the current 1vs1 connection, one entry per player.
  * Inferred from traffic the server relays anyway (signal handshake, duel
  * heartbeat, relay messages), so clients report nothing for it.
  *
@@ -90,7 +90,7 @@ final class ConnTrack
         self::set($to, $from, $theirs, $mode);
     }
 
-    /** The duel heartbeat: the 1:1 game is running. Keeps the pair's mode. */
+    /** The duel heartbeat: the 1vs1 game is running. Keeps the pair's mode. */
     public static function playing(string $a, string $b): void
     {
         self::set($a, $b, 'playing', null);
@@ -220,7 +220,7 @@ final class ConnTrack
     }
 
     /**
-     * The 1:1 Duels card: one row per client in a duel phase - inferred
+     * The 1vs1 Duels card: one row per client in a duel phase - inferred
      * from the entry the signal handshake, duel heartbeat and relay write
      * leave - plus quick-match seekers with no peer yet. A live phase shows
      * while the entry is fresh (FOK_CONN_TTL); a clean bye or decline leaves

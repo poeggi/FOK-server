@@ -220,7 +220,7 @@ const STATE_LABEL = {
     inviting: 'inviting',
     invited: 'invited by',
     connecting: 'connecting',
-    playing: 'playing 1:1',
+    playing: 'playing 1vs1',
     declined: 'declined',
     ended: 'ended',
 };
@@ -271,6 +271,18 @@ function uidCell(uid) {
     return td;
 }
 
+// A player's dispute tally, clickable: opens the findings behind the number.
+// What uidCell is for a thing, this is for a count - the tally alone says a
+// verdict happened and nothing about which.
+function disputeCell(id, n) {
+    const td = el('td', 'muted');
+    const s = el('span', 'id-link', String(n));
+    s.title = 'What was found';
+    s.onclick = () => showDisputes(id);
+    td.append(s);
+    return td;
+}
+
 // A ledger party is an 8-hex player id (clickable) or empty / a digest.
 function partyCell(v, name) {
     if (typeof v === 'string' && v.length === 8) return idCell(v, name);
@@ -293,7 +305,7 @@ function ipCell(ip) {
 }
 
 // One condensed popup with everything known about a client: identity,
-// presence, its 1:1 / connection state, relay counters, matchmaking,
+// presence, its 1vs1 / connection state, relay counters, matchmaking,
 // friendships, scores and mailbox. Opened by clicking any id.
 // Popup-local auto-refresh cadence (seconds), shared by every details
 // popup; not a server setting. 0 = off.
@@ -450,7 +462,7 @@ function renderClientBody(body, overlay, d, reload) {
     kv('Latency', c.latency === null ? '-' : c.latency + ' ms');
     kv('Debug', debugLabel(c));
 
-    sec('1:1 / connection');
+    sec('1vs1 / connection');
     if (c.duel) {
         kv('State', STATE_LABEL[c.duel.state] || c.duel.state);
         kvId('Peer', c.duel.peer);
@@ -866,6 +878,12 @@ function worstQueue(rows) {
 // writer, so its whole duration is the wait. TOOK is a statement doing its
 // own work. Never both: SQLite does not report the two apart inside one
 // ordinary statement (see Load::noteTime).
+//
+// A COMMIT row names the transaction that opened it and how many pages it
+// appended to the write-ahead log: every contended path ends in a COMMIT, so
+// the bare word says nothing about which one was slow. 'ckpt' in place of a
+// page count means the log shrank - that commit crossed wal_autocheckpoint
+// and paid for the checkpoint (see Load::txLabel).
 function worstDb(rows, skipped) {
     const box = el('div');
     box.append(el('div', 'subhead', 'Slowest accesses, last 24 h'));
@@ -1362,6 +1380,109 @@ function whyCell(why) {
     return td;
 }
 
+// Every tampering verdict recorded against one player, and the one act this
+// popup owns: marking them reviewed. It deliberately does NOT release
+// anything - an instance still frozen is resolved in its own popup, one
+// click away through the uid, because letting a review sweep instances out
+// of the frozen state would make "I have read this" and "here is my verdict"
+// the same button.
+async function showDisputes(id) {
+    const { overlay, modal, head, title, name, body, close } = makeModal(id);
+    modal.classList.add('wide');
+    title.append(el('span', 'modal-id', id));
+
+    body._sid = 'disputes';
+    const refresh = el('button', 'small refresh', 'refresh');
+    const load = async () => {
+        flash(refresh);
+        try {
+            const d = await api('disputes&id=' + id);
+            name.textContent = d.name || '(no name)';
+            renderDisputesBody(body, overlay, id, d);
+            restoreScroll(body);
+        } catch (e) {
+            body.replaceChildren(el('p', 'error', 'Error: ' + e.message));
+        }
+    };
+    refresh.onclick = load;
+    head.append(title, refresh, close);
+    body.append(el('p', 'muted', 'Loading ...'));
+    document.body.append(overlay);
+    await load();
+}
+
+// The tallies first, then the findings, then the review button. A verdict
+// older than the finding log left nothing but its count, and that gap is
+// stated rather than shown as an empty table.
+function renderDisputesBody(body, overlay, id, d) {
+    body.replaceChildren();
+
+    const tbl = el('table', 'kv');
+    const kv = (k, v) => { const r = el('tr'); r.append(el('td', 'kv-k', k), el('td', 'kv-v', v)); tbl.append(r); };
+    kv('Claims settled with a peer tag', String(d.ok));
+    kv('Settled unwitnessed', String(d.untagged));
+    kv('Disputes', String(d.disputed) + ' (' + d.reviewed + ' reviewed)');
+    body.append(tbl);
+
+    body.append(el('p', 'muted', 'Unwitnessed is not a suspicion: it only means no valid '
+        + 'peer tag rode the claim, which is what happens when the peer had already left '
+        + 'or the claim aged past its grace. Only the disputes are verdicts.'));
+
+    body.append(el('h3', 'subhead', 'Findings'));
+    if (!d.disputes.length) {
+        body.append(el('p', 'muted', 'Nothing logged. Findings have been recorded per '
+            + 'instance since schema 42; an older one left only the count above, and the '
+            + 'alert it raised at the time if that has not been pruned.'));
+    } else {
+        if (d.logged < d.disputed) {
+            body.append(el('p', 'muted', (d.disputed - d.logged) + ' of these predate the '
+                + 'finding log and have no entry below.'));
+        }
+        const t = el('table');
+        t.append(row(['When', 'Verdict', 'Item', 'Match', 'Tick', 'Instance'], 'th'));
+        for (const f of d.disputes) {
+            const r = el('tr');
+            r.append(el('td', 'muted', fmtTime(f.created)), whyCell(f.why), uidCell(f.uid),
+                hexCell(f.mid || '-', 'muted'), el('td', 'muted tight', f.tick || '-'),
+                el('td', f.state === 'frozen' ? 'error' : 'muted', DISPUTE_STATE[f.state]));
+            t.append(r);
+        }
+        body.append(t);
+        body.append(el('p', 'muted', 'Click an item to open the instance, which is where a '
+            + 'frozen one is released or dropped.'));
+    }
+
+    if (d.reviewed >= d.disputed) {
+        body.append(el('p', 'muted', 'All reviewed. Nothing here is on the queue.'));
+        return;
+    }
+    const note = el('p', 'modal-msg', 'Marking these reviewed takes the player off the queue '
+        + 'and changes nothing else: the tally is the forensic record and never moves '
+        + 'backwards, and any instance still frozen stays frozen.');
+    const foot = el('div', 'modal-foot');
+    const go = el('button', 'small', 'mark reviewed');
+    go.onclick = async () => {
+        try {
+            await api('disputes_review', { method: 'POST', body: form({ id: id }) });
+            closeModal(overlay);
+            refreshModule('items');
+        } catch (e) {
+            note.replaceChildren(el('span', 'error', 'Failed: ' + e.message));
+        }
+    };
+    foot.append(go);
+    body.append(note, foot);
+}
+
+// What became of the instance a verdict froze. 'gone' is the operator having
+// dropped it from the registry, which is one of the two answers item_resolve
+// offers - not a missing row.
+const DISPUTE_STATE = {
+    frozen: 'still frozen',
+    released: 'released',
+    gone: 'dropped',
+};
+
 // One instance, and what may be done with it. A freeze is terminal until
 // somebody decides, so this popup IS the deciding: the verdict that took the
 // instance out of play, who was holding it, what the ledger still remembers,
@@ -1583,12 +1704,12 @@ function renderItemStatus(box, d) {
     if (d.disputed.length) {
         view.append(el('h3', 'subhead', 'Disputed claims by player'));
         const t = el('table');
-        t.append(row(['ID', 'Name', 'OK', 'Untagged', 'Disputed'], 'th'));
+        t.append(row(['ID', 'Name', 'OK', 'Untagged', 'Disputed', 'Unreviewed'], 'th'));
         for (const p of d.disputed) {
             const r = el('tr');
             r.append(idCell(p.id), el('td', '', p.name === null ? '-' : p.name),
                 el('td', 'muted', p.ok), el('td', 'muted', p.untagged),
-                el('td', 'error', p.disputed));
+                disputeCell(p.id, p.disputed), el('td', 'error', p.open));
             t.append(r);
         }
         view.append(t);
@@ -1596,10 +1717,11 @@ function renderItemStatus(box, d) {
     }
 
     if (!d.frozen.length && !d.disputed.length) {
-        view.append(el('p', 'muted', 'Nothing frozen, no disputed claims.'));
+        view.append(el('p', 'muted', 'Nothing frozen, nothing left to review.'));
     }
     view.append(el('p', 'muted', 'A frozen item is a claim the ladder judged as '
-        + 'tampering. Match secrets not shown.'));
+        + 'tampering. This list is what has not been reviewed yet - click a '
+        + 'count to read the findings behind it. Match secrets not shown.'));
     box.append(view);
 }
 
@@ -1746,7 +1868,7 @@ const MODULES = [
                 { label: 'Users online', value: d.counts.online },
                 { label: 'Online v4 | v6', value: d.families.v4 + ' | ' + d.families.v6,
                     tip: 'Online clients by the address family their last request came in over.' },
-                { label: 'Playing 1:1', value: d.counts.playing },
+                { label: 'Playing 1vs1', value: d.counts.playing },
                 { label: 'Tournaments', value: d.tourneys },
                 { label: 'Users registered', value: d.counts.registered },
                 // A game reading, not a server one: it says how many duels
@@ -1819,8 +1941,8 @@ const MODULES = [
         async refresh(box) {
             const d = await api('duels');
             box.replaceChildren();
-            box.append(el('h3', 'subhead', '1:1 duels'));
-            if (!d.duels.length) box.append(el('p', 'muted', 'No 1:1 activity.'));
+            box.append(el('h3', 'subhead', '1vs1 duels'));
+            if (!d.duels.length) box.append(el('p', 'muted', 'No 1vs1 activity.'));
             else {
                 const table = el('table');
                 table.append(row(['Client', 'Name', 'Peer', 'State', 'Mode', 'Lat', 'Msgs', 'Age'], 'th'));
@@ -1840,7 +1962,7 @@ const MODULES = [
                 }
                 box.append(table);
                 sortable(table, 'duels');
-                box.append(el('p', 'muted', 'Every phase of a 1:1 - matchmaking, invite, connect, play - '
+                box.append(el('p', 'muted', 'Every phase of a 1vs1 - matchmaking, invite, connect, play - '
                     + 'and 10 s after it ends. Msgs: relay messages sent. Click a header to sort.'));
             }
             box.append(el('h3', 'subhead', 'Tournaments'));

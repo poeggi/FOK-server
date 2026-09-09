@@ -101,6 +101,19 @@ The worst list keeps the slowest ACCESS OF EACH REQUEST, not every access
 - naming one costs a shared-memory read and write, and a request issuing
 twenty statements must not pay that twenty times.
 
+A COMMIT row reads `COMMIT <Class::method> <n>p`, because every contended
+path ends in a COMMIT and the bare word cannot say which one was slow. The
+caller is read off the stack at the BEGIN IMMEDIATE (Load::txCaller), which
+skips Db and LoadPDO, so a housekeeping commit names the TASK rather than
+Db::tryWrite and no call site carries a hand-written label. `<n>p` is the
+write-ahead log's growth over the transaction in frames (page + 24 bytes,
+page size never set so it is SQLite's default 4096), measured by two stats
+of the -wal file: exact, not sampled, because SQLite has one writer and the
+transaction held it across the whole span. `ckpt` in place of the count
+means the log SHRANK - the commit crossed wal_autocheckpoint and paid for
+the checkpoint SQLite charges to whichever write crosses the line, which is
+the usual explanation for a lone slow COMMIT on an otherwise flat graph.
+
 `n:db_skip` under the table is the housekeeping declining to queue for the
 writer (Db::tryWrite), not an error. It is the only reading that says
 contention was real rather than theoretical.

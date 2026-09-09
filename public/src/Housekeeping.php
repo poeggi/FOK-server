@@ -57,9 +57,11 @@ final class Housekeeping
         $out = [];
         // One row per PAIR, written once and only stamped afterwards, so
         // the table grows by a row for every pair that ever played and
-        // never shrinks. Everything reading it looks back a minute
-        // (Presence::counts, playingOf) or two (Items::matchDeadline, whose
+        // never shrinks. Only the item registry reads it now, two minutes
+        // back (Items::matchDeadline and the match sweep beside it, whose
         // no-row fallback is the mint stamp - long expired at this age).
+        // What a client is TOLD about a duel comes from the presence entry
+        // instead (see Presence::spectateEndsAt).
         $days = Settings::int('duel_ttl_days');
         if ($days > 0) {
             $st = $db->prepare('DELETE FROM duels WHERE last_seen < ?');

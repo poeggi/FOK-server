@@ -18,7 +18,14 @@ require_once __DIR__ . '/../src/Pace.php';
  *   "id": "8-hex",
  *   "name": "PLAYER",           optional, display name; recorded and shown
  *                               to accepted friends
- *   "duel_with": "8-hex",       optional, while a 1:1 game runs
+ *   "duel_with": "8-hex",       optional, the peer while a 1vs1 runs. It
+ *                               REFRESHES a duel start.php already put on
+ *                               record; it is not what puts it there
+ *   "duel_private": bool,       optional, 4.7: this duel counts but is
+ *                               never attributed to the caller, so no
+ *                               friend is offered a spectate link for it
+ *   "duel_end": "8-hex",        optional, 4.7: the peer the caller has just
+ *                               STOPPED playing, sent at teardown
  *   "latency": int ms,          optional, the client's measured latency
  *                               (mandated regularly, see docs/API.md)
  *   "auto_accept": bool,        optional, true while the QR/add-friend
@@ -109,12 +116,31 @@ if ($nets !== null) {
     Presence::claim($id, $nets);
 }
 
+// The duel a client is in is stated the way online/offline is: an edge in,
+// an edge out, and a window that expires if neither arrives (see
+// Presence::touchDuel). The edge IN is start.php, which both peers call at
+// the moment play begins - what arrives here is the refresh that holds the
+// duel up, and the teardown. The END is applied FIRST, so one hello may
+// carry both and a rematch announced in a single request lands on the new
+// pairing rather than being cancelled by the old one's teardown.
+$duelEnd = $body['duel_end'] ?? null;
+if ($duelEnd !== null) {
+    if (!Util::isValidId($duelEnd)) {
+        Util::fail('invalid duel_end');
+    }
+    Presence::endDuel($id, $duelEnd);
+}
+
 $duelWith = $body['duel_with'] ?? null;
 if ($duelWith !== null) {
     if (!Util::isValidId($duelWith) || $duelWith === $id) {
         Util::fail('invalid duel_with');
     }
-    Presence::touchDuel($id, $duelWith);
+    $duelPrivate = $body['duel_private'] ?? false;
+    if (!is_bool($duelPrivate)) {
+        Util::fail('invalid duel_private');
+    }
+    Presence::touchDuel($id, $duelWith, $duelPrivate);
     ConnTrack::playing($id, $duelWith);
 }
 

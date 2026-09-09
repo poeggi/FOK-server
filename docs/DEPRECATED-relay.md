@@ -67,7 +67,7 @@ means deleting that call (and its `require_once .../Relay.php`), nothing more.
     is a MAJOR API bump - see docs/API.md Versioning.)
 
 - `public/src/ConnTrack.php`  (only residual entry-field touches remain)
-  - This class tracks ALL 1:1 connections (p2p and relay) plus presence, so
+  - This class tracks ALL 1vs1 connections (p2p and relay) plus presence, so
     the file stays. The four relay methods already moved to `Relay.php`, so
     what is left here is only: `relay_seen` in the entry shape and in the
     `stateOf` docblock, `markEnded`'s `relay_seen = 0`, `set`'s carry of the

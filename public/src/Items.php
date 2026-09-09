@@ -404,7 +404,7 @@ final class Items
             if (Ledger::verifyTag($peerSecret, $mid, $tick, $wsDigest, $peerTag)) {
                 $peerConfirmed = true;
             } else {
-                self::freezeDisputed($db, $uid, $id, 'tag_invalid');
+                self::freezeDisputed($db, $uid, $id, 'tag_invalid', $mid, $tick);
                 Alerts::raise('item_tag_invalid', "Invalid attestation tag: uid $uid from player $id");
                 return ['ok' => false, 'code' => 409, 'error' => 'tag invalid'];
             }
@@ -457,7 +457,7 @@ final class Items
         // asserts a DIFFERENT direction. Impossible in an honest game -
         // one simulation moment has one outcome - so it is tampering.
         if (self::contradicted($db, $mid, $uid, $tick, $from, $to)) {
-            self::freezeDisputed($db, $uid, $id, 'contradiction');
+            self::freezeDisputed($db, $uid, $id, 'contradiction', $mid, $tick);
             Alerts::raise('item_contradiction', "Contradictory claims: uid $uid from player $id");
             return ['ok' => false, 'code' => 409, 'error' => 'contradiction'];
         }
@@ -527,11 +527,12 @@ final class Items
             // that is about to write anyway.
             if (self::contradicted($db, $mid, $uid, $tick, $from, $to)) {
                 self::freezeInTx($db, $uid, 'contradiction');
-                // The tally rides the same transaction as the freeze it
-                // records: a verdict and its accounting are one fact, and
-                // taking the writer a second time for one column is a lock the
+                // The tally and the finding ride the same transaction as the
+                // freeze they record: a verdict and its accounting are one
+                // fact, and taking the writer again for them is a lock the
                 // whole database would queue behind.
                 self::bumpClaim($id, 'claims_disputed');
+                self::noteDispute($db, $uid, $id, 'contradiction', $mid, $tick);
                 $db->exec('COMMIT');
                 Alerts::raise('item_contradiction', "Contradictory claims: uid $uid from player $id");
                 return ['ok' => false, 'code' => 409, 'error' => 'contradiction'];
@@ -642,23 +643,31 @@ final class Items
 
     /**
      * The tampering verdict reached OUTSIDE the settling transaction: freeze
-     * the instance and count the dispute against the claimant, in one
-     * transaction. Two writes that describe one finding, so they take the
-     * writer once between them - and a freeze with no tally behind it would
-     * be a finding the admin card cannot show.
+     * the instance, count the dispute against the claimant and record what
+     * was found, in one transaction. Three writes that describe one finding,
+     * so they take the writer once between them - a freeze with no tally
+     * behind it would be a finding the admin card cannot show, and a tally
+     * with no record behind it is a number an operator cannot act on.
      *
      * Re-runnable as a whole: a BUSY rolls the transaction back before the
      * increment, so a retry cannot count the same dispute twice. The alert
      * belongs AFTER the commit - it is a report of what happened, not part
      * of it.
      */
-    private static function freezeDisputed(PDO $db, string $uid, string $id, string $why): void
-    {
-        Db::retry(static function () use ($db, $uid, $id, $why): void {
+    private static function freezeDisputed(
+        PDO $db,
+        string $uid,
+        string $id,
+        string $why,
+        string $mid = '',
+        int $tick = 0
+    ): void {
+        Db::retry(static function () use ($db, $uid, $id, $why, $mid, $tick): void {
             $db->exec('BEGIN IMMEDIATE');
             try {
                 self::freezeInTx($db, $uid, $why);
                 self::bumpClaim($id, 'claims_disputed');
+                self::noteDispute($db, $uid, $id, $why, $mid, $tick);
                 $db->exec('COMMIT');
             } catch (Throwable $e) {
                 if ($db->inTransaction()) {
@@ -721,6 +730,101 @@ final class Items
     // No transaction and no retry of its own: a tally belongs to the write it
     // describes, so every caller either already holds that transaction or
     // wraps this one call in Db::retry.
+    /**
+     * One tampering verdict, written where it outlives what it was found on.
+     * Never called on its own: every caller already holds the transaction
+     * that froze the instance, because the freeze and the record of it must
+     * not be able to exist apart.
+     */
+    private static function noteDispute(
+        PDO $db,
+        string $uid,
+        string $player,
+        string $why,
+        string $mid,
+        int $tick
+    ): void {
+        $db->prepare(
+            'INSERT INTO item_disputes (uid, player, why, mid, tick, created)
+             VALUES (?, ?, ?, ?, ?, ?)'
+        )->execute([$uid, $player, $why, $mid, $tick, time()]);
+    }
+
+    /**
+     * Every finding recorded against one player, newest first, each with the
+     * instance's CURRENT state beside it - an operator reading a verdict
+     * needs to know whether the thing it froze is still frozen, was handed to
+     * somebody, or is gone from the registry entirely.
+     *
+     * A player can have more disputes tallied than there are rows here: a
+     * finding from before the log existed left nothing but the count. The
+     * caller reports that difference rather than hiding it (see AdminData).
+     *
+     * @return list<array{id:int, uid:string, why:string, mid:string,
+     *                    tick:int, created:int, seen:bool, state:string}>
+     */
+    public static function disputesOf(string $player, int $limit = 50): array
+    {
+        $st = Db::get()->prepare(
+            'SELECT d.id, d.uid, d.why, d.mid, d.tick, d.created, d.seen,
+                    i.frozen, i.owner
+               FROM item_disputes d LEFT JOIN items i ON i.uid = d.uid
+              WHERE d.player = ? ORDER BY d.created DESC, d.id DESC LIMIT ?'
+        );
+        $st->execute([$player, $limit]);
+        $out = [];
+        foreach ($st->fetchAll() as $r) {
+            $out[] = [
+                'id' => (int)$r['id'],
+                'uid' => (string)$r['uid'],
+                'why' => (string)$r['why'],
+                'mid' => (string)$r['mid'],
+                'tick' => (int)$r['tick'],
+                'created' => (int)$r['created'],
+                'seen' => (int)$r['seen'] === 1,
+                // The instance's fate, which is what says whether there is
+                // still something to resolve on it.
+                'state' => $r['frozen'] === null ? 'gone'
+                    : ((int)$r['frozen'] === 1 ? 'frozen' : 'released'),
+                'owner' => $r['owner'] === null ? null : (string)$r['owner'],
+            ];
+        }
+        $st->closeCursor();
+        return $out;
+    }
+
+    /**
+     * The operator has reviewed this player's findings: mark the rows seen
+     * and pull the tally's reviewed mark up to the tally itself. The tally
+     * never moves backwards - it is the forensic record - so this is what
+     * takes a player off the review queue without erasing what was found,
+     * and it covers the findings that predate the log as well.
+     */
+    public static function reviewDisputes(string $player): bool
+    {
+        return (bool)Db::retry(static function () use ($player): bool {
+            $db = Db::get();
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                $st = $db->prepare(
+                    'UPDATE players SET claims_disputed_seen = claims_disputed
+                      WHERE id = ? AND claims_disputed_seen < claims_disputed'
+                );
+                $st->execute([$player]);
+                $moved = $st->rowCount() > 0;
+                $db->prepare('UPDATE item_disputes SET seen = 1 WHERE player = ? AND seen = 0')
+                    ->execute([$player]);
+                $db->exec('COMMIT');
+                return $moved;
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
+            }
+        });
+    }
+
     private static function bumpClaim(string $id, string $column): void
     {
         if (!in_array($column, ['claims_ok', 'claims_untagged', 'claims_disputed'], true)) {
