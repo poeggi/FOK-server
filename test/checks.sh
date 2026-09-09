@@ -54,6 +54,20 @@ if [ -n "$missing" ]; then
 fi
 [ "$fail" -eq 0 ] && echo "OK"
 
+step "Tournament keys carry the environment namespace"
+# Every tournament key builds on FOK_APCU_NS: the sweep judges a tournament
+# by its own environment's presence entries, so a bare-prefix key here is
+# how one CI push ends every live tournament. A unit test cannot see it -
+# the CLI runs as live, whose namespace IS the bare prefix - so the source
+# text is what is checked.
+if grep -nE "'fok:" public/src/TourneyStore.php \
+    || grep -nE "TSWEEP_KEY = 'fok:" public/src/Util.php; then
+    echo "FAIL: bare-prefix tournament key (must build on FOK_APCU_NS)"
+    fail=1
+else
+    echo "OK"
+fi
+
 step "Unit tests"
 php test/unit.php || fail=1
 

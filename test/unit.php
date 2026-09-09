@@ -1873,7 +1873,7 @@ for ($step = 0; $step < 40; $step++) {
 }
 $view = Tournament::view($tp[0], $tid);
 ok($view['state'] === 'done', 'reporting every match runs the tournament to the end');
-ok(apcu_key_info('fok:t:' . $tid)['ttl'] === Settings::int('tournament_done_ttl'),
+ok(apcu_key_info(FOK_APCU_NS . 't:' . $tid)['ttl'] === Settings::int('tournament_done_ttl'),
     'and a finished bracket is kept longer than an abandoned one, to be read back');
 ok($view['break'] === null, 'and a tournament that is over is not waiting on anything');
 ok(count($view['bracket']) === 1 && $view['bracket'][0]['nid'] === 'final',
@@ -2022,7 +2022,7 @@ ok($ev(Signals::take($w[2])[0])['after_ms'] === 1000,
     'a wrong step cannot park a seat past the client\'s own 1000 ms cap');
 // A dangling index - the tournament it names is gone - is dropped by the
 // drain that finds it, not answered with an error.
-apcu_store('fok:tin:7b000009', str_repeat('f', 32), 60);
+apcu_store(FOK_APCU_NS . 'tin:7b000009', str_repeat('f', 32), 60);
 Tournament::pulse('7b000009');
 ok(TourneyStore::runningFor('7b000009') === null, 'an index that names nothing is dropped on the drain');
 // A guest's leave is a forfeit; the host's is an abandon (seats are dealt
@@ -2443,11 +2443,11 @@ ok(($totals['duel_started'] ?? 0) > 0, 'a 1vs1 is counted where play begins');
 // means it can also expire under a live one - and the next holder must not
 // have the lock deleted out from under them.
 ok(TourneyStore::lock('hklocktest'), 'a tournament lock is taken');
-apcu_store('fok:tlock:hklocktest', 'another worker', 5);
+apcu_store(FOK_APCU_NS . 'tlock:hklocktest', 'another worker', 5);
 TourneyStore::unlock('hklocktest');
-ok(apcu_fetch('fok:tlock:hklocktest') === 'another worker',
+ok(apcu_fetch(FOK_APCU_NS . 'tlock:hklocktest') === 'another worker',
     'and an unlock that no longer holds it leaves it alone');
-apcu_delete('fok:tlock:hklocktest');
+apcu_delete(FOK_APCU_NS . 'tlock:hklocktest');
 // The lifetime bucket shares the counters table with the per-minute request
 // counts and the hourly traffic buckets, and that lookup is a STRING
 // comparison - so anything that is not a YmdH stamp, whether a name or a
@@ -2504,7 +2504,7 @@ Tournament::leave($rp[0], $c1c['tid']);
 // lobby, a bracket in play and a podium are worth keeping for different
 // lengths of time.
 $c2 = Tournament::create('77000002', false);
-$k2 = 'fok:t:' . $c2['tid'];
+$k2 = FOK_APCU_NS . 't:' . $c2['tid'];
 ok(apcu_key_info($k2)['ttl'] === Settings::int('tournament_join_ttl'),
     'an open lobby is held for the join TTL');
 Tournament::leave('77000002', $c2['tid']);

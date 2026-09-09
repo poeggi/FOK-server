@@ -146,10 +146,16 @@ prefix let one FPM pool share them between live and staging, so the live
 worst list could show staging's rows (the tell: an Azure 20.x address on
 hello.php is a GitHub Actions runner, and CI only calls hello.php against
 staging). The other bare-prefix stores (fok:hold:, fok:sg:, fok:rq:,
-fok:t:, fok:pid:, fok:flight:, fok:rr:, fok:skew:) hold no
+fok:pid:, fok:flight:, fok:rr:, fok:skew:) hold no
 database-derived state and are left alone on purpose, as Config.php
 explains. Rule for anything new: namespace it if it comes from or goes
-back into the database. The live prefix string stays unchanged, so a
+back into the database, OR if it is JUDGED against a store that is. The
+tournament store (fok:t: and its indexes, plus the fok:tsweep gate) is
+namespaced since 1.7.1 for the second reason: the sweep decides by the
+per-environment presence entries, so on a shared prefix one CI push
+ended every live tournament as "everyone left" (confirmed on the host
+2026-09-09: one live hello abandoned a staging lobby whose host had
+beaten 40 s before). The live prefix string stays unchanged, so a
 namespacing fix only ever moves STAGING keys.
 
 Counters::max() must keep its guarded write: CAS up to MAX_TRIES (8),

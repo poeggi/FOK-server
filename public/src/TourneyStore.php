@@ -41,17 +41,26 @@ require_once __DIR__ . '/Caps.php';
  * apcu_add() is the primitive that replaces BEGIN IMMEDIATE for all of them:
  * it writes only if the key is absent, so a claim is atomic against every
  * other worker without a global lock anywhere.
+ *
+ * Every key carries the environment namespace (FOK_APCU_NS). One FPM pool
+ * can serve live and staging, and a tournament is judged by the PRESENCE
+ * entries of its own environment, which are namespaced: the sweep asks
+ * whether anybody seated is still beating, and a tournament from the other
+ * environment has nobody in this one's presence at all, so on a shared
+ * prefix the staging smoke's hellos read every live tournament as deserted
+ * and ended it. The stats trace a run leaves (see Stats) goes into the
+ * environment's own database for the same reason.
  */
 final class TourneyStore
 {
-    private const T    = 'fok:t:';
-    private const CODE = 'fok:tcode:';
-    private const HOST = 'fok:thost:';
-    private const CD   = 'fok:tcd:';
-    private const OPEN = 'fok:topen:';
-    private const IN   = 'fok:tin:';
-    private const LIVE = 'fok:tlive:';
-    private const LOCK = 'fok:tlock:';
+    private const T    = FOK_APCU_NS . 't:';
+    private const CODE = FOK_APCU_NS . 'tcode:';
+    private const HOST = FOK_APCU_NS . 'thost:';
+    private const CD   = FOK_APCU_NS . 'tcd:';
+    private const OPEN = FOK_APCU_NS . 'topen:';
+    private const IN   = FOK_APCU_NS . 'tin:';
+    private const LIVE = FOK_APCU_NS . 'tlive:';
+    private const LOCK = FOK_APCU_NS . 'tlock:';
 
     /**
      * Long enough to cover a transition, short enough that a worker dying

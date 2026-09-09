@@ -18,10 +18,10 @@ final class Util
     // so a worker killed mid-request cannot leave a count high for good.
     private const FLIGHT_PREFIX = 'fok:flight:';
     private const FLIGHT_TTL = FOK_POLL_WAIT_MAX + 60;
-    // The gate for the abandoned-tournament sweep. Bare prefix like the rest
-    // of the tournament keys: none of it comes from or goes back into the
-    // database, so it is left un-namespaced on purpose (see Config.php).
-    private const TSWEEP_KEY = 'fok:tsweep';
+    // The gate for the abandoned-tournament sweep, namespaced per environment
+    // like the store it sweeps (see TourneyStore): a gate shared with staging
+    // would let its smoke park the live sweep for as long as it likes.
+    private const TSWEEP_KEY = FOK_APCU_NS . 'tsweep';
 
     /**
      * Keeps the "every response is JSON with ok" contract when something
