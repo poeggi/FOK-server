@@ -161,7 +161,21 @@ mid/uid/tick (contradiction) FREEZES the instance and raises a fraud
 alert. Those are the ONLY two paths that may freeze; the first verdict
 stands (the freeze UPDATE carries WHERE frozen = 0) and
 frozen_at/frozen_why record which (since schema 39). Freezing is terminal
-until an operator clears it. A claim whose uid exists but is registered
+until an operator clears it.
+
+A verdict is an EVENT, not a property of the instance it froze: resolving one
+clears frozen_why and may drop the row outright, so the instance can never be
+the record of what was found on it, and the per-player tally could say a
+finding existed while nothing could say which. Since schema 42 the finding
+goes to `item_disputes` (uid, player, why, mid, tick, created, seen), written
+inside the SAME transaction as the freeze and the tally, so a verdict cannot
+exist without a record of it. The admin card lists players whose findings are
+UNREVIEWED (claims_disputed > claims_disputed_seen), the count opens them, and
+marking them reviewed moves only the seen mark - the tally is the forensic
+record and never goes backwards. Releasing an instance stays a separate
+decision in its own popup: "I have read this" and "here is my verdict" must
+not be one button. A finding from before schema 42 has no row and never will,
+so the popup reports the difference rather than showing an empty table. A claim whose uid exists but is registered
 to somebody else is a STALE WARDROBE (a restored config backup or an
 unsynced duel loss): Alerts::note, never a raised item_counterfeit;
 nothing moves, the instance is never frozen, and the client drops it at
@@ -215,6 +229,55 @@ keyspace.
 - `friends` on hello still answers exactly as in 4.5 when `friends_since`
   is absent. The deployed client sends ids; ignoring them outright would
   have broken every live player until they updated.
+
+## Duel announcement (since API 4.7)
+
+A duel is stated the way being online is - an edge in, an edge out, a window
+that expires when neither arrives - and the edge IN is start.php, NOT the
+heartbeat. Both peers already call start.php where play begins, so the duel
+is on record from that moment and from two independent callers. Before this,
+duel_with on hello was the only caller of Presence::touchDuel, so a friend's
+WATCH row was up to a beat late, never appeared at all for a match shorter
+than the gap to the next beat, and then stood for the rest of the online
+window after the match ended.
+
+- The announcement runs AFTER Starts::request has issued a start. A 409 means
+  the caller is not in the pair's current run, and announcing a duel for it
+  would offer a feed of a match nobody is playing.
+- A tournament match calls start.php itself like any other duel, so it is
+  announced by the same line and no tournament code knows about any of this.
+- `duel_end` on hello is the other edge, naming the peer left. Once the
+  DataChannel is open a bye goes peer-to-peer and the server never sees it,
+  so the end must be STATED; absence cannot mean it, because a client closed
+  mid-match sends nothing ever again. A hello may carry duel_end and
+  duel_with together - the end is applied first, so a rematch announced in
+  one request lands on the new pairing.
+- TWO CLOCKS, deliberately apart. FOK_DUEL_SEEN_WINDOW (90 s, the presence
+  entry) is the spectate offer and bounds a client that crashed;
+  FOK_DUEL_WINDOW (120 s, the duels row) is unchanged because an item claim's
+  deadline is measured from it and a claim legitimately arrives after the
+  last tick. Wrong about the offer is cosmetic and the next beat repairs it;
+  wrong about the other costs somebody an item. Do not merge them.
+- `duel_private` (hello and start.php alike) is COUNTED, never ATTRIBUTED: in
+  the playing figure, holding the duel window, on the operator's dashboard,
+  and absent from friends_playing and from a delta's playing. A property of
+  the duel, not a latch - stated on every request that holds the duel up, so
+  omitting it makes the duel public again from that request on.
+- The transition fan-out keys on what a FRIEND can see (playing && !private),
+  which is what makes a privacy toggle mid-match an ordinary transition
+  instead of a case of its own, and stops a private duel waking every
+  friend's held poll for a state that reads identical.
+- Presence::playingOf reads the ENTRIES, not the duels table: it and the
+  delta are two ways of asking one question, and answering it off the table
+  would let a client ask the older way and learn about a private duel. The
+  playing figure counts entries in the pass that already counts online,
+  private ones included. So the duels table is now read by the item registry
+  and the housekeeping and by NOTHING else, and touchDuel's upsert no longer
+  reads a row back.
+- Cost added to start.php: one duels upsert on a latency-sensitive endpoint
+  that already takes the writer for Starts::request. The local smoke is
+  single-threaded and proves nothing about it - watch for INSERT INTO duels
+  in the admin worst-access list.
 
 ## Tournament mode (since API 4.1)
 
