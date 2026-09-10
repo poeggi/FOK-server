@@ -24,3 +24,10 @@ script end; only >=64KB per write flushed in real time (32KB irregular,
 - Transport confirmed on the host: HTTPS only, TLS 1.3, HTTP/2 (ALPN h2),
   keep-alive/persistent connections; no HTTP/3 (no alt-svc). Each held
   request still pins 1 worker regardless of HTTP version.
+- That h2 is an EDGE fact and PHP cannot see it. TLS is terminated in front
+  of whatever runs PHP - the banner is "HTTP Server", not Apache - so
+  SERVER_PROTOCOL reads HTTP/1.1 on a request a browser made over h2
+  (checked 2026-09-10: openssl ALPN says h2, a browser's nextHopProtocol
+  says h2, the admin card said 1.1 at the same moment). Hence the card can
+  only ever CONFIRM h2, never deny it, and the denial is not a fault to
+  chase. Do not re-derive this from $_SERVER; ask ALPN from outside.

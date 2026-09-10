@@ -123,8 +123,14 @@ final class Caps
      * is negotiated per connection, so it is a property of the request in
      * hand, not of the host: the stored assessment is seeded by whichever
      * request comes first after a deploy, and CI's curl speaks HTTP/1.1.
-     * The operator's own browser is the probe - it takes h2 whenever the
-     * vhost offers it. Apache's mod_http2 reports the protocol both ways.
+     *
+     * What PHP reads is the protocol of the hop that REACHED IT, and on this
+     * host that is not the one the browser used: ALPN offers h2 and a browser
+     * negotiates h2, while SERVER_PROTOCOL still says HTTP/1.1, because TLS
+     * is terminated in front of whatever runs PHP (the banner is "HTTP
+     * Server", not Apache). So h2 here is PROOF and 1.1 is NOT proof of its
+     * absence - which is why only the first of them may be a verdict. The
+     * question is settled from outside, never from in here.
      */
     public static function withRequest(array $caps): array
     {
@@ -133,10 +139,13 @@ final class Caps
         $caps['checks'][] = [
             'key' => 'http2',
             'label' => 'HTTP/2',
-            'value' => ($h2 ? 'on' : 'off') . ' (this request: ' . ($proto === '' ? 'unknown' : $proto) . ')',
-            'status' => $h2 ? 'good' : 'bad',
+            'value' => $h2
+                ? 'on (this request)'
+                : ($proto === '' ? 'unknown' : $proto) . ' reached PHP',
+            'status' => $h2 ? 'good' : 'info',
             'note' => $h2 ? ''
-                : 'a held poll and the requests beside it each cost a connection; the vhost owns the h2 switch',
+                : 'says nothing about the edge, which may serve h2 and speak 1.1 '
+                    . 'to PHP - only an external ALPN check settles that',
         ];
         return $caps;
     }
