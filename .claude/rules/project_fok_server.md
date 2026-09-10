@@ -372,7 +372,24 @@ PRESENCE, never activity: a long match transitions rarely. Before 1.7.0
 nothing did this and an abandoned run stood for tournament_run_ttl (1 h),
 listed and holding its host's one-per-host claim. Result ladder:
 a reported LOSS settles at once, a lone win/draw is held
-~tournament_result_ms, a contradiction FREEZES the node. A round is
+~tournament_result_ms, a contradiction FREEZES the node.
+THERE ARE TWO WAYS A NODE NOBODY PLAYED ENDS, and they are deliberately
+disjoint. Presence decides the first: tournament_walkover_ms (180 s) hands
+the node to whoever stayed, but only where the other seat reads OFFLINE -
+a slow match between two people who are both there is never taken away
+from them. The second is the case presence cannot see, both awake and no
+link between them: tournament_deadlock_ms (150 s) re-deals the node once
+and voids it on the second lapse, and it fires ONLY where no match was
+ever observed between the two seats. That test is Presence::duelSeenSince
+and it reads the duels ROW, never the entries - endDuel clears an entry
+and the question has to stay answered afterwards - as the LAST gate, after
+the deadline and after both seats read online, so only a node about to be
+settled pays for it. If either seat is gone this rule stands aside; the
+win belongs to whoever turned up and a void must never take it. A VOID
+carries `draw` TRUE (the verdict that advances an empty slot instead of
+replaying an unplayable node) plus `why`, 'gone' or 'unplayed' - the two
+read as opposite things on a bracket, and a client testing `draw` first
+would tell two people who never connected that they drew. A round is
 played at level = min(start + round - 1, tournament_max_level=10), where
 start is the create's `lvl` (4.9, default 1, clamped on the way in), and
 that cap MUST NOT exceed MAX_LEVELS in the client's js/assets.js; `stage`

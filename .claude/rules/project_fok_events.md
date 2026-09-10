@@ -61,6 +61,22 @@ putting a clock in shared memory.
   The two get different warnings in the admin popup on purpose.
 - Freezing an item instance is unrelated and stays the item registry's.
 
+## The audience is the members AND the monitor
+
+`Events::audience` is who a transition is told about, and it is NOT the
+roster: a monitor is absent from every member list and count and is still
+in it, because a screen that is not told what changed shows the wrong room.
+The `event` signal fan-out (EventView::announce) and the local tournament
+announce (Tournament::announce, hello `tourneys` / poll `tl=1`) both use
+it. Pending rows are in neither - a door tells you nothing about the room.
+
+This is one set on purpose. Before 1.11.3 both filtered on state 'member'
+exactly, so a RESERVED monitor got neither while a FREE one - an ordinary
+member holding a lease - got both. Nobody chose that; it fell out of the
+row state. A monitor still cannot JOIN a tournament: that tests
+`Events::isMember`, which is members only, so seeing a lobby and taking a
+seat stay different things.
+
 ## The roster is the server's, and one path writes it
 
 `Events::setMember` is the ONE path behind the organizer's `roster` verb and
