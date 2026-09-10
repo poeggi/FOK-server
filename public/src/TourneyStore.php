@@ -60,6 +60,7 @@ final class TourneyStore
     private const OPEN = FOK_APCU_NS . 'topen:';
     private const IN   = FOK_APCU_NS . 'tin:';
     private const LIVE = FOK_APCU_NS . 'tlive:';
+    private const EID  = FOK_APCU_NS . 'teid:';
     private const LOCK = FOK_APCU_NS . 'tlock:';
 
     /**
@@ -161,9 +162,22 @@ final class TourneyStore
             apcu_store(self::LIVE . $tid, [
                 'tid' => $tid,
                 'ids' => array_column($t['players'], 'id'),
+                'eid' => $t['eid'] ?? null,
             ], self::ttl($t));
         } else {
             apcu_delete(self::LIVE . $tid);
+        }
+        // An event's live tournament, so event state answers with one
+        // lookup instead of a scan. Written and cleared beside the live
+        // card above, and cleared ONLY by the tournament that holds it -
+        // an ending one must not take a successor's index with it.
+        $eid = $t['eid'] ?? null;
+        if (is_string($eid) && $eid !== '') {
+            if ($state === 'open' || $state === 'running') {
+                apcu_store(self::EID . $eid, $tid, self::ttl($t));
+            } elseif (apcu_fetch(self::EID . $eid) === $tid) {
+                apcu_delete(self::EID . $eid);
+            }
         }
         if ($state === 'open') {
             apcu_store(self::CODE . $t['code'], $tid, self::ttl($t));
@@ -173,6 +187,7 @@ final class TourneyStore
                 'host' => (string)$t['host'],
                 'stakes' => (bool)$t['stakes'],
                 'speed' => (bool)($t['speed'] ?? false),
+                'eid' => $t['eid'] ?? null,
                 'players' => count($t['players']),
                 'updated' => time(),
             ], self::ttl($t));
@@ -180,6 +195,16 @@ final class TourneyStore
         }
         apcu_delete(self::CODE . $t['code']);
         apcu_delete(self::OPEN . $tid);
+    }
+
+    /** The tid of an event's open-or-running tournament, or null. */
+    public static function liveForEvent(string $eid): ?string
+    {
+        if (!self::usable()) {
+            return null;
+        }
+        $tid = apcu_fetch(self::EID . $eid);
+        return is_string($tid) ? $tid : null;
     }
 
     public static function byCode(string $code): ?array

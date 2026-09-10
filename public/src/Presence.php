@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/Events.php';
 require_once __DIR__ . '/Util.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Signals.php';
@@ -794,6 +795,32 @@ final class Presence
      * The single removal path: the TTL sweep and the admin button both come
      * through here, so the two cannot clean up different halves of a player.
      */
+    /**
+     * The names a set of ids goes by, in ONE query. An id on screen always
+     * carries its name; an id with no row answers nothing, which is a real
+     * answer (a player can expire and leave what it owned behind).
+     *
+     * @param list<string> $ids
+     * @return array<string, string>
+     */
+    public static function namesFor(array $ids): array
+    {
+        $ids = array_values(array_filter(array_unique($ids),
+            static fn($v) => is_string($v) && Util::isValidId($v)));
+        if ($ids === []) {
+            return [];
+        }
+        $st = Db::get()->prepare('SELECT id, name FROM players WHERE id IN ('
+            . implode(', ', array_fill(0, count($ids), '?')) . ')');
+        $st->execute($ids);
+        $rows = $st->fetchAll();
+        $st->closeCursor();
+        $names = [];
+        foreach ($rows as $r) {
+            $names[(string)$r['id']] = (string)$r['name'];
+        }
+        return $names;
+    }
     public static function forget(string $id): void
     {
         $db = Db::get();
@@ -807,6 +834,10 @@ final class Presence
         }
         $db->prepare('DELETE FROM friends WHERE a = ? OR b = ?')->execute([$id, $id]);
         $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
+        // Every event this player was in. The ARCHIVE keeps the id: a
+        // finished tournament is the record of an evening, and a name
+        // that no longer resolves is a real answer everywhere else here.
+        Events::forgetPlayer($id);
         if (Caps::apcu()) {
             apcu_delete(self::PREFIX . $id);
         }

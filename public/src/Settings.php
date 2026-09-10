@@ -111,6 +111,14 @@ final class Settings
         'tournament_max_level' => [FOK_TOURNAMENT_MAX_LEVEL, 'Deepest level a tournament round is played at'],
         'tournament_break_ms' => [1000, 'Min time a round-break scoreboard stays up before continue (ms)'],
         'tournament_break_ttl_ms' => [120000, 'A round break continues by itself after (ms)'],
+        // Events. The pass is a code derived from the clock, so a slot needs
+        // no row and a code is valid across two of them: what is on somebody
+        // else's screen must still work while that screen has moved on. The
+        // client reads both numbers off the `pass` answer and hard-codes
+        // neither.
+        'event_pass_step_secs' => [10, 'How often the event pass QR rotates (seconds)'],
+        'event_pass_valid_secs' => [20, 'How long an event pass stays valid (seconds)'],
+        'event_join_fails_per_min' => [10, 'Wrong event codes per player per minute before 429'],
         'admin_refresh_secs' => [30, 'Admin dashboard refresh interval (seconds, 0 = off)'],
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)'],
         'admin_duels_refresh_secs' => [5, 'Duels card refresh interval (seconds, 0 = off)'],

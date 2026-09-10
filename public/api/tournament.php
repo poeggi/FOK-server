@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../src/Util.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Tournament.php';
+require_once __DIR__ . '/../src/Events.php';
 
 /**
  * Tournament mode: the server runs the tournament, the players run the games.
@@ -11,9 +12,9 @@ require_once __DIR__ . '/../src/Tournament.php';
  * One POST endpoint, nine actions, always {"id": "8-hex", "action": "..."}
  * plus the action's fields (see docs/API.md "Tournament mode"):
  *
- *   create    {id, stakes?, replace?, lvl?, speed?}
+ *   create    {id, stakes?, replace?, lvl?, speed?, eid?}
  *                                    -> {ok, tid, code, stakes, lvl,
- *                                        speed, max}
+ *                                        speed, eid, max}
  *   join      {id, tid|code}         -> {ok, ...lobby}
  *   leave     {id, tid}              -> {ok}
  *   start     {id, tid}              -> {ok}                    host only
@@ -143,9 +144,16 @@ function tourney_out(?array $res): never
 
 switch ($action) {
     case 'create':
+        // An event tournament is an ordinary one with an eid on it; the
+        // organizer check and the event's own state are Tournament's.
+        $eid = $body['eid'] ?? null;
+        if ($eid !== null && (!is_string($eid)
+            || preg_match('/^[' . Events::ALPHABET . ']{4}$/', $eid) !== 1)) {
+            Util::fail('invalid eid');
+        }
         tourney_out(Tournament::create($id, ($body['stakes'] ?? false) === true,
             ($body['replace'] ?? false) === true, (int)($body['lvl'] ?? 1),
-            ($body['speed'] ?? false) === true));
+            ($body['speed'] ?? false) === true, $eid));
         // no break - tourney_out never returns
 
     case 'join':

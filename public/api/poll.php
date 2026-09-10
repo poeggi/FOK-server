@@ -6,6 +6,7 @@ require_once __DIR__ . '/../src/Holds.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Tournament.php';
+require_once __DIR__ . '/../src/Events.php';
 require_once __DIR__ . '/../src/Friends.php';
 require_once __DIR__ . '/../src/FriendFeed.php';
 require_once __DIR__ . '/../src/Pace.php';
@@ -13,7 +14,8 @@ require_once __DIR__ . '/../src/Pace.php';
 /**
  * Fast, cheap signal poll for the matchmaking/signaling window.
  * GET /api/poll.php?id=<8-hex>[&wait=<seconds>][&fs=<cursor ms>]
- *                          [&aa=1][&fl=1][&tl=1][&de=<8-hex>][&db=0|1]
+ *                          [&aa=1][&fl=1][&tl=1][&ev=1][&de=<8-hex>]
+ *                          [&db=0|1]
  *   -> 204 No Content        nothing pending (empty body; the hold reads
  *                            shared memory only)
  *   -> 200 {"ok":true,"signals":[...]}   pending messages, drained on read
@@ -23,12 +25,13 @@ require_once __DIR__ . '/../src/Pace.php';
  * way a signal does - so the screens that watch friends need no heartbeat
  * of their own. signals is then allowed to be empty.
  *
- * aa, fl, tl, de and db (4.9) are the rest of that same idea: what a
- * screen HOLDING this poll would otherwise have had to send a hello for -
- * arming auto-accept, the whole roster, the local tournament announce, the
- * announced end of a duel, and the client's own debug state. Each is the
- * same field of the same name on hello. fl and tl ANSWER AT ONCE: a screen
- * that just opened is not waiting for a signal that is not coming.
+ * aa, fl, tl, de and db (4.9), and ev (4.11), are the rest of that same
+ * idea: what a screen HOLDING this poll would otherwise have had to send
+ * a hello for - arming auto-accept, the whole roster, the local
+ * tournament announce, the caller's own events, the announced end of a
+ * duel, and the client's own debug state. Each is the same field of the
+ * same name on hello. fl, tl and ev ANSWER AT ONCE: a screen that just
+ * opened is not waiting for a signal that is not coming.
  *
  * The line this draws, and the reason it lands here: everything the SERVER
  * has to say unasked rides this response - api and debug on every body,
@@ -80,6 +83,7 @@ $flag = static function (string $k): ?bool {
 $armAccept = $flag('aa') === true;
 $wantRoster = $flag('fl') === true;
 $wantTourneys = $flag('tl') === true;
+$wantEvents = $flag('ev') === true;
 // What the client reports its OWN debug mode to be, as hello's `debug`
 // does. Absent is null here rather than hello's false: a poll that did not
 // say is not a client saying no.
@@ -140,10 +144,11 @@ if ($wait > 0 && !Holds::claim()) {
 $delta = $fs === null ? null : FriendFeed::delta($id, $fs);
 $roster = $wantRoster ? Friends::rosterOf($id) : null;
 $tourneys = $wantTourneys ? Tournament::announce($id, Util::clientIp()) : null;
+$events = $wantEvents ? Events::listFor($id) : null;
 
 $deadline = microtime(true) + $wait;
 while (!Signals::any($id) && ($delta === null || $delta['rows'] === [])
-       && $roster === null && $tourneys === null && !$instruct) {
+       && $roster === null && $tourneys === null && $events === null && !$instruct) {
     // Only the deadline can end this: PHP does not learn that the client
     // went away until the script tries to write to it, and this loop writes
     // nothing until it answers. connection_aborted() is 0 here however long
@@ -177,6 +182,9 @@ if ($roster !== null) {
 }
 if ($tourneys !== null) {
     $out['tourneys'] = $tourneys;
+}
+if ($events !== null) {
+    $out['events'] = $events;
 }
 if ($delta !== null) {
     $out['friends_delta'] = (object)$delta['rows'];

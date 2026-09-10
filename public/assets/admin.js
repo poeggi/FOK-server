@@ -26,7 +26,7 @@ async function call(query, opts) {
 // neither is on a timer, but both land beside a tick often enough to be worth
 // carrying in its request rather than opening a second one.
 const POLLED = new Set(['stats', 'conns', 'duels', 'alerts', 'load',
-    'load_min', 'caps']);
+    'load_min', 'caps', 'events']);
 let due = null;
 
 async function api(action, opts) {
@@ -367,11 +367,14 @@ function infoModal(titleText, bodyNode) {
 // confirm() answers cancel, so the button would have done nothing and had
 // nothing to say about it. A popup also has room for the whole warning, which
 // a note wedged into a toolbar does not.
-function confirmModal(titleText, message, confirmLabel, onConfirm) {
+function confirmModal(titleText, message, confirmLabel, onConfirm, extra) {
     const { overlay, head, title, close, body } = makeModal(titleText);
     close.textContent = 'cancel';
     head.append(title, close);
     body.append(el('p', 'modal-msg', message));
+    // What a destructive action is about to take, itemised. A sentence can
+    // carry a warning; only a list can carry an inventory.
+    if (extra) body.append(extra);
     const foot = el('div', 'modal-foot');
     const go = el('button', 'small', confirmLabel);
     go.onclick = () => { closeModal(overlay); onConfirm(); };
@@ -574,6 +577,79 @@ function tabs(box, id, defs) {
 let logFilter = 'all';      // 'all' | 'warn' | 'error'
 let lastLog = null;
 let lastCaps = null;
+
+// The debug-report list, the third tab of the diagnostics card. It reads
+// nothing until an operator opens the tab (see tabs()).
+async function renderDebug(box) {
+    const d = await api('debug_list');
+    box.replaceChildren();
+    if (!d.datasets.length) { box.append(el('p', 'muted', 'No debug reports.')); return; }
+
+    const cbs = [];
+    const master = el('input');
+    master.type = 'checkbox';
+    master.title = 'Select all';
+    const dlSel = iconBtn(ICON.download, 'Download selected');
+    const delSel = iconBtn(ICON.trash, 'Delete selected');
+    const selected = () => cbs.filter((c) => c.checked).map((c) => c.value);
+    const updateBar = () => {
+        const n = selected().length;
+        dlSel.disabled = delSel.disabled = n === 0;
+        master.checked = n === cbs.length;
+        master.indeterminate = n > 0 && n < cbs.length;
+    };
+
+    const table = el('table', 'seltable');
+    const head = el('tr');
+    const mth = el('th');
+    mth.append(master);
+    head.append(mth);
+    for (const h of ['PIN', 'Sent', 'Expires', 'Size', '']) head.append(el('th', '', h));
+    table.append(head);
+
+    for (const ds of d.datasets) {
+        const r = el('tr');
+        const cb = el('input');
+        cb.type = 'checkbox';
+        cb.value = ds.pin;
+        cb.onchange = updateBar;
+        cbs.push(cb);
+        const cbtd = el('td');
+        cbtd.append(cb);
+        const dl = iconBtn(ICON.download, 'Download');
+        dl.onclick = () => downloadPin(ds.pin);
+        const actd = el('td');
+        actd.append(dl);
+        r.append(cbtd, el('td', '', ds.pin), el('td', '', fmtTime(ds.created)),
+            el('td', 'muted', fmtDate(ds.created + d.ttl)), el('td', 'muted', fmtBytes(ds.bytes)), actd);
+        table.append(r);
+    }
+
+    master.onchange = () => { for (const c of cbs) c.checked = master.checked; updateBar(); };
+    // Toggling all must not also sort the (empty) checkbox column.
+    master.addEventListener('mousedown', (e) => e.stopPropagation());
+    dlSel.onclick = () => selected().forEach((pin, i) => setTimeout(() => downloadPin(pin), i * 200));
+    delSel.onclick = () => {
+        const pins = selected();
+        if (!pins.length) return;
+        confirmModal('Delete debug reports',
+            'This deletes ' + pins.length + ' submitted report(s), and there is no undo.',
+            'Delete them', async () => {
+                await api('debug_delete', { method: 'POST', body: form({ pins: pins.join(',') }) });
+                refreshModule('alerts');
+            });
+    };
+
+    // The bar above the pane, as on every other card.
+    const bar = toolbar(dlSel, delSel);
+    const view = pane('', table);
+    box.append(bar, view);
+    updateBar();
+    sortable(table, 'debug');
+    mth.classList.remove('sortable');
+    box.append(el('p', 'muted', 'A client submits logs + up to two snapshots and reads out '
+        + 'the PIN; datasets self-purge after ' + Math.round(d.ttl / 3600) + ' h.'));
+}
 
 function renderAlerts(box, d) {
     box.replaceChildren();
@@ -1675,6 +1751,432 @@ const TWAIT = {
 // A tournament in full, opened from the Matches card: who is seated, who is
 // playing, what it is waiting on - and the one place an operator ends one.
 // Follows that card's interval, like every popup opened from a card.
+// ---------------------------------------------------------------- events
+//
+// An event is a room an operator opens, entered by scanning its QR. The card
+// lists them, the popup runs one - the same roster verbs the organizer has
+// from its own client, plus the five only an operator gets: create, edit,
+// print, name an organizer, delete.
+//
+// Event states reuse the existing badge colours, the way TSTATE already does
+// for tournaments: nothing about them is different enough to earn a palette.
+const ESTATE = { upcoming: 'connecting', active: 'playing',
+                 paused: 'inviting', ended: 'ended' };
+
+function eventBadge(state) {
+    return el('span', 'badge ' + (ESTATE[state] || ''), state);
+}
+
+// An id field that can be searched by NAME. Typing anything looks players
+// up (name or id prefix), the hits drop down under it, and picking one
+// fills in the id and shows whose it is - because nobody carries an 8-hex
+// string in their head. The value is still the id: this is a way of
+// FINDING one, not a second way of storing one.
+function playerField(value, placeholder) {
+    const wrap = el('div', 'pickfield');
+    const input = el('input');
+    input.type = 'text';
+    input.value = value || '';
+    input.placeholder = placeholder || 'name or id, empty for none';
+    input.autocomplete = 'off';
+    const chosen = el('div', 'muted');
+    const list = el('div', 'picklist');
+    list.hidden = true;
+    let timer = null;
+    const said = (id, name) => {
+        chosen.textContent = id ? (name ? id + ' - ' + name : id + ' - no name') : '';
+    };
+    const search = async () => {
+        const q = input.value.trim();
+        // An id typed in full is its own answer; searching for it would
+        // only tell the operator what they just wrote.
+        if (/^[0-9a-f]{8}$/.test(q)) { list.hidden = true; said(q, ''); return; }
+        if (q.length < 2) { list.hidden = true; return; }
+        let d;
+        try { d = await api('player_find&q=' + encodeURIComponent(q)); } catch (e) { return; }
+        list.replaceChildren();
+        if (!d.players.length) {
+            list.append(el('div', 'muted pickrow', 'No player of that name.'));
+        }
+        for (const p of d.players) {
+            const r = el('div', 'pickrow');
+            r.append(el('span', '', p.name || 'no name'), el('span', 'muted', ' ' + p.id));
+            r.onclick = () => {
+                input.value = p.id;
+                said(p.id, p.name);
+                list.hidden = true;
+            };
+            list.append(r);
+        }
+        list.hidden = false;
+    };
+    input.oninput = () => {
+        chosen.textContent = '';
+        clearTimeout(timer);
+        timer = setTimeout(search, 250);
+    };
+    input.onblur = () => setTimeout(() => { list.hidden = true; }, 200);
+    wrap.append(input, list, chosen);
+    wrap._input = input;
+    return wrap;
+}
+
+// A datetime-local field reads and writes UTC here, and says so: an operator
+// and an event are not always in the same country, and the wire is UTC.
+function utcField(name, unix) {
+    const i = el('input');
+    i.type = 'datetime-local';
+    i.name = name;
+    i.value = unix ? new Date(unix * 1000).toISOString().slice(0, 16) : '';
+    return i;
+}
+
+function utcValue(input) {
+    return input.value ? String(Math.floor(Date.parse(input.value + 'Z') / 1000)) : '';
+}
+
+// Create and edit are ONE form: the fields are identical, and the only
+// difference is whether an eid goes with them.
+function eventForm(existing) {
+    const d = existing || {};
+    const { overlay, head, title, close, body } = makeModal(
+        existing ? 'Edit event' : 'New event');
+    head.append(title, close);
+
+    const tbl = el('table', 'kv');
+    const fields = {};
+    const field = (key, label, node, note) => {
+        fields[key] = node;
+        const r = el('tr');
+        const v = el('td', 'kv-v');
+        v.append(node);
+        if (note) v.append(el('div', 'muted', note));
+        r.append(el('td', 'kv-k', label), v);
+        tbl.append(r);
+    };
+    const text = (value, max) => {
+        const i = el('input');
+        i.type = 'text';
+        i.value = value || '';
+        i.maxLength = max;
+        return i;
+    };
+    field('name', 'Name', text(d.name, 40));
+    field('descr', 'Description', text(d.descr, 500));
+    const door = el('select');
+    for (const [v, t] of [['0', 'Open - a scan joins'], ['1', 'Closed - the organizer approves']]) {
+        const o = el('option', '', t);
+        o.value = v;
+        door.append(o);
+    }
+    door.value = d.closed ? '1' : '0';
+    field('closed', 'Door', door);
+    field('organizer', 'Organizer', playerField(d.organizer),
+        'Search by name. Only the organizer can work the door or open a tournament.');
+    field('starts', 'Starts', utcField('starts', d.starts),
+        'UTC. Leave both empty and the organizer runs it by hand.');
+    field('ends', 'Ends', utcField('ends', d.ends), 'UTC.');
+    const mon = el('select');
+    for (const [v, t] of [['1', 'Yes - one screen may monitor it'], ['0', 'No']]) {
+        const o = el('option', '', t);
+        o.value = v;
+        mon.append(o);
+    }
+    mon.value = (existing && !d.monitor_allowed) ? '0' : '1';
+    field('monitor_allowed', 'Monitor', mon,
+        'A screen for a TV: the event live, then the tournament as an invisible spectator.');
+    field('monitor', 'Reserved for', playerField(d.monitor),
+        'Search by name. Named: that player holds the slot even while offline, '
+        + 'joins without approval, is in no participant list and can do nothing '
+        + 'else here. Empty: whoever asks first gets it.');
+    field('ach_name', 'Achievement', text(d.ach_name, 15), 'Granted on joining. Empty for none.');
+    field('ach_desc', 'Achievement text', text(d.ach_desc, 40));
+    body.append(tbl);
+
+    const err = el('p', 'error');
+    err.hidden = true;
+    const bar = toolbar(el('span', 'grow'));
+    const save = el('button', 'small', existing ? 'Save' : 'Create event');
+    save.onclick = async () => {
+        const payload = {
+            name: fields.name.value.trim(),
+            descr: fields.descr.value.trim(),
+            closed: fields.closed.value,
+            organizer: fields.organizer._input.value.trim(),
+            monitor_allowed: fields.monitor_allowed.value,
+            monitor: fields.monitor._input.value.trim(),
+            starts: utcValue(fields.starts),
+            ends: utcValue(fields.ends),
+            ach_name: fields.ach_name.value.trim(),
+            ach_desc: fields.ach_desc.value.trim(),
+        };
+        if (!payload.name) {
+            err.textContent = 'An event needs a name.';
+            err.hidden = false;
+            return;
+        }
+        if (existing) payload.eid = existing.eid;
+        save.disabled = true;
+        try {
+            const r = await api(existing ? 'event_edit' : 'event_create',
+                { method: 'POST', body: form(payload) });
+            closeModal(overlay);
+            refreshModule('events');
+            if (!existing && r.eid) showEvent(r.eid);
+        } catch (e) {
+            err.textContent = 'Error: ' + e.message;
+            err.hidden = false;
+            save.disabled = false;
+        }
+    };
+    bar.append(save);
+    body.append(err, bar);
+    document.body.append(overlay);
+}
+
+async function showEvent(eid) {
+    const { overlay, modal, head, title, name, body, close } = makeModal(eid);
+    modal.classList.add('wide');
+    title.append(el('span', 'modal-id', eid));
+
+    body._sid = 'event';
+    const refresh = el('button', 'small refresh', 'refresh');
+    const load = async () => {
+        flash(refresh);
+        try {
+            const d = await api('event&eid=' + eid);
+            name.textContent = d.name;
+            renderEventBody(body, overlay, eid, d);
+            restoreScroll(body);
+        } catch (e) {
+            body.replaceChildren(el('p', 'error', 'Error: ' + e.message));
+        }
+    };
+    refresh.onclick = load;
+    head.append(title, refresh, close);
+    body.append(el('p', 'muted', 'Loading ...'));
+    document.body.append(overlay);
+    await load();
+}
+
+function renderEventBody(body, overlay, eid, d) {
+    const named = (id) => (d.names && d.names[id]) || '';
+    body.replaceChildren();
+
+    // The controls first, because an operator opens this popup to DO
+    // something. A scheduled event walks itself, so it offers only its end.
+    const act = async (action, extra) => {
+        await api(action, { method: 'POST', body: form({ eid, ...(extra || {}) }) });
+        refreshModule('events');
+        return showEventReload(body, overlay, eid);
+    };
+    const bar = toolbar();
+    const print = el('button', 'small', 'Print QR');
+    print.title = 'Opens the poster with the event key on it. The key is on no '
+        + 'other screen and in no answer this dashboard can give.';
+    print.onclick = () => window.open('event.php?eid=' + eid, '_blank', 'noopener');
+    bar.append(print);
+    const edit = el('button', 'small', 'Edit');
+    edit.onclick = () => eventForm(d);
+    bar.append(edit);
+    if (!d.scheduled) {
+        if (d.state !== 'active' && d.state !== 'ended') {
+            const run = el('button', 'small', 'Run');
+            run.onclick = () => act('event_run');
+            bar.append(run);
+        }
+        if (d.state === 'active') {
+            const pause = el('button', 'small', 'Pause');
+            pause.onclick = () => act('event_pause');
+            bar.append(pause);
+        }
+    }
+    if (d.state !== 'ended') {
+        const end = el('button', 'small', 'End');
+        end.title = 'Freezes the event for everyone. A tournament already '
+            + 'running plays on and is still archived.';
+        end.onclick = () => confirmModal('End event',
+            'This freezes ' + d.name + ' for everyone: no more joins, no more passes, '
+            + 'no new tournaments, and it can never be run again. A tournament '
+            + 'already running plays on and is archived, and everything the event '
+            + 'holds stays readable - use Delete to remove it.',
+            'End it', () => act('event_end'));
+        bar.append(end);
+    }
+    bar.append(el('span', 'grow'));
+    const del = el('button', 'small', 'Delete');
+    del.title = 'Purges the event and every row that belongs to it. Ending it '
+        + 'is the other button: that freezes it and keeps the record.';
+    // Deliberately a HARDER warning than End's, and a different one: ending
+    // an event keeps every trace of what happened at it, and this removes
+    // them. An operator has to be able to tell the two apart at the moment
+    // of pressing, so the popup names exactly what goes.
+    del.onclick = () => {
+        const goes = ['the event itself, so its printed QR opens nothing',
+            (d.counts.members + d.counts.pending + d.counts.banned)
+                + ' roster row(s), including who was banned from it',
+            d.archive.length + ' archived tournament(s) - the record of every '
+                + 'evening it ran'];
+        if (d.tourney) goes.push('the tournament it is running right now, ended for its players');
+        const list = el('ul');
+        for (const g of goes) list.append(el('li', '', g));
+        confirmModal('Purge event ' + eid,
+            'This PERMANENTLY REMOVES ' + d.name + ' and everything the database '
+            + 'holds about it. There is no undo and no backup of it. Ending the '
+            + 'event instead freezes it and keeps all of this readable.',
+            'Purge it', async () => {
+                await api('event_delete', { method: 'POST', body: form({ eid }) });
+                closeModal(overlay);
+                refreshModule('events');
+            }, list);
+    };
+    bar.append(del);
+    body.append(bar);
+
+    const tbl = el('table', 'kv');
+    const kv = (k, v) => {
+        const r = el('tr');
+        const cell = el('td', 'kv-v');
+        cell.append(...(Array.isArray(v) ? v : [v]));
+        r.append(el('td', 'kv-k', k), cell);
+        tbl.append(r);
+    };
+    const when = (unix) => (unix ? new Date(unix * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '');
+    kv('State', [eventBadge(d.state), el('span', 'muted',
+        d.scheduled ? ' scheduled: ' + (when(d.starts) || 'any time') + ' to '
+            + (when(d.ends) || 'no end') : ' unscheduled, run by its organizer')]);
+    kv('Door', [el('span', 'badge ' + (d.closed ? 'inviting' : ''), d.closed ? 'closed' : 'open'),
+        el('span', 'muted', d.closed ? ' a scan asks; the organizer approves'
+                                     : ' a scan joins straight away')]);
+    const org = el('span');
+    if (d.organizer) {
+        const s = el('span', 'id-link', d.organizer);
+        s.onclick = () => showClient(d.organizer);
+        org.append(s, el('span', 'muted idname', named(d.organizer)));
+    } else {
+        org.append(el('span', 'muted',
+            'none - nobody can work the door or open a tournament until one is named'));
+    }
+    kv('Organizer', org);
+    if (d.descr) kv('Description', d.descr);
+    kv('Achievement', d.ach_name
+        ? d.ach_name + (d.ach_desc ? ' - ' + d.ach_desc : '')
+        : el('span', 'muted', 'none'));
+    const monCell = el('span');
+    if (!d.monitor_allowed) {
+        monCell.append(el('span', 'muted', 'not offered'));
+    } else if (d.monitor) {
+        const s = el('span', 'id-link', d.monitor);
+        s.onclick = () => showClient(d.monitor);
+        monCell.append(el('span', 'badge connecting', 'reserved'), s,
+            el('span', 'muted idname', named(d.monitor)),
+            el('span', 'muted', ' holds the slot whether it is switched on or not'));
+    } else if (d.monitor_holder) {
+        const s = el('span', 'id-link', d.monitor_holder);
+        s.onclick = () => showClient(d.monitor_holder);
+        monCell.append(el('span', 'badge playing', 'live'), s,
+            el('span', 'muted idname', named(d.monitor_holder)));
+    } else {
+        monCell.append(el('span', 'muted', 'free - whoever asks first gets it'));
+    }
+    kv('Monitor', monCell);
+    kv('Key', el('span', 'muted', 'printed only - it is in no answer this dashboard can give'));
+    if (d.tourney) {
+        const t = el('span');
+        const link = el('span', 'id-link', d.tourney.code);
+        link.onclick = () => showTourney(d.tourney.tid);
+        t.append(link, el('span', 'badge ' + (TSTATE[d.tourney.state] || ''), d.tourney.state),
+            el('span', 'muted', ' ' + d.tourney.players + ' of ' + d.tourney.max + ' seats'));
+        kv('Tournament', t);
+    }
+    body.append(tbl);
+
+    const c = d.counts;
+    body.append(el('p', 'subhead', 'Roster - ' + c.members + ' in'
+        + (c.pending ? ', ' + c.pending + ' waiting' : '')
+        + (c.banned ? ', ' + c.banned + ' banned' : '')));
+    if (!d.roster.length) {
+        body.append(el('p', 'muted', 'Nobody has scanned it yet.'));
+    } else {
+        const table = el('table');
+        const head = el('tr');
+        for (const h of ['Player', 'State', 'Asked', 'Via', '']) head.append(el('th', '', h));
+        table.append(head);
+        for (const m of d.roster) {
+            const r = el('tr', m.state === 'pending' ? 'unseen'
+                : (m.state === 'banned' ? 'gone'
+                : (m.state === 'monitor' ? '' : (m.online ? 'online' : ''))));
+            const st = el('td');
+            const cls = { pending: 'inviting', banned: 'declined',
+                monitor: 'connecting', member: 'playing' }[m.state] || '';
+            st.append(el('span', 'badge ' + cls, m.state));
+            if (m.organizer) st.append(el('span', 'muted', ' organizer'));
+            const acts = el('td');
+            const verb = (label, set, title) => {
+                const b = el('button', 'small', label);
+                if (title) b.title = title;
+                b.onclick = () => act('event_roster', { id: m.id, set });
+                acts.append(b);
+            };
+            if (m.state === 'monitor') {
+                acts.append(el('span', 'muted', 'the screen - edit the event to change it'));
+            } else if (m.state === 'pending') {
+                verb('Approve', 'member');
+                verb('Decline', 'none', 'Drops the request and tells nobody. They may scan again.');
+            } else if (m.state === 'banned') {
+                verb('Unban', 'none', 'Drops the row, so they may scan again.');
+            } else {
+                verb('Remove', 'none', 'Drops the row. They may scan again.');
+                verb('Ban', 'banned', 'Keeps the row and refuses every scan.');
+                if (!m.organizer) {
+                    const mk = el('button', 'small', 'Make organizer');
+                    mk.onclick = () => act('event_organizer', { id: m.id });
+                    acts.append(mk);
+                }
+            }
+            r.append(idCell(m.id, named(m.id)), st,
+                el('td', 'muted', fmtTime(m.asked)), el('td', 'muted', m.via), acts);
+            table.append(r);
+        }
+        body.append(pane('', table));
+        sortable(table, 'eventroster');
+    }
+
+    body.append(el('p', 'subhead', 'Archive'));
+    if (!d.archive.length) {
+        body.append(el('p', 'muted', 'No tournament has finished here yet.'));
+    } else {
+        const at = el('table');
+        const ah = el('tr');
+        for (const h of ['Finished', 'Seats', 'Played', 'Podium']) ah.append(el('th', '', h));
+        at.append(ah);
+        for (const a of d.archive) {
+            const r = el('tr');
+            const pod = el('td');
+            a.podium.forEach((p, i) => {
+                if (i) pod.append(el('span', 'muted', ', '));
+                pod.append(el('span', i === 0 ? 'win' : '', p.name || p.id));
+            });
+            r.append(el('td', 'muted', fmtTime(a.finished)), el('td', '', String(a.seats)),
+                el('td', '', String(a.played)), pod);
+            at.append(r);
+        }
+        body.append(at);
+        sortable(at, 'eventarchive');
+    }
+}
+
+// A roster change re-reads the popup it happened in, so the queue and the
+// counts above it move together.
+async function showEventReload(body, overlay, eid) {
+    try {
+        renderEventBody(body, overlay, eid, await api('event&eid=' + eid));
+        restoreScroll(body);
+    } catch (e) {
+        body.replaceChildren(el('p', 'error', 'Error: ' + e.message));
+    }
+}
+
 async function showTourney(tid) {
     const { overlay, modal, head, title, name, body, close } = makeModal(tid);
     modal.classList.add('wide');
@@ -2224,8 +2726,68 @@ const MODULES = [
         },
     },
     {
+        id: 'events',
+        title: 'Events',
+        // No own interval: an event changes on somebody pressing something,
+        // not on a clock. The global refresh and its own button carry it.
+        async refresh(box) {
+            const d = await api('events');
+            box.replaceChildren();
+            const running = d.events.filter((e) => e.state === 'active').length;
+            const bar = toolbar(el('span', 'muted', d.events.length
+                ? d.events.length + ' event(s), ' + running + ' running'
+                : 'No events yet.'), el('span', 'grow'));
+            const add = el('button', 'small', 'Create event');
+            add.onclick = () => eventForm(null);
+            bar.append(add);
+            box.append(bar);
+            if (!d.events.length) {
+                box.append(el('p', 'muted',
+                    'An event is a room players get into by scanning its QR.'));
+                return;
+            }
+            const table = el('table');
+            const head = el('tr');
+            const th = (t, title) => {
+                const c = el('th', '', t);
+                if (title) c.title = title;
+                return c;
+            };
+            head.append(th('EID'), th('Name'), th('State'), th('Door'), th('Organizer'),
+                th('In', 'Members who have joined'),
+                th('Wait', 'Requests waiting for the organizer'),
+                th('T', 'Tournaments archived on this event'));
+            table.append(head);
+            for (const e of d.events) {
+                const r = el('tr', e.state === 'active' ? 'online'
+                    : (e.state === 'ended' ? 'gone' : ''));
+                const eidCell = el('td');
+                const link = el('span', 'id-link', e.eid);
+                link.onclick = () => showEvent(e.eid);
+                eidCell.append(link);
+                const st = el('td');
+                st.append(eventBadge(e.state));
+                const door = el('td');
+                door.append(el('span', 'badge ' + (e.closed ? 'inviting' : ''),
+                    e.closed ? 'closed' : 'open'));
+                const org = e.organizer
+                    ? idCell(e.organizer, (d.names && d.names[e.organizer]) || '')
+                    : el('td', 'muted', 'none');
+                // A queue at a closed door reads off the card, so an operator
+                // does not have to open one to find out somebody is waiting.
+                const wait = el('td', e.pending ? 'error' : 'muted', String(e.pending));
+                r.append(eidCell, el('td', '', e.name), st, door, org,
+                    el('td', '', String(e.members)), wait,
+                    el('td', e.tournaments ? '' : 'muted', String(e.tournaments)));
+                table.append(r);
+            }
+            box.append(pane('', table));
+            sortable(table, 'events');
+        },
+    },
+    {
         id: 'alerts',
-        title: 'Alerts and logs',
+        title: 'Alerts, logs and debug',
         refresh(box) {
             return tabs(box, 'alerts', [
                 {
@@ -2241,79 +2803,14 @@ const MODULES = [
                     label: 'Logs',
                     render: async (p) => { lastLog = await api('log'); renderLogs(p); },
                 },
+                {
+                    // Same rule as Logs: the report list is fetched only
+                    // while its own tab is open.
+                    key: 'debug',
+                    label: 'Debug',
+                    render: (p) => renderDebug(p),
+                },
             ]);
-        },
-    },
-    {
-        id: 'debug',
-        title: 'Debug reports',
-        async refresh(box) {
-            const d = await api('debug_list');
-            box.replaceChildren();
-            if (!d.datasets.length) { box.append(el('p', 'muted', 'No debug reports.')); return; }
-
-            const cbs = [];
-            const master = el('input');
-            master.type = 'checkbox';
-            master.title = 'Select all';
-            const dlSel = iconBtn(ICON.download, 'Download selected');
-            const delSel = iconBtn(ICON.trash, 'Delete selected');
-            const selected = () => cbs.filter((c) => c.checked).map((c) => c.value);
-            const updateBar = () => {
-                const n = selected().length;
-                dlSel.disabled = delSel.disabled = n === 0;
-                master.checked = n === cbs.length;
-                master.indeterminate = n > 0 && n < cbs.length;
-            };
-
-            const table = el('table', 'seltable');
-            const head = el('tr');
-            const mth = el('th');
-            mth.append(master);
-            head.append(mth);
-            for (const h of ['PIN', 'Sent', 'Expires', 'Size', '']) head.append(el('th', '', h));
-            table.append(head);
-
-            for (const ds of d.datasets) {
-                const r = el('tr');
-                const cb = el('input');
-                cb.type = 'checkbox';
-                cb.value = ds.pin;
-                cb.onchange = updateBar;
-                cbs.push(cb);
-                const cbtd = el('td');
-                cbtd.append(cb);
-                const dl = iconBtn(ICON.download, 'Download');
-                dl.onclick = () => downloadPin(ds.pin);
-                const actd = el('td');
-                actd.append(dl);
-                r.append(cbtd, el('td', '', ds.pin), el('td', '', fmtTime(ds.created)),
-                    el('td', 'muted', fmtDate(ds.created + d.ttl)), el('td', 'muted', fmtBytes(ds.bytes)), actd);
-                table.append(r);
-            }
-
-            master.onchange = () => { for (const c of cbs) c.checked = master.checked; updateBar(); };
-            // Toggling all must not also sort the (empty) checkbox column.
-            master.addEventListener('mousedown', (e) => e.stopPropagation());
-            dlSel.onclick = () => selected().forEach((pin, i) => setTimeout(() => downloadPin(pin), i * 200));
-            delSel.onclick = async () => {
-                const pins = selected();
-                if (!pins.length || !confirm('Delete ' + pins.length + ' debug report(s)?')) return;
-                await api('debug_delete', { method: 'POST', body: form({ pins: pins.join(',') }) });
-                refreshModule('debug');
-            };
-
-            const bar = el('div', 'bulk-bar');
-            bar.append(dlSel, delSel);
-            // Bulk actions stay put above the scrolling list (see admin.css).
-            const view = el('div', 'pane');
-            view.append(table);
-            box.append(bar, view);
-            updateBar();
-            sortable(table, 'debug');
-            mth.classList.remove('sortable');
-            box.append(el('p', 'muted', 'A client submits logs + up to two snapshots and reads out '
-                + 'the PIN; datasets self-purge after ' + Math.round(d.ttl / 3600) + ' h.'));
         },
     },
     {

@@ -120,6 +120,17 @@ expect() { # expect <name> <needle> <actual>
         fail=1
     fi
 }
+# The other half of expect: what an answer must NOT carry. A key, a secret
+# or an online flag that leaks is a silent failure otherwise, because the
+# assertion that would have caught it reads the same either way.
+refute() { # refute <name> <needle> <actual>
+    if [[ "$3" != *"$2"* ]]; then
+        echo "ok   $1"
+    else
+        echo "FAIL $1: did NOT expect '$2' in: $3"
+        fail=1
+    fi
+}
 # Player/count assertions are exact locally; on a shared remote instance
 # other clients may exist, so only the field's presence is asserted.
 strict() { if [ "$REMOTE" -eq 0 ]; then echo "$1"; else echo "${1%%:*}:"; fi; }

@@ -8,6 +8,7 @@ require_once __DIR__ . '/../src/Friends.php';
 require_once __DIR__ . '/../src/FriendFeed.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Tournament.php';
+require_once __DIR__ . '/../src/Events.php';
 require_once __DIR__ . '/../src/Pace.php';
 
 /**
@@ -40,6 +41,7 @@ require_once __DIR__ . '/../src/Pace.php';
  *                               so a screen showing it needs no second
  *                               request alongside this heartbeat
  *   "tourneys": bool            optional, ask for open tournament lobbies
+ *   "events": bool              optional, ask for the caller's own events
  *                               hosted on one of the caller's own networks
  *   "nets": ["ip", ...]         optional, the caller's OWN public addresses
  *                               as it discovered them (STUN), so the family
@@ -155,6 +157,10 @@ $tourneys = $body['tourneys'] ?? false;
 if (!is_bool($tourneys)) {
     Util::fail('invalid tourneys');
 }
+$events = $body['events'] ?? false;
+if (!is_bool($events)) {
+    Util::fail('invalid events');
+}
 
 // A tournament participant's heartbeat carries that tournament's deadlines
 // the way its poll does (see poll.php), so a client that is not polling
@@ -220,6 +226,12 @@ if ($wantRoster) {
 // stops existing (see TourneyStore).
 if ($tourneys) {
     $out['tourneys'] = Tournament::announce($id, Util::clientIp());
+}
+// The caller's own events, and the only way a client knows it is in one
+// at all - a removed member finds the row simply gone. Costs one
+// shared-memory read in the steady state (see Events::mine).
+if ($events) {
+    $out['events'] = Events::listFor($id);
 }
 
 Util::jsonOut($out);

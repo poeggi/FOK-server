@@ -42,6 +42,9 @@ require_once __DIR__ . '/../public/src/Bracket.php';
 require_once __DIR__ . '/../public/src/Tournament.php';
 require_once __DIR__ . '/../public/src/TourneyStore.php';
 require_once __DIR__ . '/../public/src/Stats.php';
+require_once __DIR__ . '/../public/src/EventView.php';
+require_once __DIR__ . '/../public/src/Qr.php';
+require_once __DIR__ . '/../public/src/Events.php';
 require_once __DIR__ . '/../public/src/AdminData.php';
 require_once __DIR__ . '/../public/src/Housekeeping.php';
 
@@ -2994,6 +2997,534 @@ Db::get()->prepare(
      ON CONFLICT (bucket, metric) DO UPDATE SET value = value + 1"
 )->execute();
 ok(Db::drainWal() < $walFolded, 'and the write after one starts the log over rather than adding to it');
+
+
+// ---------------------------------------------------------------- events
+//
+// An event is a room an operator opens, entered by scanning a code. Its
+// STATE is a pure function of (mode, starts, ends, now) - there is no cron
+// here, so nothing fires at a scheduled moment - and its pass is derived
+// from the clock, so no slot is ever stored. Both are asserted over their
+// whole grid rather than at one point, because both are read on every
+// request that touches an event.
+
+$evCard = static function (array $over = []): array {
+    return $over + [
+        'eid' => 'AAAA', 'name' => 'srv-CI-event', 'descr' => '',
+        'organizer' => null, 'ekey' => str_repeat('A', 16),
+        'secret' => str_repeat('ab', 32), 'closed' => false,
+        'starts' => null, 'ends' => null, 'mode' => 'upcoming',
+        'ach_name' => null, 'ach_desc' => null, 'ach_icon' => null,
+        'created' => 1000, 'ended_at' => null,
+    ];
+};
+
+// Unscheduled: the organizer drives it, so the stored mode IS the state.
+ok(Events::stateOf($evCard(['mode' => 'upcoming']), 5000) === 'upcoming',
+    'an unscheduled event waits in the mode it was opened in');
+ok(Events::stateOf($evCard(['mode' => 'active']), 5000) === 'active',
+    'and runs once its organizer has run it');
+ok(Events::stateOf($evCard(['mode' => 'paused']), 5000) === 'paused',
+    'a pause is a state of its own');
+ok(Events::stateOf($evCard(['mode' => 'ended']), 5000) === 'ended',
+    'and an ended event is ended');
+
+// Scheduled: the clock drives it, and nothing has to run for a moment to
+// arrive - which is the whole reason state is derived rather than swept.
+$sched = $evCard(['mode' => 'upcoming', 'starts' => 100, 'ends' => 200]);
+ok(Events::stateOf($sched, 99) === 'upcoming', 'a scheduled event is upcoming before its start');
+ok(Events::stateOf($sched, 100) === 'active', 'active from the second it starts');
+ok(Events::stateOf($sched, 199) === 'active', 'still active a second before its end');
+ok(Events::stateOf($sched, 200) === 'ended', 'and ended from the second it ends');
+ok(Events::stateOf($sched, 5000) === 'ended', 'and stays ended, with nobody having run');
+
+// A schedule does not undo a pause somebody pressed, and an end outranks
+// everything: the two are the only orderings that can disagree.
+ok(Events::stateOf($evCard(['mode' => 'paused', 'starts' => 100]), 150) === 'paused',
+    'a pause outranks a schedule that says the event is under way');
+ok(Events::stateOf($evCard(['mode' => 'ended', 'starts' => 100]), 150) === 'ended',
+    'and an end outranks the schedule entirely');
+ok(Events::stateOf($evCard(['mode' => 'active', 'ends' => 200]), 300) === 'ended',
+    'a run that outlives its own end reads as ended');
+ok(Events::stateOf($evCard(['mode' => 'upcoming', 'ends' => 200]), 100) === 'upcoming',
+    'an end alone does not start an event early');
+ok(!Events::isScheduled($evCard()), 'an event with neither stamp is unscheduled');
+ok(Events::isScheduled($evCard(['ends' => 200])), 'one stamp is enough to make it scheduled');
+
+// The pass: an HMAC over the event secret and the slot, mapped onto the
+// code alphabet. Same slot, same code; different event, different code.
+$evAlpha = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+$p1 = Events::passFor(str_repeat('ab', 32), 'AAAA', 100);
+ok(strlen($p1) === 6, 'a pass is six characters');
+ok(strspn($p1, $evAlpha) === 6, 'from the code alphabet, so it can be read off a screen');
+ok(Events::passFor(str_repeat('ab', 32), 'AAAA', 100) === $p1, 'the same slot mints the same pass');
+ok(Events::passFor(str_repeat('ab', 32), 'AAAA', 101) !== $p1, 'the next slot mints a different one');
+ok(Events::passFor(str_repeat('ab', 32), 'BBBB', 100) !== $p1, 'and so does another event at the same moment');
+ok(Events::passFor(str_repeat('cd', 32), 'AAAA', 100) !== $p1, 'the secret is what makes it unguessable');
+
+// The validity window, at its edges. A code minted for slot S is accepted
+// while now is inside [S*step, S*step + valid) - two slots by default, so
+// what is on somebody else's screen still works while that screen has
+// moved on.
+$evP = $evCard();
+$slot10 = Events::passFor($evP['secret'], 'AAAA', 10);   // shown from 100 s
+ok(Events::verifyPass($evP, $slot10, 100), 'a pass verifies the second it is minted');
+ok(Events::verifyPass($evP, $slot10, 109), 'and at the end of its own slot');
+ok(Events::verifyPass($evP, $slot10, 110), 'and through the slot after it');
+ok(Events::verifyPass($evP, $slot10, 119), 'right up to the last second of the overlap');
+ok(!Events::verifyPass($evP, $slot10, 120), 'and is refused once the window has passed');
+ok(!Events::verifyPass($evP, $slot10, 99), 'a pass is not valid before its own slot');
+ok(!Events::verifyPass($evP, 'ZZZZZZ', 100), 'a code nobody minted never verifies');
+ok(!Events::verifyPass($evP, '', 100), 'nor does an empty one');
+
+$evSlots = Events::mintPasses($evP, 6, 105);
+ok(count($evSlots) === 6, 'a pass request hands out six slots, a minute of QR');
+ok($evSlots[0]['at'] === 100000, 'the first is the slot now is inside, in server ms');
+ok($evSlots[1]['at'] === 110000, 'and they step by the rotation interval');
+ok($evSlots[0]['code'] === $slot10, 'the current slot mints the code that is valid now');
+ok(Events::verifyPass($evP, $evSlots[5]['code'], 155),
+    'and the last one still verifies when its own moment comes');
+
+// The rows. A scan is the only way to get one, and it is idempotent: a
+// client that lost the answer simply asks again.
+$evOpen = Events::create(['name' => 'srv-CI-open', 'organizer' => '11117e57']);
+ok(strlen($evOpen['eid']) === 4, 'an event gets a four-character public id');
+ok(strlen($evOpen['ekey']) === 16, 'and a sixteen-character printed key');
+ok(strlen($evOpen['secret']) === 64, 'and 32 bytes of secret nobody outside the server sees');
+ok($evOpen['mode'] === 'upcoming', 'a new event waits to be run');
+ok(Events::isMember($evOpen['eid'], '11117e57'),
+    'and its organizer is seated by being named, having scanned nothing');
+ok(Events::counts($evOpen['eid'])['members'] === 1,
+    'so a brand new event already holds one participant');
+
+$evClosed = Events::create(['name' => 'srv-CI-closed', 'organizer' => '11117e57',
+    'closed' => true, 'mode' => 'active']);
+ok($evClosed['closed'] === true, 'an event can be opened with its door closed');
+ok($evClosed['eid'] !== $evOpen['eid'], 'and every event gets an id of its own');
+
+ok(Events::admit($evOpen['eid'], '22227e57', false, 'key') === 'member',
+    'an open door makes a scanner a member at once');
+ok(Events::admit($evOpen['eid'], '22227e57', false, 'key') === 'member',
+    'and scanning again answers the same, so a lost response costs nothing');
+ok(Events::counts($evOpen['eid'])['members'] === 2,
+    'the scanner is counted once beside the organizer, not twice');
+ok(Events::isMember($evOpen['eid'], '22227e57'), 'and reads as a member');
+ok(!Events::isMember($evOpen['eid'], '33337e57'), 'while a stranger does not');
+
+ok(Events::admit($evClosed['eid'], '22227e57', true, 'pass') === 'pending',
+    'a closed door makes a scanner pending');
+ok(!Events::isMember($evClosed['eid'], '22227e57'), 'a pending row is not a member');
+ok(Events::counts($evClosed['eid'])['pending'] === 1, 'and is counted as waiting');
+ok(Events::counts($evClosed['eid'])['members'] === 1,
+    'and not as somebody who is in - only the organizer is');
+
+// The public face is what a pending row may read, and it carries none of
+// the members-only half.
+$evFace = Events::publicFace($evClosed, 5000);
+ok(isset($evFace['name'], $evFace['state'], $evFace['closed']),
+    'the public face names the event, its door and its state');
+ok(!isset($evFace['members']), 'and never how many are already in');
+ok(!array_key_exists('ekey', $evFace), 'the printed key is in no projection');
+ok(!array_key_exists('secret', $evFace), 'and neither is the secret');
+ok($evFace['starts'] === null, 'an unscheduled event answers no start');
+
+// setMember is the ONE path behind the organizer's roster verb and the
+// operator's admin action, so the two can never drift apart.
+ok(Events::setMember($evClosed['eid'], '22227e57', 'member'), 'approving a pending row changes it');
+ok(Events::isMember($evClosed['eid'], '22227e57'), 'and the person is in');
+ok(!Events::setMember($evClosed['eid'], '22227e57', 'member'), 'approving again changes nothing');
+ok(Events::counts($evClosed['eid'])['pending'] === 0, 'and nobody is left waiting');
+
+ok(Events::setMember($evClosed['eid'], '33337e57', 'member', 'admin'),
+    'an operator can seat somebody who never scanned');
+$evRows = Events::members($evClosed['eid'], true);
+$evVia = [];
+foreach ($evRows as $r) { $evVia[$r['id']] = $r['via']; }
+ok(($evVia['33337e57'] ?? '') === 'admin', 'and the row records that it came from the dashboard');
+ok(($evVia['22227e57'] ?? '') === 'pass', 'while a scan records the code it was let in with');
+
+ok(Events::setMember($evClosed['eid'], '33337e57', 'banned'), 'a member can be banned');
+$evBan = Events::rowOf($evClosed['eid'], '33337e57');
+ok($evBan !== null && $evBan['state'] === 'banned', 'and the row stays, saying so');
+ok(Events::counts($evClosed['eid'])['banned'] === 1, 'a ban is counted apart from the members');
+ok(Events::setMember($evClosed['eid'], '33337e57', 'none'), 'lifting a ban drops the row');
+ok(Events::rowOf($evClosed['eid'], '33337e57') === null, 'so the person may scan again');
+
+// A plain member never learns that pending or banned rows exist.
+Events::admit($evClosed['eid'], '33337e57', true, 'key');
+ok(count(Events::members($evClosed['eid'], false)) === 2,
+    'a member sees only the people who are in');
+ok(count(Events::members($evClosed['eid'], true)) === 3,
+    'the organizer sees who is waiting too');
+
+// Closing and reopening the door decides new scans, never the queue that
+// is already standing at it.
+Events::setClosed($evClosed['eid'], false);
+$evAfter = Events::card($evClosed['eid']);
+ok($evAfter !== null && $evAfter['closed'] === false, 'the door can be opened again');
+$evStill = Events::rowOf($evClosed['eid'], '33337e57');
+ok($evStill !== null && $evStill['state'] === 'pending',
+    'and what was already pending is still the organizer to decide');
+
+// The caller's own list is what hello and poll answer, and a banned row is
+// not an event as far as its owner is concerned.
+$evMine = Events::listFor('22227e57', 5000);
+ok(count($evMine) === 2, 'a player reads back every event it has a row in');
+$evByEid = [];
+foreach ($evMine as $e) { $evByEid[$e['eid']] = $e; }
+ok(isset($evByEid[$evOpen['eid']], $evByEid[$evClosed['eid']]), 'both of them, by id');
+ok($evByEid[$evOpen['eid']]['you']['state'] === 'member', 'each saying where the caller stands');
+ok(isset($evByEid[$evOpen['eid']]['members']), 'a member row carries the count');
+Events::setMember($evOpen['eid'], '22227e57', 'banned');
+ok(count(Events::listFor('22227e57', 5000)) === 1, 'a banned row is not an event the caller has');
+Events::setMember($evOpen['eid'], '22227e57', 'none');
+
+// A pending row is told the door it is standing at, and nothing behind it.
+$evPend = Events::listFor('33337e57', 5000);
+ok(count($evPend) === 1 && $evPend[0]['you']['state'] === 'pending',
+    'a pending row is listed, marked as waiting');
+ok(!isset($evPend[0]['members']), 'and is never told the size of the room');
+
+// The achievement rides every member answer, so a reinstalled client
+// re-grants it; the server records nothing about having given it out.
+ok(Events::ach($evOpen) === null, 'an event with no achievement offers none');
+Events::edit($evOpen['eid'], ['ach_name' => 'NIGHT OWL', 'ach_desc' => 'Joined srv-CI-open']);
+$evAch = Events::ach(Events::card($evOpen['eid']) ?? []);
+ok($evAch !== null && $evAch['id'] === 'ev_' . $evOpen['eid'], 'the achievement is named after its event');
+ok($evAch['name'] === 'NIGHT OWL', 'and carries what the operator wrote');
+ok(!isset($evAch['icon']), 'an icon is optional, and absent means the client default');
+
+// run / pause / end, and the one-way door at the end of it.
+Events::setMode($evOpen['eid'], 'active');
+ok(Events::stateOf(Events::card($evOpen['eid']) ?? [], 5000) === 'active', 'an organizer can run an event');
+Events::setMode($evOpen['eid'], 'paused');
+ok(Events::stateOf(Events::card($evOpen['eid']) ?? [], 5000) === 'paused', 'and pause it');
+Events::setMode($evOpen['eid'], 'ended');
+ok(Events::stateOf(Events::card($evOpen['eid']) ?? [], 5000) === 'ended', 'and end it');
+Events::setMode($evOpen['eid'], 'active');
+ok(Events::stateOf(Events::card($evOpen['eid']) ?? [], 5000) === 'ended',
+    'and an ended event can never be run again');
+
+// The archive outlives everything: it is written whatever state the event
+// is in, because the match began while the event was live.
+Events::archive($evOpen['eid'], ['tid' => str_repeat('a', 32), 'host' => '11117e57',
+    'started' => 900, 'finished' => 1000, 'seats' => 4, 'played' => 3,
+    'podium' => ['11117e57', '22227e57'], 'standings' => [['id' => '11117e57', 'pts' => 6]]]);
+$evArch = Events::archiveOf($evOpen['eid']);
+ok(count($evArch) === 1, 'a finished tournament is archived on its event');
+ok($evArch[0]['seats'] === 4 && $evArch[0]['played'] === 3, 'with the shape of the evening');
+ok($evArch[0]['podium'] === ['11117e57', '22227e57'], 'and who was on the podium');
+ok($evArch[0]['standings'][0]['pts'] === 6, 'the standings surviving the round trip through JSON');
+
+// The wrong-code throttle is a fixed window per player: it is there so the
+// attempt is on record, not because the codes could be guessed.
+if (Caps::apcu()) {
+    ok(!Events::failsOver('44447e57'), 'a player with no failures is not throttled');
+    for ($i = 0; $i < Settings::int('event_join_fails_per_min'); $i++) {
+        Events::noteFail('44447e57');
+    }
+    ok(Events::failsOver('44447e57'), 'and is once it has walked into the cap');
+    ok(!Events::failsOver('55557e57'), 'while the player beside it is untouched');
+}
+
+// A player that expires takes its roster rows with it, and leaves the
+// archive alone - a name that no longer resolves is a real answer.
+Events::admit($evClosed['eid'], '44447e57', false, 'key');
+ok(count(Events::listFor('44447e57', 5000)) === 1, 'the player is in an event');
+Events::forgetPlayer('44447e57');
+ok(count(Events::listFor('44447e57', 5000)) === 0, 'expiry takes the roster row');
+ok(count(Events::archiveOf($evOpen['eid'])) === 1, 'and leaves the record of the evening standing');
+
+/**
+ * Reads a QR matrix back the way a scanner does: unmask, follow the same
+ * zigzag, de-interleave the blocks and parse the byte-mode header. It shares
+ * the GEOMETRY with the encoder (that map is pinned against the client's
+ * independent encoder) but nothing else - which is the point, because the
+ * block interleaving of a multi-block version is the one thing the client's
+ * fixed single-block encoder cannot check.
+ */
+function qrCodewordsOf(array $q): array
+{
+    $bits = [];
+    foreach (Qr::dataOrder($q['version']) as [$x, $y]) {
+        $v = $q['m'][$y][$x];
+        if (Qr::masked($q['mask'], $x, $y)) {
+            $v = !$v;
+        }
+        $bits[] = $v ? 1 : 0;
+    }
+    [$ecc, $blocks, $perBlock] = Qr::layout($q['version'], $q['level']);
+    $total = ($blocks * $perBlock + $blocks * $ecc) * 8;
+    $bytes = [];
+    for ($i = 0; $i + 8 <= $total; $i += 8) {
+        $b = 0;
+        for ($j = 0; $j < 8; $j++) {
+            $b = ($b << 1) | $bits[$i + $j];
+        }
+        $bytes[] = $b;
+    }
+    // De-interleave: the standard writes one codeword from each block in
+    // turn, data first and then ECC.
+    $data = array_fill(0, $blocks, []);
+    $par = array_fill(0, $blocks, []);
+    $k = 0;
+    for ($i = 0; $i < $perBlock; $i++) {
+        for ($b = 0; $b < $blocks; $b++) {
+            $data[$b][$i] = $bytes[$k++];
+        }
+    }
+    for ($i = 0; $i < $ecc; $i++) {
+        for ($b = 0; $b < $blocks; $b++) {
+            $par[$b][$i] = $bytes[$k++];
+        }
+    }
+    return ['data' => $data, 'ecc' => $par];
+}
+
+/** The payload a matrix carries, or null when the header is not byte mode. */
+function qrReadBack(array $q): ?string
+{
+    $cw = qrCodewordsOf($q);
+    $flat = [];
+    foreach ($cw['data'] as $blk) {
+        foreach ($blk as $b) {
+            $flat[] = $b;
+        }
+    }
+    // Blocks are equal-sized here, so the payload runs straight through them
+    // in block order - which is how the encoder laid it down.
+    $mode = $flat[0] >> 4;
+    if ($mode !== 4) {
+        return null;
+    }
+    $len = (($flat[0] & 0x0F) << 4) | ($flat[1] >> 4);
+    $out = '';
+    for ($i = 0; $i < $len; $i++) {
+        $out .= chr(((($flat[1 + $i] & 0x0F) << 4) | ($flat[2 + $i] >> 4)) & 0xFF);
+    }
+    return $out;
+}
+
+/**
+ * Every Reed-Solomon syndrome of every block, evaluated INDEPENDENTLY of the
+ * routine that produced the parity: a log/antilog table built from the same
+ * field, then Horner over the whole block at a^0 .. a^(ecc-1). All zero means
+ * the codeword is a valid one, which is what a printed code lives on.
+ */
+function qrSyndromesZero(array $q): bool
+{
+    $exp = [];
+    $x = 1;
+    for ($i = 0; $i < 256; $i++) {
+        $exp[$i] = $x;
+        $x <<= 1;
+        if ($x & 0x100) {
+            $x ^= 0x11D;
+        }
+    }
+    $mul = static function (int $a, int $b) use ($exp): int {
+        if ($a === 0 || $b === 0) {
+            return 0;
+        }
+        $la = array_search($a, array_slice($exp, 0, 255), true);
+        $lb = array_search($b, array_slice($exp, 0, 255), true);
+        return $exp[((int)$la + (int)$lb) % 255];
+    };
+    $cw = qrCodewordsOf($q);
+    [$ecc] = Qr::layout($q['version'], $q['level']);
+    foreach ($cw['data'] as $b => $block) {
+        $full = array_merge($block, $cw['ecc'][$b]);
+        for ($s = 0; $s < $ecc; $s++) {
+            $acc = 0;
+            foreach ($full as $byte) {
+                $acc = $mul($acc, $exp[$s]) ^ $byte;
+            }
+            if ($acc !== 0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+
+// The MONITOR slot: one screen per event, held two different ways, and the
+// difference is the whole feature - a reservation survives the screen being
+// switched off, a lease does not.
+$evMon = Events::create(['name' => 'srv-CI-monitor', 'organizer' => '11117e57',
+    'mode' => 'active']);
+ok($evMon['monitor_allowed'] === true, 'an event offers a monitor unless it is told not to');
+ok($evMon['monitor'] === null, 'and reserves it for nobody by default');
+$evNoMon = Events::create(['name' => 'srv-CI-nomonitor', 'monitor_allowed' => false]);
+ok($evNoMon['monitor_allowed'] === false, 'an operator can decline to offer one');
+
+if (Caps::apcu()) {
+    ok(Events::monitorHolder($evMon) === null, 'a free slot is held by nobody');
+    ok(Events::claimMonitor($evMon, '22227e57'), 'and the first screen to ask takes it');
+    ok(Events::monitorHolder($evMon) === '22227e57', 'which then holds it');
+    ok(!Events::claimMonitor($evMon, '33337e57'), 'so the second screen is turned away');
+    ok(Events::claimMonitor($evMon, '22227e57'), 'while the holder renews by simply asking again');
+    Events::releaseMonitor($evMon['eid'], '33337e57');
+    ok(Events::monitorHolder($evMon) === '22227e57',
+        'and somebody who never held it cannot give it up on the holder`s behalf');
+    Events::releaseMonitor($evMon['eid'], '22227e57');
+    ok(Events::monitorHolder($evMon) === null, 'the holder gives it up and the slot is free');
+}
+
+// A RESERVATION outranks the lease: the screen holds its place while it is
+// switched off, which is the point of naming one.
+Events::setMonitorId($evMon['eid'], '33337e57');
+$evMonCard = Events::card($evMon['eid']) ?? [];
+ok($evMonCard['monitor'] === '33337e57', 'an operator reserves the slot for one screen');
+$evPre = Events::rowOf($evMon['eid'], '33337e57');
+ok($evPre !== null && $evPre['state'] === 'monitor',
+    'and naming it is granting it access: it has its row before it scans');
+ok(Events::monitorHolder($evMonCard) === '33337e57',
+    'which holds it with nothing running at all');
+ok(!Events::claimMonitor($evMonCard, '22227e57'), 'and nobody else can take it');
+ok(Events::claimMonitor($evMonCard, '33337e57'), 'while the reserved screen always can');
+
+// The reserved screen is a ROW, and that row is not a participant.
+ok(Events::admit($evMon['eid'], '33337e57', true, 'key', true) === 'monitor',
+    'a reserved screen is admitted as the monitor, closed door or not');
+ok(Events::counts($evMon['eid'])['members'] === 1,
+    'and is counted as nobody: only the organizer is a participant');
+ok(Events::counts($evMon['eid'])['monitor'] === 1, 'it is counted as what it is');
+$evMonIds = static fn(bool $all, bool $with = false): array
+    => array_column(Events::members($evMon['eid'], $all, $with), 'id');
+ok(!in_array('33337e57', $evMonIds(false), true), 'it is in no participant list');
+ok(!in_array('33337e57', $evMonIds(true), true), 'not even the organizer sees it there');
+ok(in_array('33337e57', $evMonIds(true, true), true),
+    'only the operator asks for it by name');
+$evMonMine = null;
+foreach (Events::listFor('33337e57', 5000) as $evRow) {
+    if ($evRow['eid'] === $evMon['eid']) {
+        $evMonMine = $evRow;
+    }
+}
+ok($evMonMine !== null && $evMonMine['you']['state'] === 'monitor',
+    'the screen still reads the event as its own');
+ok(isset($evMonMine['members']), 'and is told the figures it exists to show');
+
+// Naming a different screen moves the row with the column, both ways.
+Events::admit($evMon['eid'], '22227e57', false, 'key');
+Events::setMonitorId($evMon['eid'], '22227e57');
+$evWas = Events::rowOf($evMon['eid'], '33337e57');
+ok($evWas !== null && $evWas['state'] === 'member',
+    'the screen it replaces becomes an ordinary member rather than losing its place');
+$evNow = Events::rowOf($evMon['eid'], '22227e57');
+ok($evNow !== null && $evNow['state'] === 'monitor',
+    'and a member named as the monitor stops being a participant');
+ok(Events::counts($evMon['eid'])['members'] === 2,
+    'so the count follows the swap: the organizer and the demoted screen');
+Events::setMonitorId($evMon['eid'], null);
+$evFreed = Events::rowOf($evMon['eid'], '22227e57');
+ok($evFreed !== null && $evFreed['state'] === 'member',
+    'and clearing the reservation puts that row back too');
+
+// The monitor reads the event, and earns nothing by watching it.
+Events::edit($evMon['eid'], ['ach_name' => 'ON AIR']);
+$evMonC = Events::card($evMon['eid']) ?? [];
+$evSeen = EventView::forCaller($evMonC, '22227e57', 'monitor', 5000);
+ok(isset($evSeen['members']), 'a monitor reads the event as a member does');
+ok(!isset($evSeen['ach']), 'but is granted no achievement: it was posted, not joined');
+ok(isset(EventView::forCaller($evMonC, '22227e57', 'member', 5000)['ach']),
+    'while somebody who actually joined is');
+// ------------------------------------------------------------------- qr
+//
+// THE COMPATIBILITY VECTOR. The client draws the live event pass with its own
+// fixed encoder (FOK-snake js/qr.js: version 3, level L, mask 0) and the
+// server draws the printed key with this one. They are the same mathematics
+// written twice, so they are pinned to each other: these rows were produced
+// by the CLIENT's encoder for the client's own friend URL, and Qr.php must
+// reproduce them module for module. A drift in either one fails here.
+$qrText = 'https://poeggi.github.io/FOK-snake/#friend=c0ffee42';
+$qrWant = [
+    '11111110000110110111001111111',
+    '10000010000100111101001000001',
+    '10111010101000111001001011101',
+    '10111010010110110010001011101',
+    '10111010011110011111101011101',
+    '10000010001110011011001000001',
+    '11111110101010101010101111111',
+    '00000000100111001110000000000',
+    '11101111100011011110111000100',
+    '11011101110010000000111001001',
+    '10011010001000100100011100111',
+    '00001101111111111111101000010',
+    '00111010101011001000011001011',
+    '01001001101011001100111001001',
+    '10000010101010000100100111011',
+    '01001101001011100101000001010',
+    '01101011111011011001101001011',
+    '00000101001010001000111001101',
+    '10000010001011000100110100011',
+    '01110001101011010111111011010',
+    '10100110100011001000111110000',
+    '00000000110011001000100010111',
+    '11111110110010001111101011011',
+    '10000010101101001110100011001',
+    '10111010111001111110111110001',
+    '10111010000000101000000110101',
+    '10111010101000000000000111001',
+    '10000010101001100111100100010',
+    '11111110101011000101110011011',
+];
+$qrGot = Qr::matrix($qrText, 'L', 3, 0);
+ok($qrGot['size'] === 29, 'a version 3 code is 29 modules square');
+$qrRows = [];
+foreach ($qrGot['m'] as $row) {
+    $qrRows[] = implode('', array_map(static fn($v) => $v ? '1' : '0', $row));
+}
+ok($qrRows === $qrWant, 'and the server draws the client encoder module for module');
+
+// Capacity, and the reason the identifiers are the length they are: the pass
+// URL is 53 bytes and the client's fixed version 3 at L holds exactly that.
+ok(Qr::capacity(3, 'L') === 53, 'version 3 at L holds 53 text bytes, which is the pass budget');
+ok(Qr::size(1) === 21 && Qr::size(6) === 41, 'a version is 17 + 4v modules square');
+ok(Qr::fit(str_repeat('x', 53), 'L') === 3, 'a 53-byte payload fits version 3 at L');
+ok(Qr::fit(str_repeat('x', 54), 'L') === 4, 'and one byte more takes the next version');
+ok(Qr::fit(str_repeat('x', 63), 'M') === 5, 'the 63-byte printed URL needs version 5 at M');
+ok(Qr::fit(str_repeat('x', 5000), 'M') === 0, 'and a payload past every version fits none');
+
+// The printed code: version 5 at M is TWO Reed-Solomon blocks, which the
+// client's single-block encoder cannot exercise at all. Read the matrix back
+// the way a scanner does - unmask, follow the same zigzag, de-interleave -
+// and the payload must come out again.
+$qrUrl = 'https://poeggi.github.io/FOK-snake/#event=K7QM.M4KRF41RH9WDPQ2T';
+ok(strlen($qrUrl) === 63, 'the printed URL is 63 bytes: 42 of prefix, an eid, a dot and a key');
+$qrPrint = Qr::matrix($qrUrl, 'M');
+ok($qrPrint['version'] === 5, 'which the encoder puts on version 5');
+ok($qrPrint['mask'] >= 0 && $qrPrint['mask'] <= 7, 'under one of the eight masks');
+ok(qrReadBack($qrPrint) === $qrUrl, 'and reading the modules back yields the payload again');
+
+// The same round trip on the single-block shape, so the reader itself is not
+// what is being tested above.
+ok(qrReadBack(Qr::matrix($qrText, 'L', 3, 0)) === $qrText,
+    'a single-block code reads back too');
+ok(qrReadBack(Qr::matrix('FOK', 'M', 1, 3)) === 'FOK', 'and so does the smallest one');
+
+// Every mask must produce a readable code; choosing one is only ever about
+// how easy it is to scan.
+$qrAllMasks = true;
+for ($qrM = 0; $qrM < 8; $qrM++) {
+    if (qrReadBack(Qr::matrix($qrUrl, 'M', 5, $qrM)) !== $qrUrl) {
+        $qrAllMasks = false;
+    }
+}
+ok($qrAllMasks, 'all eight mask patterns encode the same payload');
+
+// The ECC is what a printed code is for, so it is checked against an
+// INDEPENDENT syndrome evaluation rather than the routine that produced it.
+ok(qrSyndromesZero(Qr::matrix($qrUrl, 'M', 5, 0)),
+    'and every Reed-Solomon syndrome of the printed code is zero');
+
+$qrSvg = Qr::svg($qrUrl, 'M');
+ok(str_starts_with($qrSvg, '<svg '), 'the print page gets inline SVG');
+ok(str_contains($qrSvg, 'viewBox="0 0 45 45"'), 'sized to the code plus the quiet zone');
+ok(str_contains($qrSvg, '<rect'), 'drawn as rects, with no image library anywhere');
+ok(substr_count($qrSvg, '<rect') < 37 * 37,
+    'one rect per dark run rather than per module');
 
 // Cleanup
 Db::close();

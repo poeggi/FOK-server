@@ -38,10 +38,11 @@ final class Signals
 
     // Client-sendable types. 'friend' (friendship notifications),
     // 'undelivered' (see sweep()), 'peer-net' (see
-    // Presence::announceNet) and 'tourney' (see Tournament::flush) are
-    // server-generated and deliberately NOT in this list, so a client cannot
-    // forge them - a forged 'tourney' would let anyone rewrite a bracket on
-    // someone else's screen.
+    // Presence::announceNet), 'tourney' (see Tournament::flush) and 'event'
+    // (see EventView::announce) are server-generated and deliberately NOT in
+    // this list, so a client cannot forge them - a forged 'tourney' would let
+    // anyone rewrite a bracket on someone else's screen, and a forged 'event'
+    // would put a room on it that nobody opened.
     //
     // 'watch' is a spectator's request to be fed a match: peer-to-peer, like
     // every other signaling type here, and NOT in NEEDS_RECEIPT - a spectator

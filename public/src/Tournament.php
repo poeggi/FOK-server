@@ -10,6 +10,7 @@ require_once __DIR__ . '/Signals.php';
 require_once __DIR__ . '/Alerts.php';
 require_once __DIR__ . '/Bracket.php';
 require_once __DIR__ . '/TourneyStore.php';
+require_once __DIR__ . '/Events.php';
 require_once __DIR__ . '/Stats.php';
 
 /**
@@ -346,8 +347,24 @@ final class Tournament
      * lobbies is the one thing a lobby's whole identity rests on.
      */
     public static function create(string $host, bool $stakes, bool $replace = false,
-        int $lvl = 1, bool $speed = false): array
+        int $lvl = 1, bool $speed = false, ?string $eid = null): array
     {
+        // An EVENT tournament is an ordinary tournament with a tag on it:
+        // the eid decides who may join and where it is archived, and
+        // nothing else here knows about events at all. Only the event's
+        // organizer may open one, and only while the event is running -
+        // a lobby for a room that is closed has nobody to play in it.
+        if ($eid !== null) {
+            $card = Events::card($eid);
+            if ($card === null || !Events::isOrganizer($card, $host)) {
+                return ['ok' => false, 'error' => 'not the organizer', 'http' => 403];
+            }
+            $state = Events::stateOf($card);
+            if ($state !== 'active') {
+                return ['ok' => false, 'http' => 409,
+                    'error' => $state === 'upcoming' ? 'not started' : $state];
+            }
+        }
         if (!TourneyStore::usable()) {
             // Tournament state has no database fallback by design, so this is
             // fatal rather than slow. Say so where an operator will see it.
@@ -407,6 +424,7 @@ final class Tournament
             'stakes' => $stakes,
             'lvl' => $lvl,
             'speed' => $speed,
+            'eid' => $eid,
             'created' => $now,
             'data' => self::emptyData(),
             'players' => [['id' => $host, 'seat' => -1, 'forfeited' => false, 'joined' => $now]],
@@ -420,6 +438,7 @@ final class Tournament
             'stakes' => $stakes,
             'lvl' => $lvl,
             'speed' => $speed,
+            'eid' => $eid,
             'max' => Settings::int('tournament_max_players'),
         ];
     }
@@ -454,6 +473,13 @@ final class Tournament
             }
             if ($t['state'] !== 'open') {
                 return ['ok' => false, 'error' => 'no such tournament', 'http' => 404];
+            }
+            // THE WHOLE SECRECY of an event tournament: by tid and by code
+            // alike, only the event's members get in. The code is no use to
+            // somebody who is not in the room.
+            $eid = $t['eid'] ?? null;
+            if (is_string($eid) && $eid !== '' && !Events::isMember($eid, $id)) {
+                return ['ok' => false, 'error' => 'not in the event', 'http' => 403];
             }
             // Joining twice is a no-op, not an error: a client that lost the
             // response to its first join must be able to simply ask again.
@@ -1165,8 +1191,9 @@ final class Tournament
         $t['state'] = 'done';
         // The cursor is the node being PLAYED, and nothing is any more.
         $t['data']['cursor'] = null;
-        self::event($t, ['event' => 'over', 'podium' => self::podium($t)]);
-        self::record($t);
+        $podium = self::podium($t);
+        self::event($t, ['event' => 'over', 'podium' => $podium]);
+        self::record($t, $podium);
     }
 
     /**
@@ -1174,7 +1201,7 @@ final class Tournament
      * Counted here rather than as each node closes, so a whole bracket costs
      * one database write; a walkover is not a match anybody played.
      */
-    private static function record(array $t): void
+    private static function record(array $t, array $podium = []): void
     {
         $played = 0;
         foreach ($t['data']['results'] as $r) {
@@ -1183,12 +1210,33 @@ final class Tournament
             }
         }
         $seats = count($t['players']);
-        self::afterUnlock(static function () use ($played, $seats): void {
+        // An event tournament also leaves a row on its event, which is
+        // what the archive is made of. Written whatever state the event
+        // is in: the match began while it was live, and this is the only
+        // record the evening leaves once the bracket expires.
+        $eid = $t['eid'] ?? null;
+        $row = null;
+        if (is_string($eid) && $eid !== '' && $played > 0) {
+            $row = [
+                'tid' => (string)$t['tid'],
+                'host' => (string)$t['host'],
+                'started' => (int)($t['created'] ?? time()),
+                'finished' => time(),
+                'seats' => $seats,
+                'played' => $played,
+                'podium' => $podium,
+                'standings' => $t['data']['standings'] ?? [],
+            ];
+        }
+        self::afterUnlock(static function () use ($played, $seats, $eid, $row): void {
             Stats::bump([
                 'tourney_finished' => 1,
                 'tourney_matches' => $played,
                 'tourney_seats' => $seats,
             ]);
+            if ($row !== null) {
+                Events::archive((string)$eid, $row);
+            }
         });
     }
 
@@ -1457,6 +1505,7 @@ final class Tournament
             'host' => $t['host'],
             'stakes' => $t['stakes'],
             'speed' => self::isSpeed($t),
+            'eid' => $t['eid'] ?? null,
             'max' => Settings::int('tournament_max_players'),
             'players' => $players,
         ];
@@ -1554,6 +1603,23 @@ final class Tournament
     }
 
     /** The whole-tournament projection, as $id sees it. */
+    /**
+     * The tournament as an EVENT MONITOR sees it: the same projection every
+     * participant reads, without the membership check - a monitor is
+     * authorised by its EVENT, not by a seat, and it never has one.
+     *
+     * INERT, deliberately. view() settles whatever deadline has come due,
+     * because a participant asking is a participant still being there. A
+     * monitor is a screen on a wall: reading it must never be what forfeits
+     * somebody's match, for the same reason the admin dashboard is excluded
+     * from the sweep. The players' own requests run the clock.
+     */
+    public static function monitorView(string $tid, string $id): ?array
+    {
+        $t = self::load($tid);
+        return $t === null ? null : self::project($t, $id);
+    }
+
     private static function project(array $t, string $id): array
     {
         $out = ['ok' => true] + self::lobby($t);
@@ -1656,22 +1722,38 @@ final class Tournament
         $max = Settings::int('tournament_max_players');
         // Freshest first, and never more than a screenful.
         usort($lobbies, static fn(array $a, array $b): int => $b['updated'] <=> $a['updated']);
+        // The caller's own events, read once: an event lobby is announced
+        // to its MEMBERS whatever network they are on - being in the room
+        // is the thing an event replaces a shared address with - and to
+        // nobody else at all, however close by they are.
+        $mine = [];
+        foreach (Events::mine($id) as $row) {
+            if ($row['state'] === 'member') {
+                $mine[$row['eid']] = true;
+            }
+        }
         $out = [];
         foreach ($lobbies as $l) {
-            // array_key_exists, not isset: a player who has never set a name
-            // has a NULL one, and the lobby is still perfectly announceable.
-            if (!array_key_exists($l['host'], $names)) {
+            $eid = $l['eid'] ?? null;
+            if (is_string($eid) && $eid !== '') {
+                if (!isset($mine[$eid])) {
+                    continue;
+                }
+            } elseif (!array_key_exists($l['host'], $names)) {
+                // array_key_exists, not isset: a player who has never set a
+                // name has a NULL one, and the lobby is still announceable.
                 continue;
             }
             $out[] = [
                 'tid' => (string)$l['tid'],
                 'code' => (string)$l['code'],
                 'host' => (string)$l['host'],
-                'host_name' => $names[$l['host']],
+                'host_name' => $names[$l['host']] ?? null,
                 'players' => (int)$l['players'],
                 'max' => $max,
                 'stakes' => (bool)$l['stakes'],
                 'speed' => (bool)($l['speed'] ?? false),
+                'eid' => $l['eid'] ?? null,
             ];
             if (count($out) === 10) {
                 break;

@@ -324,6 +324,98 @@ top of an ordinary tournament, not a second kind of one. Its smaller
 sibling, an event leaderboard aggregated across the archive, is likewise
 not in v1 - it is one GROUP BY over event_results when wanted.
 
+## Named people are pre-subscribed
+
+An ORGANIZER and a DESIGNATED MONITOR are named by the operator, not by
+a scan, so naming them IS granting them access: each gets its row at
+that moment, whether or not it ever scans anything, and keeps it while
+it holds the job.
+
+This is not a convenience. The `events` list on hello is how ANY client
+learns it is in an event at all, and an event lobby is announced against
+the same rows - so an organizer without one could not see the event it
+runs, nor the tournament it just opened. It never scans, so nothing else
+would ever give it a row.
+
+- The organizer is seated as an ordinary `member`: it is a participant
+  and appears in every roster. Naming one leaves a `banned` or `monitor`
+  row alone - that is not the place to overrule either.
+- The monitor is seated as `monitor`, which is a row and not a
+  participant (see below). Naming a member as the monitor takes them out
+  of the participant list in the same write; clearing the reservation
+  puts them back as a member rather than dropping them.
+
+## Ending and purging are two different decisions
+
+ENDING an event freezes it and KEEPS everything: the roster, the
+archive, the record of every evening it ran. It is terminal but it is
+not destructive, and the admin popup says so.
+
+DELETING one PURGES it, and the operator gets a different and harder
+warning that itemises what goes: the event itself (so its printed QR
+opens nothing), every roster row including the bans, every archived
+tournament, and the tournament it is running right now, which is ended
+for its players. Nothing may be left describing an event that is gone -
+which is why a purge is not three DELETEs: a live tournament tagged with
+the eid would go on refusing joins in the name of a room nobody can read
+any more, and a monitor claim would hold a slot on it. The APCu card,
+counts, monitor claim and every member's list cache go with the rows.
+
+## The event monitor
+
+A screen somebody puts on a TV in the room. It shows the event live and,
+once a tournament is running, becomes an INVISIBLE SPECTATOR of it: it
+sees the match, it follows the bracket, it never plays and it is never
+seated. Nobody attends it - it needs no key pressed, ever, and it always
+shows whatever is interesting at that moment.
+
+- `monitor_allowed` is an event property, DEFAULT TRUE, set at create or
+  edit. An event that does not offer one answers 403 `no monitor`.
+- ONE monitor at a time. Two ways of holding the slot, and the difference
+  is the whole feature:
+  - RESERVED (`monitor` on the events row, an operator names it): that
+    player holds the slot whether or not it is switched on. A screen in a
+    hall is still that hall's screen while it is dark, and nobody can take
+    its place by being quicker.
+  - FREE (`monitor` null): a LEASE in shared memory (`emon:<eid>`,
+    FOK_ONLINE_WINDOW), taken by whoever asks first and given up by simply
+    not asking again. A TV that is unplugged frees the slot with nobody
+    pressing anything.
+- THE RESERVED MONITOR IS A ROW, NOT A PARTICIPANT. It scans a code like
+  anybody else and is admitted at once - the operator already decided, so
+  a closed door does not apply to it - but its row state is `monitor`,
+  which means: absent from every participant list and from the member
+  count, no achievement (it did not join, it was posted), and exactly TWO
+  actions available to it, `state` and `monitor`. Everything else answers
+  403 `monitor only`. Naming a monitor converts an existing row; clearing
+  one puts that row back to `member`.
+- `monitor {id, eid}` is one request that both TAKES OR RENEWS the slot
+  and answers everything the screen shows: the event's public face, the
+  member and pending counts, the archive, and - while one is running - the
+  WHOLE tournament projection, the same one a participant reads.
+- THE MONITOR VIEW IS INERT. An ordinary `state` settles whatever deadline
+  has come due, because a participant asking is a participant still being
+  there. Tournament::monitorView does not: a screen on a wall must never
+  be what forfeits somebody's match, for the same reason the admin
+  dashboard is excluded from the sweep. The players' own requests run the
+  clock.
+- IT NEVER TAKES A SEAT. A monitor's row is `monitor`, so it is not a
+  member, so Tournament::join refuses it - by tid and by code alike. It
+  therefore cannot count towards tournament_max_players, and a
+  tournament being watched still seats its full eight. This falls out of
+  the row state rather than being a rule of its own, which is why there
+  is no seat arithmetic anywhere that knows what a monitor is.
+- NO MATCH TRAFFIC, as everywhere else. The projection's `roles` names the
+  two players; the monitor asks one of them for a feed with the ORDINARY
+  'watch' signal and the feed is P2P. The server carries nothing for a
+  monitor that it would not carry for anybody.
+
+Admin: both id fields on the event form (organizer and monitor) SEARCH BY
+NAME - `player_find&q=` matches a name or an id prefix, newest seen first,
+capped at 20 - because an operator thinks in names and the schema is keyed
+on ids. The popup says whether a monitor is offered, and whether the slot
+is reserved, live or free.
+
 ## QR encoder: public/src/Qr.php
 
 A self-contained byte-mode encoder emitting inline SVG. The print page
@@ -440,7 +532,7 @@ only with a new reason.
    (rejected from clients, smoke-asserted); Tournament: eid on create,
    membership check on join, announce to members, archive on finish and
    on a played abort.
-5. Admin: Events.php list/detail readers, admin/api.php actions and
+5. Admin: EventAdmin readers, admin/api.php actions and
    AUDIT lines, admin/event.php print page, admin.js module and popup,
    admin.css only if a variable is missing.
 6. test/smoke/08_events.sh (shares the admin cookie jar from 06): create
@@ -574,6 +666,40 @@ The achievement:
   which covers a reinstall or a restored config.
 - It is secret: never listed before it is earned, not in the events
   chooser, not derivable from anything the client shows a non-member.
+
+The event monitor - a screen for a TV:
+
+- REUSE THE EXISTING NETCODE. This is the important one and it is not
+  negotiable: the monitor is a SPECTATOR, so it goes through the spectator
+  path the client already has - the ordinary 'watch' signal, the same P2P
+  feed a tournament spectator gets, the same renderer. Do NOT write a
+  second transport, a second feed format or a monitor-only netcode branch.
+  The only thing that is new is the SCREEN; everything under it exists.
+- A menu entry under the event page, shown while the event allows a
+  monitor. It opens a screen meant to be left alone on a TV: no key is
+  ever pressed on it, it never times out, and it always shows whatever is
+  interesting at that moment.
+- It calls `event.php monitor` on its own cadence. That one request both
+  holds the slot and answers everything the screen shows, so there is
+  nothing else to poll. Stop calling it and the slot frees itself; a
+  reserved monitor keeps its place either way.
+- Refused with 409 `monitor taken` - somebody else has the screen - or 403
+  `no monitor` when the event does not offer one. Say which, and stop.
+- What it shows, in the usual snake style: the event name, its state, how
+  many have joined, how many are waiting to be let in, and the archive. As
+  soon as a tournament runs, the answer's `tourney` is the WHOLE
+  projection a participant reads - lobby, schedule, bracket, standings, the
+  break board and `roles` - so the screen can follow it with no extra call.
+- Spectating: `tourney.roles` names the two players of the match in flight,
+  and `you` reads `idle` because the monitor is not seated. Ask one of them
+  to watch, exactly as a tournament spectator does. When the cursor moves,
+  follow it to the next pair.
+- It never joins. The monitor is in no participant list, holds no pass, has
+  no achievement and cannot approve, leave, or open anything - the server
+  refuses all of it with `monitor only`. The screen should not offer it
+  either.
+- More is planned for it later. Build the screen so a section can be added
+  without rearranging it.
 
 Housekeeping on the client side:
 

@@ -2715,6 +2715,9 @@ plus the action's own fields. `eid` is required by every action.
     members   {id, eid}         -> {ok, members: [...]}
     pass      {id, eid}         -> {ok, step, valid, slots: [...]}
                                    any member, while the event is active
+    monitor   {id, eid}         -> {ok, ...} takes or renews the event's
+                                   one monitor slot and answers the whole
+                                   screen. See The monitor below
     leave     {id, eid}         -> {ok} the caller removes its own row.
                                    A pending caller withdraws the same
                                    way. The organizer cannot leave its
@@ -2744,7 +2747,7 @@ plus the action's own fields. `eid` is required by every action.
       "ends": null,                    unix ms, or null
       "now": 1784182417123,            server clock, so the state above
                                        can be re-derived locally
-      "you": {"state": "member",       member|pending
+      "you": {"state": "member",       member|pending|monitor
               "organizer": false},
                                        everything below: MEMBERS ONLY
       "members": 14,                   how many have joined
@@ -2763,6 +2766,11 @@ plus the action's own fields. `eid` is required by every action.
          "podium": [{"id": "c0ffee42", "name": "KAI"}, ...]}
       ]
     }
+
+AN ORGANIZER IS PRE-SUBSCRIBED TOO, and is an ordinary member: it is named
+rather than admitted, so it has a row from the moment it is named and the
+event is in its `events` list without it scanning anything. It is a
+participant like everybody else, and it cannot `leave` its own event.
 
 `organizer` is null when the player who ran the event has expired. The
 event keeps running on its schedule; nobody can open a tournament or
@@ -2816,6 +2824,74 @@ last slot lapses.
 A pass names NO ISSUER. The server never learns who passed an event on,
 and cannot: there is no room for an issuer in 53 bytes.
 
+### The monitor
+
+An event can offer ONE MONITOR: a screen somebody puts on a TV in the
+room. It shows the event live and, once a tournament is running, becomes
+an invisible spectator of it - it sees the match and follows the bracket,
+and it never plays, is never seated and is in no participant list.
+
+It is meant to be left alone. Nothing on it is ever pressed, and it holds
+its place by asking; it gives it up by stopping.
+
+    monitor  {id, eid}  -> {ok, ...the public face, plus:
+                            "now": <server ms>,
+                            "you": {"state": "monitor", "organizer": false},
+                            "members": 14,        who has joined
+                            "pending": 3,         who is waiting to be
+                            "reserved": true,     this event names its screen
+                            "archive": [...],     as `state` answers it
+                            "tourney": {...}}     see below, or null
+
+ONE REQUEST DOES EVERYTHING. It takes or renews the monitor slot and
+answers the whole screen, so a monitor polls this and nothing else.
+
+`tourney` is the WHOLE tournament projection - the same object
+`tournament.php state` gives a participant: lobby, schedule, bracket,
+standings, the round break and `roles`. `roles.you` reads `idle`, because
+a monitor has no seat.
+
+SPECTATING IS THE ORDINARY SPECTATOR PATH. `roles` names the two players
+of the match in flight; the monitor asks one of them to watch with the
+ordinary `watch` signal and the feed is peer to peer, exactly as it is for
+a tournament spectator. No match traffic passes through the server for a
+monitor either.
+
+Reading the monitor NEVER settles a deadline. Everywhere else a request
+from a participant is what runs a tournament's clock; this one is inert on
+purpose, because a screen on a wall must not be what forfeits somebody's
+match. The players' own requests do that.
+
+TWO WAYS THE SLOT IS HELD:
+
+- RESERVED. The event names a player as its monitor. That player holds the
+  slot whether or not it is switched on - a screen in a hall is still that
+  hall's screen while it is dark - and no one else can take it.
+- FREE. Whoever asks first holds it, and keeps it while it keeps asking.
+  Stop asking and it lapses within the online window, so an unplugged TV
+  frees the slot with nobody pressing anything.
+
+A RESERVED MONITOR IS PRE-SUBSCRIBED and is NOT A PARTICIPANT. Naming it
+is granting it access: it has its row from that moment, so the event is in
+its `events` list before it has scanned anything, and a scan is admitted
+straight away even at a closed door - the event named it, so there is
+nobody left to approve it. From then on:
+
+- `you.state` is `monitor`, on `state`, on `monitor` and in the `events`
+  list alike;
+- it is in NO member list and in no member count;
+- it is granted no achievement: the achievement is for joining, and a
+  screen was posted rather than joined;
+- it may call `state` and `monitor` and NOTHING else. Every other action
+  answers 403 `monitor only`.
+
+Errors:
+
+    403  "no monitor"     the event does not offer one
+    403  "monitor only"   a monitor tried anything but state or monitor
+    403  "not a member"   a pending row asked for the screen
+    409  "monitor taken"  somebody else holds the slot
+
 ### Errors
 
     400  bad input (unknown action, malformed id, eid or code)
@@ -2830,6 +2906,10 @@ and cannot: there is no room for an issuer in 53 bytes.
     409  "paused"
     409  "ended"
     409  "scheduled"         run/pause/end on a scheduled event
+    409  "monitor taken"     somebody else holds the monitor slot
+    403  "no monitor"        the event offers no monitor
+    403  "monitor only"      a monitor tried anything but state or
+                             monitor
     429  "too many attempts" too many wrong codes; `retry_after` is
                              seconds
 
@@ -2852,7 +2932,8 @@ Either one adds the caller's own event rows to the answer:
        "members": 14}
     ]
 
-Both member and pending rows are in it, told apart by `you.state`;
+Member, pending and monitor rows are all in it, told apart by
+`you.state`;
 `members` (the count) rides a member row only. This list is HOW A CLIENT
 KNOWS it is in an event at all - show the menu entry while it is
 non-empty, hide it when it is empty - and how a removed member finds
@@ -2905,7 +2986,9 @@ whole difference is:
   `archive`.
 
 Caps and shape are unchanged: 2 to 8 players, one tournament at a time,
-one live per host.
+one live per host. A MONITOR NEVER TAKES A SEAT and never counts towards
+that cap - it cannot join at all, by tid or by code, so a tournament with
+a screen watching it still seats eight players.
 
 ### The achievement
 

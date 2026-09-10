@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 43;
+    private const SCHEMA_VERSION = 45;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -90,7 +90,8 @@ final class Db
     // table (see Signals, RelayStore, ConnTrack and Matchmaking).
     private const COUNTED = ['players', 'scores', 'duels',
         'counters', 'alerts', 'settings', 'admin_fails', 'friends',
-        'starts', 'items', 'matches', 'ledger', 'item_disputes'];
+        'starts', 'items', 'matches', 'ledger', 'item_disputes',
+        'events', 'event_members', 'event_results'];
 
     /**
      * How many rows the database holds, over every table above. One statement
@@ -772,6 +773,69 @@ final class Db
             // one, so it has always been empty; cross-device progress
             // travels through the config vault (backup.php) instead.
             $pdo->exec('DROP TABLE IF EXISTS pstats');
+        }
+        if ($v < 44) {
+            // Events: a room an operator opens, entered by scanning a code.
+            // Rows, not shared memory, because an event outlives every
+            // request that touches it and its results are kept - the live
+            // reads run out of APCu on top of these (see Events).
+            $pdo->exec("CREATE TABLE IF NOT EXISTS events (
+                eid TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                descr TEXT NOT NULL DEFAULT '',
+                organizer TEXT,
+                ekey TEXT NOT NULL,
+                secret TEXT NOT NULL,
+                closed INTEGER NOT NULL DEFAULT 0,
+                starts INTEGER,
+                ends INTEGER,
+                mode TEXT NOT NULL DEFAULT 'upcoming',
+                ach_name TEXT,
+                ach_desc TEXT,
+                ach_icon TEXT,
+                created INTEGER NOT NULL,
+                ended_at INTEGER
+            )");
+            // The whole roster. state is pending|member|banned; a declined
+            // or removed row is DELETED, so the person may scan again.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS event_members (
+                eid TEXT NOT NULL,
+                id TEXT NOT NULL,
+                state TEXT NOT NULL,
+                asked INTEGER NOT NULL,
+                joined INTEGER,
+                via TEXT NOT NULL,
+                PRIMARY KEY (eid, id)
+            )');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_event_members_id
+                        ON event_members (id)');
+            // What a finished tournament leaves behind on its event. The
+            // ids are kept even when the player is gone: a missing name is
+            // a real answer, and this is the only record of the evening.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS event_results (
+                id INTEGER PRIMARY KEY,
+                eid TEXT NOT NULL,
+                tid TEXT NOT NULL,
+                host TEXT NOT NULL,
+                started INTEGER NOT NULL,
+                finished INTEGER NOT NULL,
+                seats INTEGER NOT NULL,
+                played INTEGER NOT NULL,
+                podium TEXT NOT NULL,
+                standings TEXT NOT NULL
+            )');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_event_results_eid
+                        ON event_results (eid, finished)');
+        }
+        if ($v < 45) {
+            // The event monitor: a screen somebody puts on a TV, which shows
+            // the event and then spectates its tournament without ever
+            // joining one. Whether an event offers one at all is the
+            // operator's choice, and a RESERVED monitor holds the single
+            // slot whether or not it is switched on - a TV that is off for
+            // an hour must still have its place when it comes back.
+            $pdo->exec('ALTER TABLE events ADD COLUMN monitor_allowed INTEGER NOT NULL DEFAULT 1');
+            $pdo->exec('ALTER TABLE events ADD COLUMN monitor TEXT');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

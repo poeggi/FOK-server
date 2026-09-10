@@ -337,6 +337,12 @@ const FOK_PSTATS_SECONDS_MAX = 4000000000;
 // totals and resends), so at most one write per id per window reaches disk.
 const FOK_PSTATS_WRITE_THROTTLE = 10;
 
+// Where the game itself lives. The event QRs point at it: a phone's
+// camera opens the game, which IS the event page, so there is no landing
+// page on this server to write. The first allowed origin is the same
+// host, and this is the path under it.
+const FOK_GAME_URL = 'https://poeggi.github.io/FOK-snake/';
+
 // Game clients are served from these origins (CORS allowlist).
 const FOK_ALLOWED_ORIGINS = [
     'https://poeggi.github.io',

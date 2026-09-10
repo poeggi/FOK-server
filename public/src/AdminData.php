@@ -318,21 +318,9 @@ final class AdminData
      */
     public static function namesFor(array $ids): array
     {
-        $ids = array_values(array_filter(array_unique($ids),
-            static fn($v) => is_string($v) && Util::isValidId($v)));
-        if ($ids === []) {
-            return [];
-        }
-        $st = Db::get()->prepare('SELECT id, name FROM players WHERE id IN ('
-            . implode(', ', array_fill(0, count($ids), '?')) . ')');
-        $st->execute($ids);
-        $rows = $st->fetchAll();
-        $st->closeCursor();
-        $names = [];
-        foreach ($rows as $r) {
-            $names[(string)$r['id']] = $r['name'];
-        }
-        return $names;
+        // Where player identity lives, so the client-facing event
+        // roster and this one answer the same question the same way.
+        return Presence::namesFor($ids);
     }
 
     /**
