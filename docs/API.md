@@ -1721,12 +1721,6 @@ Every mint and every move lands on a tamper-evident ledger for
 after-the-fact review. Unforgeable minting needs the coin economy to move
 server-side, which is future work and a later contract.
 
-CHANGED IN 4.12, and it is the only change since 4.11: the printed key is
-11 characters and names its own event, so `join` takes `{id, code}` with
-no `eid` beside it. 4.11 had a 16-character key in a 63-byte URL, which no
-version 3 code can hold - so the poster could not be read by the game's own
-scanner, which was the whole point of it. Nothing else moved.
-
 ### Identifiers
 
 - a PLAYER id is the usual 8-hex public identity (`c0ffee42`).
@@ -2349,9 +2343,18 @@ it, and a client never calls `state` for timekeeping: `state` is for a
 reload, a rejoin, or genuine doubt that an event was missed, and nothing
 else.
 
-A player who forfeits (by leaving, or by being offline past the walkover)
-loses their remaining matches as walkovers. A node where BOTH sides are
-gone is voided: no points, no difference, no winner.
+A player who forfeits by LEAVING loses their remaining matches as
+walkovers at once. Being walked over for absence is not the same thing:
+it settles that node only, and every later node of theirs is dealt
+normally and waits its own full `tournament_walkover_ms`, testing again
+whether they are still offline - so a player whose phone wakes up is back
+in the schedule. A node where BOTH sides are gone is voided: no points,
+no difference, no winner.
+
+A walkover names a winner with `"score": null`, which is what keeps it out
+of the score-difference tie-break. It advances in a knockout and takes the
+full point in the round robin exactly as a played win does, and the
+standings ride the `result` event with it.
 
 ### state - the full read-back
 
@@ -2928,6 +2931,9 @@ nobody left to approve it. From then on:
   member (or the organizer) holding a lease, and every answer says so.
   `reserved` in the monitor answer is what tells the two apart;
 - it is in NO member list and in no member count;
+- it IS in the event's audience: the `event` signal reaches it and so do
+  the event's open lobbies in the local announce, because a screen that
+  is not told what changed shows the wrong room;
 - it is granted no achievement: the achievement is for joining, and a
   screen was posted rather than joined;
 - it may call `state` and `monitor` and NOTHING else. Every other action
@@ -2996,14 +3002,24 @@ not on every beat.
 `event` is a RESERVED signal type: server-generated only, and a client
 that sends one is refused with 400, exactly like `tourney`. It rides the
 ordinary mailbox, so it arrives with a hello or a poll like anything
-else. Every payload carries `eid`:
+else. It goes to the event's AUDIENCE - its members and its monitor, the
+same set the local announce serves - unless the line below says otherwise.
+Every payload carries `eid`:
 
     {"event": "state",   "eid": "K7QM", "state": "paused"}
-        to every member, when the organizer runs, pauses or ends the
-        event. Not sent for a SCHEDULED event's own moments: those are
-        derived, and nothing has to happen for them to arrive.
+        when the organizer runs, pauses or ends the event. Not sent for
+        a SCHEDULED event's own moments: those are derived, and nothing
+        has to happen for them to arrive.
     {"event": "tourney", "eid": "K7QM", "tid": "...", "code": "K7QMX2"}
-        to every member, when the organizer opens a lobby.
+        when the organizer opens a lobby.
+    {"event": "tourney", "eid": "K7QM", "tid": "...", "over": true}
+        when that lobby stops being the event's live one - it finished,
+        the host ended it, or an operator did. `code` is absent here and
+        `over` is absent above, so the two are told apart by either.
+        BEST EFFORT: a lobby that simply EXPIRES unattended announces
+        nothing, because nothing runs for it. Both are a hint to re-read
+        `state`, whose `tourney` is the truth - and re-reading on the
+        hint is cheaper than polling for the same news.
     {"event": "request", "eid": "K7QM", "from": "c0ffee42"}
         to the ORGANIZER, when a closed event gets a pending row.
     {"event": "accepted", "eid": "K7QM"}
@@ -3027,9 +3043,13 @@ whole difference is:
   event`. That is the entire secrecy: the code is no use to somebody
   who is not in the room.
 - The local announce (hello `tourneys`, poll `tl=1`) carries an event's
-  open lobbies to its MEMBERS regardless of network, so an event
+  open lobbies to its AUDIENCE regardless of network, so an event
   tournament shows up on the normal tournament screen too. To everyone
   else it does not exist.
+- A MONITOR is in that audience, so a screen watching an event learns of
+  a new lobby on the poll it already holds rather than on its next
+  `monitor` call. It still cannot join one, by tid or by code: joining
+  tests membership, and a monitor is not a member.
 - When it finishes - or is abandoned after at least one match was
   played - it is archived on the event and appears in `state`'s
   `archive`.

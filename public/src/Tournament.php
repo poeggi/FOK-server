@@ -11,6 +11,11 @@ require_once __DIR__ . '/Alerts.php';
 require_once __DIR__ . '/Bracket.php';
 require_once __DIR__ . '/TourneyStore.php';
 require_once __DIR__ . '/Events.php';
+// EventView requires this file in turn. PHP registers a file as included
+// before it runs it, so the cycle terminates and both classes are defined
+// whichever of the two a request reaches first; neither names the other
+// while its own class is being defined.
+require_once __DIR__ . '/EventView.php';
 require_once __DIR__ . '/Stats.php';
 
 /**
@@ -138,11 +143,28 @@ final class Tournament
                 return null;
             }
             $before = self::fingerprint($t);
+            $eid = $t['eid'] ?? null;
+            $wasLive = is_string($eid) && $eid !== '' && TourneyStore::isLive($t);
             $out = $fn($t);
             // A pure read (a reload calling `state` on a tournament with
             // nothing due) must not write the entry back.
             if ($t['events'] !== [] || $before !== self::fingerprint($t)) {
                 TourneyStore::put($t);
+                // The edge an event page watches: the tournament it was
+                // showing has stopped being the event's live one. Announced
+                // from here rather than from the endings themselves because
+                // there are four of them (the host's leave, open or running,
+                // an abort, and the final result) and this is the one place
+                // that sees them all. An entry that merely EXPIRES announces
+                // nothing - nothing runs for it - which is why the signal is
+                // a hint to re-read and `state` is the truth.
+                if ($wasLive && !TourneyStore::isLive($t)) {
+                    $tid = (string)$t['tid'];
+                    self::afterUnlock(static function () use ($eid, $tid): void {
+                        EventView::announce((string)$eid,
+                            ['event' => 'tourney', 'tid' => $tid, 'over' => true]);
+                    });
+                }
             }
             $pending = [$t['host'], $t['events']];
         } finally {
@@ -431,6 +453,14 @@ final class Tournament
         ]);
         TourneyStore::markCreate($host);
         Stats::bump(['tourney_created' => 1]);
+        if ($eid !== null) {
+            // The other edge of what mutate() announces: the event now has a
+            // live tournament. Its members and its monitor are told the tid
+            // and the join code, so a screen already on the event page does
+            // not have to notice on its own.
+            EventView::announce($eid,
+                ['event' => 'tourney', 'tid' => $tid, 'code' => $code]);
+        }
         return [
             'ok' => true,
             'tid' => $tid,
@@ -1723,12 +1753,18 @@ final class Tournament
         // Freshest first, and never more than a screenful.
         usort($lobbies, static fn(array $a, array $b): int => $b['updated'] <=> $a['updated']);
         // The caller's own events, read once: an event lobby is announced
-        // to its MEMBERS whatever network they are on - being in the room
+        // to its AUDIENCE whatever network they are on - being in the room
         // is the thing an event replaces a shared address with - and to
         // nobody else at all, however close by they are.
+        //
+        // The audience is the members and the MONITOR, the same set a
+        // transition is signalled to. A monitor takes no seat and cannot
+        // join one - a tournament join tests Events::isMember, which is
+        // members only - but a screen on a wall is there to show the room's
+        // tournaments, so it is told about them.
         $mine = [];
         foreach (Events::mine($id) as $row) {
-            if ($row['state'] === 'member') {
+            if ($row['state'] === 'member' || $row['state'] === 'monitor') {
                 $mine[$row['eid']] = true;
             }
         }

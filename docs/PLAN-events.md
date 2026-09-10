@@ -33,8 +33,11 @@ manages it.
 
     eid    4 chars from Tournament::CODE_ALPHABET (31^4 = 923k events).
            Public. Grants nothing on its own.
-    key    16 chars, same alphabet (~79 bits). Printed ONLY on the admin
-           print page. Long-lived: works while the event admits members.
+    key    11 chars, same alphabet (~55 bits, and a wrong-code throttle
+           on top). It NAMES ITS OWN EVENT - no eid beside it - because
+           11 characters is the whole budget beside the URL in a version
+           3 code. Printed ONLY on the admin print page. Long-lived:
+           works while the event admits members.
     pass   6 chars, same alphabet. HMAC-SHA256(event secret, eid|slot),
            mapped onto the code alphabet and cut to 6.
            slot = floor(server_s / 10).
@@ -510,9 +513,11 @@ only with a new reason.
 ## Steps, in order
 
 SHIPPED. Steps 1 to 7 went out as 1.10.0 (2026-09-10, API 4.11, schema
-44/45) with 1.10.1 behind it; live and staging both answer 4.11. The
-steps are kept below as the record of what was built and in what order.
-STEP 8 IS OUTSTANDING and is FOK-snake's own work.
+44/45), and 1.11.0 shortened the printed key to 11 characters so the
+poster is readable by the game's own scanner (API 4.12, and `join` takes
+the scanned code with no eid beside it). Live and staging answer 1.11.2 /
+4.12. The steps are kept below as the record of what was built and in what
+order. STEP 8 IS OUTSTANDING and is FOK-snake's own work.
 
 1. CONTRACT FIRST. docs/API.md: a new "Events" section (identifiers, the
    URL shape and its 53-byte budget, the door and the two waits, join/
@@ -570,22 +575,26 @@ feature-detected.
 
 Nothing in this list touches this repo. It is the other half of the same
 writeup, in the order a client session would take it. The server answers
-all of it from API 4.11; the client feature-detects (`events` in the
+all of it from API 4.12; the client feature-detects (`events` in the
 hello answer, `eid` on a lobby), never gates on the minor.
 
 Getting in:
 
-- Deep link on load: `#event=<eid>.<code>` beside `#friend=` and
+- Deep link on load: `#event=<code>` beside `#friend=` and
   `#tourney=` (js/game.js). Opening it in a browser on a phone with no
   snake installed lands in the game with the event page open - the
-  game URL IS the events page. When the code is a key (16) or a pass (6)
-  the client POSTs event.php join and shows the result; when the page
+  game URL IS the events page. The code is a PASS (`EEEE.PPPPPP`, the dot
+  in it) or the PRINTED KEY (11 characters, no dot, naming its own event);
+  either way the client POSTs event.php join with the code exactly as
+  scanned and NO eid, and shows the result; when the page
   was opened by a browser scan and the user is not yet online (offline
   setting, no id yet) the page explains what will happen first.
 - Scanner: every QR scanner inside snake (the friend scanner and the
   tournament scanner, js/input.js) recognises the event URL as a third
   pattern and joins, whatever screen it was opened from. Regex:
-  `/#event=([A-Z2-9]{4})\.([A-Z2-9]{6}|[A-Z2-9]{16})$/`.
+  `/#event=((?:[A-Z2-9]{4}\.[A-Z2-9]{6})|[A-Z2-9]{11})$/`. Both codes are
+  11 characters, which is the whole of what fits beside the URL in the
+  version 3 code the in-game decoder reads.
 - Join feedback: joined, already a member, waiting for approval (a
   closed event - the answer's `you.state` is 'pending'), not started
   yet, paused, ended (frozen, no new members), banned, no such event

@@ -158,7 +158,8 @@ final class TourneyStore
         // The sweep's card: both live states, because a lobby its host walked
         // away from is as abandoned as a bracket nobody is playing, and both
         // hold the one-per-host claim (see Tournament::sweep).
-        if ($state === 'open' || $state === 'running') {
+        $live = self::isLive($t);
+        if ($live) {
             apcu_store(self::LIVE . $tid, [
                 'tid' => $tid,
                 'ids' => array_column($t['players'], 'id'),
@@ -173,7 +174,7 @@ final class TourneyStore
         // an ending one must not take a successor's index with it.
         $eid = $t['eid'] ?? null;
         if (is_string($eid) && $eid !== '') {
-            if ($state === 'open' || $state === 'running') {
+            if ($live) {
                 apcu_store(self::EID . $eid, $tid, self::ttl($t));
             } elseif (apcu_fetch(self::EID . $eid) === $tid) {
                 apcu_delete(self::EID . $eid);
@@ -195,6 +196,16 @@ final class TourneyStore
         }
         apcu_delete(self::CODE . $t['code']);
         apcu_delete(self::OPEN . $tid);
+    }
+
+    /**
+     * Whether a tournament is still one an event would show: the rule the
+     * eid index is written and cleared by, and the edge Tournament::mutate
+     * announces on.
+     */
+    public static function isLive(array $t): bool
+    {
+        return $t['state'] === 'open' || $t['state'] === 'running';
     }
 
     /** The tid of an event's open-or-running tournament, or null. */

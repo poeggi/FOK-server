@@ -167,10 +167,20 @@ expect "the organizer opens one" '"tid":' "$R"
 expect "and it carries the event back" "\"eid\":\"$EID1\"" "$R"
 R=$(evact "$ID2" state "$EID1")
 expect "which the event names as its live tournament" "\"tid\":\"$ETID\"" "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID2\"}" "$BASE/api/hello.php")
+expect "and every member is told a lobby opened" '"event\":\"tourney' "$R"
+expect "the signal naming the tournament" "\\\"tid\\\":\\\"$ETID\\\"" "$R"
+expect "and carrying its join code" "\\\"code\\\":\\\"$ECODE\\\"" "$R"
 R=$(tourney "{\"id\":\"$ID2\",\"action\":\"join\",\"tid\":\"$ETID\"}")
 expect "a member joins it" '"event":"lobby"' "$R"
 R=$(tourney "{\"id\":\"$ID1\",\"action\":\"leave\",\"tid\":\"$ETID\"}")
 expect "the host closes it again" '"ok":true' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID2\"}" "$BASE/api/hello.php")
+expect "and the same member is told it is over" '"over\":true' "$R"
+R=$(evact "$ID2" state "$EID1")
+refute "the event naming no live tournament any more" '"tourney":{' "$R"
 
 R=$(evadmin event_create "name=srv-CI-secret" "organizer=$ID1" "closed=0" "mode=active")
 EID2=$(evfield "$R" eid)
@@ -353,6 +363,10 @@ R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"eid\":\"$EID4\"}")
 MTID=$(evfield "$R" tid)
 MCODE=$(evfield "$R" code)
 expect "the organizer opens a tournament the screen will watch" '"tid":' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID3\",\"tourneys\":true}" "$BASE/api/hello.php")
+expect "the screen is served the lobby in the ordinary announce" "\"tid\":\"$MTID\"" "$R"
+expect "and is signalled it, being in the event audience" '"event\":\"tourney' "$R"
 R=$(tourney "{\"id\":\"$ID3\",\"action\":\"join\",\"tid\":\"$MTID\"}")
 expect "the screen cannot join it and so can never hold a seat" '"error":"not in the event"' "$R"
 R=$(tourney "{\"id\":\"$ID3\",\"action\":\"join\",\"code\":\"$MCODE\"}")
@@ -361,6 +375,9 @@ R=$(evact "$ID3" monitor "$EID4")
 expect "while it watches the same tournament as the screen" "\"tid\":\"$MTID\"" "$R"
 R=$(tourney "{\"id\":\"$ID1\",\"action\":\"leave\",\"tid\":\"$MTID\"}")
 expect "the host closes it again" '"ok":true' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID3\"}" "$BASE/api/hello.php")
+expect "and is told when it is over" '"over\":true' "$R"
 
 # The operator's two id fields search by name, which is how one is set at all.
 R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=player_find&q=SMOKE")

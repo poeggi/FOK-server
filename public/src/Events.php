@@ -312,6 +312,28 @@ final class Events
     }
 
     /**
+     * Who a transition is told about: the members, and the MONITOR. A
+     * monitor is absent from every roster and every count, but it is a
+     * screen whose whole job is showing what just changed, so it is told.
+     * A pending row is not: it is standing at a door, and a door tells you
+     * nothing about the room behind it.
+     *
+     * @return list<string>
+     */
+    public static function audience(string $eid): array
+    {
+        $st = Db::get()->prepare(
+            "SELECT id FROM event_members WHERE eid = ? AND state IN ('member', 'monitor')");
+        $st->execute([$eid]);
+        $ids = [];
+        foreach ($st->fetchAll() as $row) {
+            $ids[] = (string)$row['id'];
+        }
+        $st->closeCursor();
+        return $ids;
+    }
+
+    /**
      * The roster. Pending and banned rows are the organizer's business, so
      * a plain member asks with $all false and never learns they exist.
      * @return list<array<string, mixed>>

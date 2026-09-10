@@ -202,19 +202,14 @@ final class EventView
     }
 
     /**
-     * Tells every MEMBER that something changed. One Signals::send each, in
-     * the deferred tail: transitions are rare, and nothing here is anything
-     * the caller reads back.
-     *
-     * Pending rows are not told: they are not in the event, and an event's
-     * business is not a door's.
+     * Tells the event's audience that something changed - its members and
+     * its monitor (see Events::audience). One Signals::send each, in the
+     * deferred tail: transitions are rare, and nothing here is anything the
+     * caller reads back.
      */
     public static function announce(string $eid, array $payload): void
     {
-        $ids = [];
-        foreach (Events::members($eid, false) as $r) {
-            $ids[] = $r['id'];
-        }
+        $ids = Events::audience($eid);
         if (!$ids) {
             return;
         }

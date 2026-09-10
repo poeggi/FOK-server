@@ -96,11 +96,15 @@ body {
     color: var(--ink);
 }
 
-/* The sheet IS A4. Everything on it is placed in millimetres, so what the
-   screen shows is what the paper gets, at any zoom. */
+/* The sheet IS A4, exactly - not a floor it may grow past. Everything on it
+   is placed in millimetres, so what the screen shows is what the paper gets,
+   at any zoom, and the page it gets is ONE. The height is fixed and the
+   overflow hidden because a poster that runs onto a second sheet is not a
+   poster; every block below is sized so that the sheet's own content cannot
+   reach that clip. */
 .sheet {
-    width: 210mm; min-height: 297mm;
-    padding: 22mm 20mm 18mm;
+    width: 210mm; height: 297mm; overflow: hidden;
+    padding: 15mm 18mm 12mm;
     background: var(--paper);
     color: var(--ink);
     display: flex; flex-direction: column; align-items: center; text-align: center;
@@ -110,7 +114,7 @@ body {
 .pixel { font-family: 'Press Start 2P', 'Courier New', monospace; }
 
 .titleblock {
-    width: 100%; padding: 9mm 6mm 8mm; margin-bottom: 10mm;
+    width: 100%; padding: 7mm 6mm 6mm; margin-bottom: 6mm;
     background: #0b0f14; border-radius: 1.5mm;
 }
 .wordmark {
@@ -130,11 +134,16 @@ h1.long { font-size: 6mm; }
 h1.longer { font-size: 4.6mm; }
 
 .descr {
-    margin: 7mm auto 0; max-width: 130mm;
-    font-size: 4.2mm; line-height: 1.5; color: var(--ink-soft);
+    margin: 6mm auto 0; max-width: 140mm;
+    font-size: 4.2mm; line-height: 1.45; color: var(--ink-soft);
+    max-height: 22mm; overflow: hidden;
 }
+/* 500 characters is what the field takes, so prose steps down the way the
+   name does rather than pushing the QR off the sheet. */
+.descr.long { font-size: 3.6mm; }
+.descr.longer { font-size: 3.1mm; }
 .when {
-    margin: 6mm 0 0; font-size: 3.2mm; letter-spacing: 0.08em;
+    margin: 5mm 0 0; font-size: 3.2mm; letter-spacing: 0.08em;
     color: var(--ink-soft);
 }
 .when span { white-space: nowrap; }
@@ -144,7 +153,7 @@ h1.longer { font-size: 4.6mm; }
    in dark mode it sits on its own lit panel instead, which reads as a screen
    and is the point of the page. */
 .qr {
-    margin: 11mm auto 0; padding: 5mm;
+    margin: 8mm auto 0; padding: 5mm;
     background: #fff; border-radius: 2mm;
     width: 96mm; max-width: 100%;
 }
@@ -152,14 +161,14 @@ html.dark .qr { box-shadow: 0 0 0 0.8mm var(--accent); }
 .qr svg { display: block; width: 100%; height: auto; }
 
 .code {
-    margin: 7mm 0 0; font-size: 5mm; letter-spacing: 0.06em;
+    margin: 6mm 0 0; font-size: 5mm; letter-spacing: 0.06em;
     color: var(--ink); word-break: break-all;
 }
-.how { margin: 5mm 0 0; font-size: 3.6mm; color: var(--ink-soft); }
-.snake { display: block; width: 88mm; max-width: 100%; margin: 9mm auto 0; }
+.how { margin: 4mm 0 0; font-size: 3.6mm; color: var(--ink-soft); }
+.snake { display: block; width: 62mm; max-width: 100%; margin: 7mm auto 0; }
 
 .foot {
-    margin-top: auto; padding-top: 8mm; width: 100%;
+    margin-top: auto; padding-top: 6mm; width: 100%;
     border-top: 0.4mm solid var(--line);
     display: flex; justify-content: space-between; gap: 6mm;
     font-size: 2.9mm; letter-spacing: 0.06em; color: var(--ink-soft);
@@ -185,7 +194,7 @@ html.dark .qr { box-shadow: 0 0 0 0.8mm var(--accent); }
     html, body { background: var(--paper); }
     body { padding: 0; display: block; }
     .sheet {
-        width: 210mm; min-height: 297mm; box-shadow: none;
+        width: 210mm; height: 297mm; box-shadow: none;
         page-break-after: avoid; break-after: avoid;
     }
     .bar, .note { display: none; }
@@ -200,6 +209,8 @@ html.dark .qr { box-shadow: 0 0 0 0.8mm var(--accent); }
 <?php
 $name = (string)$card['name'];
 $size = strlen($name) > 34 ? ' longer' : (strlen($name) > 18 ? ' long' : '');
+$descr = (string)$card['descr'];
+$dsize = strlen($descr) > 220 ? ' longer' : (strlen($descr) > 90 ? ' long' : '');
 ?>
 <div class="sheet">
     <div class="titleblock">
@@ -208,8 +219,8 @@ $size = strlen($name) > 34 ? ' longer' : (strlen($name) > 18 ? ' long' : '');
     </div>
     <h1 class="pixel<?= $size ?>"><?= $e($name) ?></h1>
 
-    <?php if ($card['descr'] !== ''): ?>
-        <p class="descr"><?= $e($card['descr']) ?></p>
+    <?php if ($descr !== ''): ?>
+        <p class="descr<?= $dsize ?>"><?= $e($descr) ?></p>
     <?php endif; ?>
 
     <?php if ($card['starts'] !== null || $card['ends'] !== null): ?>

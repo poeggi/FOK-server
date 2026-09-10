@@ -351,10 +351,17 @@ function closeModal(overlay) {
 }
 
 // Shared modal shell: backdrop + panel + head (a title with a modal-name span)
-// + scrollable body, wired to close on the button, click-outside or Escape.
+// + scrollable body, wired to close on the button and - unless it is guarded
+// below - on a click outside or Escape.
 // Callers fill the body, add any extra head controls before the close button,
 // then append the overlay to the document.
-function makeModal(nameText) {
+//
+// A popup that HOLDS TYPED INPUT passes guarded = true, and then only its own
+// close button dismisses it. A click that lands beside the panel and an Escape
+// aimed at a dropdown are both ordinary accidents, and neither may throw away
+// a form somebody has been filling in. Every other popup shows something the
+// server already holds, so dismissing it costs nothing and both stay wired.
+function makeModal(nameText, guarded) {
     const overlay = el('div', 'modal-backdrop');
     const modal = el('div', 'modal');
     const head = el('div', 'modal-head');
@@ -366,10 +373,12 @@ function makeModal(nameText) {
     close.onclick = () => closeModal(overlay);
     modal.append(head, body);
     overlay.append(modal);
-    overlay.onmousedown = (e) => { if (e.target === overlay) closeModal(overlay); };
-    const onKey = (e) => { if (e.key === 'Escape') closeModal(overlay); };
-    overlay._onKey = onKey;
-    document.addEventListener('keydown', onKey);
+    if (!guarded) {
+        overlay.onmousedown = (e) => { if (e.target === overlay) closeModal(overlay); };
+        const onKey = (e) => { if (e.key === 'Escape') closeModal(overlay); };
+        overlay._onKey = onKey;
+        document.addEventListener('keydown', onKey);
+    }
     return { overlay, modal, head, title, name, body, close };
 }
 
@@ -1879,7 +1888,7 @@ function utcValue(field) {
 function eventForm(existing) {
     const d = existing || {};
     const { overlay, head, title, close, body } = makeModal(
-        existing ? 'Edit event' : 'New event');
+        existing ? 'Edit event' : 'New event', true);
     head.append(title, close);
 
     const tbl = el('table', 'kv');

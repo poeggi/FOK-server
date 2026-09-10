@@ -3160,6 +3160,8 @@ ok(count(Events::members($evClosed['eid'], false)) === 2,
     'a member sees only the people who are in');
 ok(count(Events::members($evClosed['eid'], true)) === 3,
     'the organizer sees who is waiting too');
+ok(!in_array('33337e57', Events::audience($evClosed['eid']), true),
+    'and a pending row is told nothing: it is standing at a door');
 
 // Closing and reopening the door decides new scans, never the queue that
 // is already standing at it.
@@ -3400,6 +3402,14 @@ ok(!in_array('33337e57', $evMonIds(false), true), 'it is in no participant list'
 ok(!in_array('33337e57', $evMonIds(true), true), 'not even the organizer sees it there');
 ok(in_array('33337e57', $evMonIds(true, true), true),
     'only the operator asks for it by name');
+
+// The AUDIENCE is who a transition is told about, and it is deliberately not
+// the roster: a screen absent from every list is still shown what changed.
+$evAud = Events::audience($evMon['eid']);
+ok(in_array('11117e57', $evAud, true), 'a transition reaches the members');
+ok(in_array('33337e57', $evAud, true),
+    'and the monitor, which shows the room rather than sitting in it');
+ok(count($evAud) === 2, 'and nobody else at all');
 $evMonMine = null;
 foreach (Events::listFor('33337e57', 5000) as $evRow) {
     if ($evRow['eid'] === $evMon['eid']) {
