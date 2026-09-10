@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.10", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.11", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -51,7 +51,9 @@ announce, the announced end of a duel, the debug report, and `api` and
 the debug instruction on every body it sends, with a 5 s default
 hold - added in 4.9, or one request at a time from a client while its
 poll is parked, with a margin a clock reading may be ahead by before it
-is refused - added in 4.10) is
+is refused - added in 4.10, or events: a room an operator opens, whose
+members get in by scanning a code, whose roster lives only on the server
+and whose tournaments nobody outside it can see - added in 4.11) is
 available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
@@ -535,6 +537,10 @@ Request:
                                   lobbies hosted on the caller's own network
                                   (see Tournament mode). Send it only while a
                                   screen that shows them is open.
+      "events": true              4.11, optional bool: ask for the caller's
+                                  own events (see Events). Send it on the
+                                  hello before a screen that needs them,
+                                  not on every beat.
       "nets": ["198.51.100.7",    optional, up to 4: the caller's OWN public
                "2a02:1:2:3::9"]   addresses, as the client discovered them.
                                   The server sees one address family per
@@ -548,7 +554,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.10",               contract version, see Versioning
+      "api": "4.11",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a free
@@ -587,7 +593,13 @@ Response:
       "tourneys": [                          only when "tourneys" was true
         {"tid": "<32-hex>", "code": "K7QMX2", "host": "c0ffee42",
          "host_name": "KAI", "players": 3, "max": 8, "stakes": false,
-         "speed": false}
+         "speed": false, "eid": null}
+      ],
+      "events": [                            only when "events" was true
+        {"eid": "K7QM", "name": "Snake Night", "closed": false,
+         "state": "active", "starts": null, "ends": null,
+         "you": {"state": "member", "organizer": false},
+         "members": 14}
       ]
     }
 
@@ -669,6 +681,10 @@ on IPv6 every device carries its own address out of the site's /64 and only
 the prefix is shared. It is a network-local convenience, not a directory:
 everything else is joined by `code`, and the code is the capability (see
 Tournament mode).
+
+One exception, and it is the point of it: an EVENT's open lobbies are
+listed to that event's MEMBERS whatever network they are on (4.11), and
+to nobody else. A lobby carrying an `eid` is an event's - see Events.
 
 A player is on as many networks as the address families it has spoken.
 A dual-stack client picks a family per connection, so the host's hello can
@@ -952,7 +968,7 @@ not its hello is on time - and needs no hello to stay online at all.
 Every answer WITH A BODY carries `api` and `debug` (4.9), beside the
 `signals` array:
 
-      "api": "4.10",             the contract version, re-read here for
+      "api": "4.11",             the contract version, re-read here for
                                 the same reason hello carries it: it
                                 un-latches a client after a rollback
       "debug": false,           the server's debug instruction for this
@@ -963,9 +979,10 @@ due, so it can never be its job to ask - which is what makes a poll a
 complete beat rather than most of one. `now` and `q_ms` are NOT here:
 they are readings, and hello's (see Pacing).
 
-`aa`, `fl`, `tl`, `de` and `db` (4.9) carry what a screen holding this
-poll would otherwise send a hello for. Each is the hello field of the
-same name, on the request the client is already making:
+`aa`, `fl`, `tl`, `de` and `db` (4.9), and `ev` (4.11), carry what a
+screen holding this poll would otherwise send a hello for. Each is the
+hello field of the same name, on the request the client is already
+making:
 
     aa=1        arm auto-accept for ~120 s, as hello's `auto_accept`
                 does. A poll can only ARM it; only a hello clears it
@@ -974,6 +991,8 @@ same name, on the request the client is already making:
                 `friends_list` does.
     tl=1        answer `tourneys`, the local tournament announce, as
                 hello's `tourneys` does.
+    ev=1        answer `events`, the caller's own events, as hello's
+                `events` does (4.11).
     de=<8-hex>  the peer this client has just STOPPED playing, as hello's
                 `duel_end` does (4.7). The screen a client returns to
                 after a match is one holding this poll, so state it here
@@ -1181,6 +1200,9 @@ Types (fixed set, anything else is rejected):
     tourney   RESERVED - server-generated only     payload: JSON, see the
               (clients cannot send it: 400)          event list under
                                                      Tournament mode
+    event     RESERVED - server-generated only     payload: JSON, see
+              (clients cannot send it: 400)          The `event` signal
+                                                     under Events (4.11)
 
 The 'friend' signal is the friendship NOTIFICATION: the server delivers
 it into the peer's mailbox when a friend request is created for them or
@@ -2002,9 +2024,9 @@ two reports agree, when one is enough, and when they contradict each other
 Always POST, always `{"id": "<8-hex>", "action": "..."}` plus the action's
 fields:
 
-    create    {id, stakes?, replace?, lvl?, speed?}
+    create    {id, stakes?, replace?, lvl?, speed?, eid?}
                                      -> {ok, tid, code, stakes, lvl, speed,
-                                         max}
+                                         max, eid}
     join      {id, tid}  or  {id, code}
                                      -> {ok, ...lobby fields}
     leave     {id, tid}              -> {ok}
@@ -2037,6 +2059,15 @@ with the flag is their business. It is a property of the TOURNAMENT and
 is fixed at create - there is no way to turn it on later. Unlike `lvl` it
 rides the lobby as well as the `roles` sheet, so a player can see it
 before joining.
+
+`eid` (4.11, optional) makes this an EVENT tournament: the caller must be
+that event's organizer and the event must be active. It changes nothing
+about how the tournament runs - the difference is who may join it (its
+event's members, and 403 `not in the event` for anyone else, by tid and
+by code alike), who is shown it in the local announce (its members, on
+any network) and that it is archived on the event when it finishes. It
+rides the create's answer, the lobby, the announce and the `roles` sheet;
+absent or null means an ordinary tournament. See Events.
 
 A host may hold one open-or-running tournament at a time (409), and may
 create one every `tournament_create_cooldown` (429 with `retry_after`).
@@ -2546,6 +2577,353 @@ still be read back, and an abandoned one after
 `tournament_abandoned_ttl`, which is shorter because there is no finished
 bracket to come back to. After that the tid is simply unknown, and `state`
 answers 404.
+
+## Events (4.11)
+
+An EVENT is a room an operator opens on the server: a LAN party, a club
+night, a stand at a fair. A player gets in by scanning its QR code -
+straight in when the event is OPEN, after the organizer approves them
+when it is CLOSED. Inside, the organizer runs tournaments only members
+can see or join, past tournaments are archived on the event, joining
+grants a secret achievement, and any member can pass the event on with a
+QR that lives 20 seconds.
+
+THE SERVER IS THE ROSTER. Membership is rows on the server and nothing
+else: a client reads the roster fresh whenever it shows it, keeps no
+copy, and reconciles nothing at startup. A member learns it was removed
+by the event no longer being in its list. This is deliberately NOT the
+friends-list pattern - a local copy plus a startup reconciliation is what
+makes a restored config fire a burst of requests.
+
+An event tournament is an ORDINARY tournament: same lifecycle, same
+bracket, same deadlines, same caps, same requests (see Tournament mode).
+`eid` on it is a tag and a membership check on the way in, nothing more.
+
+### Identifiers
+
+    eid     4 chars, alphabet 23456789ABCDEFGHJKMNPQRSTUVWXYZ. The
+            event's public name on the wire. It grants NOTHING on its
+            own: every action but `join` answers 404 for a caller with
+            no row, so an eid alone cannot even tell you an event
+            exists.
+    key     16 chars, same alphabet. The long-lived code, printed on
+            the event's poster and nowhere else. It is in no JSON
+            answer this API can produce, for anybody, ever.
+    pass    6 chars, same alphabet. The live code a member shows on
+            screen. It is derived from the server's clock, so it is
+            valid for 20 s and no row is stored for it.
+    ach id  `ev_<eid>` - the achievement joining grants.
+
+`key` and `pass` are both called `code` on the wire and the server tells
+them apart by LENGTH (16 or 6). A client never has to know which it
+scanned.
+
+### The URL a QR carries
+
+One shape for both codes:
+
+    https://poeggi.github.io/FOK-snake/#event=<eid>.<code>
+
+A phone's camera opens the game, which IS the event page - there is no
+landing page on the server. The client parses the hash on load and in
+its own scanner, exactly as it already does for `#friend=` and
+`#tourney=`.
+
+THE BUDGET, and why the identifiers are the length they are: the live
+pass QR is rendered by the CLIENT, whose encoder is a fixed QR version 3
+in byte mode - 53 text bytes, no more. The URL prefix is 42 bytes, which
+leaves 11 for `<eid>.<code>`: 4 + 1 + 6, and 53 in all. Not one byte
+spare. There is no room in a pass QR for anything else, which is why a
+pass names no issuer (see `pass`). The printed key QR is rendered by the
+SERVER and has no such limit.
+
+### State
+
+An event's state is DERIVED at read time, never swept: there is no cron
+here, so nothing fires at a scheduled moment and nothing needs to.
+
+    upcoming   visible to its members; nobody can join yet, no passes,
+               no tournaments
+    active     joins, passes and tournaments
+    paused     no joins, no passes, no new tournaments; a tournament
+               already running plays on
+    ended      FROZEN and terminal: no joins, no passes, no new
+               tournaments, and the event never leaves this state. A
+               tournament RUNNING at the moment of the end finishes
+               normally and is archived - it began while the event was
+               live, and a clock must not stop two players mid match.
+
+A SCHEDULED event has `starts` and/or `ends` and walks itself: upcoming
+before `starts`, active after it, ended at `ends`. Nothing is pushed
+when either moment arrives - a client derives the state from `starts`,
+`ends` and the server clock, all three of which ride every answer. The
+organizer cannot run, pause or end a scheduled event (409 `scheduled`);
+the operator can end one.
+
+An UNSCHEDULED event is driven by its organizer with `run`, `pause` and
+`end`.
+
+`state` on the wire is always the DERIVED value. `starts` and `ends` are
+unix MILLISECONDS like every other timing value in this API, because a
+client compares them against the same clock as `now`. Dates that are
+only ever displayed - `asked`, `joined`, `finished` - are unix SECONDS,
+like `created` everywhere else.
+
+### The door: open or closed
+
+`closed` is a property of the event. It decides what a scanned code
+does and nothing else about the event changes with it:
+
+    open     the code makes the scanner a MEMBER at once, and the
+             answer carries the achievement
+    closed   the code makes the scanner PENDING. The organizer is told
+             (an `event` signal, `request`), and approves or declines.
+             Approval makes the row a member and tells the requester
+             (an `event` signal, `accepted`). A DECLINE drops the row
+             and tells nobody - the friend logic exactly.
+
+The code stays the only way in under both doors: nobody can ask to join
+an event whose code they have not scanned, and an organizer approves,
+never adds.
+
+A PENDING caller sees the PUBLIC FACE of the event and nothing else:
+name, description, organizer, schedule, state, and that it is waiting.
+No member count, no member list, no tournaments, no archive, no pass, no
+achievement.
+
+Flipping a closed event open does NOT approve what is already pending -
+the organizer still decides those, while new scans go straight in.
+
+TWO DIFFERENT WORDS FOR TWO DIFFERENT WAITS, and they are not the same
+thing: an EVENT before its start is `upcoming`; a MEMBER ROW before
+approval is `pending`. Both appear in one answer, as `state` and
+`you.state`.
+
+### POST /api/event.php
+
+Always POST, always `{"id": "<8-hex>", "action": "...", "eid": "<4>"}`
+plus the action's own fields. `eid` is required by every action.
+
+    join      {id, eid, code}   -> {ok, ...state fields}
+                                   the only action that takes a code,
+                                   and the only way to get a row.
+                                   Idempotent: a repeat answers what the
+                                   first did, achievement included, so a
+                                   client that lost the response simply
+                                   asks again
+    state     {id, eid}         -> {ok, ...} see below
+    members   {id, eid}         -> {ok, members: [...]}
+    pass      {id, eid}         -> {ok, step, valid, slots: [...]}
+                                   any member, while the event is active
+    leave     {id, eid}         -> {ok} the caller removes its own row.
+                                   A pending caller withdraws the same
+                                   way. The organizer cannot leave its
+                                   own event (403). The row is gone and
+                                   the person may scan again
+    roster    {id, eid, peer, set}
+                                -> {ok} organizer only
+    access    {id, eid, closed} -> {ok} organizer only, flips the door
+    run       {id, eid}         -> {ok} organizer, unscheduled only
+    pause     {id, eid}         -> {ok} organizer, unscheduled only
+    end       {id, eid}         -> {ok} organizer, unscheduled only.
+                                   TERMINAL
+
+`state` answers the caller's whole view of the event:
+
+    {
+      "ok": true,
+      "eid": "K7QM",
+      "name": "Snake Night",
+      "descr": "Every Thursday, back room",
+      "organizer": "c0ffee42",         may be null (see below)
+      "organizer_name": "KAI",
+      "closed": false,
+      "state": "active",               derived: upcoming|active|paused
+                                       |ended
+      "starts": 1784182417000,         unix ms, or null
+      "ends": null,                    unix ms, or null
+      "now": 1784182417123,            server clock, so the state above
+                                       can be re-derived locally
+      "you": {"state": "member",       member|pending
+              "organizer": false},
+                                       everything below: MEMBERS ONLY
+      "members": 14,                   how many have joined
+      "ach": {"id": "ev_K7QM",         the achievement, see below
+              "name": "NIGHT OWL",
+              "desc": "Joined Snake Night",
+              "icon": {...}},
+      "tourney": {"tid": "<32-hex>",   the event's live tournament, or
+                  "code": "K7QMX2",    null. Same fields the tournament
+                  "state": "open",     announce carries
+                  "players": 3,
+                  "max": 8},
+      "archive": [                     newest first
+        {"tid": "<32-hex>", "finished": 1784100000, "seats": 8,
+         "played": 7,
+         "podium": [{"id": "c0ffee42", "name": "KAI"}, ...]}
+      ]
+    }
+
+`organizer` is null when the player who ran the event has expired. The
+event keeps running on its schedule; nobody can open a tournament or
+work the door until an operator names a new one.
+
+`members` (the action) answers the roster:
+
+    {"ok": true,
+     "members": [
+       {"id": "c0ffee42", "name": "KAI", "state": "member",
+        "joined": 1784100000, "organizer": true, "friend": "none"}
+     ]}
+
+Every id carries its name. `state` is `member` for everyone; `pending`
+and `banned` rows are answered to the ORGANIZER only. `friend` is
+`none`, `pending` or `accepted` and is what an "ask to be friends"
+button reads - the request itself is friend.php, unchanged.
+
+The roster names NO ONLINE STATE. Presence is friendship-gated in this
+API and stays that way: being in the same room does not make two people
+friends.
+
+`roster` is the organizer's one verb over a row:
+
+    set  "member"   approve a pending row
+         "none"     decline a pending row, remove a member, or lift a
+                    ban. The row is dropped and the person may scan
+                    again
+         "banned"   the row stays and every scan answers 403
+
+`peer` must already have a row: a peer with none is 404. The organizer
+APPROVES, never adds. A `set` that changes nothing answers ok, like a
+repeated friend accept.
+
+`pass` hands out the next six 10-second slots at once:
+
+    {"ok": true, "step": 10, "valid": 20,
+     "slots": [{"at": 1784182410000, "code": "H3KM9P"}, ...6]}
+
+`at` is the server-clock millisecond the slot begins, `step` how far
+apart the slots are and `valid` how long each code is accepted for -
+both in SECONDS, and both read from the answer rather than hard-coded,
+because they are admin-configurable. The overlap is deliberate: a code
+stays valid for two slots, so a code read off a screen still works while
+the screen has already moved on.
+
+Six slots is one minute of QR, which is one request a minute for a
+screen that rotates locally on the synced clock. Ask again before the
+last slot lapses.
+
+A pass names NO ISSUER. The server never learns who passed an event on,
+and cannot: there is no room for an issuer in 53 bytes.
+
+### Errors
+
+    400  bad input (unknown action, malformed id, eid or code)
+    403  "banned"            the caller's row is banned
+    403  "not the organizer" an organizer-only action
+    403  "not a member"      a members-only action from a pending row
+    404  "no such event"     no such eid, OR a wrong key, OR a wrong or
+                             expired pass, OR the caller has no row for
+                             an event that does exist. ONE answer for
+                             all four, so nothing can be enumerated
+    409  "not started"       the event is upcoming
+    409  "paused"
+    409  "ended"
+    409  "scheduled"         run/pause/end on a scheduled event
+    429  "too many attempts" too many wrong codes; `retry_after` is
+                             seconds
+
+A wrong code is throttled per player id, not per event: a client that
+mistypes or scans something stale a few times is fine, a client walking
+the keyspace is not. The codes are far too large to guess - the throttle
+is there so the attempt is on record.
+
+### On hello and poll
+
+    hello body   "events": true
+    poll query   ev=1
+
+Either one adds the caller's own event rows to the answer:
+
+    "events": [
+      {"eid": "K7QM", "name": "Snake Night", "closed": false,
+       "state": "active", "starts": null, "ends": null,
+       "you": {"state": "member", "organizer": false},
+       "members": 14}
+    ]
+
+Both member and pending rows are in it, told apart by `you.state`;
+`members` (the count) rides a member row only. This list is HOW A CLIENT
+KNOWS it is in an event at all - show the menu entry while it is
+non-empty, hide it when it is empty - and how a removed member finds
+out: the row is simply gone.
+
+Ask for it on the hello or poll that precedes a screen that needs it,
+not on every beat.
+
+### The `event` signal
+
+`event` is a RESERVED signal type: server-generated only, and a client
+that sends one is refused with 400, exactly like `tourney`. It rides the
+ordinary mailbox, so it arrives with a hello or a poll like anything
+else. Every payload carries `eid`:
+
+    {"event": "state",   "eid": "K7QM", "state": "paused"}
+        to every member, when the organizer runs, pauses or ends the
+        event. Not sent for a SCHEDULED event's own moments: those are
+        derived, and nothing has to happen for them to arrive.
+    {"event": "tourney", "eid": "K7QM", "tid": "...", "code": "K7QMX2"}
+        to every member, when the organizer opens a lobby.
+    {"event": "request", "eid": "K7QM", "from": "c0ffee42"}
+        to the ORGANIZER, when a closed event gets a pending row.
+    {"event": "accepted", "eid": "K7QM"}
+        to the requester, when the organizer approves them. No other
+        fields: read `state`, which now carries the achievement.
+
+Nothing is signalled for a join into an OPEN event (the count is read,
+not pushed), for a decline, or for a removal - the friend logic again:
+what did not happen is not announced.
+
+### Tournaments inside an event
+
+An event tournament is an ordinary tournament in every respect. The
+whole difference is:
+
+- `create` takes an optional `eid`. The caller must be that event's
+  organizer and the event must be active, or the create is refused.
+  The answer, the lobby projection, the announce card and the roles
+  sheet all carry `eid` back.
+- `join` by tid OR by code refuses a non-member with 403 `not in the
+  event`. That is the entire secrecy: the code is no use to somebody
+  who is not in the room.
+- The local announce (hello `tourneys`, poll `tl=1`) carries an event's
+  open lobbies to its MEMBERS regardless of network, so an event
+  tournament shows up on the normal tournament screen too. To everyone
+  else it does not exist.
+- When it finishes - or is abandoned after at least one match was
+  played - it is archived on the event and appears in `state`'s
+  `archive`.
+
+Caps and shape are unchanged: 2 to 8 players, one tournament at a time,
+one live per host.
+
+### The achievement
+
+Joining an event grants an achievement the client renders from what the
+server sends:
+
+    "ach": {"id": "ev_K7QM", "name": "NIGHT OWL",
+            "desc": "Joined Snake Night",
+            "icon": {"p": [...], "d": "..."}}
+
+`icon` is optional and is in the client's own 8x8 icon shape; without
+one the client uses its default. `ach` rides the `join` answer AND every
+member's `state` answer, so a reinstalled or restored client re-grants
+it silently instead of losing it. The server records nothing about
+having granted it: BEING A MEMBER IS THE RECORD.
+
+It is SECRET. It is never listed before it is earned, never carried to a
+pending row, and nothing a non-member can read hints at it.
 
 ## Debug reports
 

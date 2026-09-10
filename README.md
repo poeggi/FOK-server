@@ -82,6 +82,17 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   addresses the client reports about itself (hello "nets"), which rank
   below what the server saw for itself. The code remains the capability
   and the way in from anywhere else.
+- Events (contract 4.11): a room an operator opens - a LAN party, a club
+  night, a stand at a fair. A player gets in by scanning its QR: the
+  printed key on the poster, or the 20-second pass a member shows on
+  screen. The door is OPEN (a scan joins) or CLOSED (a scan asks, and the
+  organizer approves), and the code is the capability either way. The
+  SERVER IS THE ROSTER - a client keeps no copy and reconciles nothing,
+  so a removed member simply finds the event gone from its list. Inside,
+  the organizer runs ordinary tournaments that only members can see or
+  join, finished ones are archived on the event, and joining grants a
+  secret achievement. State is DERIVED, never swept: a scheduled event
+  starts and ends on its own clock with nothing fired at either moment.
 - Connection tracking: per-client state of the current 1vs1 connection -
   idle, inviting, invited, connecting or playing, with the peer and
   whether the pair runs p2p or relayed. Inferred from traffic the server
@@ -154,6 +165,11 @@ major. Every minor since is additive; docs/API.md carries them one by one.
                       tournament mode: one POST with an action switch
                       (create/join/leave/start/state/result/...); the server
                       orchestrates and settles, and carries no match traffic
+        event.php     events: a room an operator opens, entered by scanning
+                      its QR - one POST with an action switch
+                      (join/state/members/pass/leave/roster/access/run/
+                      pause/end). The server is the whole roster; its
+                      tournaments are ordinary ones only its members see
         match.php     quick-match queue (pair with anyone waiting)
         start.php     server-issued absolute start PTS per pair, where play
                       BEGINS (first/rematch; the halts within a run are
@@ -421,7 +437,7 @@ host-level. If this outgrows shared hosting, fix workers first.
 ## API sketch
 
     GET  /api/version.txt
-      -> {"ok":true,"server":"<x.y.z>","api":"4.10","env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":"4.11","env":"live"}
          (static, written by the deploy - it starts no PHP)
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
@@ -431,11 +447,11 @@ host-level. If this outgrows shared hosting, fix workers first.
                           "duel_private":bool?, "duel_end":"deadbeef"?,
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,
                           "friends_since":ms?, "tourneys":bool?,
-                          "nets":[ip,...]?}
-      -> {"ok":true,"api":"4.7","now":ms,"debug":bool,"online":n,"playing":n,
+                          "events":bool?, "nets":[ip,...]?}
+      -> {"ok":true,"api":"4.11","now":ms,"debug":bool,"online":n,"playing":n,
           "registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
-          "friends_delta":{...}?, "tourneys":[...]?}
+          "friends_delta":{...}?, "tourneys":[...]?, "events":[...]?}
          (the delta only ever names accepted friends; tourneys lists the open
           lobbies hosted on one of the caller's own networks. duel_with sets
           the duel and duel_end clears it - see docs/API.md, Announcing a
