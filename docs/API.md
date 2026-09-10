@@ -2233,11 +2233,13 @@ normal 3-heart duel. Each knockout stage is one level deeper than the one
 before it (see The round ladder). A drawn knockout node is simply REPLAYED: same node
 id, fresh match, fresh roles.
 
-A VOIDED one is not - there is nobody left to replay it. It advances an
-empty slot instead, which the next node reads as a bye for whoever is
-still standing; if that node is empty on both sides too it voids in turn,
-and a bracket that voids all the way to the top ends with an empty
-podium.
+A VOIDED one is not, and that is why it carries `draw` without being one:
+replaying it would deal the same unplayable node again - nobody is left
+to play it, or the two who are have already had their re-deal. It
+advances an empty slot instead, which the next node reads as a bye for
+whoever is still standing; if that node is empty on both sides too it
+voids in turn, and a bracket that voids all the way to the top ends with
+an empty podium.
 
 ### Roles - who plays and who watches
 
@@ -2407,17 +2409,25 @@ A node is:
                                              knockout node not yet fed
      "state": "pending"|"held"|"settled"|"confirmed"|"frozen"|"void",
      "winner": "c0ffee42" | null,
-     "draw": false,
+     "draw": false,                          TRUE on a void as well - read
+                                             `state` before this field
      "score": [12, 9] | null,                 null for a walkover, a bye
                                              or a void
      "why": "gone"|"unplayed"|null}          why a VOID is one, null on
                                              every other node
 
+A VOID CARRIES `draw` TRUE, on the node and on the `result` event alike:
+it has no winner, and inside the server that is the same shape a drawn
+node has. So `state` (or `why`) is what a client must test FIRST - a
+renderer that reaches for `draw` before either will tell two people who
+never got a match going that they drew one.
+
 A void has two causes and they read as opposite things on a bracket, so
 `why` names which: `gone` is nobody left to play it, `unplayed` is both
 players there and no connection between them. A client wording the second
 as the first would erase two people who sat there trying. It rides the
-`result` event as well, and is null wherever it does not apply.
+`result` event as well, and is null wherever it does not apply. Either
+way the node KEEPS BOTH PLAYERS, so a bracket can go on naming them.
 
 ### Events
 

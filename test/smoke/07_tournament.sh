@@ -427,6 +427,7 @@ if [ "$ADMIN" -eq 1 ]; then
     expect "with no winner named, both players having turned up" '"winner":null' "$R"
     expect "the node reading as one that was not played" '"state":"void"' "$R"
     expect "and saying WHICH void it is, both players having been there" '"why":"unplayed"' "$R"
+    expect "and reading as drawn, which is what a node with no winner is here" '"draw":true' "$R"
     setting tournament_deadlock_ms 150000
     R=$(tourney "{\"id\":\"$ID1\",\"action\":\"leave\",\"tid\":\"$T7\"}")
     expect "the host clears it away" '"ok":true' "$R"
