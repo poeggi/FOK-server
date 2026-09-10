@@ -2075,60 +2075,60 @@ function renderEventBody(body, overlay, eid, d) {
     body.append(bar);
 
     const tbl = el('table', 'kv');
-    const kv = (k, v) => {
+    // The value on its own line, and whatever explains it underneath in
+    // muted type - a badge, an id and a sentence running together on one
+    // line is what made this read as a wall.
+    const kv = (k, v, note) => {
         const r = el('tr');
         const cell = el('td', 'kv-v');
-        cell.append(...(Array.isArray(v) ? v : [v]));
+        const line = el('div', 'kv-line');
+        line.append(...(Array.isArray(v) ? v : [v]));
+        cell.append(note ? stackOf(line, el('span', 'muted', note)) : line);
         r.append(el('td', 'kv-k', k), cell);
         tbl.append(r);
     };
     const when = (unix) => (unix ? new Date(unix * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '');
-    kv('State', [eventBadge(d.state), el('span', 'muted',
-        d.scheduled ? ' scheduled: ' + (when(d.starts) || 'any time') + ' to '
-            + (when(d.ends) || 'no end') : ' unscheduled, run by its organizer')]);
-    kv('Door', [el('span', 'badge ' + (d.closed ? 'inviting' : ''), d.closed ? 'closed' : 'open'),
-        el('span', 'muted', d.closed ? ' a scan asks; the organizer approves'
-                                     : ' a scan joins straight away')]);
-    const org = el('span');
+    kv('State', eventBadge(d.state),
+        d.scheduled ? 'scheduled: ' + (when(d.starts) || 'any time') + ' to '
+            + (when(d.ends) || 'no end') : 'unscheduled, run by its organizer');
+    kv('Door', el('span', 'badge ' + (d.closed ? 'inviting' : ''),
+        d.closed ? 'closed' : 'open'),
+        d.closed ? 'a scan asks; the organizer approves'
+                 : 'a scan joins straight away');
     if (d.organizer) {
         const s = el('span', 'id-link', d.organizer);
         s.onclick = () => showClient(d.organizer);
-        org.append(s, el('span', 'muted idname', named(d.organizer)));
+        kv('Organizer', [s, el('span', 'muted', named(d.organizer))]);
     } else {
-        org.append(el('span', 'muted',
-            'none - nobody can work the door or open a tournament until one is named'));
+        kv('Organizer', el('span', 'muted', 'none'),
+            'nobody can work the door or open a tournament until one is named');
     }
-    kv('Organizer', org);
     if (d.descr) kv('Description', d.descr);
-    kv('Achievement', d.ach_name
-        ? d.ach_name + (d.ach_desc ? ' - ' + d.ach_desc : '')
-        : el('span', 'muted', 'none'));
-    const monCell = el('span');
+    kv('Achievement', d.ach_name ? el('span', '', d.ach_name)
+        : el('span', 'muted', 'none'), d.ach_name ? d.ach_desc : '');
     if (!d.monitor_allowed) {
-        monCell.append(el('span', 'muted', 'not offered'));
+        kv('Monitor', el('span', 'muted', 'not offered'));
     } else if (d.monitor) {
         const s = el('span', 'id-link', d.monitor);
         s.onclick = () => showClient(d.monitor);
-        monCell.append(el('span', 'badge connecting', 'reserved'), s,
-            el('span', 'muted idname', named(d.monitor)),
-            el('span', 'muted', ' holds the slot whether it is switched on or not'));
+        kv('Monitor', [el('span', 'badge connecting', 'reserved'), s,
+            el('span', 'muted', named(d.monitor))],
+            'holds the slot whether it is switched on or not');
     } else if (d.monitor_holder) {
         const s = el('span', 'id-link', d.monitor_holder);
         s.onclick = () => showClient(d.monitor_holder);
-        monCell.append(el('span', 'badge playing', 'live'), s,
-            el('span', 'muted idname', named(d.monitor_holder)));
+        kv('Monitor', [el('span', 'badge playing', 'live'), s,
+            el('span', 'muted', named(d.monitor_holder))]);
     } else {
-        monCell.append(el('span', 'muted', 'free - whoever asks first gets it'));
+        kv('Monitor', el('span', 'muted', 'free'), 'whoever asks first gets it');
     }
-    kv('Monitor', monCell);
     kv('Key', el('span', 'muted', 'printed only - it is in no answer this dashboard can give'));
     if (d.tourney) {
         const t = el('span');
         const link = el('span', 'id-link', d.tourney.code);
         link.onclick = () => showTourney(d.tourney.tid);
-        t.append(link, el('span', 'badge ' + (TSTATE[d.tourney.state] || ''), d.tourney.state),
-            el('span', 'muted', ' ' + d.tourney.players + ' of ' + d.tourney.max + ' seats'));
-        kv('Tournament', t);
+        t.append(link, el('span', 'badge ' + (TSTATE[d.tourney.state] || ''), d.tourney.state));
+        kv('Tournament', t, d.tourney.players + ' of ' + d.tourney.max + ' seats');
     }
     body.append(tbl);
 

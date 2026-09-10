@@ -70,9 +70,8 @@ $asset = '../assets/PressStart2P-Regular.woff2?v=' . FOK_SERVER_VERSION;
     --paper: #ffffff;
     --line: #d5dae0;
     --accent: #12894b;
-    --snake: #1c7a3a;
-    --snake-body: #2f9e52;
-    --apple: #c8332f;
+    --snake: #7fff7f;
+    --apple: #ff5f56;
 }
 html.dark {
     --ink: #e6edf3;
@@ -81,7 +80,6 @@ html.dark {
     --line: #2a3442;
     --accent: #3ddc84;
     --snake: #7fff7f;
-    --snake-body: #4fbf5f;
     --apple: #ff5f56;
 }
 
@@ -156,7 +154,7 @@ html.dark .qr { box-shadow: 0 0 0 0.8mm var(--accent); }
     color: var(--ink); word-break: break-all;
 }
 .how { margin: 5mm 0 0; font-size: 3.6mm; color: var(--ink-soft); }
-.snake { display: block; width: 78mm; max-width: 100%; margin: 9mm auto 0; }
+.snake { display: block; width: 88mm; max-width: 100%; margin: 9mm auto 0; }
 
 .foot {
     margin-top: auto; padding-top: 8mm; width: 100%;
@@ -227,36 +225,34 @@ $size = strlen($name) > 34 ? ' longer' : (strlen($name) > 18 ? ' long' : '');
     <p class="code pixel"><?= $e($card['eid'] . '.' . $card['ekey']) ?></p>
     <p class="how">Scan to join. Point any camera at it.</p>
 
-    <!-- The snake, in the grid the game draws it on: one square per
-         segment, the head with its eye, an apple ahead of it. -->
-    <svg class="snake" viewBox="0 0 22 7" shape-rendering="crispEdges"
+    <!-- The snake as the game draws it (js/render.js drawSnakeG): a
+         20-unit grid, 18x18 segments inset by 1 so the cells stay
+         separate, the body darkening towards the tail, the head
+         brighter and rounder with its two eyes. -->
+    <svg class="snake" viewBox="-2 -5 284 108"
          role="img" aria-label="A snake, chasing an apple">
-        <g fill="var(--snake-body)">
-            <rect x="1" y="4" width="1" height="1"></rect>
-            <rect x="2" y="4" width="1" height="1"></rect>
-            <rect x="3" y="4" width="1" height="1"></rect>
-            <rect x="4" y="4" width="1" height="1"></rect>
-            <rect x="4" y="3" width="1" height="1"></rect>
-            <rect x="4" y="2" width="1" height="1"></rect>
-            <rect x="5" y="2" width="1" height="1"></rect>
-            <rect x="6" y="2" width="1" height="1"></rect>
-            <rect x="7" y="2" width="1" height="1"></rect>
-            <rect x="8" y="2" width="1" height="1"></rect>
-            <rect x="8" y="3" width="1" height="1"></rect>
-            <rect x="8" y="4" width="1" height="1"></rect>
-            <rect x="9" y="4" width="1" height="1"></rect>
-            <rect x="10" y="4" width="1" height="1"></rect>
-            <rect x="11" y="4" width="1" height="1"></rect>
-            <rect x="12" y="4" width="1" height="1"></rect>
-            <rect x="13" y="4" width="1" height="1"></rect>
+        <g>
+            <rect x="1" y="61" width="18" height="18" rx="3" fill="hsl(120,65%,22%)"></rect>
+            <rect x="21" y="61" width="18" height="18" rx="3" fill="hsl(120,65%,23%)"></rect>
+            <rect x="41" y="61" width="18" height="18" rx="3" fill="hsl(120,65%,24%)"></rect>
+            <rect x="61" y="61" width="18" height="18" rx="3" fill="hsl(120,65%,26%)"></rect>
+            <rect x="61" y="41" width="18" height="18" rx="3" fill="hsl(120,65%,27%)"></rect>
+            <rect x="61" y="21" width="18" height="18" rx="3" fill="hsl(120,65%,28%)"></rect>
+            <rect x="81" y="21" width="18" height="18" rx="3" fill="hsl(120,65%,29%)"></rect>
+            <rect x="101" y="21" width="18" height="18" rx="3" fill="hsl(120,65%,31%)"></rect>
+            <rect x="121" y="21" width="18" height="18" rx="3" fill="hsl(120,65%,32%)"></rect>
+            <rect x="141" y="21" width="18" height="18" rx="3" fill="hsl(120,65%,33%)"></rect>
+            <rect x="141" y="41" width="18" height="18" rx="3" fill="hsl(120,65%,35%)"></rect>
+            <rect x="141" y="61" width="18" height="18" rx="3" fill="hsl(120,65%,36%)"></rect>
+            <rect x="161" y="61" width="18" height="18" rx="3" fill="hsl(120,65%,37%)"></rect>
+            <rect x="181" y="61" width="18" height="18" rx="3" fill="hsl(120,65%,38%)"></rect>
+            <rect x="201" y="61" width="18" height="18" rx="3" fill="hsl(120,65%,40%)"></rect>
+            <rect x="221" y="61" width="18" height="18" rx="5" fill="var(--snake)"></rect>
+            <rect x="234" y="63" width="3" height="3" fill="#001500"></rect>
+            <rect x="234" y="74" width="3" height="3" fill="#001500"></rect>
+            <rect x="261" y="61" width="18" height="18" rx="5" fill="var(--apple)"></rect>
+            <rect x="269" y="56" width="2" height="6" fill="#2f7d2f"></rect>
         </g>
-        <rect x="13" y="4" width="1" height="1" fill="var(--snake)"></rect>
-        <rect x="13.5" y="4.2" width="0.28" height="0.28" fill="#001500"></rect>
-        <rect x="14" y="4.35" width="0.5" height="0.16" fill="var(--apple)"></rect>
-        <g fill="var(--apple)">
-            <rect x="16" y="4" width="1" height="1"></rect>
-        </g>
-        <rect x="16.4" y="3.5" width="0.2" height="0.5" fill="#2f7d2f"></rect>
     </svg>
 
     <div class="foot pixel">

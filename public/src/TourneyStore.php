@@ -276,13 +276,22 @@ final class TourneyStore
         return max(0, $last + Settings::int('tournament_create_cooldown') - time());
     }
 
-    /** The entry expires on the cooldown itself, so nothing has to sweep it. */
+    /**
+     * WHEN this host last created, which is a fact and not a policy: the
+     * cooldown is applied at READ time (see createWait), so the stamp is
+     * written whatever the setting happens to be. Writing it only while the
+     * cooldown was non-zero meant a create made at zero left no trace, and
+     * raising the setting afterwards had nothing to measure from.
+     *
+     * It ages out on its own rather than being swept, with a floor under
+     * the TTL so a zero cooldown cannot mean an entry that never expires.
+     */
+    private const CD_TTL_MIN = 60;
+
     public static function markCreate(string $host): void
     {
         $cd = Settings::int('tournament_create_cooldown');
-        if ($cd > 0) {
-            apcu_store(self::CD . $host, time(), $cd);
-        }
+        apcu_store(self::CD . $host, time(), max($cd, self::CD_TTL_MIN));
     }
 
     /**

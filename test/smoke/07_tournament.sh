@@ -234,8 +234,11 @@ if [ "$ADMIN" -eq 1 ]; then
     T3=$(tfield "$R" tid)
     R=$(tcode "{\"id\":\"$ID1\",\"action\":\"create\"}")
     expect "and a plain second create is refused" '409' "$R"
-    # The cooldown is charged before anything is ended, so a replace inside it
-    # is answered 429 with the tournament it would have replaced still there.
+    # The cooldown is charged before anything is ended, so a replace inside
+    # it is answered 429 with the tournament it would have replaced still
+    # there. The create above is what it charges against: the stamp is
+    # written whatever the cooldown is set to (see markCreate), so raising
+    # it here has that create's own moment to measure from.
     setting tournament_create_cooldown 10
     R=$(tcode "{\"id\":\"$ID1\",\"action\":\"create\",\"replace\":true}")
     expect "a replace inside the create cooldown is refused too" '429' "$R"
