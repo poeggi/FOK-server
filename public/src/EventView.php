@@ -158,12 +158,17 @@ final class EventView
      * running - the whole projection of it, so the screen can follow the
      * bracket and ask the pair that is playing for a spectator feed.
      *
+     * $rowState is the caller's own row, which is what `you` reports here
+     * as everywhere else - a free monitor is a member holding a lease and
+     * says so.
+     *
      * The feed itself never comes through here. `roles` names the two players
      * exactly as it does for a participant, and the monitor asks one of them
      * for a P2P feed with the ordinary 'watch' signal - the server carries no
      * match traffic for a monitor any more than for anybody else.
      */
-    public static function monitor(array $card, string $id, ?int $now = null): array
+    public static function monitor(array $card, string $id, string $rowState,
+                                   ?int $now = null): array
     {
         $now ??= time();
         $counts = Events::counts($card['eid']);
@@ -172,7 +177,15 @@ final class EventView
             ? null
             : (Presence::namesFor([$card['organizer']])[$card['organizer']] ?? null);
         $out['now'] = Util::nowMs();
-        $out['you'] = ['state' => 'monitor', 'organizer' => false];
+        // The caller's ROW, not the role it is playing on this screen. A
+        // reserved monitor's row IS 'monitor'; a free one is a member - or
+        // the organizer - who has taken the lease, and saying otherwise
+        // made this answer disagree with state and with the events list.
+        // `reserved` below is what says which of the two this is.
+        $out['you'] = [
+            'state' => $rowState,
+            'organizer' => Events::isOrganizer($card, $id),
+        ];
         $out['members'] = $counts['members'];
         $out['pending'] = $counts['pending'];
         $out['reserved'] = $card['monitor'] !== null;

@@ -2745,6 +2745,8 @@ plus the action's own fields. `eid` is required by every action.
                                        |ended
       "starts": 1784182417000,         unix ms, or null
       "ends": null,                    unix ms, or null
+      "monitor_allowed": true,         whether this event offers a
+                                       monitor at all (see The monitor)
       "now": 1784182417123,            server clock, so the state above
                                        can be re-derived locally
       "you": {"state": "member",       member|pending|monitor
@@ -2771,6 +2773,13 @@ AN ORGANIZER IS PRE-SUBSCRIBED TOO, and is an ordinary member: it is named
 rather than admitted, so it has a row from the moment it is named and the
 event is in its `events` list without it scanning anything. It is a
 participant like everybody else, and it cannot `leave` its own event.
+
+`you` ALWAYS DESCRIBES THE CALLER'S OWN ROW, in every answer that carries
+it - `state`, `monitor` and the `events` list alike - and never the role
+the caller is playing at that moment. So a member who has taken a free
+monitor slot still reads `member`, and the organizer still reads
+`organizer: true` while running the screen. Only a RESERVED monitor reads
+`monitor`, because that is what its row says.
 
 `organizer` is null when the player who ran the event has expired. The
 event keeps running on its schedule; nobody can open a tournament or
@@ -2834,9 +2843,17 @@ and it never plays, is never seated and is in no participant list.
 It is meant to be left alone. Nothing on it is ever pressed, and it holds
 its place by asking; it gives it up by stopping.
 
+ASKING IS NOT TAKING. Whether an event offers a monitor is
+`monitor_allowed` on `state` and on every row of the `events` list, so a
+client decides whether to offer the screen at all without touching the
+slot. The `monitor` call is the one that CLAIMS it - do not use it to find
+out. Whether the slot is free is not asked in advance and cannot usefully
+be: it is answered by taking it, or by 409 `monitor taken`.
+
     monitor  {id, eid}  -> {ok, ...the public face, plus:
                             "now": <server ms>,
-                            "you": {"state": "monitor", "organizer": false},
+                            "you": {...},         the caller's ROW, as
+                                                  everywhere else - see below
                             "members": 14,        who has joined
                             "pending": 3,         who is waiting to be
                             "reserved": true,     this event names its screen
@@ -2878,7 +2895,9 @@ straight away even at a closed door - the event named it, so there is
 nobody left to approve it. From then on:
 
 - `you.state` is `monitor`, on `state`, on `monitor` and in the `events`
-  list alike;
+  list alike - which a FREE monitor's is not: that caller is an ordinary
+  member (or the organizer) holding a lease, and every answer says so.
+  `reserved` in the monitor answer is what tells the two apart;
 - it is in NO member list and in no member count;
 - it is granted no achievement: the achievement is for joining, and a
   screen was posted rather than joined;
@@ -2928,6 +2947,7 @@ Either one adds the caller's own event rows to the answer:
     "events": [
       {"eid": "K7QM", "name": "Snake Night", "closed": false,
        "state": "active", "starts": null, "ends": null,
+       "monitor_allowed": true,
        "you": {"state": "member", "organizer": false},
        "members": 14}
     ]

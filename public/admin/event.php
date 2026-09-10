@@ -70,6 +70,9 @@ $asset = '../assets/PressStart2P-Regular.woff2?v=' . FOK_SERVER_VERSION;
     --paper: #ffffff;
     --line: #d5dae0;
     --accent: #12894b;
+    --snake: #1c7a3a;
+    --snake-body: #2f9e52;
+    --apple: #c8332f;
 }
 html.dark {
     --ink: #e6edf3;
@@ -77,6 +80,9 @@ html.dark {
     --paper: #0d1117;
     --line: #2a3442;
     --accent: #3ddc84;
+    --snake: #7fff7f;
+    --snake-body: #4fbf5f;
+    --apple: #ff5f56;
 }
 
 * { box-sizing: border-box; }
@@ -103,9 +109,17 @@ body {
 
 .pixel { font-family: 'Press Start 2P', 'Courier New', monospace; }
 
-.eyebrow {
-    font-size: 3.4mm; letter-spacing: 0.14em; color: var(--accent);
-    margin-bottom: 9mm;
+.titleblock {
+    width: 100%; padding: 9mm 6mm 8mm; margin-bottom: 10mm;
+    background: #0b0f14; border-radius: 1.5mm;
+}
+.wordmark {
+    font-size: 11.3mm; line-height: 1; color: #7fff7f;
+    white-space: pre; text-shadow: 0 0 10.7mm #7fff7f;
+}
+.edition {
+    margin-top: 6.5mm; font-size: 2.83mm; line-height: 1;
+    color: #4a7a4a; white-space: pre; text-shadow: 0 0 0.3mm #4a7a4a;
 }
 h1 {
     margin: 0; font-size: 8mm; line-height: 1.35;
@@ -142,6 +156,7 @@ html.dark .qr { box-shadow: 0 0 0 0.8mm var(--accent); }
     color: var(--ink); word-break: break-all;
 }
 .how { margin: 5mm 0 0; font-size: 3.6mm; color: var(--ink-soft); }
+.snake { display: block; width: 78mm; max-width: 100%; margin: 9mm auto 0; }
 
 .foot {
     margin-top: auto; padding-top: 8mm; width: 100%;
@@ -174,9 +189,10 @@ html.dark .qr { box-shadow: 0 0 0 0.8mm var(--accent); }
         page-break-after: avoid; break-after: avoid;
     }
     .bar, .note { display: none; }
-    /* Dark mode is a choice, so the printer must honour it rather than
-       silently dropping every filled area. */
-    html.dark { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    /* The title block is a filled area in BOTH modes and dark mode is a
+       choice, so the printer must honour them rather than silently
+       dropping every fill. */
+    html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 </style>
 </head>
@@ -186,7 +202,10 @@ $name = (string)$card['name'];
 $size = strlen($name) > 34 ? ' longer' : (strlen($name) > 18 ? ' long' : '');
 ?>
 <div class="sheet">
-    <div class="eyebrow pixel">FOK SNAKE</div>
+    <div class="titleblock">
+        <div class="wordmark pixel">S N A K E</div>
+        <div class="edition pixel">F O K   E D I T I O N</div>
+    </div>
     <h1 class="pixel<?= $size ?>"><?= $e($name) ?></h1>
 
     <?php if ($card['descr'] !== ''): ?>
@@ -207,6 +226,38 @@ $size = strlen($name) > 34 ? ' longer' : (strlen($name) > 18 ? ' long' : '');
     <div class="qr"><?= $svg ?></div>
     <p class="code pixel"><?= $e($card['eid'] . '.' . $card['ekey']) ?></p>
     <p class="how">Scan to join. Point any camera at it.</p>
+
+    <!-- The snake, in the grid the game draws it on: one square per
+         segment, the head with its eye, an apple ahead of it. -->
+    <svg class="snake" viewBox="0 0 22 7" shape-rendering="crispEdges"
+         role="img" aria-label="A snake, chasing an apple">
+        <g fill="var(--snake-body)">
+            <rect x="1" y="4" width="1" height="1"></rect>
+            <rect x="2" y="4" width="1" height="1"></rect>
+            <rect x="3" y="4" width="1" height="1"></rect>
+            <rect x="4" y="4" width="1" height="1"></rect>
+            <rect x="4" y="3" width="1" height="1"></rect>
+            <rect x="4" y="2" width="1" height="1"></rect>
+            <rect x="5" y="2" width="1" height="1"></rect>
+            <rect x="6" y="2" width="1" height="1"></rect>
+            <rect x="7" y="2" width="1" height="1"></rect>
+            <rect x="8" y="2" width="1" height="1"></rect>
+            <rect x="8" y="3" width="1" height="1"></rect>
+            <rect x="8" y="4" width="1" height="1"></rect>
+            <rect x="9" y="4" width="1" height="1"></rect>
+            <rect x="10" y="4" width="1" height="1"></rect>
+            <rect x="11" y="4" width="1" height="1"></rect>
+            <rect x="12" y="4" width="1" height="1"></rect>
+            <rect x="13" y="4" width="1" height="1"></rect>
+        </g>
+        <rect x="13" y="4" width="1" height="1" fill="var(--snake)"></rect>
+        <rect x="13.5" y="4.2" width="0.28" height="0.28" fill="#001500"></rect>
+        <rect x="14" y="4.35" width="0.5" height="0.16" fill="var(--apple)"></rect>
+        <g fill="var(--apple)">
+            <rect x="16" y="4" width="1" height="1"></rect>
+        </g>
+        <rect x="16.4" y="3.5" width="0.2" height="0.5" fill="#2f7d2f"></rect>
+    </svg>
 
     <div class="foot pixel">
         <span><?= $e($card['eid']) ?></span>

@@ -241,6 +241,27 @@ function debugLabel(c) {
 // the tables are keyed on ids, but an operator reads about people. A player
 // row can be gone - Presence::forget keeps what somebody owned and drops the
 // person - and then the id is all there is.
+// A table cell whose content is stacked rather than laid out along the row:
+// the second line carries what would otherwise widen the table past the
+// card. Cells are nowrap by default (see admin.css), so this opts out for
+// its own content only.
+function stackCell(top, bottom, cls) {
+    const td = el('td', cls || '');
+    const box = el('div', 'stack');
+    box.append(top);
+    if (bottom) box.append(bottom);
+    td.append(box);
+    return td;
+}
+
+// The same two lines as a plain node, for a cell that already exists.
+function stackOf(top, bottom) {
+    const box = el('div', 'stack');
+    box.append(top);
+    if (bottom) box.append(bottom);
+    return box;
+}
+
 function idCell(id, name) {
     const td = el('td');
     const s = el('span', 'id-link', id);
@@ -2009,8 +2030,11 @@ function renderEventBody(body, overlay, eid, d) {
             bar.append(pause);
         }
     }
+    // Everything above acts ON the event; the two below END it, so they
+    // sit together at the right edge away from the rest.
+    bar.append(el('span', 'grow'));
     if (d.state !== 'ended') {
-        const end = el('button', 'small', 'End');
+        const end = el('button', 'small', 'End event');
         end.title = 'Freezes the event for everyone. A tournament already '
             + 'running plays on and is still archived.';
         end.onclick = () => confirmModal('End event',
@@ -2021,7 +2045,6 @@ function renderEventBody(body, overlay, eid, d) {
             'End it', () => act('event_end'));
         bar.append(end);
     }
-    bar.append(el('span', 'grow'));
     const del = el('button', 'small', 'Delete');
     del.title = 'Purges the event and every row that belongs to it. Ending it '
         + 'is the other button: that freezes it and keeps the record.';
@@ -2744,66 +2767,6 @@ const MODULES = [
         },
     },
     {
-        id: 'events',
-        title: 'Events',
-        // No own interval: an event changes on somebody pressing something,
-        // not on a clock. The global refresh and its own button carry it.
-        async refresh(box) {
-            const d = await api('events');
-            box.replaceChildren();
-            const running = d.events.filter((e) => e.state === 'active').length;
-            const bar = toolbar(el('span', 'muted', d.events.length
-                ? d.events.length + ' event(s), ' + running + ' running'
-                : 'No events yet.'), el('span', 'grow'));
-            const add = el('button', 'small', 'Create event');
-            add.onclick = () => eventForm(null);
-            bar.append(add);
-            box.append(bar);
-            if (!d.events.length) {
-                box.append(el('p', 'muted',
-                    'An event is a room players get into by scanning its QR.'));
-                return;
-            }
-            const table = el('table');
-            const head = el('tr');
-            const th = (t, title) => {
-                const c = el('th', '', t);
-                if (title) c.title = title;
-                return c;
-            };
-            head.append(th('EID'), th('Name'), th('State'), th('Door'), th('Organizer'),
-                th('In', 'Members who have joined'),
-                th('Wait', 'Requests waiting for the organizer'),
-                th('T', 'Tournaments archived on this event'));
-            table.append(head);
-            for (const e of d.events) {
-                const r = el('tr', e.state === 'active' ? 'online'
-                    : (e.state === 'ended' ? 'gone' : ''));
-                const eidCell = el('td');
-                const link = el('span', 'id-link', e.eid);
-                link.onclick = () => showEvent(e.eid);
-                eidCell.append(link);
-                const st = el('td');
-                st.append(eventBadge(e.state));
-                const door = el('td');
-                door.append(el('span', 'badge ' + (e.closed ? 'inviting' : ''),
-                    e.closed ? 'closed' : 'open'));
-                const org = e.organizer
-                    ? idCell(e.organizer, (d.names && d.names[e.organizer]) || '')
-                    : el('td', 'muted', 'none');
-                // A queue at a closed door reads off the card, so an operator
-                // does not have to open one to find out somebody is waiting.
-                const wait = el('td', e.pending ? 'error' : 'muted', String(e.pending));
-                r.append(eidCell, el('td', '', e.name), st, door, org,
-                    el('td', '', String(e.members)), wait,
-                    el('td', e.tournaments ? '' : 'muted', String(e.tournaments)));
-                table.append(r);
-            }
-            box.append(pane('', table));
-            sortable(table, 'events');
-        },
-    },
-    {
         id: 'alerts',
         title: 'Alerts, logs and debug',
         refresh(box) {
@@ -2829,6 +2792,75 @@ const MODULES = [
                     render: (p) => renderDebug(p),
                 },
             ]);
+        },
+    },
+    {
+        id: 'events',
+        title: 'Events',
+        // No own interval: an event changes on somebody pressing something,
+        // not on a clock. The global refresh and its own button carry it.
+        async refresh(box) {
+            const d = await api('events');
+            box.replaceChildren();
+            const running = d.events.filter((e) => e.state === 'active').length;
+            const bar = toolbar(el('span', 'muted', d.events.length
+                ? d.events.length + ' event(s), ' + running + ' running'
+                : 'No events yet.'), el('span', 'grow'));
+            const add = el('button', 'small', 'Create event');
+            add.onclick = () => eventForm(null);
+            bar.append(add);
+            box.append(bar);
+            if (!d.events.length) {
+                box.append(el('p', 'muted',
+                    'An event is a room players get into by scanning its QR.'));
+                return;
+            }
+            // Two lines per event rather than eight columns: the card is
+            // 300px at its narrowest and the row scrolled sideways, which
+            // hides the very counts an operator opens this to read.
+            const table = el('table');
+            const head = el('tr');
+            const th = (t, title) => {
+                const c = el('th', '', t);
+                if (title) c.title = title;
+                return c;
+            };
+            head.append(th('Event'), th('State'), th('Organizer'),
+                th('In / wait / T', 'Members, requests waiting for the organizer, '
+                    + 'and tournaments archived on this event'));
+            table.append(head);
+            for (const e of d.events) {
+                const r = el('tr', e.state === 'active' ? 'online'
+                    : (e.state === 'ended' ? 'gone' : ''));
+                const link = el('span', 'id-link', e.eid);
+                link.onclick = () => showEvent(e.eid);
+                const door = el('span', 'badge ' + (e.closed ? 'inviting' : ''),
+                    e.closed ? 'closed' : 'open');
+                const org = e.organizer
+                    ? stackCell(el('span', 'id-link', e.organizer),
+                        el('span', 'muted', (d.names && d.names[e.organizer]) || 'no name'))
+                    : el('td', 'muted', 'none');
+                if (e.organizer) {
+                    org.querySelector('.id-link').onclick = () => showClient(e.organizer);
+                }
+                // A queue at a closed door reads off the card, so an operator
+                // does not have to open one to find out somebody is waiting.
+                const counts = el('span');
+                counts.append(el('span', '', String(e.members)),
+                    el('span', 'muted', ' / '),
+                    el('span', e.pending ? 'error' : 'muted', String(e.pending)),
+                    el('span', 'muted', ' / '),
+                    el('span', e.tournaments ? '' : 'muted', String(e.tournaments)));
+                r.append(
+                    stackCell(link, el('span', '', e.name)),
+                    stackCell(eventBadge(e.state), door),
+                    org,
+                    stackCell(counts, el('span', 'muted',
+                        e.scheduled ? 'scheduled' : 'by hand')));
+                table.append(r);
+            }
+            box.append(pane('', table));
+            sortable(table, 'events');
         },
     },
     {

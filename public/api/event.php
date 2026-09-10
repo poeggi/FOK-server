@@ -7,6 +7,7 @@ require_once __DIR__ . '/../src/Events.php';
 require_once __DIR__ . '/../src/EventView.php';
 require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Settings.php';
+require_once __DIR__ . '/../src/Alerts.php';
 
 /**
  * Events: a room an operator opens, entered by scanning its QR.
@@ -89,6 +90,21 @@ function event_unknown(): never
     Util::fail('no such event', 404);
 }
 
+/**
+ * Counts a wrong code, and says so ONCE when the count crosses the cap.
+ * Noted rather than raised: somebody typing a stale pass is ordinary, and
+ * an alert per refused attempt would be a flood rather than a signal. The
+ * line names what was tried, never the code itself.
+ */
+function event_noteWrongCode(string $id, string $eid, string $kind): void
+{
+    $n = Events::noteFail($id);
+    if ($n === Settings::int('event_join_fails_per_min')) {
+        Alerts::note('event', "$id walked into the event code throttle on $eid "
+            . "($n wrong $kind attempts in a minute)");
+    }
+}
+
 /** Only the organizer drives the event itself. */
 function event_requireOrganizer(?array $card, string $id): void
 {
@@ -136,7 +152,7 @@ switch ($action) {
             Util::fail('invalid code');
         }
         if ($card === null) {
-            Events::noteFail($id);
+            event_noteWrongCode($id, $eid, 'eid');
             event_unknown();
         }
         $via = strlen($code) === Events::KEY_LEN ? 'key' : 'pass';
@@ -144,7 +160,7 @@ switch ($action) {
             ? hash_equals($card['ekey'], $code)
             : Events::verifyPass($card, $code, $now);
         if (!$good) {
-            Events::noteFail($id);
+            event_noteWrongCode($id, $eid, $via);
             event_unknown();
         }
         // A banned row is answered before the event's own state, because it
@@ -252,7 +268,7 @@ switch ($action) {
         if (!Events::claimMonitor($card, $id)) {
             Util::fail('monitor taken', 409);
         }
-        Util::jsonOut(EventView::monitor($card, $id, $now));
+        Util::jsonOut(EventView::monitor($card, $id, $mine['state'], $now));
 
     // Approve, decline, remove, ban, unban: one verb over one path, the
     // same one the dashboard calls.

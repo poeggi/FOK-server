@@ -91,6 +91,22 @@ expect "a wrong key is the same answer as no event at all" '"error":"no such eve
 R=$(evact "$ID3" state "$EID1")
 expect "and leaves the scanner with no row" '"error":"no such event"' "$R"
 
+# The wrong-code throttle. Lowered to two so this costs two requests
+# rather than ten, then put back.
+# One wrong code is already spent above, and the counter is per player
+# for the whole minute - so the cap of two is one attempt away.
+setting event_join_fails_per_min 2
+R=$(evjoin "$ID3" "$EID1" "ZZZZZZZZZZZZZZZZ")
+expect "a wrong code still answers the same 404 up to the cap" '"error":"no such event"' "$R"
+R=$(evjoin "$ID3" "$EID1" "ZZZZZZZZZZZZZZZZ")
+expect "past it the attempts are refused outright" '"error":"too many attempts"' "$R"
+expect "and the client is told how long to wait" '"retry_after":' "$R"
+R=$(evjoin "$ID3" "$EID1" "$KEY1")
+expect "even a correct code, while the throttle stands" '"error":"too many attempts"' "$R"
+R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=log")
+expect "and the attempt is on record, which is what the throttle is for" 'event code throttle' "$R"
+setting event_join_fails_per_min 10
+
 # The live pass: minted from the clock, so no slot is ever stored, and ANY
 # member may show one - that is what makes an event spread in a room.
 R=$(evact "$ID2" pass "$EID1")
@@ -261,19 +277,30 @@ expect "though its members can still read it" '"state":"ended"' "$R"
 
 # ---- the monitor: one screen per event, held two different ways ----
 
+# Asking whether a screen is offered must not take the slot: the monitor
+# call claims a free one, so it cannot be how a client finds out.
+R=$(evact "$ID2" state "$EID1")
+expect "state says whether the event offers a monitor" '"monitor_allowed":true' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID2\",\"events\":true}" "$BASE/api/hello.php")
+expect "and so does every row of the events list" '"monitor_allowed":' "$R"
+R=$(evact "$ID3" monitor "$EID1")
+expect "so the slot was still free for somebody else to take" '"reserved":false' "$R"
 R=$(evact "$ID2" monitor "$EID1")
-expect "a member takes the free monitor slot" '"you":{"state":"monitor"' "$R"
+expect "and the one who asked is now the one turned away" '"error":"monitor taken"' "$R"
+R=$(evact "$ID3" monitor "$EID1")
+expect "a member running a FREE slot still reads as a member" '"you":{"state":"member"' "$R"
 expect "and the screen is told how many have joined" '"members":' "$R"
 expect "and how many are waiting" '"pending":' "$R"
 expect "with the archive it shows between matches" '"archive":' "$R"
 expect "and the tournament slot it fills while one runs" '"tourney":' "$R"
 expect "the slot is not reserved on this event" '"reserved":false' "$R"
 R=$(evact "$ID3" monitor "$EID1")
-expect "so a second screen is turned away" '"error":"monitor taken"' "$R"
-R=$(evact "$ID2" monitor "$EID1")
-expect "while the holder renews by simply asking again" '"you":{"state":"monitor"' "$R"
+expect "while the holder renews by simply asking again" '"members":' "$R"
 R=$(evadmin event_edit "eid=$EID1" "monitor_allowed=0")
 expect "an operator can stop offering one" '"ok":true' "$R"
+R=$(evact "$ID2" state "$EID1")
+expect "which every answer then says" '"monitor_allowed":false' "$R"
 R=$(evact "$ID2" monitor "$EID1")
 expect "and then nobody gets a screen" '"error":"no monitor"' "$R"
 R=$(evadmin event_edit "eid=$EID1" "monitor_allowed=1")

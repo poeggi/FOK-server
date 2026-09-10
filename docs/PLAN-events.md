@@ -509,6 +509,11 @@ only with a new reason.
 
 ## Steps, in order
 
+SHIPPED. Steps 1 to 7 went out as 1.10.0 (2026-09-10, API 4.11, schema
+44/45) with 1.10.1 behind it; live and staging both answer 4.11. The
+steps are kept below as the record of what was built and in what order.
+STEP 8 IS OUTSTANDING and is FOK-snake's own work.
+
 1. CONTRACT FIRST. docs/API.md: a new "Events" section (identifiers, the
    URL shape and its 53-byte budget, the door and the two waits, join/
    state/members/roster/access/pass/run/pause/end, the `events` flag on

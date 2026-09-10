@@ -3422,6 +3422,37 @@ $evFreed = Events::rowOf($evMon['eid'], '22227e57');
 ok($evFreed !== null && $evFreed['state'] === 'member',
     'and clearing the reservation puts that row back too');
 
+// ASKING IS NOT TAKING: whether an event offers a screen rides every
+// answer, because the call that would otherwise reveal it takes the lease.
+$evAsk = Events::card($evMon['eid']) ?? [];
+ok(Events::publicFace($evAsk, 5000)['monitor_allowed'] === true,
+    'the public face says whether a monitor is offered');
+ok(Events::publicFace(Events::card($evNoMon['eid']) ?? [], 5000)['monitor_allowed'] === false,
+    'and says so when one is not');
+$evAskList = Events::listFor('22227e57', 5000);
+ok(isset($evAskList[0]['monitor_allowed']),
+    'and the events list carries it too, which is what shows the menu entry');
+if (Caps::apcu()) {
+    $evHeldBefore = Events::monitorHolder($evAsk);
+    Events::publicFace($evAsk, 5000);
+    Events::listFor('22227e57', 5000);
+    ok(Events::monitorHolder($evAsk) === $evHeldBefore,
+        'and asking left the slot exactly as it found it');
+}
+
+// `you` describes the caller's ROW, never the role it is playing. A free
+// monitor is a member holding a lease, and every answer has to agree.
+$evFreeMon = EventView::monitor($evAsk, '22227e57', 'member', 5000);
+ok($evFreeMon['you']['state'] === 'member',
+    'a member running the screen still reads as a member');
+ok($evFreeMon['reserved'] === false, 'and the slot says it is not reserved');
+$evOrgMon = EventView::monitor($evAsk, '11117e57', 'member', 5000);
+ok($evOrgMon['you']['organizer'] === true,
+    'and an organizer running it does not stop being the organizer');
+$evResMon = EventView::monitor($evAsk, '33337e57', 'monitor', 5000);
+ok($evResMon['you']['state'] === 'monitor',
+    'while a reserved screen reads monitor, because that is what its row says');
+
 // The monitor reads the event, and earns nothing by watching it.
 Events::edit($evMon['eid'], ['ach_name' => 'ON AIR']);
 $evMonC = Events::card($evMon['eid']) ?? [];

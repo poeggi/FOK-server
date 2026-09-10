@@ -627,3 +627,11 @@ table.kv .kv-sec td {
 /* The date pair: the field and the control a browser does not give it. */
 .datefield { display: flex; gap: 6px; align-items: center; }
 .datefield input { flex: 1 1 auto; min-width: 0; }
+
+/* A cell that stacks its lines (see stackCell in admin.js). Table cells are
+   nowrap so a wide row scrolls sideways; a card is 300px at its narrowest,
+   and a row with more columns than that fits hides its own content behind a
+   scrollbar. Stacking is how a tile says more without getting wider. */
+.stack { display: flex; flex-direction: column; line-height: 1.35; }
+td .stack { white-space: normal; overflow-wrap: anywhere; }
+.stack > :nth-child(2) { font-size: 11.5px; }

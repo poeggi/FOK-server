@@ -343,6 +343,7 @@ final class Events
                 'state' => self::stateOf($card, $now),
                 'starts' => $card['starts'] === null ? null : $card['starts'] * 1000,
                 'ends' => $card['ends'] === null ? null : $card['ends'] * 1000,
+                'monitor_allowed' => $card['monitor_allowed'],
                 'you' => [
                     'state' => $row['state'],
                     'organizer' => self::isOrganizer($card, $id),
@@ -915,6 +916,11 @@ final class Events
             'state' => self::stateOf($card, $now),
             'starts' => $card['starts'] === null ? null : $card['starts'] * 1000,
             'ends' => $card['ends'] === null ? null : $card['ends'] * 1000,
+            // Whether the event offers a screen at all. A property of the
+            // event like the door, and it rides every answer BECAUSE the
+            // question must be askable without answering it: the monitor
+            // call takes the lease, so it cannot be how a client finds out.
+            'monitor_allowed' => $card['monitor_allowed'],
         ];
     }
 
