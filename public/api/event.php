@@ -15,7 +15,8 @@ require_once __DIR__ . '/../src/Alerts.php';
  * One POST endpoint, ten actions, always {"id": "8-hex", "action": "...",
  * "eid": "4 chars"} plus the action's fields (see docs/API.md "Events"):
  *
- *   join     {id, eid, code}          -> {ok, ...state}   member or pending
+ *   join     {id, code}               -> {ok, ...state}   member or pending
+ *                                       the code names its own event
  *   state    {id, eid}                -> {ok, ...the caller's whole view}
  *   members  {id, eid}                -> {ok, members: [...]}
  *   pass     {id, eid}                -> {ok, step, valid, slots: [...]}
@@ -63,18 +64,47 @@ if (!in_array($action, ['join', 'state', 'members', 'pass', 'leave', 'monitor',
 Util::bump('event');
 Presence::touch($id, Util::clientIp());
 
-$eid = $body['eid'] ?? null;
-if (!is_string($eid) || preg_match('/^[' . Events::ALPHABET . ']{4}$/', $eid) !== 1) {
-    Util::fail('invalid eid');
-}
-
-$card = Events::card($eid);
 $now = time();
+$code = $body['code'] ?? null;
+
+// A SCAN carries the code and nothing else: the poster's key names its own
+// event (there is no room beside it in a version 3 code, see Events::KEY_LEN)
+// and a pass carries the eid in front of its own dot. Every other action is
+// asked by somebody who already has a row, so it names the eid outright.
+if ($action === 'join') {
+    if (Events::failsOver($id)) {
+        Util::jsonOut(['ok' => false, 'error' => 'too many attempts',
+            'retry_after' => 60], 429);
+    }
+    if (!is_string($code)) {
+        Util::fail('invalid code');
+    }
+    $A = Events::ALPHABET;
+    if (preg_match('/^[' . $A . ']{4}\\.[' . $A . ']{6}$/', $code) === 1) {
+        $eid = substr($code, 0, 4);
+        $code = substr($code, 5);
+        $card = Events::card($eid);
+        $via = 'pass';
+    } elseif (preg_match('/^[' . $A . ']{' . Events::KEY_LEN . '}$/', $code) === 1) {
+        $card = Events::byKey($code);
+        $eid = $card === null ? '' : $card['eid'];
+        $via = 'key';
+    } else {
+        Util::fail('invalid code');
+    }
+} else {
+    $eid = $body['eid'] ?? null;
+    if (!is_string($eid) || preg_match('/^[' . Events::ALPHABET . ']{4}$/', $eid) !== 1) {
+        Util::fail('invalid eid');
+    }
+    $card = Events::card($eid);
+    $via = '';
+}
 
 // A MONITOR is in the event without being at it - it is a screen on a
 // wall. It reads the event and it runs itself, and that is the whole list:
 // it is in no roster, holds no pass, and has no business with a door.
-$mine = Events::rowOf($eid, $id);
+$mine = $eid === '' ? null : Events::rowOf($eid, $id);
 if ($mine !== null && $mine['state'] === 'monitor'
     && !in_array($action, ['state', 'monitor'], true)) {
     Util::fail('monitor only', 403);
@@ -142,24 +172,15 @@ switch ($action) {
     // what the first did, achievement included, so a client that lost the
     // response simply asks again.
     case 'join':
-        if (Events::failsOver($id)) {
-            Util::jsonOut(['ok' => false, 'error' => 'too many attempts',
-                'retry_after' => 60], 429);
-        }
-        $code = $body['code'] ?? null;
-        if (!is_string($code)
-            || preg_match('/^[' . Events::ALPHABET . ']{6}(?:[' . Events::ALPHABET . ']{10})?$/', $code) !== 1) {
-            Util::fail('invalid code');
-        }
         if ($card === null) {
-            event_noteWrongCode($id, $eid, 'eid');
+            // A key that names nothing and a pass for an event that does not
+            // exist are the same answer, and so is a wrong code below.
+            event_noteWrongCode($id, $eid === '' ? '?' : $eid, $via);
             event_unknown();
         }
-        $via = strlen($code) === Events::KEY_LEN ? 'key' : 'pass';
-        $good = $via === 'key'
-            ? hash_equals($card['ekey'], $code)
-            : Events::verifyPass($card, $code, $now);
-        if (!$good) {
+        // The key was matched by the lookup that found the event; a pass is
+        // checked against the clock here.
+        if ($via === 'pass' && !Events::verifyPass($card, $code, $now)) {
             event_noteWrongCode($id, $eid, $via);
             event_unknown();
         }

@@ -38,7 +38,17 @@ final class Events
     public const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 
     public const EID_LEN = 4;
-    public const KEY_LEN = 16;
+
+    /**
+     * The printed key: a standalone token that names its own event, so the
+     * poster URL is `#event=<key>` with no eid beside it. Eleven characters
+     * because that is the whole budget - the game's own QR decoder is a
+     * fixed version 3 at level L (53 text bytes) and the URL prefix takes
+     * 42 of them. 31^11 is about 2^54, which against the per-player wrong-
+     * code throttle is not a keyspace anybody walks.
+     */
+    public const KEY_LEN = 11;
+
     public const PASS_LEN = 6;
 
     public const MAX_NAME = 40;
@@ -167,6 +177,20 @@ final class Events
             apcu_store(self::CARD . $eid, $card, self::CACHE_TTL);
         }
         return self::$memo[$eid] = $card;
+    }
+
+    /**
+     * The event a printed key names, or null. The key is the capability AND
+     * the address: a poster carries nothing else, because nothing else fits
+     * beside it in a version 3 code.
+     */
+    public static function byKey(string $key): ?array
+    {
+        $st = Db::get()->prepare('SELECT eid FROM events WHERE ekey = ?');
+        $st->execute([$key]);
+        $eid = $st->fetchColumn();
+        $st->closeCursor();
+        return $eid === false ? null : self::card((string)$eid);
     }
 
     /** Dropped at every write to the events row. */
@@ -551,13 +575,30 @@ final class Events
         if ($eid === '') {
             throw new RuntimeException('no free event id');
         }
+        // The key IS the lookup now, so it has to be unique. At 2^54 a
+        // collision is not going to happen; being sure costs one SELECT.
+        $key = '';
+        for ($try = 0; $try < 20; $try++) {
+            $cand = self::randomCode(self::KEY_LEN);
+            $st = $db->prepare('SELECT 1 FROM events WHERE ekey = ?');
+            $st->execute([$cand]);
+            $taken = (bool)$st->fetchColumn();
+            $st->closeCursor();
+            if (!$taken) {
+                $key = $cand;
+                break;
+            }
+        }
+        if ($key === '') {
+            throw new RuntimeException('no free event key');
+        }
         $row = [
             'eid' => $eid,
             'name' => self::clip((string)($f['name'] ?? ''), self::MAX_NAME),
             'descr' => self::clip((string)($f['descr'] ?? ''), self::MAX_DESCR),
             'organizer' => isset($f['organizer']) && Util::isValidId($f['organizer'])
                 ? (string)$f['organizer'] : null,
-            'ekey' => self::randomCode(self::KEY_LEN),
+            'ekey' => $key,
             'secret' => bin2hex(random_bytes(32)),
             'closed' => !empty($f['closed']) ? 1 : 0,
             'starts' => isset($f['starts']) && $f['starts'] !== null ? (int)$f['starts'] : null,

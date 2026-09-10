@@ -82,7 +82,7 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   addresses the client reports about itself (hello "nets"), which rank
   below what the server saw for itself. The code remains the capability
   and the way in from anywhere else.
-- Events (contract 4.11): a room an operator opens - a LAN party, a club
+- Events (contract 4.12): a room an operator opens - a LAN party, a club
   night, a stand at a fair. A player gets in by scanning its QR: the
   printed key on the poster, or the 20-second pass a member shows on
   screen. The door is OPEN (a scan joins) or CLOSED (a scan asks, and the
@@ -437,7 +437,7 @@ host-level. If this outgrows shared hosting, fix workers first.
 ## API sketch
 
     GET  /api/version.txt
-      -> {"ok":true,"server":"<x.y.z>","api":"4.11","env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":"4.12","env":"live"}
          (static, written by the deploy - it starts no PHP)
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
@@ -448,7 +448,7 @@ host-level. If this outgrows shared hosting, fix workers first.
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,
                           "friends_since":ms?, "tourneys":bool?,
                           "events":bool?, "nets":[ip,...]?}
-      -> {"ok":true,"api":"4.11","now":ms,"debug":bool,"online":n,"playing":n,
+      -> {"ok":true,"api":"4.12","now":ms,"debug":bool,"online":n,"playing":n,
           "registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_delta":{...}?, "tourneys":[...]?, "events":[...]?}

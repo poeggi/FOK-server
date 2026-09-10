@@ -36,11 +36,13 @@ if ($card === null) {
     exit('unknown event');
 }
 
-$url = FOK_GAME_URL . '#event=' . $card['eid'] . '.' . $card['ekey'];
-// Level M on paper: a poster gets creased, shadowed and photographed at an
-// angle, and the extra correction is what a printed code is for. The encoder
-// picks the version and the lowest-penalty mask itself.
-$svg = Qr::svg($url, 'M', 0, -1, 8, 2);
+$url = FOK_GAME_URL . '#event=' . $card['ekey'];
+// PINNED to version 3 / level L / mask 0, which is not a preference: the
+// game's own scanner falls back to a decoder built for exactly that shape
+// (FOK-snake js/qr.js) wherever the browser has no BarcodeDetector, and a
+// poster nobody can scan in the app is the wrong poster. It costs the
+// sturdier level M correction, so the code is printed large instead.
+$svg = Qr::svg($url, 'L', 3, 0, 8, 2);
 $e = static fn(?string $s): string => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
 $when = static fn(?int $t): string => $t === null ? '' : gmdate('d.m.Y H:i', $t) . ' UTC';
 $asset = '../assets/PressStart2P-Regular.woff2?v=' . FOK_SERVER_VERSION;
@@ -222,7 +224,7 @@ $size = strlen($name) > 34 ? ' longer' : (strlen($name) > 18 ? ' long' : '');
     <?php endif; ?>
 
     <div class="qr"><?= $svg ?></div>
-    <p class="code pixel"><?= $e($card['eid'] . '.' . $card['ekey']) ?></p>
+    <p class="code pixel"><?= $e($card['ekey']) ?></p>
     <p class="how">Scan to join. Point any camera at it.</p>
 
     <!-- The snake as the game draws it (js/render.js drawSnakeG): a

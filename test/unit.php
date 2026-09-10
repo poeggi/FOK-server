@@ -3089,7 +3089,11 @@ ok(Events::verifyPass($evP, $evSlots[5]['code'], 155),
 // client that lost the answer simply asks again.
 $evOpen = Events::create(['name' => 'srv-CI-open', 'organizer' => '11117e57']);
 ok(strlen($evOpen['eid']) === 4, 'an event gets a four-character public id');
-ok(strlen($evOpen['ekey']) === 16, 'and a sixteen-character printed key');
+ok(strlen($evOpen['ekey']) === 11,
+    'and an eleven-character printed key, which is the whole version 3 budget');
+ok(Events::byKey($evOpen['ekey'])['eid'] === $evOpen['eid'],
+    'that names its own event, because a poster carries nothing beside it');
+ok(Events::byKey(str_repeat('Z', 11)) === null, 'and a key nobody minted names none');
 ok(strlen($evOpen['secret']) === 64, 'and 32 bytes of secret nobody outside the server sees');
 ok($evOpen['mode'] === 'upcoming', 'a new event waits to be run');
 ok(Events::isMember($evOpen['eid'], '11117e57'),
@@ -3515,19 +3519,36 @@ ok(Qr::capacity(3, 'L') === 53, 'version 3 at L holds 53 text bytes, which is th
 ok(Qr::size(1) === 21 && Qr::size(6) === 41, 'a version is 17 + 4v modules square');
 ok(Qr::fit(str_repeat('x', 53), 'L') === 3, 'a 53-byte payload fits version 3 at L');
 ok(Qr::fit(str_repeat('x', 54), 'L') === 4, 'and one byte more takes the next version');
-ok(Qr::fit(str_repeat('x', 63), 'M') === 5, 'the 63-byte printed URL needs version 5 at M');
+ok(Qr::fit(str_repeat('x', 53), 'L') === 3, 'the 53-byte printed URL fits version 3 at L');
 ok(Qr::fit(str_repeat('x', 5000), 'M') === 0, 'and a payload past every version fits none');
 
 // The printed code: version 5 at M is TWO Reed-Solomon blocks, which the
 // client's single-block encoder cannot exercise at all. Read the matrix back
 // the way a scanner does - unmask, follow the same zigzag, de-interleave -
 // and the payload must come out again.
-$qrUrl = 'https://poeggi.github.io/FOK-snake/#event=K7QM.M4KRF41RH9WDPQ2T';
-ok(strlen($qrUrl) === 63, 'the printed URL is 63 bytes: 42 of prefix, an eid, a dot and a key');
-$qrPrint = Qr::matrix($qrUrl, 'M');
-ok($qrPrint['version'] === 5, 'which the encoder puts on version 5');
-ok($qrPrint['mask'] >= 0 && $qrPrint['mask'] <= 7, 'under one of the eight masks');
+$qrUrl = FOK_GAME_URL . '#event=' . str_repeat('K', Events::KEY_LEN);
+ok(strlen($qrUrl) === 53,
+    'the printed URL is 53 bytes: 42 of prefix and an 11-character key');
+ok(strlen($qrUrl) <= Qr::capacity(3, 'L'),
+    'which is the whole of what a version 3 code at level L holds');
+$qrPrint = Qr::matrix($qrUrl, 'L', 3, 0);
+ok($qrPrint['version'] === 3 && $qrPrint['level'] === 'L' && $qrPrint['mask'] === 0,
+    'so the poster is the one shape the game\'s own decoder can read');
+ok($qrPrint['size'] === 29, 'a 29 by 29 grid, as that decoder samples');
 ok(qrReadBack($qrPrint) === $qrUrl, 'and reading the modules back yields the payload again');
+$qrPass = FOK_GAME_URL . '#event=K7QM.H3KM9P';
+ok(strlen($qrPass) === 53, 'and a pass URL is the same 53 bytes');
+ok(Qr::matrix($qrPass, 'L', 3, 0)['version'] === 3,
+    'so both codes an event ever shows are version 3');
+
+// The multi-block path is not used by the poster any more, but the encoder
+// still generalises over versions and the arithmetic has to stay right.
+$qrBig = str_repeat('x', 70);
+ok(Qr::fit($qrBig, 'M') === 5, 'a 70-byte payload needs version 5 at M');
+ok(qrReadBack(Qr::matrix($qrBig, 'M', 5, 0)) === $qrBig,
+    'and its two Reed-Solomon blocks read back interleaved');
+ok(qrSyndromesZero(Qr::matrix($qrBig, 'M', 5, 0)),
+    'with every syndrome zero');
 
 // The same round trip on the single-block shape, so the reader itself is not
 // what is being tested above.
@@ -3539,7 +3560,7 @@ ok(qrReadBack(Qr::matrix('FOK', 'M', 1, 3)) === 'FOK', 'and so does the smallest
 // how easy it is to scan.
 $qrAllMasks = true;
 for ($qrM = 0; $qrM < 8; $qrM++) {
-    if (qrReadBack(Qr::matrix($qrUrl, 'M', 5, $qrM)) !== $qrUrl) {
+    if (qrReadBack(Qr::matrix($qrUrl, 'L', 3, $qrM)) !== $qrUrl) {
         $qrAllMasks = false;
     }
 }
@@ -3547,14 +3568,14 @@ ok($qrAllMasks, 'all eight mask patterns encode the same payload');
 
 // The ECC is what a printed code is for, so it is checked against an
 // INDEPENDENT syndrome evaluation rather than the routine that produced it.
-ok(qrSyndromesZero(Qr::matrix($qrUrl, 'M', 5, 0)),
+ok(qrSyndromesZero(Qr::matrix($qrUrl, 'L', 3, 0)),
     'and every Reed-Solomon syndrome of the printed code is zero');
 
-$qrSvg = Qr::svg($qrUrl, 'M');
+$qrSvg = Qr::svg($qrUrl, 'L', 3, 0);
 ok(str_starts_with($qrSvg, '<svg '), 'the print page gets inline SVG');
-ok(str_contains($qrSvg, 'viewBox="0 0 45 45"'), 'sized to the code plus the quiet zone');
+ok(str_contains($qrSvg, 'viewBox="0 0 37 37"'), 'sized to the code plus the quiet zone');
 ok(str_contains($qrSvg, '<rect'), 'drawn as rects, with no image library anywhere');
-ok(substr_count($qrSvg, '<rect') < 37 * 37,
+ok(substr_count($qrSvg, '<rect') < 29 * 29,
     'one rect per dark run rather than per module');
 
 // Cleanup

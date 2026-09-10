@@ -29,8 +29,13 @@ evadmin() { # evadmin <action> <post-data...>
 }
 # A no-match grep exits 1 under set -e, so the extractors swallow it.
 evfield() { echo "$1" | grep -oE "\"$2\":\"[0-9A-Za-z]+\"" | head -1 | cut -d'"' -f4 || true; }
-evjoin() { # evjoin <id> <eid> <code>
-    ev "{\"id\":\"$1\",\"action\":\"join\",\"eid\":\"$2\",\"code\":\"$3\"}"
+# A scan posts what it scanned and nothing else - a printed key names its
+# own event, a pass carries the eid in front of its own dot.
+evjoin() { # evjoin <id> <code>
+    ev "{\"id\":\"$1\",\"action\":\"join\",\"code\":\"$2\"}"
+}
+evpass() { # evpass <id> <eid> <pass>
+    evjoin "$1" "$2.$3"
 }
 evact() { # evact <id> <action> <eid>
     ev "{\"id\":\"$1\",\"action\":\"$2\",\"eid\":\"$3\"}"
@@ -70,23 +75,23 @@ refute "and no secret" '"secret"' "$R"
 # read one, so this is also how the smoke learns it.
 R=$(curl -s -b "$COOKIES" "$BASE/admin/event.php?eid=$EID1")
 expect "the print page renders" '<svg' "$R"
-expect "with the code under the QR" "$EID1." "$R"
+expect "with the code under the QR" 'class="code pixel"' "$R"
 expect "and says how to use it" 'Scan to join' "$R"
-KEY1=$(echo "$R" | grep -oE "$EID1\.[0-9A-Z]{16}" | head -1 | cut -d. -f2 || true)
-expect "the key is 16 characters" '16' "${#KEY1}"
+KEY1=$(echo "$R" | grep -oE "class=\"code pixel\">[0-9A-Z]{11}<" | grep -oE "[0-9A-Z]{11}" | head -1 || true)
+expect "the key is 11 characters, the whole version 3 budget" '11' "${#KEY1}"
 R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/admin/event.php?eid=$EID1")
 expect "and the page is login-gated" '401' "$R"
 
 # ---- getting in ----
 
-R=$(evjoin "$ID2" "$EID1" "$KEY1")
+R=$(evjoin "$ID2" "$KEY1")
 expect "a scan of the printed key joins an open event" '"you":{"state":"member"' "$R"
 expect "and the answer carries the member count" '"members":' "$R"
-R=$(evjoin "$ID2" "$EID1" "$KEY1")
+R=$(evjoin "$ID2" "$KEY1")
 expect "scanning again answers the same, so a lost response costs nothing" '"you":{"state":"member"' "$R"
 R=$(evadmin event_roster "eid=$EID1" "id=$ID2" "set=member")
 expect "and the roster still holds one row for them" '"ok":true' "$R"
-R=$(evjoin "$ID3" "$EID1" "ZZZZZZZZZZZZZZZZ")
+R=$(evjoin "$ID3" "ZZZZZZZZZZZ")
 expect "a wrong key is the same answer as no event at all" '"error":"no such event"' "$R"
 R=$(evact "$ID3" state "$EID1")
 expect "and leaves the scanner with no row" '"error":"no such event"' "$R"
@@ -96,12 +101,12 @@ expect "and leaves the scanner with no row" '"error":"no such event"' "$R"
 # One wrong code is already spent above, and the counter is per player
 # for the whole minute - so the cap of two is one attempt away.
 setting event_join_fails_per_min 2
-R=$(evjoin "$ID3" "$EID1" "ZZZZZZZZZZZZZZZZ")
+R=$(evjoin "$ID3" "ZZZZZZZZZZZ")
 expect "a wrong code still answers the same 404 up to the cap" '"error":"no such event"' "$R"
-R=$(evjoin "$ID3" "$EID1" "ZZZZZZZZZZZZZZZZ")
+R=$(evjoin "$ID3" "ZZZZZZZZZZZ")
 expect "past it the attempts are refused outright" '"error":"too many attempts"' "$R"
 expect "and the client is told how long to wait" '"retry_after":' "$R"
-R=$(evjoin "$ID3" "$EID1" "$KEY1")
+R=$(evjoin "$ID3" "$KEY1")
 expect "even a correct code, while the throttle stands" '"error":"too many attempts"' "$R"
 R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=log")
 expect "and the attempt is on record, which is what the throttle is for" 'event code throttle' "$R"
@@ -115,7 +120,7 @@ expect "with the rotation interval on the wire, not hard-coded" '"step":' "$R"
 expect "and how long each code stays valid" '"valid":' "$R"
 PASS=$(echo "$R" | grep -oE '"code":"[0-9A-Z]{6}"' | head -1 | cut -d'"' -f4 || true)
 expect "the pass is six characters" '6' "${#PASS}"
-R=$(evjoin "$ID3" "$EID1" "$PASS")
+R=$(evpass "$ID3" "$EID1" "$PASS")
 expect "and somebody else scans their way in with it" '"you":{"state":"member"' "$R"
 R=$(evact "$ID3" pass "$EID1")
 expect "who may then pass it on themselves" '"slots":' "$R"
@@ -194,7 +199,7 @@ R=$(evact "$ID3" leave "$EID1")
 expect "a member may leave" '"ok":true' "$R"
 R=$(evact "$ID3" state "$EID1")
 expect "and the row is gone" '"error":"no such event"' "$R"
-R=$(evjoin "$ID3" "$EID1" "$KEY1")
+R=$(evjoin "$ID3" "$KEY1")
 expect "so they may scan their way back in" '"you":{"state":"member"' "$R"
 R=$(evact "$ID1" leave "$EID1")
 expect "but the organizer cannot leave its own event" '"error":"not the organizer"' "$R"
@@ -203,7 +208,7 @@ R=$(evact "$ID2" run "$EID1")
 expect "a plain member cannot run the event" '"error":"not the organizer"' "$R"
 R=$(evact "$ID1" pause "$EID1")
 expect "the organizer pauses it" '"state":"paused"' "$R"
-R=$(evjoin "$ID3" "$EID1" "$KEY1")
+R=$(evjoin "$ID3" "$KEY1")
 expect "and a paused event admits nobody" '"error":"paused"' "$R"
 R=$(evact "$ID1" run "$EID1")
 expect "running it again reopens the door" '"state":"active"' "$R"
@@ -213,8 +218,8 @@ expect "running it again reopens the door" '"state":"active"' "$R"
 R=$(evadmin event_create "name=srv-CI-closed" "organizer=$ID1" "closed=1" "mode=active")
 EID3=$(evfield "$R" eid)
 R=$(curl -s -b "$COOKIES" "$BASE/admin/event.php?eid=$EID3")
-KEY3=$(echo "$R" | grep -oE "$EID3\.[0-9A-Z]{16}" | head -1 | cut -d. -f2 || true)
-R=$(evjoin "$ID2" "$EID3" "$KEY3")
+KEY3=$(echo "$R" | grep -oE "class=\"code pixel\">[0-9A-Z]{11}<" | grep -oE "[0-9A-Z]{11}" | head -1 || true)
+R=$(evjoin "$ID2" "$KEY3")
 expect "a scan at a closed door lands pending" '"you":{"state":"pending"' "$R"
 refute "and a pending row is told no count" '"members":' "$R"
 refute "nor the achievement" '"ach"' "$R"
@@ -223,7 +228,7 @@ R=$(evact "$ID2" members "$EID3")
 expect "and cannot read the roster" '"error":"not a member"' "$R"
 R=$(evact "$ID2" pass "$EID3")
 expect "nor mint a pass" '"error":"not a member"' "$R"
-R=$(evjoin "$ID2" "$EID3" "$KEY3")
+R=$(evjoin "$ID2" "$KEY3")
 expect "scanning again answers pending again" '"you":{"state":"pending"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"}" "$BASE/api/hello.php")
@@ -244,15 +249,15 @@ expect "who now reads the event in full" '"members":' "$R"
 
 R=$(ev "{\"id\":\"$ID1\",\"action\":\"access\",\"eid\":\"$EID3\",\"closed\":false}")
 expect "the organizer opens the door" '"closed":false' "$R"
-R=$(evjoin "$ID3" "$EID3" "$KEY3")
+R=$(evjoin "$ID3" "$KEY3")
 expect "and the next scan goes straight in" '"you":{"state":"member"' "$R"
 R=$(ev "{\"id\":\"$ID1\",\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID3\",\"set\":\"banned\"}")
 expect "a pest is banned" '"ok":true' "$R"
-R=$(evjoin "$ID3" "$EID3" "$KEY3")
+R=$(evjoin "$ID3" "$KEY3")
 expect "and every later scan is refused" '"error":"banned"' "$R"
 R=$(ev "{\"id\":\"$ID1\",\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID3\",\"set\":\"none\"}")
 expect "lifting the ban drops the row" '"ok":true' "$R"
-R=$(evjoin "$ID3" "$EID3" "$KEY3")
+R=$(evjoin "$ID3" "$KEY3")
 expect "so they may scan again" '"you":{"state":"member"' "$R"
 
 # The operator has one power the organizer has not: seating somebody who
@@ -266,7 +271,7 @@ expect "and the row records where it came from" '"via":"admin"' "$R"
 
 R=$(evadmin event_end "eid=$EID3")
 expect "the operator ends the event" '"state":"ended"' "$R"
-R=$(evjoin "$ID2" "$EID3" "$KEY3")
+R=$(evjoin "$ID2" "$KEY3")
 expect "an ended event admits nobody" '"error":"ended"' "$R"
 R=$(evact "$ID2" pass "$EID3")
 expect "and mints no more passes" '"error":"ended"' "$R"
@@ -312,11 +317,11 @@ R=$(evadmin event_create "name=srv-CI-tv" "organizer=$ID1" "closed=1" "mode=acti
 EID4=$(evfield "$R" eid)
 expect "an operator reserves the slot when setting the event up" '"ok":true' "$R"
 R=$(curl -s -b "$COOKIES" "$BASE/admin/event.php?eid=$EID4")
-KEY4=$(echo "$R" | grep -oE "$EID4\.[0-9A-Z]{16}" | head -1 | cut -d. -f2 || true)
-R=$(evjoin "$ID3" "$EID4" "$KEY4")
+KEY4=$(echo "$R" | grep -oE "class=\"code pixel\">[0-9A-Z]{11}<" | grep -oE "[0-9A-Z]{11}" | head -1 || true)
+R=$(evjoin "$ID3" "$KEY4")
 expect "the reserved screen joins a CLOSED event without waiting" '"you":{"state":"monitor"' "$R"
 refute "and is granted no achievement for it" '"ach"' "$R"
-R=$(evjoin "$ID2" "$EID4" "$KEY4")
+R=$(evjoin "$ID2" "$KEY4")
 expect "while an ordinary scan at that door still waits" '"you":{"state":"pending"' "$R"
 R=$(ev "{\"id\":\"$ID1\",\"action\":\"roster\",\"eid\":\"$EID4\",\"peer\":\"$ID2\",\"set\":\"member\"}")
 expect "the organizer lets that one in" '"ok":true' "$R"

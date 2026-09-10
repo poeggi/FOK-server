@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.11", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.12", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -53,7 +53,8 @@ hold - added in 4.9, or one request at a time from a client while its
 poll is parked, with a margin a clock reading may be ahead by before it
 is refused - added in 4.10, or events: a room an operator opens, whose
 members get in by scanning a code, whose roster lives only on the server
-and whose tournaments nobody outside it can see - added in 4.11) is
+and whose tournaments nobody outside it can see - added in 4.11, its
+printed key shortened to fit the code the game itself can scan in 4.12) is
 available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
@@ -554,7 +555,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.11",               contract version, see Versioning
+      "api": "4.12",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a free
@@ -968,7 +969,7 @@ not its hello is on time - and needs no hello to stay online at all.
 Every answer WITH A BODY carries `api` and `debug` (4.9), beside the
 `signals` array:
 
-      "api": "4.11",             the contract version, re-read here for
+      "api": "4.12",             the contract version, re-read here for
                                 the same reason hello carries it: it
                                 un-latches a client after a rollback
       "debug": false,           the server's debug instruction for this
@@ -1719,6 +1720,12 @@ shown to have observed, or roll ownership back by restoring an old backup.
 Every mint and every move lands on a tamper-evident ledger for
 after-the-fact review. Unforgeable minting needs the coin economy to move
 server-side, which is future work and a later contract.
+
+CHANGED IN 4.12, and it is the only change since 4.11: the printed key is
+11 characters and names its own event, so `join` takes `{id, code}` with
+no `eid` beside it. 4.11 had a 16-character key in a 63-byte URL, which no
+version 3 code can hold - so the poster could not be read by the game's own
+scanner, which was the whole point of it. Nothing else moved.
 
 ### Identifiers
 
@@ -2578,7 +2585,7 @@ still be read back, and an abandoned one after
 bracket to come back to. After that the tid is simply unknown, and `state`
 answers 404.
 
-## Events (4.11)
+## Events (4.12)
 
 An EVENT is a room an operator opens on the server: a LAN party, a club
 night, a stand at a fair. A player gets in by scanning its QR code -
@@ -2599,6 +2606,12 @@ An event tournament is an ORDINARY tournament: same lifecycle, same
 bracket, same deadlines, same caps, same requests (see Tournament mode).
 `eid` on it is a tag and a membership check on the way in, nothing more.
 
+CHANGED IN 4.12, and it is the only change since 4.11: the printed key is
+11 characters and names its own event, so `join` takes `{id, code}` with
+no `eid` beside it. 4.11 had a 16-character key in a 63-byte URL, which no
+version 3 code can hold - so the poster could not be read by the game's own
+scanner, which was the whole point of it. Nothing else moved.
+
 ### Identifiers
 
     eid     4 chars, alphabet 23456789ABCDEFGHJKMNPQRSTUVWXYZ. The
@@ -2606,9 +2619,11 @@ bracket, same deadlines, same caps, same requests (see Tournament mode).
             own: every action but `join` answers 404 for a caller with
             no row, so an eid alone cannot even tell you an event
             exists.
-    key     16 chars, same alphabet. The long-lived code, printed on
-            the event's poster and nowhere else. It is in no JSON
-            answer this API can produce, for anybody, ever.
+    key     11 chars, same alphabet. The long-lived code, printed on
+            the event's poster and nowhere else. It NAMES ITS OWN
+            EVENT - there is no eid beside it - because 11 characters
+            is the entire budget (see The URL a QR carries). It is in
+            no JSON answer this API can produce, for anybody, ever.
     pass    6 chars, same alphabet. The live code a member shows on
             screen. It is derived from the server's clock, so it is
             valid for 20 s and no row is stored for it.
@@ -2620,22 +2635,31 @@ scanned.
 
 ### The URL a QR carries
 
-One shape for both codes:
+One shape, and the code is one of two things:
 
-    https://poeggi.github.io/FOK-snake/#event=<eid>.<code>
+    https://poeggi.github.io/FOK-snake/#event=<eid>.<pass>   a pass
+    https://poeggi.github.io/FOK-snake/#event=<key>          the key
+
+Both are 11 characters, so both URLs are 53 bytes. THE DOT IS WHAT TELLS
+THEM APART: a pass carries the eid in front of its own dot, and a key has
+no dot because it names its own event.
 
 A phone's camera opens the game, which IS the event page - there is no
 landing page on the server. The client parses the hash on load and in
 its own scanner, exactly as it already does for `#friend=` and
 `#tourney=`.
 
-THE BUDGET, and why the identifiers are the length they are: the live
-pass QR is rendered by the CLIENT, whose encoder is a fixed QR version 3
-in byte mode - 53 text bytes, no more. The URL prefix is 42 bytes, which
-leaves 11 for `<eid>.<code>`: 4 + 1 + 6, and 53 in all. Not one byte
-spare. There is no room in a pass QR for anything else, which is why a
-pass names no issuer (see `pass`). The printed key QR is rendered by the
-SERVER and has no such limit.
+THE BUDGET, and why the identifiers are the length they are: every QR an
+event shows has to be readable by the GAME'S OWN SCANNER, which falls back
+to a decoder built for a fixed QR version 3 at level L wherever the browser
+offers no native one - 53 text bytes, no more. The URL prefix is 42 bytes,
+which leaves 11 for the code, and 53 in all. Not one byte spare.
+
+That is why a pass names no issuer (4 + 1 + 6 is already the whole of it),
+and why the printed key is 11 characters carrying no eid rather than a
+longer code beside one. The server encodes the printed QR at exactly
+version 3 / level L / mask 0 for the same reason: a poster nobody can scan
+in the app is the wrong poster.
 
 ### State
 
@@ -2702,11 +2726,16 @@ approval is `pending`. Both appear in one answer, as `state` and
 ### POST /api/event.php
 
 Always POST, always `{"id": "<8-hex>", "action": "...", "eid": "<4>"}`
-plus the action's own fields. `eid` is required by every action.
+plus the action's own fields. `eid` is required by every action EXCEPT
+`join`, which takes the scanned code instead and finds the event from it -
+a printed key has no eid to send.
 
-    join      {id, eid, code}   -> {ok, ...state fields}
+    join      {id, code}        -> {ok, ...state fields}
                                    the only action that takes a code,
-                                   and the only way to get a row.
+                                   and the only way to get a row. It
+                                   takes NO eid: post the code exactly
+                                   as it was scanned and the server
+                                   reads the event out of it.
                                    Idempotent: a repeat answers what the
                                    first did, achievement included, so a
                                    client that lost the response simply
