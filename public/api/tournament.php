@@ -11,7 +11,9 @@ require_once __DIR__ . '/../src/Tournament.php';
  * One POST endpoint, nine actions, always {"id": "8-hex", "action": "..."}
  * plus the action's fields (see docs/API.md "Tournament mode"):
  *
- *   create    {id, stakes?}          -> {ok, tid, code, stakes, max}
+ *   create    {id, stakes?, replace?, lvl?, speed?}
+ *                                    -> {ok, tid, code, stakes, lvl,
+ *                                        speed, max}
  *   join      {id, tid|code}         -> {ok, ...lobby}
  *   leave     {id, tid}              -> {ok}
  *   start     {id, tid}              -> {ok}                    host only
@@ -23,11 +25,13 @@ require_once __DIR__ . '/../src/Tournament.php';
  *   standdown {id, tid, nid}         -> {ok}
  *   orphan    {id, tid, nid}         -> {ok}
  *
- * Rounds get HARDER as the field narrows: round 1 is played at level 1 and
- * every round after it one level deeper, which the roles sheet carries as
- * `lvl` beside the hearts. Between two rounds the server stops on a
- * scoreboard - who is through, who is out - and waits for the host to
- * `continue`; that break clears itself if nobody ever does.
+ * Rounds get HARDER as the field narrows: round 1 is played at the level the
+ * host asked for and every round after it one level deeper, which the roles
+ * sheet carries as `lvl` beside the hearts. `speed` rides the same sheet and
+ * says every round is played as a speed round; the server only carries it.
+ * Between two rounds the server stops on a scoreboard - who is through, who
+ * is out - and waits for the host to `continue`; that break clears itself if
+ * nobody ever does.
  *
  * Transitions are announced as 'tourney' signals through the ordinary
  * mailbox, so a participant learns about them on its next hello/poll like
@@ -140,7 +144,8 @@ function tourney_out(?array $res): never
 switch ($action) {
     case 'create':
         tourney_out(Tournament::create($id, ($body['stakes'] ?? false) === true,
-            ($body['replace'] ?? false) === true, (int)($body['lvl'] ?? 1)));
+            ($body['replace'] ?? false) === true, (int)($body['lvl'] ?? 1),
+            ($body['speed'] ?? false) === true));
         // no break - tourney_out never returns
 
     case 'join':

@@ -172,6 +172,7 @@ final class TourneyStore
                 'code' => (string)$t['code'],
                 'host' => (string)$t['host'],
                 'stakes' => (bool)$t['stakes'],
+                'speed' => (bool)($t['speed'] ?? false),
                 'players' => count($t['players']),
                 'updated' => time(),
             ], self::ttl($t));

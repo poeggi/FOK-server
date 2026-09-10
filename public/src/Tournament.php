@@ -316,6 +316,18 @@ final class Tournament
         return (int)($t['lvl'] ?? 1);
     }
 
+    /**
+     * Every round of this tournament is played as a speed round. The server
+     * never acts on it - it is carried to the two players and to anyone
+     * deciding whether to join, exactly like the stakes flag. A tournament
+     * with no 'speed' of its own reads as false, which is the store's own
+     * shape rather than a compatibility shim.
+     */
+    private static function isSpeed(array $t): bool
+    {
+        return (bool)($t['speed'] ?? false);
+    }
+
     /** Done, or frozen - either way the cursor may move past it. */
     private static function isClosed(array $t, string $nid): bool
     {
@@ -334,7 +346,7 @@ final class Tournament
      * lobbies is the one thing a lobby's whole identity rests on.
      */
     public static function create(string $host, bool $stakes, bool $replace = false,
-        int $lvl = 1): array
+        int $lvl = 1, bool $speed = false): array
     {
         if (!TourneyStore::usable()) {
             // Tournament state has no database fallback by design, so this is
@@ -394,6 +406,7 @@ final class Tournament
             'seed' => $seed,
             'stakes' => $stakes,
             'lvl' => $lvl,
+            'speed' => $speed,
             'created' => $now,
             'data' => self::emptyData(),
             'players' => [['id' => $host, 'seat' => -1, 'forfeited' => false, 'joined' => $now]],
@@ -406,6 +419,7 @@ final class Tournament
             'code' => $code,
             'stakes' => $stakes,
             'lvl' => $lvl,
+            'speed' => $speed,
             'max' => Settings::int('tournament_max_players'),
         ];
     }
@@ -1341,6 +1355,10 @@ final class Tournament
             // preset the hearts.
             'lvl' => Bracket::level((int)$node['round'], Settings::int('tournament_max_level'),
                 self::startLvl($t)),
+            // Per match rather than once per tournament, because this is the
+            // sheet the pair presets from: a tournament that plays only some
+            // of its rounds fast would then need no new field.
+            'speed' => self::isSpeed($t),
             'stakes' => $t['stakes'],
             'players' => [$a, $b],
             'feeder' => $a,
@@ -1438,6 +1456,7 @@ final class Tournament
             'code' => $t['code'],
             'host' => $t['host'],
             'stakes' => $t['stakes'],
+            'speed' => self::isSpeed($t),
             'max' => Settings::int('tournament_max_players'),
             'players' => $players,
         ];
@@ -1652,6 +1671,7 @@ final class Tournament
                 'players' => (int)$l['players'],
                 'max' => $max,
                 'stakes' => (bool)$l['stakes'],
+                'speed' => (bool)($l['speed'] ?? false),
             ];
             if (count($out) === 10) {
                 break;
@@ -1792,6 +1812,7 @@ final class Tournament
             'state' => (string)$t['state'],
             'round' => (int)$t['round'],
             'stakes' => (bool)$t['stakes'],
+            'speed' => self::isSpeed($t),
             'since' => (int)$t['created'],
             'now' => $now,
             'cursor' => $cur,

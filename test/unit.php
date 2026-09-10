@@ -2536,6 +2536,27 @@ ok(Tournament::create($sl[0], false, false, 99)['lvl'] === Settings::int('tourna
 Tournament::leave($sl[0], TourneyStore::hostedBy($sl[0]) ?? '');
 ok(Tournament::create($sl[0], false)['lvl'] === 1, 'and a create that says nothing starts at 1');
 Tournament::leave($sl[0], TourneyStore::hostedBy($sl[0]) ?? '');
+
+// A speed tournament (4.10): the host says every round is played as a speed
+// round, and the server only carries the flag. It reaches the lobby, because a
+// player decides on it before joining, and every roles sheet, because that is
+// what the two players preset the match from.
+$sp = ['77000007', '77000008'];
+foreach ($sp as $pid) {
+    Presence::touch($pid, '127.0.0.1');
+}
+$cp = Tournament::create($sp[0], false, false, 1, true);
+ok($cp['speed'] === true, 'a create can declare every round a speed round');
+ok(Tournament::join($sp[1], $cp['tid'])['speed'] === true,
+    'and a joiner reads that off the lobby, before agreeing to play it');
+Tournament::start($sp[0], $cp['tid']);
+$vp = Tournament::view($sp[0], $cp['tid']);
+ok($vp['roles']['speed'] === true, 'every match it deals is one');
+ok(Tournament::detail($cp['tid'])['speed'] === true, 'and an operator can tell which it is');
+Tournament::leave($sp[0], $cp['tid']);
+ok(Tournament::create($sp[0], false)['speed'] === false,
+    'a create that says nothing plays the ordinary mix');
+Tournament::leave($sp[0], TourneyStore::hostedBy($sp[0]) ?? '');
 Settings::set('tournament_create_cooldown', 10);
 
 // The long-poll worker budget (Holds). Slots stand in for the OTHER workers

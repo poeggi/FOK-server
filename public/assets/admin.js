@@ -1717,6 +1717,7 @@ function renderTourneyBody(body, overlay, tid, d) {
     kv('State', d.state + (d.wait === 'break' ? ' (break)' : ''));
     kv('Round', d.round ? String(d.round) : 'not started');
     kv('Stakes', d.stakes ? 'yes' : 'no');
+    kv('Speed', d.speed ? 'every round' : 'no');
     kv('Opened', fmtTime(d.since) + ' (' + fmtMs((d.now - d.since) * 1000) + ' ago)');
     if (d.wait) {
         const w = TWAIT[d.wait] || [d.wait, ''];

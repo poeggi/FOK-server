@@ -310,6 +310,28 @@ if [ "$ADMIN" -eq 1 ]; then
     setting tournament_create_cooldown 10
 fi
 
+# --- A speed tournament (4.10). The flag is the host's and the server only
+# carries it: onto the lobby, which is where a player decides whether to join
+# one, and onto every roles sheet the tournament deals.
+if [ "$ADMIN" -eq 1 ]; then
+    setting tournament_create_cooldown 0
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"speed\":true}")
+    expect "a create can declare every round a speed round" '"speed":true' "$R"
+    TS=$(tfield "$R" tid)
+    R=$(act "$ID2" join "$TS")
+    expect "a guest reads it off the lobby before joining" '"speed":true' "$R"
+    R=$(act "$ID1" start "$TS")
+    expect "the host starts it" '"ok":true' "$R"
+    R=$(act "$ID1" state "$TS")
+    expect "and every match it deals is one" '"speed":true,"stakes":false' "$R"
+    R=$(act "$ID1" leave "$TS")
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    expect "a create that says nothing plays the ordinary mix" '"speed":false' "$R"
+    TS2=$(tfield "$R" tid)
+    R=$(act "$ID1" leave "$TS2")
+    setting tournament_create_cooldown 10
+fi
+
 # --- The sweep for a tournament nobody is at. Its logic (who counts as gone,
 # which seat keeps it alive) is unit-tested against the presence entries; what
 # only real HTTP can show is the two things asserted here: that an ordinary

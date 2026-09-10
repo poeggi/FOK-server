@@ -586,7 +586,8 @@ Response:
       ],
       "tourneys": [                          only when "tourneys" was true
         {"tid": "<32-hex>", "code": "K7QMX2", "host": "c0ffee42",
-         "host_name": "KAI", "players": 3, "max": 8, "stakes": false}
+         "host_name": "KAI", "players": 3, "max": 8, "stakes": false,
+         "speed": false}
       ]
     }
 
@@ -2001,8 +2002,9 @@ two reports agree, when one is enough, and when they contradict each other
 Always POST, always `{"id": "<8-hex>", "action": "..."}` plus the action's
 fields:
 
-    create    {id, stakes?, replace?, lvl?}
-                                     -> {ok, tid, code, stakes, lvl, max}
+    create    {id, stakes?, replace?, lvl?, speed?}
+                                     -> {ok, tid, code, stakes, lvl, speed,
+                                         max}
     join      {id, tid}  or  {id, code}
                                      -> {ok, ...lobby fields}
     leave     {id, tid}              -> {ok}
@@ -2027,6 +2029,14 @@ The round ladder). Absent reads as 1, which is what every client sent
 before the field existed. It rides the create's answer back, and nothing
 else carries it: a player who JOINS learns the level from the first `roles`
 sheet.
+
+`speed` (4.10, default false) says every round of this tournament is
+played as a speed round. Like `stakes` it is carried, never acted on: the
+server has no idea what a speed round is, and what the two players do
+with the flag is their business. It is a property of the TOURNAMENT and
+is fixed at create - there is no way to turn it on later. Unlike `lvl` it
+rides the lobby as well as the `roles` sheet, so a player can see it
+before joining.
 
 A host may hold one open-or-running tournament at a time (409), and may
 create one every `tournament_create_cooldown` (429 with `retry_after`).
@@ -2205,6 +2215,8 @@ the two players, the feeder, and the spectator tree.
     players     the two ids, in seat order
     hm          hearts: 2, or 3 for the final
     lvl         the level the match is played at (see The round ladder)
+    speed       the create's `speed`, true on every match of a tournament
+                that asked for it
     stage       "group" | "quarter" | "semi" | "final" | "ko"
     feeder      players[0] - the side that opens the P2P connection and
                 feeds the primaries
@@ -2314,7 +2326,7 @@ the whole picture.
       "event": "lobby",           the lobby fields are carried verbatim,
                                   this one included - ignore it here
       "tid": "<32-hex>", "state": "running", "code": "K7QMX2",
-      "host": "c0ffee42", "stakes": false, "max": 8,
+      "host": "c0ffee42", "stakes": false, "speed": false, "max": 8,
       "players": [{"id": "c0ffee42", "name": "KAI"}, ...],
       "round": 1,                 1 = the first round, 2+ = knockout stages.
                                   During a break this is ALREADY the round
@@ -2355,11 +2367,11 @@ Every transition is announced to each participant as a server-generated
 A client that was offline picks its events up on its next hello. Every
 payload carries `tid`.
 
-    lobby        {event, tid, state, code, host, stakes, max,
+    lobby        {event, tid, state, code, host, stakes, speed, max,
                   players:[{id,name}], reason?}
                  someone joined or left; `reason` explains an abandon
     roles        {event, tid, round, stage, match, of, nid, hm, lvl,
-                  stakes, players, feeder, primaries, secondaries,
+                  speed, stakes, players, feeder, primaries, secondaries,
                   names, you}
                  a match is up. `match`/`of` are its 1-based position in
                  the stage. `you` differs per recipient.
@@ -2427,11 +2439,11 @@ extent of playing a match it cannot see in `state` - when in doubt, call
 `state` and render that.
 
 That is the doubtful case only. An expected `roles` event already carries
-the whole sheet a match needs - `nid`, `hm`, `lvl`, `stakes`, `players`,
-`feeder`, `primaries`, `secondaries`, `names` and `you` - and a `result`
-carries the standings it moved, so `state` is not a routine follow-up to
-either, and least of all one made alongside the `start.php` that a
-`roles` event prompts. One event, one call.
+the whole sheet a match needs - `nid`, `hm`, `lvl`, `speed`, `stakes`,
+`players`, `feeder`, `primaries`, `secondaries`, `names` and `you` - and a
+`result` carries the standings it moved, so `state` is not a routine
+follow-up to either, and least of all one made alongside the `start.php`
+that a `roles` event prompts. One event, one call.
 
 ### What it costs on the wire
 
