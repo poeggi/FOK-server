@@ -69,6 +69,13 @@ endpoint - it is the contract the FOK-snake client is built against.
   shipped. Excluding it is not a licence to let it be expensive: it
   batches a whole tick into one request and runs on ONE clock so that the
   cards due together actually land in the same turn of the event loop.
+  It was 95 percent of all requests on this server, so admin/api.php asks
+  for the database WHERE IT IS USED, never at the top: a tick carrying
+  only presence and duels is answered from shared memory and opens no
+  connection at all. Do not hoist a `$db = Db::get()` back to the top of
+  that file. Load::markStart stays there, though - it is the CPU baseline
+  every other endpoint pays on its own open, and without it the one screen
+  being measured would be the one reporting no CPU.
 - apcu_inc does NOT refresh the TTL of a key it increments - its ttl
   argument applies only to the key it creates - while apcu_store resets
   the TTL on every write. A pair of counters written the two different

@@ -77,6 +77,15 @@ push-to-live time and is real request work through a keep-alive tunnel,
 not handshake waste (grep the deploy log for `tunnel` before
 re-theorising).
 
+What the verify reads is api/version.txt, a STATIC file both deploy paths
+write from Config.php plus the target environment (tools/make-version.sh)
+before the tree is hashed. It renames in the api/ tier, after src/ and
+assets/, so live answering the new number proves the rest landed - the
+ordering argument is in feedback_verify_on_the_real_host.md. It rides
+EVERY upload, including a hand-run `deploy.ps1 -Only`, or a partial
+emergency deploy would leave the verify reporting the release before the
+one the webroot is running.
+
 Two traps that cost whole sessions:
 
 1. A failing staging smoke SILENTLY PINS LIVE at the last green commit
@@ -368,8 +377,10 @@ matched within tournament_announce_window 180 s), because on a dual-stack
 LAN the host
 and joiner never share an address; hello's optional "nets" is a CLAIM,
 never evidence (a claim never displaces a live observation and cannot be
-rewritten faster than 60 s). GET /api/net.php is the field check for "my
-phone cannot see the lobby on my PC".
+rewritten faster than 60 s). There is no server-side field check for "my
+phone cannot see the lobby on my PC" any more - net.php is gone (1.9.1),
+and test/live-protocol.sh asks www4/www6.poggensee.it/ip instead, which
+answers both whether the family works and what address it presents.
 
 ## Testing lessons
 
@@ -436,9 +447,20 @@ change and the admin 'relaying' gauge decides it, not a survey. And ~36 of
 clutter only, and turning them into constants would churn the config
 export/import path for nothing.
 
+REMOVED in 1.9.1, same rule, same contract minor (4.10):
+
+- net.php. No client ever called it; the live-protocol harness was the only
+  caller and now asks www4/www6.poggensee.it/ip.
+- version.php, which is api/version.txt now - see Deploy above.
+- the contract's demand that a client check the version. `api` rides every
+  hello and poll body and what a client does with it is its own business.
+  docs/API.md also stopped naming PHP and Apache outside a URL.
+
 Used and fine: q_ms, pace.hold, nets (Presence::announceNet reads them),
 after_ms, the delta's latency, backup.php, debug/submit.php, time.php
-(t.txt fallback), net.php.
+(t.txt fallback, and the smoke's up-probe and origin-allowlist assertions -
+a static file cannot consult the allowlist and can answer before the server
+is ready to).
 
 ## Open
 
