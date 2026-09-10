@@ -15,6 +15,11 @@ admin Properties card reports opcache / APCu / deferred-flush / DB-open
 cost, so such questions stay answered. It is admin-gated - ask an operator
 to read it; never handle admin credentials.
 
-Deploy gotcha: version.php flips before the rest of the uploads land
-(deploy sends src/ first), so a watcher that polls the version and then
-immediately curls a new static file will 404 - wait a beat.
+Deploy ordering: api/version.txt is a static file the deploy writes
+(tools/make-version.sh, called by both deploy paths before the tree is
+hashed), and it renames in the api/ tier - AFTER src/ and assets/, each
+behind a `wait all` barrier. So live answering the new number PROVES the
+code and the assets landed, and the reverse cannot happen. Poll it to
+know a deploy finished. The old version.php could not do this: it sat in
+api/ but read Config.php out of src/, which lands first, so it flipped
+before the rest of the uploads did.

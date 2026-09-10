@@ -41,7 +41,13 @@ if ($LASTEXITCODE -ne 0) { Write-Error 'could not write public/api/version.txt' 
 $srcDir = Join-Path $root 'src'
 $assetDir = Join-Path $root 'assets'
 $files = if ($Only) {
-    Get-ChildItem -Path $base -Recurse -File
+    # api/version.txt rides EVERY upload, whatever -Only names. It is what the
+    # deploy verify reads, so it must never lag the code beside it: an
+    # emergency '-Only src' that left it behind would report the release
+    # before this one on a webroot already running this one.
+    @(Get-ChildItem -Path $base -Recurse -File) +
+    @(Get-ChildItem -Path (Join-Path $root 'api/version.txt') -File |
+        Where-Object { $_.FullName -notlike "$base*" })
 } else {
     @(Get-ChildItem -Path $srcDir -Recurse -File) +
     @(Get-ChildItem -Path $assetDir -Recurse -File) +

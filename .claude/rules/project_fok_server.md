@@ -19,7 +19,7 @@ bumps the middle digit and resets the last one (1.4.18 -> 1.5.0), any
 other one bumps the last digit, tagged as a bare number
 (feedback_fok_server_version_bump.md).
 Some releases shipped untagged, so match the next release number to the
-LIVE version.php, never to the last git tag. docs/API.md is THE client
+LIVE version.txt, never to the last git tag. docs/API.md is THE client
 contract and must stay in step.
 
 ## Pacing
@@ -80,7 +80,7 @@ re-theorising).
 Two traps that cost whole sessions:
 
 1. A failing staging smoke SILENTLY PINS LIVE at the last green commit
-   while staging shows the new version - always curl /api/version.php on
+   while staging shows the new version - always curl /api/version.txt on
    LIVE after a push and check the CI conclusion; never infer "deployed"
    from a green pre-commit hook.
 2. The staging smoke runs against a PERSISTENT staging DB, so tests
