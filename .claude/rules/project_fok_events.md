@@ -1,21 +1,32 @@
 # Events: identifiers, the budget, the two waits, and what is terminal
 
 An event is a room an operator opens; a player gets in by scanning its QR.
-Shipped in 1.10.0 (API 4.11, schema 44/45). docs/PLAN-events.md is the full
-design and docs/API.md is the contract; this file is the handful of things
-that will bite somebody who changes the code without reading either.
+Shipped in 1.10.0 (API 4.11, schema 44/45); the printed key was shortened
+to 11 characters in 1.11.0 (API 4.12) so the poster is scannable in-game.
+docs/PLAN-events.md is the full design and docs/API.md is the contract;
+this file is the handful of things that will bite somebody who changes the
+code without reading either.
 
 ## The identifiers, and the byte budget that fixes their lengths
 
     eid    4 chars   public, grants NOTHING on its own
-    key   16 chars   printed on the poster, long-lived
+    key   11 chars   printed on the poster, long-lived, NAMES ITS OWN EVENT
     pass   6 chars   derived from the clock, valid 20 s, no row stored
 
-`GAME_URL#event=<eid>.<code>` is 42 + 4 + 1 + 6 = 53 bytes, and the live pass
-QR is rendered by the CLIENT, whose encoder is a fixed QR version 3 in byte
-mode: 53 bytes, no more. THERE IS NOT ONE BYTE SPARE. That is why a pass
-names no issuer and why none of the three lengths may grow - lengthening any
-of them silently breaks the client's ability to draw the code at all.
+Every QR an event shows has to be read by the GAME'S OWN SCANNER, which falls
+back to a decoder built for a fixed version 3 at level L wherever the browser
+offers no BarcodeDetector: 53 text bytes, no more. `GAME_URL#event=` is 42 of
+them, so THE CODE'S ENTIRE BUDGET IS 11 CHARACTERS and there is not one byte
+spare. A pass spends all 11 on `<eid>.<pass>` (4 + 1 + 6), which is why it
+names no issuer; the printed key spends all 11 on itself, which is why it
+carries no eid and `join` takes `{id, code}` alone. THE DOT IS WHAT TELLS THE
+TWO APART. None of the lengths may grow.
+
+The server encodes the poster at exactly version 3 / L / mask 0 for the same
+reason (`Qr::svg(url, 'L', 3, 0, ...)` in public/admin/event.php). 1.10.x had
+a 16-character key in a 63-byte URL: correct QR, unreadable by the one
+scanner it was printed for. If a length ever changes again, the unit block
+asserting 53 bytes at version 3 is what has to stay true.
 
 ## THE KEY IS IN NO JSON ANSWER
 

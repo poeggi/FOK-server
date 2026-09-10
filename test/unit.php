@@ -3094,6 +3094,28 @@ ok(strlen($evOpen['ekey']) === 11,
 ok(Events::byKey($evOpen['ekey'])['eid'] === $evOpen['eid'],
     'that names its own event, because a poster carries nothing beside it');
 ok(Events::byKey(str_repeat('Z', 11)) === null, 'and a key nobody minted names none');
+
+// A key minted before the budget was known is 16 characters, which makes the
+// poster impossible to draw and the code impossible to post. The ladder
+// re-mints it; the step is exercised by putting a legacy key back and winding
+// the schema version back over it.
+Db::get()->prepare('UPDATE events SET ekey = ? WHERE eid = ?')
+    ->execute([str_repeat('Z', 16), $evOpen['eid']]);
+Db::get()->exec('PRAGMA user_version = 45');
+Db::close();
+Events::forgetCard($evOpen['eid']);
+$evReKey = Db::get()->prepare('SELECT ekey FROM events WHERE eid = ?');
+$evReKey->execute([$evOpen['eid']]);
+$evNewKey = (string)$evReKey->fetchColumn();
+$evReKey->closeCursor();
+ok(strlen($evNewKey) === Events::KEY_LEN,
+    'a key from before 1.11.0 is re-minted at the length the game can scan');
+ok($evNewKey !== str_repeat('Z', 16), 'which is a new key, not the old one cut short');
+ok(Events::byKey($evNewKey)['eid'] === $evOpen['eid'],
+    'and the event answers to it');
+ok(strlen(FOK_GAME_URL . '#event=' . $evNewKey) <= Qr::capacity(3, 'L'),
+    'so its poster fits the code the game decodes');
+$evOpen['ekey'] = $evNewKey;
 ok(strlen($evOpen['secret']) === 64, 'and 32 bytes of secret nobody outside the server sees');
 ok($evOpen['mode'] === 'upcoming', 'a new event waits to be run');
 ok(Events::isMember($evOpen['eid'], '11117e57'),

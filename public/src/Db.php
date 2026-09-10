@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 45;
+    private const SCHEMA_VERSION = 46;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -836,6 +836,38 @@ final class Db
             // an hour must still have its place when it comes back.
             $pdo->exec('ALTER TABLE events ADD COLUMN monitor_allowed INTEGER NOT NULL DEFAULT 1');
             $pdo->exec('ALTER TABLE events ADD COLUMN monitor TEXT');
+        }
+        if ($v < 46) {
+            // The printed key is 11 characters since 1.11.0 - the whole of
+            // what fits beside the URL in the version 3 code the game's own
+            // scanner reads. A key minted before that is 16, so its poster
+            // cannot be drawn at all and the code cannot even be posted to
+            // join. Re-mint every one of them; nothing is lost that still
+            // worked. The alphabet is Events::ALPHABET, repeated here
+            // because a migration may not depend on a class that reads the
+            // database it is still migrating.
+            $al = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+            $old = $pdo->query('SELECT eid FROM events WHERE length(ekey) <> 11')
+                        ->fetchAll(PDO::FETCH_COLUMN);
+            if ($old) {
+                $taken = array_flip(array_map('strval',
+                    $pdo->query('SELECT ekey FROM events')->fetchAll(PDO::FETCH_COLUMN)));
+                $upd = $pdo->prepare('UPDATE events SET ekey = ? WHERE eid = ?');
+                foreach ($old as $eid) {
+                    do {
+                        $key = '';
+                        for ($i = 0; $i < 11; $i++) {
+                            $key .= $al[random_int(0, strlen($al) - 1)];
+                        }
+                    } while (isset($taken[$key]));
+                    $taken[$key] = true;
+                    $upd->execute([$key, (string)$eid]);
+                    // The cached card carries the key it was read with.
+                    if (function_exists('apcu_delete') && apcu_enabled()) {
+                        apcu_delete(FOK_APCU_NS . 'ev:' . (string)$eid);
+                    }
+                }
+            }
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that
