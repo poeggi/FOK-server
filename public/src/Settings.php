@@ -113,7 +113,7 @@ final class Settings
         'tournament_break_ttl_ms' => [120000, 'A round break continues by itself after (ms)'],
         'admin_refresh_secs' => [30, 'Admin dashboard refresh interval (seconds, 0 = off)'],
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)'],
-        'admin_duels_refresh_secs' => [1, 'Duels card refresh interval (seconds, 0 = off)'],
+        'admin_duels_refresh_secs' => [5, 'Duels card refresh interval (seconds, 0 = off)'],
         'admin_perf_refresh_secs' => [5, 'Server performance card refresh interval (seconds, 0 = off)'],
         'admin_stats_refresh_secs' => [5, 'Statistics card refresh interval (seconds, 0 = off)'],
     ];

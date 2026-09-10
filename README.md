@@ -131,7 +131,9 @@ major. Every minor since is additive; docs/API.md carries them one by one.
     public/           mirrors the webroot 1:1
       index.php       landing page with the global top 100
       api/            JSON endpoints for game clients (CORS-allowlisted)
-        version.php   server + API contract version, environment
+        version.txt   server + API contract version, environment - a
+                      static file the deploy writes, so a probe never
+                      queues for a PHP worker
         t.txt         clock source: Apache stamps the receive time into a
                       header, so sync never queues for a PHP worker
         time.php      millisecond clock sync, fallback for t.txt
@@ -139,8 +141,6 @@ major. Every minor since is additive; docs/API.md carries them one by one.
                       presence deltas, debug flag (server instruction +
                       client report), local tournament lobbies,
                       self-reported networks
-        net.php       what network the server sees the caller on - a field
-                      diagnostic, reads and writes nothing
         poll.php      fast signal poll, 204 when idle (matchmaking,
                       tournaments); carries the friend delta, the counters
                       and the hold decision when asked, and wakes on a
@@ -223,7 +223,7 @@ Actions (.github/workflows/ci.yml), no exceptions and no manual steps:
     2. deploy to staging  tools/deploy.sh staging (FTPS, secrets in Actions)
     3. smoke staging      test/smoke.sh against the staging URL
     4. deploy to live     only if staging passed
-    5. verify live        version.php must report the pushed version + live
+    5. verify live        version.txt must report the pushed version + live
 
 So "deploy" == "git push to main" (which the pre-commit hook already
 gates locally). The remote smoke run uses random player IDs and removes
@@ -420,8 +420,9 @@ host-level. If this outgrows shared hosting, fix workers first.
 
 ## API sketch
 
-    GET  /api/version.php
-      -> {"ok":true,"server":"<x.y.z>","api":"4.7","env":"live"}
+    GET  /api/version.txt
+      -> {"ok":true,"server":"<x.y.z>","api":"4.10","env":"live"}
+         (static, written by the deploy - it starts no PHP)
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
     GET  /api/time.php
@@ -439,10 +440,6 @@ host-level. If this outgrows shared hosting, fix workers first.
           lobbies hosted on one of the caller's own networks. duel_with sets
           the duel and duel_end clears it - see docs/API.md, Announcing a
           duel - and a duel_private one is counted but never attributed)
-    GET  /api/net.php
-      -> {"ok":true,"ip":"...","family":4|6|0,"net":"..."}
-         (what network the server sees YOU on - open it on two devices to
-          settle whether they share one; reads and writes nothing)
     POST /api/friend.php {"id","action":"request|accept|remove|list","peer"?}
       -> {"ok":true,"state":...} | {"ok":true,"friends":[...]}
          (request/accept notify the peer via a reserved 'friend' signal)

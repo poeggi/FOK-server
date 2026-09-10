@@ -29,6 +29,13 @@ $root = Join-Path $PSScriptRoot '..\public' | Resolve-Path
 $base = if ($Only) { Join-Path $root $Only | Resolve-Path } else { $root }
 
 $prefix = if ($Staging) { 'staging/' } else { '' }
+# api/version.txt names the target, so it is written before the file walk
+# below sees it. The generator is the same shell script CI uses - two of them
+# would drift the moment a field is added - and bash is on this box already
+# (the pre-commit hook runs test/checks.sh through it).
+$envName = if ($Staging) { 'staging' } else { 'live' }
+& bash (Join-Path $PSScriptRoot 'make-version.sh') $envName
+if ($LASTEXITCODE -ne 0) { Write-Error 'could not write public/api/version.txt' }
 # Upload order: src/ (classes + migrations before consumers), then
 # assets/ (immutable ?v= files before HTML referencing them), then rest.
 $srcDir = Join-Path $root 'src'

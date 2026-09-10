@@ -71,7 +71,7 @@ echo "== live-protocol smoke against $BASE"
 echo "   ids A=$A B=$B C=$C D=$D"
 
 # --- Health: is the deployment answering, and is it the contract we expect?
-V=$(curl -s "$BASE/api/version.php")
+V=$(curl -s "$BASE/api/version.txt")
 expect "version endpoint answers" '"ok":true' "$V"
 # Clients gate on the MAJOR only (see docs/API.md "Versioning"), so that is
 # what a protocol harness pins: a MINOR bump is additive by definition and
@@ -246,9 +246,18 @@ esac
 # across runs by design, so that boundary is pinned in test/unit.php where the
 # state is built from nothing.
 E=55557e57; F=66667e57; G=77777e57; H=88887e57
+# Which families this runner has, and its own public address in each.
+# www4/www6 are single-family names that echo the caller's address back, so
+# one fetch per family answers both questions at once: whether the family
+# works end to end, and what a server sees us as on it. They redirect to
+# https, hence -L. Asking our own server would answer neither - it reports
+# the family the request happened to arrive on, which is the thing under
+# test.
 V4=0; V6=0
-curl -4 -sf -m 10 -o /dev/null "$BASE/api/version.php" && V4=1
-curl -6 -sf -m 10 -o /dev/null "$BASE/api/version.php" && V6=1
+MY4=$(curl -sL -m 10 https://www4.poggensee.it/ip)
+MY6=$(curl -sL -m 10 https://www6.poggensee.it/ip)
+[[ "$MY4" =~ ^[0-9.]+$ ]] && V4=1 || MY4=''
+[[ "$MY6" =~ ^[0-9a-fA-F:]+$ ]] && V6=1 || MY6=''
 if [ "$V4" -eq 1 ] && [ "$V6" -eq 1 ]; then
     echo "   dual-stack runner: driving the announce over both families (host=$E seekers=$D,$G)"
     hf() { # hf <-4|-6> <id> : hello asking for the announce
@@ -278,7 +287,6 @@ if [ "$V4" -eq 1 ] && [ "$V6" -eq 1 ]; then
         # about its lobby is the address $F reported about itself. That is
         # what a browser will do: it cannot choose a family for a request,
         # but it can find its own public addresses through STUN.
-        MY4=$(curl -4 -s -m 10 "$BASE/api/net.php" | grep -oE '"ip":"[0-9.]+"' | cut -d'"' -f4)
         if [ -n "$MY4" ]; then
             curl -6 -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$F\",\"name\":\"srv-CI-claim\",\"nets\":[\"$MY4\"]}" "$BASE/api/hello.php" > /dev/null
             TR=$(tf -6 "{\"id\":\"$F\",\"action\":\"create\"}")

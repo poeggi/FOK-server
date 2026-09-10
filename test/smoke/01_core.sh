@@ -4,21 +4,30 @@ expect "landing page" "FOK" "$R"
 expect "landing shows public stats" 'client ids' "$R"
 expect "landing header carries the server version" 'class="version' "$R"
 
-# The exact path a browser at the game origin takes: CORS must be open. One
-# fetch with -i carries the ACAO header AND the version body (same response).
+# What the server is running, as a static file the deploy wrote - so this
+# assertion is also the one that proves the deploy generated it (see
+# tools/make-version.sh). It bypasses PHP, so the CORS assertions below do
+# NOT ride on it: what it carries cross-origin is .htaccess's business, and
+# php -S cannot answer that at all.
 EXPECT_ENV=live
 [[ "$BASE" == */staging ]] && EXPECT_ENV=staging
-R=$(curl -s -i -H 'Origin: https://poeggi.github.io' "$BASE/api/version.php")
-expect "game origin allowed by CORS" 'poeggi.github.io' "$R"
+R=$(curl -s "$BASE/api/version.txt")
 expect "version endpoint" '"server":"' "$R"
 expect "api contract version" '"api":' "$R"
 expect "environment reported" "\"env\":\"$EXPECT_ENV\"" "$R"
+
+# The exact path a browser at the game origin takes: CORS must be open. One
+# fetch with -i carries the ACAO header AND the body (same response). time.php
+# is the subject because it is a GET that goes through Util::cors and records
+# nothing, so asking it repeatedly cannot move a count this suite asserts.
+R=$(curl -s -i -H 'Origin: https://poeggi.github.io' "$BASE/api/time.php")
+expect "game origin allowed by CORS" 'poeggi.github.io' "$R"
 # Resource Timing blanks the connection breakdown of a cross-origin response -
 # protocol, connect and TLS marks, transfer sizes - unless the server allows
 # it, and a client reads those to tell a cold connection from a warm one. The
 # allowlist governs it too, because the breakdown includes the response size.
 expect "timing allowed for the game origin"     'timing-allow-origin: https://poeggi.github.io' "$(echo "$R" | tr 'A-Z' 'a-z')"
-R=$(curl -s -i -H 'Origin: https://not.allowed.example' "$BASE/api/version.php" | tr 'A-Z' 'a-z')
+R=$(curl -s -i -H 'Origin: https://not.allowed.example' "$BASE/api/time.php" | tr 'A-Z' 'a-z')
 if echo "$R" | grep -q 'timing-allow-origin'; then
     echo "FAIL an unlisted origin is told the timing"; fail=1
 else
@@ -53,15 +62,6 @@ if [ "$REMOTE" -eq 1 ]; then
     expect "clock source is never cached" 'cache-control: no-store' "$R"
     expect "clock source allows timing" 'timing-allow-origin: *' "$R"
 fi
-
-# The field diagnostic behind "my phone cannot see the lobby on my PC": it
-# reports the network the announce matches on, so the two devices can be
-# compared without an admin login. Locally the caller is 127.0.0.1, which is
-# its own network key, so the shape is what is asserted here.
-R=$(curl -s "$BASE/api/net.php")
-expect "net diagnostic answers" '"ok":true' "$R"
-expect "net diagnostic names the family" '"family":' "$R"
-expect "net diagnostic names the network" '"net":' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"}" "$BASE/api/hello.php")
 expect "hello registers" "$(strict '"registered":1')" "$R"

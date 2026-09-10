@@ -227,6 +227,10 @@ fi
 # ---- driver ----------------------------------------------------------------
 prefix=''
 [ "${1:-}" = "staging" ] && prefix='staging/'
+# Before the manifest is hashed, so a changed version.txt is one of the files
+# the plan below picks up. It names the target, which is the one field the
+# tree cannot hold: the same public/ goes to both.
+bash tools/make-version.sh "$([ -n "$prefix" ] && echo staging || echo live)"
 if [ -z "${FTP_HOST:-}" ] || [ -z "${FTP_USER:-}" ] || [ -z "${FTP_PASS:-}" ]; then
     echo "FTP_HOST/FTP_USER/FTP_PASS must be set" >&2
     exit 1

@@ -130,3 +130,24 @@
         Header set Timing-Allow-Origin "*"
     </Files>
 </IfModule>
+
+# The version answer, for the same reason and by the same means: it is a
+# static file the deploy writes (tools/make-version.sh), so asking what the
+# server runs never queues for a PHP worker. That matters most exactly when
+# the pool is busy, which is when somebody asks.
+#
+# no-store because the deploy's own live-verify reads it: a cached copy would
+# report the release before this one and read as a deploy that did not land.
+#
+# Allow-Origin is * rather than the FOK_ALLOWED_ORIGINS allowlist, for the
+# reason t.txt gives above - a file that bypasses PHP cannot consult the list.
+# It discloses nothing: the landing page prints the same version to anyone who
+# opens it.
+<IfModule mod_headers.c>
+    <Files "version.txt">
+        Header set Content-Type "application/json"
+        Header set Cache-Control "no-store"
+        Header set Access-Control-Allow-Origin "*"
+        Header set Timing-Allow-Origin "*"
+    </Files>
+</IfModule>

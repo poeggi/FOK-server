@@ -30,7 +30,13 @@ session_write_close();
 Util::bump('admin');
 
 $action = $_GET['action'] ?? '';
-$db = Db::get();
+// The CPU baseline every other endpoint takes when it opens the database
+// (see Load::markStart). The cards the dashboard polls are answered from
+// shared memory and open nothing, so without this their CPU would read
+// zero - and the one screen being measured must not be the one that
+// under-reports. The handle itself is asked for where it is used: a tick
+// carrying only presence and duels then costs no connection at all.
+Load::markStart();
 
 /**
  * State-changing actions are POST-only: a GET could be triggered cross-site
@@ -226,6 +232,7 @@ switch ($action) {
         Util::jsonOut(['ok' => true]);
 
     case 'users':
+        $db = Db::get();
         $total = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
         $st = $db->query('SELECT id, name, ip, first_seen, last_seen, hello_count, latency, debug, debug_active FROM players ORDER BY last_seen DESC LIMIT 200');
         $users = Presence::overlay(array_map(static function (array $u) {
@@ -248,7 +255,7 @@ switch ($action) {
         // property waits for them (see Presence::forget), while an operator
         // removing a client is taking it away. The ledger is append-only audit
         // and stays: it records that the instances existed and where they went.
-        $db->prepare('DELETE FROM items WHERE owner = ?')->execute([$id]);
+        Db::get()->prepare('DELETE FROM items WHERE owner = ?')->execute([$id]);
         Util::jsonOut(['ok' => true]);
 
     // ---- config vault (per-client backup) ----
@@ -357,7 +364,7 @@ switch ($action) {
         // whether it is intact (and where it breaks if not). A read, but
         // POST-only so it is never triggered by a cross-site navigation.
         requirePost();
-        Util::jsonOut(['ok' => true, 'verify' => Ledger::verify($db)]);
+        Util::jsonOut(['ok' => true, 'verify' => Ledger::verify(Db::get())]);
 
     case 'item':
         // One instance in full: the registry row, what the ledger still holds

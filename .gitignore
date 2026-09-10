@@ -4,6 +4,10 @@ fok-server-data/
 *.db-wal
 *.db-shm
 
+# Written by tools/make-version.sh at deploy time, and by the smoke suite for
+# a local run. It names the target environment, which the tree cannot know.
+public/api/version.txt
+
 # Local-only secrets (deploy credentials live in ~/.fok-server-deploy.json)
 *.secret
 __pycache__/

@@ -36,7 +36,7 @@ jobs:
             echo "- HTTP smoke test against php -S (test/smoke.sh)"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # A red check SKIPS the deploy job below, and api/version.php keeps
+      # A red check SKIPS the deploy job below, and api/version.txt keeps
       # answering the old version - so nothing about live LOOKS wrong, and a
       # release can sit undeployed unnoticed. Say it where the run is red.
       - name: Say that live was not deployed
@@ -83,14 +83,14 @@ jobs:
         run: bash tools/deploy.sh
 
       # The deploy uploads file by file, so for a moment after it returns the
-      # live tree is a mix of both releases and version.php can still answer
+      # live tree is a mix of both releases and version.txt can still answer
       # the old number. That is not a failed deploy, so give the swap a few
       # seconds to settle rather than reading once and going red.
       - name: Verify live
         run: |
           want=$(grep -oE "FOK_SERVER_VERSION = '[^']+'" public/src/Config.php | cut -d"'" -f2)
           for i in $(seq 1 15); do
-            got=$(curl -s https://fok-server.poggensee.it/api/version.php)
+            got=$(curl -s https://fok-server.poggensee.it/api/version.txt)
             echo "attempt $i: expect server $want, got: $got"
             if echo "$got" | grep -q "\"server\":\"$want\""; then
               break
@@ -99,7 +99,11 @@ jobs:
           done
           echo "$got" | grep -q "\"server\":\"$want\""
           echo "$got" | grep -q '"env":"live"'
+          # version.txt is static and answers every origin with '*', so the
+          # allowlist is proved where it actually lives - on an endpoint that
+          # runs the code holding the list. time.php is a GET that records
+          # nothing, so asking live for it moves no counter.
           cors=$(curl -s -i -H 'Origin: https://poeggi.github.io' \
-            https://fok-server.poggensee.it/api/version.php | grep -i '^access-control-allow-origin')
+            https://fok-server.poggensee.it/api/time.php | grep -i '^access-control-allow-origin')
           echo "$cors" | grep -q 'poeggi.github.io'
           echo "Live is up on v$want, reachable from the game origin" >> "$GITHUB_STEP_SUMMARY"

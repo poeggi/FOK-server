@@ -74,9 +74,16 @@ else
     # Then WAIT FOR THE PORT TO ANSWER rather than sleeping a guessed second:
     # on a loaded CI runner php -S can still be binding when the first request
     # goes out, and from there every later assertion fails on a connection
-    # that was never made. version.php is the probe because it is the one
-    # endpoint that records nothing (no counters, no player rows), so however
-    # many probes a slow boot takes, the counts the suite asserts are the same.
+    # that was never made. time.php is the probe because it records nothing
+    # (no counters, no player rows) and opens no database, so however many
+    # probes a slow boot takes, the counts the suite asserts are the same. A
+    # static file would answer before PHP was ready to, which is the one thing
+    # this loop must not accept.
+    #
+    # api/version.txt is written by the deploy, so a local tree has none:
+    # write the one a live deploy would (the target a local run stands in for
+    # is 'live', which is what EXPECT_ENV computes from a 127.0.0.1 base).
+    bash tools/make-version.sh live > /dev/null
     up=0
     for attempt in 1 2 3; do
         PORT=$((8300 + RANDOM % 500))
@@ -84,7 +91,7 @@ else
         php -S "127.0.0.1:$PORT" -t public > "$DATA/server.log" 2>&1 &
         SERVER_PID=$!
         for _ in $(seq 100); do
-            if curl -sf -o /dev/null "$BASE/api/version.php"; then
+            if curl -sf -o /dev/null "$BASE/api/time.php"; then
                 up=1
                 break
             fi

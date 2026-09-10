@@ -10,7 +10,7 @@ and may change without notice.
 
 ## Versioning
 
-Two versions exist and both are exposed by `GET /api/version.php`:
+Two versions exist and both are exposed by `GET /api/version.txt`:
 
     {"ok":true, "server":"<x.y.z>", "api":"4.10", "env":"live"}
 
@@ -19,16 +19,26 @@ Two versions exist and both are exposed by `GET /api/version.php`:
 - `api` (FOK_API_VERSION) is THE CONTRACT version of this document, as a
   `MAJOR.MINOR` string.
   - MAJOR bumps only on breaking changes (fields removed, semantics
-    changed). This is the compatibility gate.
+    changed). This is the half a compatibility gate would read.
   - MINOR bumps on additive, backward-compatible changes (a new optional
     signal type or field). It advertises a capability; it never breaks a
     client on the same major.
 
-Clients MUST check `api` at startup (version.php, or the `api` field that
-every hello response carries) and compare the MAJOR (the integer before
-the dot): disable online features with a friendly notice when the
-server's MAJOR is newer than what they were built against, rather than
-misbehave against an incompatible server. A newer MINOR on the same MAJOR
+A client is told `api` without asking: every hello and every poll body
+carries it (4.9). `version.txt` answers it too, for anything that is not
+a client - a deploy, a probe, a person. What a client does with it is its
+own business: the server checks nothing, and behaves no differently
+whether a client reads it or ignores it.
+
+`version.txt` is a STATIC file, written by the deploy from the same
+constants the running code is built from. It is served without running
+any of that code, so asking what the server runs costs no request worker
+and is answered while the server is busy.
+
+What the two halves mean, for a client that wants a compatibility gate:
+a MAJOR newer than the one a client was built against says fields it
+relies on may be gone, which is the point at which talking to the server
+anyway is worse than saying so. A newer MINOR on the same MAJOR
 is safe to talk to; a client may read the MINOR to tell whether an
 optional feature (e.g. the peer-net hint, added in 3.1, tournament mode,
 added in 4.1, self-reported networks, added in 4.2, the tournament round
@@ -96,10 +106,11 @@ works when it is not.
   allowlist, and they are deliberate: loopback never leaves the machine, so
   there is no cleartext on a wire to protect. Every other origin must be
   `https://`. Origins outside the allowlist are not sent CORS headers. Two
-  answers come from Apache without PHP and so cannot consult that allowlist;
+  answers come from the web server itself, ahead of the code that holds the
+  allowlist, and so cannot consult it;
   both answer any origin. `t.txt` discloses nothing the standard HTTP `Date`
   header does not. The `OPTIONS` preflight on `/api/` carries no data, and
-  the response behind it still comes from PHP and still applies the
+  the response behind it is still answered normally and still applies the
   allowlist, so a stranger still cannot read an answer. A reply to an allowed
   origin also carries `Timing-Allow-Origin` naming that origin. Without it a
   browser blanks the connection breakdown of a cross-origin request -
@@ -113,7 +124,7 @@ works when it is not.
   - every response carries `Strict-Transport-Security: max-age=31536000`,
     so a browser that has loaded the site once upgrades later `http://`
     URLs itself, without the redirect;
-  - a cleartext request that reaches PHP anyway is REFUSED with **426**
+  - a cleartext request that gets through anyway is REFUSED with **426**
     `{"ok":false,"error":"HTTPS required"}`. It is a backstop, not a normal
     path: the redirect sits in front of it.
   TLS 1.2 is the floor - below it the same 426 answers
@@ -159,7 +170,7 @@ timestamp).
     Response header:  X-Fok-T: t=1784281823033613
 
 The clock rides in a header on a STATIC file, and the value is the moment
-Apache received the request, in MICROSECONDS since the epoch (note the
+the server received the request, in MICROSECONDS since the epoch (note the
 `t=` prefix; divide by 1000 for PTS milliseconds). The header is exposed
 via CORS (`Access-Control-Expose-Headers`) and the response is
 `no-store` - never cache it, a cached timestamp is a wrong clock.
@@ -167,16 +178,17 @@ via CORS (`Access-Control-Expose-Headers`) and the response is
 breakdown: a client can SEE that a request paid a TCP and TLS handshake
 rather than inferring it from an outlying first sample.
 
-Static on purpose: it is answered without PHP, so it never queues for a
-PHP-FPM worker. That queue wait happens before PHP starts, so PHP can
-neither see nor subtract it, and it would otherwise land in the offset
-as if it were network delay - exactly when the server is busiest.
+Static on purpose: it is answered without running any server code, so it
+never queues for a request worker. That queue wait is over before the
+server can time it, so nothing can subtract it, and it would otherwise
+land in the offset as if it were network delay - exactly when the server
+is busiest.
 
-Know what that does NOT buy. Bypassing the PHP pool does not bypass the
+Know what that does NOT buy. Bypassing the worker pool does not bypass the
 connection: a t.txt request still shares an HTTP/2 connection, and a web
 server, with everything else the client has in flight. Measurement on live
 shows waits of tens of milliseconds served by workers that were already
-warm, which places that contention ABOVE the PHP pool - in the same layer a
+warm, which places that contention ABOVE the pool - in the same layer a
 static file sits in. The file protects the STAMP; it does not protect the
 round trip taken around it. That is why WHERE a client measures matters -
 see "Anchor the clock when the wire is quiet" below.
@@ -376,8 +388,8 @@ timing.
 - `start_pts`: absolute, on the shared clock. Trigger everything
   (music, READY/GO, first tick) exactly then, via the local offset.
 - `now`: a free clock re-check.
-- `q_ms` (4.4, ADDITIVE): how long THIS request waited for a PHP worker
-  before any PHP ran, in ms; normally 0. A non-trivial figure says the host
+- `q_ms` (4.4, ADDITIVE): how long THIS request waited for a free request
+  worker, before any server code ran, in ms; normally 0. A non-trivial figure says the host
   was busy serving this very request, so the round trip around it is not a
   clean sample - see the clock-anchor rule above.
 - `mid`, `secret` (contract 4.0, ADDITIVE): the pair's match id and the
@@ -539,8 +551,9 @@ Response:
       "api": "4.10",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
-      "q_ms": 0,                  4.4: ms THIS request waited for a PHP
-                                  worker before any PHP ran; normally 0.
+      "q_ms": 0,                  4.4: ms THIS request waited for a free
+                                  worker, before any server code ran;
+                                  normally 0.
                                   Non-trivial means the host is busy NOW -
                                   do not anchor the clock against it
       "pace": {                   4.4: whether this client may hold a long
@@ -722,7 +735,7 @@ the wire, the same for every client:
                 each other - BOTH pay the full queue wait rather than one
                 of them paying it.
                 ONE AT A TIME (4.10). While a poll is parked, a client
-                should send nothing else that starts PHP. What is due
+                should send nothing else that reaches a worker. What is due
                 waits for the poll to answer - one hold at most - and goes
                 then, or rides the next poll. Try very hard not to break
                 this: it is the difference between a client that costs the
@@ -739,7 +752,7 @@ the wire, the same for every client:
                 they race each other and BOTH pay the full queue wait,
                 which is the opposite of what the second one was sent to
                 avoid. There is no case where three is right.
-                Why the rule is that strict: a parked poll owns a PHP
+                Why the rule is that strict: a parked poll owns a request
                 worker for its whole wait, so the request sent beside it
                 can be the one that takes the host to a concurrency it has
                 not served before, and it then waits for a worker to be
@@ -747,8 +760,9 @@ the wire, the same for every client:
                 written for, once, and not again at that level. Folding a
                 request into the poll beats sending it beside the poll,
                 and waiting for the poll to answer beats both.
-                A request that never starts PHP is not a request for this
-                rule. t.txt is a static file stamped by Apache, so it can
+                A request that never reaches a worker is not a request for
+                this rule. t.txt is a static file stamped by the web
+                server, so it can
                 never take the host to a concurrency it has not served and
                 has nothing to gain by waiting: do NOT serialise the clock
                 sweep behind a held poll - it would buy nothing and pay
@@ -770,7 +784,7 @@ carries. It is additive - a client that ignores it behaves exactly as it
 does today.
 
     hold        whether this client may hold a long poll AT ALL. A held
-                poll occupies a PHP worker for its whole duration, which
+                poll occupies a request worker for its whole duration, which
                 makes this the real lever: when it is false, poll without
                 waiting and lean on the heartbeat. It is withdrawn by
                 tier - a client in a duel or reconnecting keeps it
@@ -829,17 +843,6 @@ either. Send them on every hello once gathered (the server no-ops when
 nothing changed), re-gather every few minutes and on a network change. A
 client that sends nothing keeps today's behaviour exactly: it is matched on
 the families the server happens to see it on.
-
-### GET /api/net.php - what network the server sees you on
-
-    { "ok": true, "ip": "2a01:db8:7:7:aaaa::9", "family": 6,
-      "net": "2a01:db8:7:7::/64" }
-
-A field diagnostic, not part of the contract: it reports the caller's own
-address, its family, and the network key the announce above matches on.
-Open it in a browser on two devices to settle whether they reach the server
-the same way at all - the question behind "the lobby on my PC is not
-announced to my phone". It reads and writes nothing.
 
 Rules:
 
@@ -1552,7 +1555,7 @@ held GET can be dropped or slowed, which also frees server workers.
 
 "age" (ms, v3.2) is how long the message sat on the server before this
 delivery - it separates "waited in the mailbox" (a store/poll delay) from
-"queued before PHP even ran" (pool exhaustion). "created" stays whole seconds.
+"queued before any server code ran" (pool exhaustion). "created" stays whole seconds.
 
 payload is opaque to the server (max 2 KB, defaults admin-configurable);
 seq is a server-assigned increasing number for ordering. Keep sending

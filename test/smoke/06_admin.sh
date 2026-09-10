@@ -365,7 +365,7 @@ else
     # default, which is the only part of the pair this repo decides.
     expect "global refresh interval defaults to 30 s" '"default":30,"label":"Admin dashboard refresh interval' "$R"
     expect "connections refresh interval defaults to 1 s" '"default":1,"label":"Connections card refresh interval' "$R"
-    expect "duels refresh interval defaults to 1 s" '"default":1,"label":"Duels card refresh interval' "$R"
+    expect "duels refresh interval defaults to 5 s" '"default":5,"label":"Duels card refresh interval' "$R"
     expect "statistics refresh interval defaults to 5 s" '"default":5,"label":"Statistics card refresh interval' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
