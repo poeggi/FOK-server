@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.php`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.9", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.10", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -39,7 +39,9 @@ added in 4.7, replacing the tournament you host, added in 4.8, or the
 poll carrying the whole beat - auto-accept, the roster, the tournament
 announce, the announced end of a duel, the debug report, and `api` and
 the debug instruction on every body it sends, with a 5 s default
-hold - added in 4.9) is
+hold - added in 4.9, or one request at a time from a client while its
+poll is parked, with a margin a clock reading may be ahead by before it
+is refused - added in 4.10) is
 available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
@@ -243,10 +245,12 @@ server does zero per-client work for any of this, which is what makes it
 scale.
 
 When to sweep is the client's business. The server checks two things and
-nothing else: a `pts` is never ahead of the server (**400** `bogus pts:
-in the future` - repair the anchor, then retry), and a `pts` on a start
+nothing else: how far ahead of the server a `pts` reads - a warning in
+the log past `pts_ahead_max_ms` / 2, and **400** `bogus pts: in the
+future` past `pts_ahead_max_ms` itself (default 200 ms), so repair the
+anchor and retry - and a `pts` on a start
 that BEGINS play is computed at send time from an anchor the client
-holds (the sync gate under start.php rejects a reading older than 2 s,
+holds (the sync gate under start.php rejects a reading older than 1 s,
 never an old anchor). Two facts size how long an anchor stays good: a
 device clock drifts by roughly 1-3 ms per minute, and a suspended
 device's counter freezes, so on return from background the anchor is off
@@ -400,15 +404,23 @@ this beyond the normal handshake.
 #### The sync gate
 
 `pts` is REQUIRED and must be a fresh reading of the shared clock. A
-start is a moment on that clock, so a client that cannot place itself on
-it is turned away rather than let into a desynced game:
+start is a moment on that clock: a client that cannot place itself on it
+is turned away rather than let into a desynced game, and one whose
+reading is merely off is answered and recorded.
 
-- ahead of the server -> **400** `bogus pts` (zero tolerance, logged);
+- more than `pts_ahead_max_ms` (default 200) ahead of the server ->
+  **400** `bogus pts: in the future`, an error in the server log naming
+  how far ahead it read, and a bogus-client alert on the dashboard. The
+  400 is the only part of that the client can see, and the only thing
+  that will make it repair its anchor;
+- more than half of that (100 ms) ahead -> accepted and answered
+  normally, one warning line in the server log, no alert. The anchor is
+  drifting, not broken;
 - absent -> **400** `pts required`;
-- older than `start_sync_max_age_ms` (default 2 s) -> **400**
-  `stale pts` (resync via t.txt and retry).
+- older than `start_sync_max_age_ms` (default 1 s) -> **400**
+  `stale pts`, logged as an error (resync via t.txt and retry).
 
-All three apply to every start, because every start begins play and a
+All of it applies to every start, because every start begins play and a
 pair has to enter its run aligned.
 
 Be aware of what this does and does not prove. What reaches the server is
@@ -425,15 +437,32 @@ these gates.
 
 ### Server-side PTS validation
 
-Client PTS can NEVER be in the future - no tolerance. Endpoints that
-accept a `pts` field (signal.php, scores.php, start.php) reject any value
-ahead of the server clock with 400 `bogus pts: in the future`; the
-incident is counted and logged as a bogus-client alert in the admin UI.
-If an honest client gets this rejection its clock sync has drifted:
-re-sync immediately (min-RTT sampling keeps the offset error at a few ms,
-comfortably below any real network transit time). start.php additionally
-rejects a pts too far in the PAST, but only for a start that begins play
-(first/rematch) - see its sync gate.
+What arrives is pts + one-way delay, so the trip already pays for a clock
+that is a little fast; a reading that still lands ahead is an anchor off
+by more than the trip. Endpoints that accept a `pts` field (signal.php,
+scores.php, start.php, relay.php) sort those readings into two:
+
+- ahead by more than `pts_ahead_max_ms` / 2 (default 200, a setting, so
+  100 ms): ANSWERED NORMALLY, one WARNING in the server log. The anchor
+  is drifting and the client is still usable.
+- ahead by more than `pts_ahead_max_ms`: **400** `bogus pts: in the
+  future`, one ERROR in the server log for every occurrence, plus a
+  bogus-client alert on the dashboard (one row per alert cooldown). The
+  log lines name the endpoint, the reading and how far ahead it was.
+
+The thresholds are drawn where honest anchoring error ends - min-RTT
+sampling keeps it to a few ms, and the worst honest case is a sample
+taken on a busy wire - and far below the error of a client that never
+synced at all, whose clock is off by seconds to minutes. Before 4.10 the
+line was at zero, which refused clients whose only fault was where they
+anchored.
+
+The 400 is not bookkeeping: nothing on the server reads the value, so
+the only reason to refuse is that the CLIENT cannot see a server log.
+A client told nothing repairs nothing and goes on playing desynced
+matches, and its peer pays for that too. start.php refuses a pts too far
+in the PAST for the same reason, but only for a start that begins play
+(first/rematch), and logs an error too. See its sync gate.
 
 ## POST /api/hello.php - heartbeat and poll
 
@@ -507,7 +536,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.9",               contract version, see Versioning
+      "api": "4.10",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a PHP
@@ -667,7 +696,8 @@ the wire, the same for every client:
                 client itself knows is due and the server cannot: a
                 rename, a latency reading, its `nets`, and `duel_with`
                 during a game, where nothing is holding a poll anyway.
-                Send a hello for those. Otherwise the poll is the beat.
+                Send a hello for those once the poll has answered (4.10 -
+                see the gap). Otherwise the poll is the beat.
     poll wait   ask poll.php for `wait` of 5 s. The server serves any
                 hold up to 9 s, the longest it keeps a worker for, so a
                 client may ask for more; anything shorter is served as
@@ -690,21 +720,39 @@ the wire, the same for every client:
                 is an open request, so one exempt call already makes two
                 in flight, and two exempt calls sent in the same tick race
                 each other - BOTH pay the full queue wait rather than one
-                of them paying it. Keep at most ONE request in flight
-                besides a parked poll, exempt or not.
-                That allowance is not free either. A parked poll owns a
-                PHP worker for its whole wait, so the request sent beside
-                it can be the one that takes the host to a concurrency it
-                has not served before, and it then waits for a worker to
-                be created - about 130 ms on the deployment this contract
-                is written for, once, and not again at that level.
-                Folding a request into the poll always beats sending it
-                beside the poll. The clock probe is the exception, and not
-                a small one: t.txt is stamped by Apache and never starts
-                PHP, so it can never take the host to a concurrency it has
-                not served and has nothing to gain by waiting. Do NOT
-                serialise the clock sweep behind a held poll - it would buy
-                nothing and pay for it in stale anchors.
+                of them paying it.
+                ONE AT A TIME (4.10). While a poll is parked, a client
+                should send nothing else that starts PHP. What is due
+                waits for the poll to answer - one hold at most - and goes
+                then, or rides the next poll. Try very hard not to break
+                this: it is the difference between a client that costs the
+                host one worker and one that costs it two.
+                A SECOND request beside a parked poll is allowed where
+                waiting would be worse than sending - the duel handshake
+                above all, where a signal or a start is the latency a
+                player feels and the poll is what carries the peer's reply
+                back, so it cannot be dropped to make room either. Send it
+                when that is genuinely true, and knowing what it costs
+                (below). Do not send it because it was convenient.
+                A THIRD IS FORBIDDEN. Two of the client's own requests
+                beside a parked poll is not a trade-off, it is a stack:
+                they race each other and BOTH pay the full queue wait,
+                which is the opposite of what the second one was sent to
+                avoid. There is no case where three is right.
+                Why the rule is that strict: a parked poll owns a PHP
+                worker for its whole wait, so the request sent beside it
+                can be the one that takes the host to a concurrency it has
+                not served before, and it then waits for a worker to be
+                created - about 130 ms on the deployment this contract is
+                written for, once, and not again at that level. Folding a
+                request into the poll beats sending it beside the poll,
+                and waiting for the poll to answer beats both.
+                A request that never starts PHP is not a request for this
+                rule. t.txt is a static file stamped by Apache, so it can
+                never take the host to a concurrency it has not served and
+                has nothing to gain by waiting: do NOT serialise the clock
+                sweep behind a held poll - it would buy nothing and pay
+                for it in stale anchors.
 
     screen tick The lobby, friends, MY ID and tournament-lobby screens
                 refresh out of the poll they are already holding: `fs`
@@ -900,7 +948,7 @@ not its hello is on time - and needs no hello to stay online at all.
 Every answer WITH A BODY carries `api` and `debug` (4.9), beside the
 `signals` array:
 
-      "api": "4.9",             the contract version, re-read here for
+      "api": "4.10",             the contract version, re-read here for
                                 the same reason hello carries it: it
                                 un-latches a client after a rollback
       "debug": false,           the server's debug instruction for this

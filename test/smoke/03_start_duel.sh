@@ -89,8 +89,10 @@ expect "and the peer joins that one, not the first" '"start_pts":' "$R"
 R=$(start_req "$ID1" "$ID2" 0 level "$(now_ms)")
 expect "an in-run reason is not a reason any more" 'invalid reason' "$R"
 
-# The sync gate: a start is a moment on the shared clock. pts is required
-# and can never be in the future or stale - every start begins play.
+# The sync gate: a start is a moment on the shared clock. pts is required,
+# may not be stale, and may not read further ahead than pts_ahead_max_ms -
+# every start begins play. Inside that margin an anchor that runs a little
+# fast is a warning in the log and nothing the client is told about.
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"peer\":\"$ID2\",\"epoch\":3,\"reason\":\"first\"}" "$BASE/api/start.php")
 expect "a start without a sync proof is refused" 'pts required' "$R"

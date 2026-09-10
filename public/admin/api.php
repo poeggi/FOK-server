@@ -115,6 +115,7 @@ const AUDIT = [
     'debug_delete' => 'deleted debug datasets',
     'delete_score' => 'deleted score',
     'alerts_seen' => 'marked the alerts seen',
+    'alerts_clear' => 'cleared the alerts',
     'disputes_review' => 'marked the item disputes reviewed of',
     'caps_refresh' => 're-assessed the host capabilities',
     'log_clear' => 'cleared the server log',
@@ -313,6 +314,10 @@ switch ($action) {
         requirePost();
         Alerts::markSeen();
         Util::jsonOut(['ok' => true]);
+
+    case 'alerts_clear':
+        requirePost();
+        Util::jsonOut(['ok' => true, 'rows' => Alerts::clear()]);
 
     // ---- tournaments (see Tournament) ----
     case 'tourney':

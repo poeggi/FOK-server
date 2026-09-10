@@ -577,9 +577,24 @@ let lastCaps = null;
 
 function renderAlerts(box, d) {
     box.replaceChildren();
+    // The bar the log tab has, so Clear sits where an operator last found it:
+    // the count on the left, the button on the right.
+    const bar = toolbar();
+    bar.append(el('span', d.unseen ? 'error' : 'muted',
+        d.unseen ? d.unseen + ' unseen alert(s)' : 'All alerts seen.'), el('span', 'grow'));
+    const clear = el('button', 'small', 'Clear');
+    clear.title = 'Removes every alert from the list. The server log keeps its own '
+        + 'line for each of them.';
+    clear.onclick = () => confirmModal('Clear alerts',
+        'This removes every alert from the list, and there is no undo. The server log '
+        + 'keeps its own line for each of them.',
+        'Erase the alerts', async () => {
+            await api('alerts_clear', { method: 'POST' });
+            refreshModule('alerts');
+        });
+    bar.append(clear);
+    box.append(bar);
     if (!d.alerts.length) { box.append(el('p', 'muted', 'No alerts.')); return; }
-    box.append(el('p', d.unseen ? 'error' : 'muted',
-        d.unseen ? d.unseen + ' unseen alert(s)' : 'All alerts seen.'));
     // One line per alert (see admin.css): the message is written out whole
     // and the message column cuts it off, so the list stays scannable by time
     // and type. The click opens the row's full text.

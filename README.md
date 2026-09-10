@@ -462,7 +462,7 @@ host-level. If this outgrows shared hosting, fix workers first.
           "q_ms":ms,"mid":"<32-hex>","secret":"<32-hex>"}
          identical for both peers; both name the same epoch and reason, so
          the answer does not depend on when either asks. 400 if its pts is
-         missing, in the future or stale.
+         missing, stale, or more than pts_ahead_max_ms ahead.
          Both peers calling it is also what ANNOUNCES the duel, so a
          friend is offered the feed from the moment play begins rather
          than from the next heartbeat; duel_private keeps it counted but

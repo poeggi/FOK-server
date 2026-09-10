@@ -37,6 +37,28 @@ a heartbeat keeps alive - online, duel, auto-accept, conn TTL, signal TTL
 - is 120 s and is checked through Util::since with FOK_BEAT_JITTER (1 s)
 of grace, so nothing reads as gone before 121 s. A smoke that changes
 signal_ttl puts back the DEFS default, or it pins staging.
+ONE REQUEST AT A TIME (4.10): while a poll is parked a client sends
+nothing else that starts PHP - what is due waits for the poll to answer.
+A SECOND is allowed only where waiting would be worse (the duel
+handshake), a THIRD never, and t.txt is exempt because it never reaches
+a worker. Nothing of this is enforced and nothing should be (see
+project_fok_server_queue_wait.md); the queue gauge is the only place a
+breach shows, as the request beside a parked poll paying the ~130 ms
+fork.
+THE PTS GATE has two sides and they are not symmetric. Ahead:
+pts_ahead_max_ms (200) - past half of it a warning line, past the whole
+of it 400 plus an error line and the bogus alert. Behind:
+start_sync_max_age_ms (1000) on a begin-play start only, 400 plus an
+error line. Before 4.10 the ahead line was at ZERO, which refused honest
+clients whose only fault was anchoring beside their own traffic. Two
+things decided the shape: the trip already pays for a clock that is
+slightly fast (nowMs is read after the network AND after the queue
+wait), so a reading that still lands ahead is an anchor off by more than
+the trip; and nothing downstream reads the value, so the 400 exists ONLY
+because a server log is invisible to the client - a client told nothing
+repairs nothing and plays desynced matches. The log has three levels the
+server states outright now: Alerts::warn / Alerts::error beside
+Alerts::note, and raise() takes the level for its own line.
 tourney_after_step_ms (100) staggers the follow-up calls a pushed
 tournament event provokes, per RECIPIENT, capped at the client's 1000 ms
 guard. Per recipient, not per event: one transition pushes several events
@@ -331,9 +353,12 @@ nothing did this and an abandoned run stood for tournament_run_ttl (1 h),
 listed and holding its host's one-per-host claim. Result ladder:
 a reported LOSS settles at once, a lone win/draw is held
 ~tournament_result_ms, a contradiction FREEZES the node. A round is
-played at level = min(round, tournament_max_level=10) and that cap MUST
-NOT exceed MAX_LEVELS in the client's js/assets.js; `stage` rides as a
-TOKEN the client words itself. Between rounds advance() stops on a gate
+played at level = min(start + round - 1, tournament_max_level=10), where
+start is the create's `lvl` (4.9, default 1, clamped on the way in), and
+that cap MUST NOT exceed MAX_LEVELS in the client's js/assets.js; `stage`
+rides as a TOKEN the client words itself. A stored tournament carrying no
+`lvl` reads as 1, which is the store's own shape rather than a compat
+shim. Between rounds advance() stops on a gate
 the host clears with `continue`, and the break clears itself on a TTL so
 a host who closed the browser cannot wedge it. The HOST leaving a running
 tournament ABANDONS it for everyone; a guest's identical `leave` is a

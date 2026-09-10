@@ -177,11 +177,23 @@ final class Util
         return (int)round(microtime(true) * 1000);
     }
 
+    /** The endpoint answering this request, as it is named in the URL. */
+    public static function script(): string
+    {
+        return basename((string)($_SERVER['SCRIPT_NAME'] ?? ''));
+    }
+
     /**
      * Validates a client-sent PTS (server-clock timestamp, ms). Clients
-     * report events that already happened, so by the time a PTS arrives
-     * it must lie in the past - a future value means a broken sync or a
-     * fabricated event and is rejected and logged as bogus.
+     * report events that already happened, so a PTS that arrives ahead of
+     * the server has travelled the wire and is STILL ahead: the client's
+     * anchor is off by more than the trip.
+     *
+     * An anchor DRIFTING (past half the margin) is a warning in the log
+     * and nothing more - the request is answered. An anchor BROKEN (past
+     * the whole of it) is refused, because the 400 is the only thing the
+     * client can see: a server-side line repairs nobody's clock, and a
+     * client told nothing goes on playing desynced matches.
      */
     public static function checkPts(mixed $pts, string $who): ?int
     {
@@ -191,10 +203,27 @@ final class Util
         if (!is_int($pts) || $pts < 0) {
             self::fail('invalid pts');
         }
-        if ($pts > self::nowMs()) {
+        // How far ahead is the whole diagnosis: a few hundred ms is an
+        // anchor taken on a busy wire, seconds or more is a client that
+        // never synced or an event that never happened. The endpoint names
+        // what was asked for - each reports a different moment.
+        $ahead = $pts - self::nowMs();
+        $max = Settings::int('pts_ahead_max_ms');
+        $detail = $who . ' (' . self::clientIp() . ') - ' . self::script()
+            . ', pts ' . $pts . ' is ' . $ahead . ' ms ahead';
+        if ($ahead > $max) {
             self::bump('bogus');
-            Alerts::raise('bogus', "Bogus client event: future PTS from $who (" . self::clientIp() . ')');
+            // The dashboard row is de-duplicated, the log line is not: how
+            // often it happens is half of what an operator needs, and a
+            // suppressed repeat would leave a broken client looking quiet.
+            $msg = 'Bogus client event: future PTS from ' . $detail
+                . ' (max ' . $max . ')';
+            if (!Alerts::raise('bogus', $msg, 'error')) {
+                Alerts::error('bogus', $msg);
+            }
             self::fail('bogus pts: in the future');
+        } elseif ($ahead > intdiv($max, 2)) {
+            Alerts::warn('pts-ahead', 'Client clock ahead: ' . $detail);
         }
         return $pts;
     }
@@ -563,7 +592,7 @@ final class Util
     public static function who(): array
     {
         $who = [
-            's' => basename((string)($_SERVER['SCRIPT_NAME'] ?? '')),
+            's' => self::script(),
             'ip' => self::clientIp(),
         ];
         if (self::$caller !== null) {

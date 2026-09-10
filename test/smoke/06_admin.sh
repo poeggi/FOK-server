@@ -391,11 +391,28 @@ else
     expect "admin write audited" 'FOK admin: created a database backup' "$R"
     expect "failed login noted, not alerted" 'FOK admin: failed login attempt' "$R"
     expect "every alert is a log line too" 'FOK alert ' "$R"
+    # The three levels the server states outright (see Alerts / Logs::level):
+    # a clock reading past the margin is an error, past half of it a warning,
+    # and a start refused for a stale proof is an error of its own.
+    expect "a pts past the margin is an error line" 'FOK error bogus:' "$R"
+    expect "a pts past half the margin is a warning line" 'FOK warning pts-ahead:' "$R"
+    expect "a stale sync proof is an error line" 'FOK error stale-pts:' "$R"
 
     R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_seen")
     expect "alerts mark seen" '"ok":true' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=alerts")
     expect "unseen count cleared" '"unseen":0' "$R"
+
+    # Clearing empties the operator's queue only - the log lines asserted
+    # above are what keeps the record.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=alerts_clear")
+    expect "alerts_clear via GET rejected" '"error":"POST only"' "$R"
+    R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_clear")
+    expect "alerts cleared" '"ok":true' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=alerts")
+    expect "the list is empty afterwards" '"alerts":[]' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=log")
+    expect "clearing the alerts is audited" 'FOK admin: cleared the alerts' "$R"
 
     # Host capability assessment: probed once per release, stored, and read
     # back afterwards - so the version it reports must be THIS build.

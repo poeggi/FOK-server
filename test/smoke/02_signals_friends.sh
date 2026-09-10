@@ -20,19 +20,36 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
 expect "signal with valid pts" '"ok":true' "$R"
 curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 
-FUTURE_MS=$((NOW_MS + 60000))
+# A pts that reads ahead: silent inside half the margin, a warning past
+# that but still answered, refused past the whole of it. The last one is
+# what puts the 'bogus' row in the alerts list the admin part asserts.
+SRV_MS=$(curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2)
+NEAR_MS=$((SRV_MS + 50))
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"synced\",\"pts\":$NEAR_MS}" "$BASE/api/signal.php")
+expect "a pts inside half the margin is accepted" '"ok":true' "$R"
+
+# The warning rung is the band between half the margin and the whole of it
+# - 100 ms wide at the default, which a round trip can spend on its own. So
+# widen it for this one request and put the default back after.
+if [ "$ADMIN" -eq 1 ]; then
+    setting pts_ahead_max_ms 4000
+    WARN_MS=$(( $(curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2) + 3000 ))
+    R=$(curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"early\",\"pts\":$WARN_MS}" "$BASE/api/signal.php")
+    expect "a pts past half the margin is accepted too" '"ok":true' "$R"
+    setting pts_ahead_max_ms 200
+fi
+
+FUTURE_MS=$((SRV_MS + 60000))
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"cheat\",\"pts\":$FUTURE_MS}" "$BASE/api/signal.php")
-expect "future pts rejected as bogus" 'bogus pts' "$R"
-
-NEAR_MS=$((NOW_MS + 2000))
-R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"early\",\"pts\":$NEAR_MS}" "$BASE/api/signal.php")
-expect "near-future pts also rejected (zero tolerance)" 'bogus pts' "$R"
+expect "a pts past the whole margin is refused" 'bogus pts' "$R"
+curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"name\":\"CHEAT\",\"score\":9,\"level\":1,\"diff\":1,\"pts\":$FUTURE_MS}" "$BASE/api/scores.php")
-expect "future pts rejected on scores" 'bogus pts' "$R"
+expect "the same margin refuses a score" 'bogus pts' "$R"
 
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"name\":\"SMOKE ONE\"}" "$BASE/api/hello.php" > /dev/null
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"name\":\"SMOKE TWO\"}" "$BASE/api/hello.php" > /dev/null

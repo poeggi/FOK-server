@@ -25,7 +25,13 @@ final class Settings
         'score_rate_max' => [FOK_SCORE_RATE_MAX, 'Max score submissions per window'],
         'score_rate_window' => [FOK_SCORE_RATE_WINDOW, 'Score submission window (seconds)'],
         'start_lead_ms' => [1000, 'Lead time for server-issued starts (ms)'],
-        'start_sync_max_age_ms' => [2000, 'Reject a start whose sync proof is older than (ms)'],
+        'start_sync_max_age_ms' => [1000, 'Reject a start whose sync proof is older than (ms)'],
+        // The other side of the same gate, and the one that is never refused:
+        // what reaches the server is pts + one-way delay, so the trip already
+        // pays for a clock that is slightly fast, and a reading that still
+        // arrives ahead is an anchor off by more than the trip. Half of this
+        // is a warning in the log, the whole of it an error and an alert.
+        'pts_ahead_max_ms' => [200, 'Log a client event further ahead of the server than (ms)'],
         // The client's own request gap (docs/API.md, Pacing) spaces the
         // requests a client decides to make; this spaces the ones a broadcast
         // provokes from everyone at once (after_ms, see Tournament::flush).

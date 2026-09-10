@@ -20,6 +20,10 @@ require_once __DIR__ . '/Caps.php';
  *   note()  - something worth being able to read back, but needing no
  *             reaction: a rate limit that tripped once, an admin write, a
  *             login. A log line only - never a row, never de-duplicated.
+ *   warn()  - a note the Logs tab colours as a warning: a condition that
+ *   error()   is not yet worth acting on, and one that is. Both are log
+ *             lines only, written for EVERY occurrence, so the log answers
+ *             how often as well as how bad.
  *
  * The rule between them is escalation: a condition that is ordinary once and
  * suspicious when it repeats is noted every time and raised only when the
@@ -38,7 +42,7 @@ final class Alerts
      * as a duplicate within alert_cooldown. Callers rarely need the return -
      * the log line is written here, not by them.
      */
-    public static function raise(string $type, string $message): bool
+    public static function raise(string $type, string $message, string $level = 'alert'): bool
     {
         $cooldown = Settings::int('alert_cooldown');
         // The de-duplication gate, in shared memory. A sustained condition
@@ -71,8 +75,9 @@ final class Alerts
         });
         // Every alert is also a log line: the dashboard shows the last 50 and
         // can be cleared, the log keeps the history and the exact time. The
-        // "alert" word is what Logs::level reads to colour it as a warning.
-        error_log('FOK alert ' . $type . ': ' . $message);
+        // level word is what Logs::level reads to colour the line - "alert"
+        // is a warning, and a caller with something worse says so.
+        error_log('FOK ' . $level . ' ' . $type . ': ' . $message);
         return true;
     }
 
@@ -84,6 +89,18 @@ final class Alerts
     public static function note(string $type, string $message): void
     {
         error_log('FOK ' . $type . ': ' . $message);
+    }
+
+    /** A note the Logs tab colours as a warning. */
+    public static function warn(string $type, string $message): void
+    {
+        error_log('FOK warning ' . $type . ': ' . $message);
+    }
+
+    /** A note the Logs tab colours as an error. */
+    public static function error(string $type, string $message): void
+    {
+        error_log('FOK error ' . $type . ': ' . $message);
     }
 
     public static function recent(int $limit = 50): array
@@ -150,5 +167,22 @@ final class Alerts
     public static function markSeen(): void
     {
         Db::get()->exec('UPDATE alerts SET seen = 1 WHERE seen = 0');
+    }
+
+    /**
+     * Empties the dashboard list. Every alert also wrote a log line, so what
+     * goes is the operator's queue, never the record. The de-duplication
+     * window is left alone: a condition still inside its cooldown stays quiet
+     * whether or not its row was cleared away.
+     *
+     * @return int rows dropped
+     */
+    public static function clear(): int
+    {
+        return Db::retry(static function (): int {
+            $st = Db::get()->prepare('DELETE FROM alerts');
+            $st->execute();
+            return $st->rowCount();
+        });
     }
 }

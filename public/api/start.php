@@ -67,10 +67,11 @@ if (!is_bool($duelPrivate)) {
     Util::fail('invalid duel_private');
 }
 
-// The sync gate. checkPts rejects a PTS ahead of the server (zero
-// tolerance, logged as bogus), and pts is required: a start is a moment on
-// the shared clock, so a client that cannot place itself on it, or places
-// itself in the future, gets no start.
+// The sync gate. checkPts rejects a PTS further ahead of the server than
+// pts_ahead_max_ms (logged as bogus; half of that is a warning line and
+// nothing more), and pts is required: a start is a moment on the shared
+// clock, so a client that cannot place itself on it, or places itself in
+// the future, gets no start.
 $pts = Util::checkPts($body['pts'] ?? null, $id);
 if ($pts === null) {
     Util::fail('pts required: sync before requesting a start');
@@ -83,7 +84,11 @@ if ($pts === null) {
 // to minutes) and passes any that did (min-RTT sampling bounds it to ms).
 // It applies to every start, because every start begins play and a pair
 // must enter its run aligned.
-if (Util::nowMs() - $pts > Settings::int('start_sync_max_age_ms')) {
+$age = Util::nowMs() - $pts;
+$maxAge = Settings::int('start_sync_max_age_ms');
+if ($age > $maxAge) {
+    Alerts::error('stale-pts', "Stale sync proof from $id (" . Util::clientIp()
+        . ") - $age ms old, max $maxAge");
     Util::fail('stale pts: resync before requesting a start');
 }
 
