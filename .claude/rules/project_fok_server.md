@@ -86,7 +86,7 @@ EVERY upload, including a hand-run `deploy.ps1 -Only`, or a partial
 emergency deploy would leave the verify reporting the release before the
 one the webroot is running.
 
-Two traps that cost whole sessions:
+Three traps that cost whole sessions:
 
 1. A failing staging smoke SILENTLY PINS LIVE at the last green commit
    while staging shows the new version - always curl /api/version.txt on
@@ -94,6 +94,17 @@ Two traps that cost whole sessions:
    from a green pre-commit hook.
 2. The staging smoke runs against a PERSISTENT staging DB, so tests
    depending on accumulated rows can fail there and nowhere else.
+3. TWO PUSHES INSIDE alert_cooldown (900 s) FAIL THE SECOND ONE'S SMOKE.
+   The six admin assertions of the shape "this condition gets logged"
+   (bogus, friend-spam, the four item verdicts) each need Alerts::raise
+   to write a row, and its de-duplication gate is an APCu key per TYPE -
+   `apcu_add(alert:<type>, ttl = alert_cooldown)`, deliberately NOT the
+   alerts table, so clearing alerts does not reset it and staging keeps
+   it across a deploy. The second run's raises are suppressed, nothing is
+   there to assert, and live stays pinned at the previous release (trap 1).
+   Seen on 2026-09-10, two pushes 14 minutes apart. It is not flaky and
+   not a regression: wait out the window and re-run the failed job
+   (POST actions/runs/<id>/rerun-failed-jobs), which is what fixed it.
 
 ## Host facts (shared hosting, PHP fpm-fcgi)
 
