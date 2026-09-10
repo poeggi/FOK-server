@@ -32,7 +32,7 @@ cd "$(dirname "$0")/.."
 : "${SMOKE_BASE:?set SMOKE_BASE to the deployed instance to probe}"
 N="${HTTP_PROBE_N:-40}"
 BASE="${SMOKE_BASE%/}"
-EP="/api/version.php"
+EP="/api/time.php"
 
 now_ms() { date +%s%3N; }
 report() { printf '  %-42s %6d ms  %4d ms each\n' "$1" "$2" "$((${2} / N))"; }

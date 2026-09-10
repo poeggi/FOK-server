@@ -3,10 +3,10 @@
 #
 #   bash tools/make-version.sh live|staging
 #
-# The file is what /api/version.txt serves: the same JSON version.php used to
-# answer, as a STATIC file Apache hands out without starting PHP. A probe -
-# the deploy's own live-verify, a monitor, a person - then costs no worker and
-# is answered while the pool is busy.
+# The file is what /api/version.txt serves: one line of JSON, handed out by
+# Apache without starting PHP. A probe - the deploy's own live-verify, a
+# monitor, a person - therefore costs no worker and is answered while the
+# pool is busy, which is when somebody asks.
 #
 # It is GENERATED rather than committed because two of its three fields have a
 # single source of truth in public/src/Config.php and the third is the target,
@@ -36,8 +36,7 @@ if [ -z "$server" ] || [ -z "$api" ]; then
     exit 1
 fi
 
-# The same shape and key order version.php answered with, so anything that
-# parsed that one parses this one.
+# The shape docs/API.md documents, key order included.
 printf '{"ok":true,"server":"%s","api":"%s","env":"%s"}\n' \
     "$server" "$api" "$env_name" > public/api/version.txt
 echo "public/api/version.txt: $server / api $api / $env_name"
