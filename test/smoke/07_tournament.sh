@@ -365,6 +365,45 @@ if [ "$ADMIN" -eq 1 ]; then
     setting tournament_create_cooldown 10
 fi
 
+# The match neither player can connect. Presence cannot see this one - both
+# are online and asking - so it is told from the fact that NOBODY EVER
+# PLAYED the node: no duel between the two seats since it was dealt. The
+# first deadline re-deals it, which is a real second attempt at the link;
+# the second voids it, because both players turned up and there is nobody
+# to name as the winner. Crossed by shortening the setting, the way every
+# other deadline here is, and the pair never calls start.php - which is
+# exactly the condition being tested.
+if [ "$ADMIN" -eq 1 ]; then
+    setting tournament_create_cooldown 0
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    T7=$(tfield "$R" tid)
+    C7=$(tfield "$R" code)
+    expect "a lobby for two players who will never connect" '"tid":' "$R"
+    R=$(tourney "{\"id\":\"$ID2\",\"action\":\"join\",\"code\":\"$C7\"}")
+    expect "the second player joins it" '"event":"lobby"' "$R"
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"start\",\"tid\":\"$T7\"}")
+    expect "and the host starts it" '"ok":true' "$R"
+    R=$(act "$ID1" state "$T7")
+    expect "a node is dealt and in flight" '"cursor":"' "$R"
+    R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+    expect "a poll inside the deadline changes nothing" '"ok":true' "$R"
+    R=$(act "$ID1" state "$T7")
+    expect "and the node is still open" '"state":"running"' "$R"
+    setting tournament_deadlock_ms 0
+    R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+    expect "past it, a participant's own poll re-deals the node" 'event\":\"roles' "$R"
+    R=$(act "$ID1" state "$T7")
+    expect "which is a second attempt, not a result" '"state":"running"' "$R"
+    R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+    expect "and the attempt after that voids it" 'event\":\"result' "$R"
+    R=$(act "$ID1" state "$T7")
+    expect "with no winner named, both players having turned up" '"winner":null' "$R"
+    expect "the node reading as one that was not played" '"state":"void"' "$R"
+    setting tournament_deadlock_ms 150000
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"leave\",\"tid\":\"$T7\"}")
+    expect "the host clears it away" '"ok":true' "$R"
+    setting tournament_create_cooldown 10
+fi
 # The gate: at most one sweep every tournament_sweep_secs across the server,
 # so a busy minute cannot turn this into per-request work. Held first by an
 # ordinary request, then proven to hold by a lobby that survives a sweep it

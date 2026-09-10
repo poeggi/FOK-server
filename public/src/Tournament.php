@@ -858,6 +858,7 @@ final class Tournament
         }
         self::settleHeld($t);
         self::walkoverBySilence($t);
+        self::settleDeadlock($t);
         self::advance($t);
     }
 
@@ -910,6 +911,66 @@ final class Tournament
             return;
         }
         self::walkover($t, $nid, $aOff ? $node['a'] : null, $bOff ? $node['b'] : null);
+    }
+
+    /**
+     * The match neither player can start. Presence cannot see this one: both
+     * are awake and asking, and it is the link between them that never comes
+     * up - a NAT that will not traverse, an ICE exchange that never
+     * completes - so the walkover above rightly refuses it and the node
+     * would otherwise wait for ever, a client having no business giving up
+     * on its own.
+     *
+     * What makes it safe to act on is that NOBODY EVER PLAYED IT: both peers
+     * call start.php where play begins, so a pair that got a match going has
+     * a duel row younger than the deal, and a node that has one is left
+     * alone however long it runs. A long match is still not a fault.
+     *
+     * Re-dealt ONCE first, because a fresh mid and a fresh roles sheet are a
+     * real second attempt at the connection, and only then VOIDED: both
+     * players turned up, so there is no winner to name, and void already
+     * means a node that was not played.
+     */
+    private static function settleDeadlock(array &$t): void
+    {
+        $nid = $t['data']['cursor'] ?? null;
+        if ($nid === null || self::isClosed($t, $nid)) {
+            return;
+        }
+        $r = $t['data']['results'][$nid] ?? null;
+        if ($r === null
+            || Util::nowMs() - (int)$r['dealt'] < Settings::int('tournament_deadlock_ms')) {
+            return;
+        }
+        $node = self::node($t, $nid);
+        if ($node === null) {
+            return;
+        }
+        $a = self::idOfSeat($t, $node['a']);
+        $b = self::idOfSeat($t, $node['b']);
+        if ($a === null || $b === null) {
+            return;
+        }
+        // ONLY the case the walkover refuses. A player who is gone is that
+        // rule's business and settles as a win for whoever stayed, which
+        // this must never turn into a void - so the cheap tests run first
+        // and the duel read is the last gate, reached only by a node that is
+        // about to be settled.
+        $info = Presence::infoOf([$a, $b]);
+        if (!($info[$a]['online'] ?? false) || !($info[$b]['online'] ?? false)) {
+            return;
+        }
+        if (Presence::duelSeenSince($a, $b, intdiv((int)$r['dealt'], 1000))) {
+            return;
+        }
+        if ($r['redealt'] ?? false) {
+            self::close($t, $nid, 'draw', null, 'void');
+            return;
+        }
+        // The fresh result resets `dealt`, so the second attempt gets the
+        // whole deadline again and the mark is what stops a third.
+        $t['data']['results'][$nid] = self::blankResult(Util::nowMs()) + ['redealt' => true];
+        self::deal($t, $nid);
     }
 
     // ---- walking the tournament forward -----------------------------------

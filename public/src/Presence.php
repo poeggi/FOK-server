@@ -555,6 +555,23 @@ final class Presence
     }
 
     /**
+     * Whether $a and $b have beaten a duel WITH EACH OTHER since $since (unix
+     * seconds). The duels ROW, never the presence entries: a client that
+     * announces the end of its duel clears its entry (see endDuel), and the
+     * question here is whether the two ever got a match going at all, which
+     * has to stay answered afterwards.
+     */
+    public static function duelSeenSince(string $a, string $b, int $since): bool
+    {
+        [$x, $y] = $a < $b ? [$a, $b] : [$b, $a];
+        $st = Db::get()->prepare('SELECT last_seen FROM duels WHERE a = ? AND b = ?');
+        $st->execute([$x, $y]);
+        $row = $st->fetch();
+        $st->closeCursor();
+        return $row !== false && (int)$row['last_seen'] >= $since;
+    }
+
+    /**
      * The end of a duel, announced rather than waited out: the client says
      * so the moment its session tears down, and the friend's WATCH row goes
      * with it instead of standing until the window lapses.

@@ -98,6 +98,7 @@ final class Settings
         'tournament_abandoned_ttl' => [60, 'Forget an abandoned tournament after (seconds)'],
         'tournament_result_ms' => [15000, 'A one-sided result settles after this long unanswered (ms)'],
         'tournament_walkover_ms' => [180000, 'An offline player forfeits the match in flight after (ms)'],
+        'tournament_deadlock_ms' => [150000, 'A match neither present player can connect is re-dealt, then voided, after (ms)'],
         'tournament_create_cooldown' => [10, 'Min seconds between one host creating tournaments'],
         'tournament_announce_window' => [180, 'Announce a lobby while its host was seen within (seconds)'],
         'tournament_idle_ttl' => [180, 'End a tournament no player has been seen at for (seconds)'],

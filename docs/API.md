@@ -2330,6 +2330,13 @@ tournament.php request, or any participant's poll.php or hello.
 - the match in flight is forfeited after `tournament_walkover_ms` (3 min)
   by a player who is ALSO offline. A slow match between two players who
   are both present is never taken away from them.
+- a match NOBODY EVER STARTED is re-dealt once after
+  `tournament_deadlock_ms` (2.5 min) and voided at the same distance
+  again. This is the case presence cannot see: both players are awake and
+  asking, and it is the link between them that never comes up. The server
+  knows it apart from a slow match because both peers call start.php
+  where play begins, so a pair that got a match going is left alone
+  however long it runs.
 - an unstarted lobby is abandoned after `tournament_join_ttl` (15 min)
 - a round break continues by itself after `tournament_break_ttl_ms`
   (2 min), so a host that walked away cannot wedge the tournament
@@ -2349,7 +2356,10 @@ it settles that node only, and every later node of theirs is dealt
 normally and waits its own full `tournament_walkover_ms`, testing again
 whether they are still offline - so a player whose phone wakes up is back
 in the schedule. A node where BOTH sides are gone is voided: no points,
-no difference, no winner.
+no difference, no winner. So is one neither present player could ever
+connect, after the re-deal above has been spent - both turned up, so
+there is nobody to name as the winner, and the bracket treats it as any
+other node that was not played.
 
 A walkover names a winner with `"score": null`, which is what keeps it out
 of the score-difference tie-break. It advances in a knockout and takes the
