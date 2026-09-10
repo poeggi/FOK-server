@@ -167,6 +167,7 @@ expect "the organizer opens one" '"tid":' "$R"
 expect "and it carries the event back" "\"eid\":\"$EID1\"" "$R"
 R=$(evact "$ID2" state "$EID1")
 expect "which the event names as its live tournament" "\"tid\":\"$ETID\"" "$R"
+refute "carrying the real player cap, which is a setting and not a field" '"max":0' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\"}" "$BASE/api/hello.php")
 expect "and every member is told a lobby opened" '"event\":\"tourney' "$R"

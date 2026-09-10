@@ -2408,8 +2408,16 @@ A node is:
      "state": "pending"|"held"|"settled"|"confirmed"|"frozen"|"void",
      "winner": "c0ffee42" | null,
      "draw": false,
-     "score": [12, 9] | null}                null for a walkover, a bye
+     "score": [12, 9] | null,                 null for a walkover, a bye
                                              or a void
+     "why": "gone"|"unplayed"|null}          why a VOID is one, null on
+                                             every other node
+
+A void has two causes and they read as opposite things on a bracket, so
+`why` names which: `gone` is nobody left to play it, `unplayed` is both
+players there and no connection between them. A client wording the second
+as the first would erase two people who sat there trying. It rides the
+`result` event as well, and is null wherever it does not apply.
 
 ### Events
 
@@ -2460,9 +2468,10 @@ payload carries `tid`.
                  count the round that just ended and nothing else.
                  `adv` is "through to `next`", `until` is the deepest
                  round that player reaches, and `gone` marks a forfeit.
-    result       {event, tid, nid, winner, draw, score,
+    result       {event, tid, nid, winner, draw, score, why,
                   rows:[{seat,id,pts,diff,rank}]}
-                 a node settled (winner is null for a draw or a void).
+                 a node settled (winner is null for a draw or a void;
+                 `why` names a void's cause and is null otherwise).
                  `rows` are the standings after it, in the `standings`
                  event's row shape without `adv`: the result is applied
                  from the event and nothing is re-read

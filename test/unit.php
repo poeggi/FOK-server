@@ -1999,7 +1999,7 @@ ok(array_keys($res['rows'][0]) === ['seat', 'id', 'pts', 'diff', 'rank'],
     'a result carries the standings rows in the standings event\'s shape, without adv');
 ok(json_encode($res['rows']) === json_encode($v6['standings']) && $res['rows'][0]['id'] === $x,
     'ranked as state ranks them, the winner on top');
-ok(array_keys($res) === ['event', 'nid', 'winner', 'draw', 'score', 'rows', 'tid', 'after_ms'],
+ok(array_keys($res) === ['event', 'nid', 'winner', 'draw', 'score', 'why', 'rows', 'tid', 'after_ms'],
     'and is otherwise the event it always was');
 // One push, several events per recipient: the stagger is a fixed step per
 // RECIPIENT, so all of one seat's events carry the same delay and the

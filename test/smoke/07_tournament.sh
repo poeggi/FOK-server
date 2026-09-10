@@ -365,6 +365,33 @@ if [ "$ADMIN" -eq 1 ]; then
     setting tournament_create_cooldown 10
 fi
 
+# The gate: at most one sweep every tournament_sweep_secs across the server,
+# so a busy minute cannot turn this into per-request work. Held first by an
+# ordinary request, then proven to hold by a lobby that survives a sweep it
+# would otherwise not have.
+if [ "$ADMIN" -eq 1 ]; then
+    setting tournament_sweep_secs 300
+    R=$(hellot "$ID2")
+    expect "a client request takes the sweep gate" '"ok":true' "$R"
+    setting tournament_create_cooldown 0
+    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    T6=$(tfield "$R" tid)
+    expect "a lobby opened behind the held gate" '"tid":' "$R"
+    setting tournament_idle_ttl 0
+    R=$(hellot "$ID2")
+    expect "a second client request inside the gate" '"ok":true' "$R"
+    R=$(act "$ID1" state "$T6")
+    expect "sweeps nothing, however idle everyone is" '"state":"open"' "$R"
+    setting tournament_sweep_secs 0
+    R=$(hellot "$ID2")
+    expect "and the request past the gate" '"ok":true' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=tourney&tid=$T6")
+    expect "is the one that ends it" '"state":"abandoned"' "$R"
+    setting tournament_idle_ttl 180
+    setting tournament_sweep_secs 30
+    setting tournament_create_cooldown 10
+fi
+
 # The match neither player can connect. Presence cannot see this one - both
 # are online and asking - so it is told from the fact that NOBODY EVER
 # PLAYED the node: no duel between the two seats since it was dealt. The
@@ -399,34 +426,9 @@ if [ "$ADMIN" -eq 1 ]; then
     R=$(act "$ID1" state "$T7")
     expect "with no winner named, both players having turned up" '"winner":null' "$R"
     expect "the node reading as one that was not played" '"state":"void"' "$R"
+    expect "and saying WHICH void it is, both players having been there" '"why":"unplayed"' "$R"
     setting tournament_deadlock_ms 150000
     R=$(tourney "{\"id\":\"$ID1\",\"action\":\"leave\",\"tid\":\"$T7\"}")
     expect "the host clears it away" '"ok":true' "$R"
-    setting tournament_create_cooldown 10
-fi
-# The gate: at most one sweep every tournament_sweep_secs across the server,
-# so a busy minute cannot turn this into per-request work. Held first by an
-# ordinary request, then proven to hold by a lobby that survives a sweep it
-# would otherwise not have.
-if [ "$ADMIN" -eq 1 ]; then
-    setting tournament_sweep_secs 300
-    R=$(hellot "$ID2")
-    expect "a client request takes the sweep gate" '"ok":true' "$R"
-    setting tournament_create_cooldown 0
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
-    T6=$(tfield "$R" tid)
-    expect "a lobby opened behind the held gate" '"tid":' "$R"
-    setting tournament_idle_ttl 0
-    R=$(hellot "$ID2")
-    expect "a second client request inside the gate" '"ok":true' "$R"
-    R=$(act "$ID1" state "$T6")
-    expect "sweeps nothing, however idle everyone is" '"state":"open"' "$R"
-    setting tournament_sweep_secs 0
-    R=$(hellot "$ID2")
-    expect "and the request past the gate" '"ok":true' "$R"
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=tourney&tid=$T6")
-    expect "is the one that ends it" '"state":"abandoned"' "$R"
-    setting tournament_idle_ttl 180
-    setting tournament_sweep_secs 30
     setting tournament_create_cooldown 10
 fi

@@ -743,8 +743,16 @@ final class Tournament
     /**
      * Records a decided node and moves the tournament on. $verdict is the
      * winning seat, or the string 'draw'.
+     *
+     * $why is carried only by a VOID, which has two causes that read as
+     * opposite things on a bracket: 'gone' is nobody left to play it,
+     * 'unplayed' is both players there and no connection between them. A
+     * client that could not tell them apart would have to word one of them
+     * wrongly, and erasing two people who sat there trying is the worse of
+     * the two lies.
      */
-    private static function close(array &$t, string $nid, int|string $verdict, ?array $score, string $state): void
+    private static function close(array &$t, string $nid, int|string $verdict, ?array $score,
+        string $state, ?string $why = null): void
     {
         $r = $t['data']['results'][$nid] ?? self::blankResult(Util::nowMs());
         $draw = $verdict === 'draw';
@@ -752,6 +760,7 @@ final class Tournament
         $r['winner'] = $draw ? null : $verdict;
         $r['draw'] = $draw;
         $r['score'] = $score;
+        $r['why'] = $why;
         $t['data']['results'][$nid] = $r;
         self::standings($t);
         // The rows ride with the result: they are what a result changes on
@@ -762,6 +771,7 @@ final class Tournament
             'winner' => $draw ? null : self::idOfSeat($t, (int)$verdict),
             'draw' => $draw,
             'score' => $score,
+            'why' => $why,
             'rows' => self::ranked($t),
         ]);
 
@@ -818,7 +828,7 @@ final class Tournament
             return;
         }
         if (!$aPresent && !$bPresent) {
-            self::close($t, $nid, 'draw', null, 'void');
+            self::close($t, $nid, 'draw', null, 'void', 'gone');
             return;
         }
         self::close($t, $nid, $aPresent ? (int)$node['a'] : (int)$node['b'], null, 'settled');
@@ -964,7 +974,7 @@ final class Tournament
             return;
         }
         if ($r['redealt'] ?? false) {
-            self::close($t, $nid, 'draw', null, 'void');
+            self::close($t, $nid, 'draw', null, 'void', 'unplayed');
             return;
         }
         // The fresh result resets `dealt`, so the second attempt gets the
@@ -1754,6 +1764,8 @@ final class Tournament
                 'winner' => $r === null || $r['winner'] === null ? null : self::idOfSeat($t, (int)$r['winner']),
                 'draw' => $r !== null && $r['draw'],
                 'score' => $r === null ? null : $r['score'],
+                // Only a void has one; every other node answers null.
+                'why' => $r === null ? null : ($r['why'] ?? null),
             ];
         }
         return $out;

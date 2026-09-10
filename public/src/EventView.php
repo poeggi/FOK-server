@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Events.php';
 require_once __DIR__ . '/Presence.php';
+require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Friends.php';
 require_once __DIR__ . '/Signals.php';
 require_once __DIR__ . '/TourneyStore.php';
@@ -113,7 +114,10 @@ final class EventView
             'code' => (string)$t['code'],
             'state' => (string)$t['state'],
             'players' => count($t['players']),
-            'max' => (int)$t['max'],
+            // The cap is a SETTING, never a field on the stored tournament -
+            // the lobby projection and the announce card both read it the
+            // same way, and reading it off the entry answered 0.
+            'max' => Settings::int('tournament_max_players'),
         ];
     }
 
