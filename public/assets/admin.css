@@ -608,12 +608,11 @@ table.kv .kv-sec td {
 /* The id fields on the event form: type a name, pick from what drops down.
    The list overlays what is under it, so the form does not jump as it opens
    and close. Sized from the control tokens like every other input here. */
-.pickfield { position: relative; }
 .pickfield input { width: 100%; }
 .picklist {
-    position: absolute; z-index: 5; left: 0; right: 0; top: 100%;
+    margin-top: 4px;
     max-height: calc(var(--pane-h) / 2); overflow-y: auto;
-    background: var(--card); border: 1px solid var(--border);
+    background: var(--bg); border: 1px solid var(--border);
     border-radius: var(--r-ctl);
 }
 .pickrow { padding: 4px 8px; cursor: pointer; font-size: 12px; }
@@ -624,3 +623,7 @@ table.kv .kv-sec td {
    a second paragraph competing with the warning. */
 .modal-body ul { margin: 8px 0 0; padding-left: 20px; font-size: 12.5px; color: var(--muted); }
 .modal-body ul li { margin-bottom: 4px; }
+
+/* The date pair: the field and the control a browser does not give it. */
+.datefield { display: flex; gap: 6px; align-items: center; }
+.datefield input { flex: 1 1 auto; min-width: 0; }

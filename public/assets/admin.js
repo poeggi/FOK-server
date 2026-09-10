@@ -1792,8 +1792,15 @@ function playerField(value, placeholder) {
         // only tell the operator what they just wrote.
         if (/^[0-9a-f]{8}$/.test(q)) { list.hidden = true; said(q, ''); return; }
         if (q.length < 2) { list.hidden = true; return; }
+        list.replaceChildren(el('div', 'muted pickrow', 'Searching ...'));
+        list.hidden = false;
         let d;
-        try { d = await api('player_find&q=' + encodeURIComponent(q)); } catch (e) { return; }
+        try {
+            d = await api('player_find&q=' + encodeURIComponent(q));
+        } catch (e) {
+            list.replaceChildren(el('div', 'error pickrow', 'Search failed: ' + e.message));
+            return;
+        }
         list.replaceChildren();
         if (!d.players.length) {
             list.append(el('div', 'muted pickrow', 'No player of that name.'));
@@ -1815,7 +1822,6 @@ function playerField(value, placeholder) {
         clearTimeout(timer);
         timer = setTimeout(search, 250);
     };
-    input.onblur = () => setTimeout(() => { list.hidden = true; }, 200);
     wrap.append(input, list, chosen);
     wrap._input = input;
     return wrap;
@@ -1824,15 +1830,27 @@ function playerField(value, placeholder) {
 // A datetime-local field reads and writes UTC here, and says so: an operator
 // and an event are not always in the same country, and the wire is UTC.
 function utcField(name, unix) {
+    const wrap = el('div', 'datefield');
     const i = el('input');
     i.type = 'datetime-local';
     i.name = name;
     i.value = unix ? new Date(unix * 1000).toISOString().slice(0, 16) : '';
-    return i;
+    // A browser gives a datetime-local no clear control of its own, so
+    // setting a schedule was one-way: the only way back was knowing to
+    // select the field and press Delete.
+    const clear = el('button', 'small', 'Clear');
+    clear.type = 'button';
+    clear.title = 'Remove this moment. With both empty the event has no '
+        + 'schedule and its organizer runs it by hand.';
+    clear.onclick = () => { i.value = ''; };
+    wrap.append(i, clear);
+    wrap._input = i;
+    return wrap;
 }
 
-function utcValue(input) {
-    return input.value ? String(Math.floor(Date.parse(input.value + 'Z') / 1000)) : '';
+function utcValue(field) {
+    const v = field._input.value;
+    return v ? String(Math.floor(Date.parse(v + 'Z') / 1000)) : '';
 }
 
 // Create and edit are ONE form: the fields are identical, and the only
@@ -1883,12 +1901,12 @@ function eventForm(existing) {
         mon.append(o);
     }
     mon.value = (existing && !d.monitor_allowed) ? '0' : '1';
-    field('monitor_allowed', 'Monitor', mon,
+    field('monitor_allowed', 'Allow monitor', mon,
         'A screen for a TV: the event live, then the tournament as an invisible spectator.');
-    field('monitor', 'Reserved for', playerField(d.monitor),
-        'Search by name. Named: that player holds the slot even while offline, '
-        + 'joins without approval, is in no participant list and can do nothing '
-        + 'else here. Empty: whoever asks first gets it.');
+    field('monitor', 'Monitor user', playerField(d.monitor),
+        'Search by name. Named: that player IS the monitor - it holds the slot '
+        + 'even while offline, joins without approval, is in no participant list '
+        + 'and can do nothing else here. Empty: whoever asks first gets it.');
     field('ach_name', 'Achievement', text(d.ach_name, 15), 'Granted on joining. Empty for none.');
     field('ach_desc', 'Achievement text', text(d.ach_desc, 40));
     body.append(tbl);
