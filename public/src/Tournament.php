@@ -1545,6 +1545,11 @@ final class Tournament
         // it: it is in none of players, primaries, secondaries or names and
         // takes no tree slot. Absent when there is no event or no holder.
         $mon = self::monitorOf($t);
+        // The walkover clock (4.15): the first instant the node may be
+        // handed over for a gone seat, so every screen waiting on the
+        // match counts down the same server moment. Null before the deal
+        // stamped it, which is no clock.
+        $dealt = $t['data']['results'][$nid]['dealt'] ?? null;
         return [
             'event' => 'roles',
             'round' => (int)$node['round'],
@@ -1574,6 +1579,7 @@ final class Tournament
             'primaries' => array_slice($spectators, 0, 2),
             'secondaries' => array_slice($spectators, 2),
             'names' => (object)$names,
+            'walkover_at' => $dealt === null ? null : (int)$dealt + Settings::int('tournament_walkover_ms'),
             'spectators' => $spectators,
         ] + ($mon === null ? [] : ['monitor' => $mon]);
     }

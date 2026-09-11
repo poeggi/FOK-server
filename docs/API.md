@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.14", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.15", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -57,7 +57,7 @@ and whose tournaments nobody outside it can see - added in 4.11, its
 printed key shortened to fit the code the game itself can scan in 4.12 and
 that key made to join an event that has not started yet in 4.13, the
 event's monitor named on the roles sheet and sent the tournament's
-signals in 4.14) is
+signals in 4.14, the walkover clock on that sheet in 4.15) is
 available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
@@ -558,7 +558,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.14",               contract version, see Versioning
+      "api": "4.15",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a free
@@ -972,7 +972,7 @@ not its hello is on time - and needs no hello to stay online at all.
 Every answer WITH A BODY carries `api` and `debug` (4.9), beside the
 `signals` array:
 
-      "api": "4.14",             the contract version, re-read here for
+      "api": "4.15",             the contract version, re-read here for
                                 the same reason hello carries it: it
                                 un-latches a client after a rollback
       "debug": false,           the server's debug instruction for this
@@ -2346,7 +2346,8 @@ tournament.php request, or any participant's poll.php or hello.
   seconds, so a seat that stops asking is a client that closed. A client
   that beats only at the 60 s heartbeat is at the edge of it: keep the
   poll open while seated. A slow match between two players who both keep
-  asking is never taken away from them.
+  asking is never taken away from them. The roles sheet carries the
+  deadline as `walkover_at` (4.15), so a screen can count down to it.
 - a match NOBODY EVER STARTED is re-dealt once after
   `tournament_deadlock_ms` (2.5 min) and voided at the same distance
   again. This is the case the test above cannot see: both players are
@@ -2409,6 +2410,8 @@ the whole picture.
                                   `tid`, and DERIVED on every read, so a
                                   forfeit during the break shows up in it
       "roles": <the caller's own roles sheet, or null>
+                                  the `roles` event's fields, `walkover_at`
+                                  included, so a reload gets the clock
     }
 
 There is no `podium` field: `over` is the only place the server names one
@@ -2456,12 +2459,21 @@ payload carries `tid`.
                  someone joined or left; `reason` explains an abandon
     roles        {event, tid, round, stage, match, of, nid, hm, lvl,
                   speed, stakes, eid, players, feeder, primaries,
-                  secondaries, names, you, monitor?}
+                  secondaries, names, walkover_at, you, monitor?}
                  a match is up. `match`/`of` are its 1-based position in
                  the stage. `you` differs per recipient. `monitor` (4.14)
                  is the event's monitor holder when this is an event
                  tournament and somebody holds the slot, and ABSENT
                  otherwise - see The monitor as a spectator.
+                 `walkover_at` (4.15) is the walkover clock: server ms of
+                 the first instant this node may be handed over for a
+                 seat that is gone - the deal plus `tournament_walkover_ms`
+                 (see When nobody answers). The same value reaches every
+                 recipient, so every screen waiting on the match counts
+                 down to one moment; a re-deal ships a fresh one on its
+                 fresh sheet. Null is no clock. It says when the server
+                 may act, not that it will: a seat that keeps asking is
+                 never walked over, however far past it the match runs.
     roles-patch  {event, tid, nid, eid, primaries, secondaries, monitor?}
                  the spectator tree changed; the match is unaffected
     standings    {event, tid, rows:[{seat,id,pts,diff,rank,adv}],

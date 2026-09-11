@@ -2333,7 +2333,22 @@ foreach ($wo as $p) {
 $tidW = Tournament::create($wo[0], false)['tid'];
 Tournament::join($wo[1], $tidW);
 Tournament::start($wo[0], $tidW);
-$pW = Tournament::view($wo[0], $tidW)['roles']['players'];
+$vW = Tournament::view($wo[0], $tidW);
+$pW = $vW['roles']['players'];
+// The walkover clock (4.15) is the deal's stamp plus the window, so every
+// screen counts down to the same server moment.
+$dealtW = TourneyStore::get($tidW)['data']['results']['r1.1']['dealt'];
+ok($vW['roles']['walkover_at'] === $dealtW + Settings::int('tournament_walkover_ms'),
+    'the roles sheet on a read-back carries the walkover clock');
+$sheet = null;
+foreach (Signals::take($pW[1]) as $sig) {
+    $p = json_decode($sig['payload'], true);
+    if (($p['event'] ?? null) === 'roles') {
+        $sheet = $p;
+    }
+}
+ok($sheet !== null && $sheet['walkover_at'] === $vW['roles']['walkover_at'],
+    'and the dealt sheet carries the same one');
 Settings::set('tournament_deadlock_ms', 0);
 Presence::age($pW[1], $goneAfter);
 Tournament::view($pW[0], $tidW);
@@ -2348,8 +2363,11 @@ Tournament::view($pW[0], $tidW);
 ok(TourneyStore::get($tidW)['data']['results']['r1.1']['redealt'] === true,
     'the moment both seats are asking again, the unstarted node is re-dealt');
 $told = Signals::take($pW[1]);
-ok($told !== [] && json_decode($told[0]['payload'], true)['event'] === 'roles',
-    'and both are dealt the fresh sheet');
+$fresh = $told === [] ? [] : json_decode($told[0]['payload'], true);
+ok(($fresh['event'] ?? null) === 'roles', 'and both are dealt the fresh sheet');
+$redealtAt = TourneyStore::get($tidW)['data']['results']['r1.1']['dealt'];
+ok(($fresh['walkover_at'] ?? 0) === $redealtAt + Settings::int('tournament_walkover_ms')
+    && $fresh['walkover_at'] >= $sheet['walkover_at'], 'with a walkover clock that runs from the re-deal');
 Settings::set('tournament_deadlock_ms', 150000);
 Settings::set('tournament_create_cooldown', 10);
 Tournament::leave($wo[0], $tidW);

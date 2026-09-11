@@ -81,6 +81,7 @@ expect "the group stage being what round 1 is called" '"stage":"group"' "$R"
 expect "the bracket stays empty until round 1 is over" '"bracket":[]' "$R"
 expect "the caller gets its own roles sheet" '"you":"play"' "$R"
 expect "which places the match within its stage" '"match":1' "$R"
+expect "and carries the walkover clock, a server moment" '"walkover_at":1' "$R"
 FEEDER=$(tfield "$R" feeder)
 if [ "$FEEDER" = "$ID1" ] || [ "$FEEDER" = "$ID2" ]; then
     echo "ok   the feeder is one of the two players, never a spectator"
@@ -91,6 +92,7 @@ fi
 R=$(hellot "$ID2")
 expect "every participant is told the match is up" '"type":"tourney"' "$R"
 expect "by a roles event" 'roles' "$R"
+expect "which carries the same walkover clock" 'walkover_at\":1' "$R"
 
 R=$(tourney "{\"id\":\"$ID1\",\"action\":\"result\",\"tid\":\"$T1\",\"nid\":\"r1.oops\",\"outcome\":\"win\",\"score\":[1,0]}")
 expect "a malformed node id is rejected" '"error":"invalid nid"' "$R"

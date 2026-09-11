@@ -395,6 +395,7 @@ expect "and nothing to wait for before it asks" 'after_ms\":0' "$R"
 refute "while it is in none of the sheet's lists" "\\\"players\\\":[\\\"$ID3" "$R"
 R=$(evact "$ID3" monitor "$EID4")
 expect "the monitor read carries the same sheet" "\"monitor\":\"$ID3\"" "$R"
+expect "walkover clock included, so the screen counts down too" '"walkover_at":1' "$R"
 R=$(act "$ID1" state "$MTID")
 expect "and so does a player's own read" "\"monitor\":\"$ID3\"" "$R"
 refute "the screen is never among the players" "\"players\":[\"$ID3" "$R"

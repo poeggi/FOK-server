@@ -73,8 +73,11 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   between them. The server orchestrates and settles only - schedule, roles,
   results, bracket - and never carries a byte of match traffic: every
   tournament match is an ordinary P2P duel between the two players its
-  roles sheet names. Open lobbies are also ANNOUNCED to the host's own
-  network, so people in one room find each other without typing a code.
+  roles sheet names. A player who stops asking for a minute forfeits the
+  match in flight, and the sheet carries that clock (4.15) so every screen
+  waiting on the match counts down to it. Open lobbies are also ANNOUNCED
+  to the host's own network, so people in one room find each other
+  without typing a code.
   A player is remembered on one network per address family (IPv4 as the
   public address, IPv6 as the /64), because a dual-stack client picks a
   family per connection and the two devices in a room need not pick the
@@ -82,7 +85,7 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   addresses the client reports about itself (hello "nets"), which rank
   below what the server saw for itself. The code remains the capability
   and the way in from anywhere else.
-- Events (contract 4.11 to 4.14): a room an operator opens - a LAN party,
+- Events (contract 4.11 to 4.15): a room an operator opens - a LAN party,
   a club night, a stand at a fair. A player gets in by scanning its QR:
   the printed key on the poster, or the 20-second pass a member shows on
   screen. The door is OPEN (a scan joins) or CLOSED (a scan asks, and the
