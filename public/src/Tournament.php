@@ -927,10 +927,25 @@ final class Tournament
     }
 
     /**
-     * The match in flight has gone nowhere for a long time AND a player of it
-     * is offline: that player forfeits the node. Online but silent is left
-     * strictly alone - a long match is not a fault, and the freeze/admin path
-     * covers the pathological cases.
+     * Which of a node's two players is GONE: not heard from for
+     * tournament_gone_secs. That is deliberately shorter than the online
+     * window - a seat of a dealt match is on a tournament screen or in the
+     * match, and a client there is polling, so a seat that stops asking is
+     * a client that closed - and it is the ONE test the walkover and the
+     * deadlock both judge presence by, which is what keeps them disjoint.
+     * @return array{0: bool, 1: bool}
+     */
+    private static function gone(string $a, string $b): array
+    {
+        $heard = Presence::heardWithin([$a, $b], Settings::int('tournament_gone_secs'));
+        return [!$heard[$a], !$heard[$b]];
+    }
+
+    /**
+     * The match in flight has stood for tournament_walkover_ms AND a player
+     * of it is gone (see gone): that player forfeits the node. Two players
+     * who both keep asking are left strictly alone - a long match is not a
+     * fault, and the freeze/admin path covers the pathological cases.
      */
     private static function walkoverBySilence(array &$t): void
     {
@@ -951,13 +966,11 @@ final class Tournament
         if ($a === null || $b === null) {
             return;
         }
-        $info = Presence::infoOf([$a, $b]);
-        $aOff = !($info[$a]['online'] ?? false);
-        $bOff = !($info[$b]['online'] ?? false);
-        if (!$aOff && !$bOff) {
+        [$aGone, $bGone] = self::gone($a, $b);
+        if (!$aGone && !$bGone) {
             return;
         }
-        self::walkover($t, $nid, $aOff ? $node['a'] : null, $bOff ? $node['b'] : null);
+        self::walkover($t, $nid, $aGone ? $node['a'] : null, $bGone ? $node['b'] : null);
     }
 
     /**
@@ -1003,8 +1016,8 @@ final class Tournament
         // this must never turn into a void - so the cheap tests run first
         // and the duel read is the last gate, reached only by a node that is
         // about to be settled.
-        $info = Presence::infoOf([$a, $b]);
-        if (!($info[$a]['online'] ?? false) || !($info[$b]['online'] ?? false)) {
+        [$aGone, $bGone] = self::gone($a, $b);
+        if ($aGone || $bGone) {
             return;
         }
         if (Presence::duelSeenSince($a, $b, intdiv((int)$r['dealt'], 1000))) {
@@ -2072,7 +2085,7 @@ final class Tournament
      * that matters: the deadline lapsed and the tournament is still in that
      * state, so nothing has asked since. A lapsed 'match' does not settle by
      * itself either way - a walkover also needs one of the two players to be
-     * offline, which the player rows say.
+     * gone (see gone), which the player rows' last beat says.
      */
     private static function waitingOn(array $t): array
     {

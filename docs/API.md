@@ -2338,16 +2338,22 @@ evaluated lazily, on the next request that touches the tournament: any
 tournament.php request, or any participant's poll.php or hello.
 
 - a held one-sided result settles after `tournament_result_ms` (15 s)
-- the match in flight is forfeited after `tournament_walkover_ms` (3 min)
-  by a player who is ALSO offline. A slow match between two players who
-  are both present is never taken away from them.
+- the match in flight is forfeited after `tournament_walkover_ms` (1 min)
+  by a player who is ALSO gone: no request of any kind from that seat for
+  `tournament_gone_secs` (60 s, with the beat's second of grace). That is
+  half the online window on purpose. A seat of a dealt match is on a
+  tournament screen or in the match, where a client is polling every few
+  seconds, so a seat that stops asking is a client that closed. A client
+  that beats only at the 60 s heartbeat is at the edge of it: keep the
+  poll open while seated. A slow match between two players who both keep
+  asking is never taken away from them.
 - a match NOBODY EVER STARTED is re-dealt once after
   `tournament_deadlock_ms` (2.5 min) and voided at the same distance
-  again. This is the case presence cannot see: both players are awake and
-  asking, and it is the link between them that never comes up. The server
-  knows it apart from a slow match because both peers call start.php
-  where play begins, so a pair that got a match going is left alone
-  however long it runs.
+  again. This is the case the test above cannot see: both players are
+  awake and asking, and it is the link between them that never comes up.
+  The server knows it apart from a slow match because both peers call
+  start.php where play begins, so a pair that got a match going is left
+  alone however long it runs.
 - an unstarted lobby is abandoned after `tournament_join_ttl` (15 min)
 - a round break continues by itself after `tournament_break_ttl_ms`
   (2 min), so a host that walked away cannot wedge the tournament
@@ -2365,7 +2371,7 @@ A player who forfeits by LEAVING loses their remaining matches as
 walkovers at once. Being walked over for absence is not the same thing:
 it settles that node only, and every later node of theirs is dealt
 normally and waits its own full `tournament_walkover_ms`, testing again
-whether they are still offline - so a player whose phone wakes up is back
+whether they are still gone - so a player whose phone wakes up is back
 in the schedule. A node where BOTH sides are gone is voided: no points,
 no difference, no winner. So is one neither present player could ever
 connect, after the re-deal above has been spent - both turned up, so

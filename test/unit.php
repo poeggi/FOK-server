@@ -2280,17 +2280,79 @@ ok($v5['cursor'] === 'final', 'both of two players reach the final');
 // was dealt, which is the millisecond the report above dealt it, so any
 // positive threshold is a race with the clock rather than a test.
 Settings::set('tournament_walkover_ms', 0);
-Presence::age($v[0], FOK_ONLINE_WINDOW + FOK_BEAT_JITTER + 1);
-Presence::age($v[1], FOK_ONLINE_WINDOW + FOK_BEAT_JITTER + 1);
+$goneAfter = Settings::int('tournament_gone_secs') + FOK_BEAT_JITTER + 1;
+Presence::age($v[0], $goneAfter);
+Presence::age($v[1], $goneAfter);
 $v5 = Tournament::view($v[0], $tid5);
 ok($v5['bracket'][0]['state'] === 'void' && $v5['bracket'][0]['winner'] === null,
     'a final neither side could play is voided, never replayed');
 ok($v5['state'] === 'done' && $v5['cursor'] === null,
     'and the tournament ends rather than waiting on it forever');
-Settings::set('tournament_walkover_ms', 180000);
+Settings::set('tournament_walkover_ms', 60000);
 foreach ($v as $p) {
     Presence::touch($p, '127.0.0.1');
 }
+
+// ---- One player closes the app; the other wins in a minute ------------
+// Gone is judged by SILENCE, not by the online window: a seat of a dealt
+// match is polling, so a minute without a request from it is a client
+// that closed, long before presence would call it offline. Two seats
+// that both keep asking are never touched, however slow the match.
+$wo = ['79000001', '79000002'];
+foreach ($wo as $p) {
+    Presence::touch($p, '127.0.0.1');
+}
+Settings::set('tournament_create_cooldown', 0);
+$tidW = Tournament::create($wo[0], false)['tid'];
+Tournament::join($wo[1], $tidW);
+Tournament::start($wo[0], $tidW);
+$vW = Tournament::view($wo[0], $tidW);
+$pW = $vW['roles']['players'];
+$loser = $pW[1];
+$winner = $pW[0];
+Settings::set('tournament_walkover_ms', 0);
+Presence::age($loser, intdiv(Settings::int('tournament_gone_secs'), 2));
+$vW = Tournament::view($winner, $tidW);
+ok($vW['schedule'][0]['state'] !== 'settled', 'a seat quiet for half the window is still present');
+Presence::age($loser, $goneAfter);
+ok(Presence::infoOf([$loser])[$loser]['online'] === true, 'the absent seat still reads ONLINE');
+$vW = Tournament::view($winner, $tidW);
+ok($vW['schedule'][0]['state'] === 'settled' && $vW['schedule'][0]['winner'] === $winner,
+    'and the match is handed to the one still asking');
+ok($vW['schedule'][0]['score'] === null, 'as a walkover, with no score');
+Settings::set('tournament_walkover_ms', 60000);
+Tournament::leave($wo[0], $tidW);
+
+// The deadlock re-deal is the complement, and it judges by the same test:
+// a seat that is gone is the walkover's business, so with the walkover
+// not yet due the deadlock leaves that node alone rather than dealing a
+// second attempt to somebody who is not there.
+foreach ($wo as $p) {
+    Presence::touch($p, '127.0.0.1');
+}
+$tidW = Tournament::create($wo[0], false)['tid'];
+Tournament::join($wo[1], $tidW);
+Tournament::start($wo[0], $tidW);
+$pW = Tournament::view($wo[0], $tidW)['roles']['players'];
+Settings::set('tournament_deadlock_ms', 0);
+Presence::age($pW[1], $goneAfter);
+Tournament::view($pW[0], $tidW);
+$rW = TourneyStore::get($tidW)['data']['results']['r1.1'];
+ok(empty($rW['redealt']) && $rW['state'] !== 'settled',
+    'a node with a gone seat is neither re-dealt nor settled before the walkover is due');
+Presence::touch($pW[1], '127.0.0.1');
+foreach ($wo as $p) {
+    Signals::take($p);
+}
+Tournament::view($pW[0], $tidW);
+ok(TourneyStore::get($tidW)['data']['results']['r1.1']['redealt'] === true,
+    'the moment both seats are asking again, the unstarted node is re-dealt');
+$told = Signals::take($pW[1]);
+ok($told !== [] && json_decode($told[0]['payload'], true)['event'] === 'roles',
+    'and both are dealt the fresh sheet');
+Settings::set('tournament_deadlock_ms', 150000);
+Settings::set('tournament_create_cooldown', 10);
+Tournament::leave($wo[0], $tidW);
 
 // ---- A break the host never presses through clears itself -------------
 // The host is one browser tab among several, and it can close. The break

@@ -285,10 +285,12 @@ tournament. The test is PRESENCE, never activity.
 Result ladder: a reported LOSS settles at once, a lone win/draw is held
 ~tournament_result_ms, a contradiction FREEZES the node. TWO WAYS A NODE
 NOBODY PLAYED ENDS, deliberately disjoint: tournament_walkover_ms
-(180 s) hands the node to whoever stayed, only where the other seat
-reads OFFLINE; tournament_deadlock_ms (150 s) re-deals once and voids on
-the second lapse, ONLY where both seats read online and no match was
-ever observed between them (Presence::duelSeenSince reads the duels ROW,
+(60 s) hands the node to whoever stayed, only where the other seat is
+GONE - unheard from for tournament_gone_secs (60 s, half the online
+window: a seated client polls, so Tournament::gone judges by silence
+and both rules use it); tournament_deadlock_ms (150 s) re-deals once and
+voids on the second lapse, ONLY where neither seat is gone and no match
+was ever observed between them (Presence::duelSeenSince reads the duels ROW,
 since endDuel clears the entry, as the LAST gate so only a node about to
 be settled pays for it). A VOID carries `draw` TRUE plus `why` 'gone' or
 'unplayed'.

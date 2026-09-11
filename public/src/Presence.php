@@ -650,6 +650,26 @@ final class Presence
     }
 
     /**
+     * Whether each id has been heard from within $secs (plus the beat's
+     * grace), keyed by id. The online verdict is this same test at
+     * FOK_ONLINE_WINDOW; this one is for a caller whose window is shorter
+     * because it knows its subject is polling - a seat of a dealt
+     * tournament match. An id with no entry has not been heard from.
+     * @param list<string> $ids
+     * @return array<string, bool>
+     */
+    public static function heardWithin(array $ids, int $secs): array
+    {
+        $cut = Util::since($secs);
+        $entries = self::entriesOf($ids);
+        $out = [];
+        foreach ($ids as $id) {
+            $out[$id] = isset($entries[$id]) && (int)$entries[$id]['seen'] >= $cut;
+        }
+        return $out;
+    }
+
+    /**
      * Online / latency / name for a set of ids: the entries answer for
      * whoever is here, the rows for the rest - the name of an offline
      * friend is still a name. An id nobody has ever seen is absent.

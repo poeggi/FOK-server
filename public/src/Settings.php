@@ -162,13 +162,15 @@ final class Settings
         'mint_max_per_hour' => [60, 'Max client-driven item mints per player per hour',
             'Item mints one player may make per hour; a mint beyond it is refused with 429. Minting stays '
             . 'client-trusted: the cap bounds the rate, not who may mint.'],
-        // Tournament mode (see Tournament, api/tournament.php). The two _ms
+        // Tournament mode (see Tournament, api/tournament.php). The _ms
         // deadlines are the whole of the "what if nobody answers" story, and
-        // both are evaluated lazily on the next touch - there is no timer.
+        // all are evaluated lazily on the next touch - there is no timer.
         // result_ms is short: it only has to outlast the losing client's own
-        // report of a match that just ended. walkover_ms is long, and only
-        // ever fires against a player who is also OFFLINE, so a slow match
-        // between two present players is never taken away from them.
+        // report of a match that just ended. walkover_ms only ever fires
+        // against a player who is also GONE - unheard from for gone_secs,
+        // shorter than the online window because a seated client is polling
+        // - so a slow match between two present players is never taken away
+        // from them.
         'tournament_max_players' => [FOK_TOURNAMENT_MAX_PLAYERS, 'Max players in one tournament',
             'Seats in one tournament. A join beyond it answers full; an event monitor takes no seat. Every lobby '
             . 'announcement carries it.'],
@@ -184,9 +186,13 @@ final class Settings
         'tournament_result_ms' => [15000, 'A one-sided result settles after this long unanswered (ms)',
             'A match result reported by one side only becomes final after this long without the other side\'s '
             . 'report. A reported loss settles at once; a contradiction freezes the node.'],
-        'tournament_walkover_ms' => [180000, 'An offline player forfeits the match in flight after (ms)',
-            'A dealt match one of whose players reads offline is handed to the other after this long. It never '
-            . 'fires while both are present.'],
+        'tournament_walkover_ms' => [60000, 'A gone player forfeits the match in flight after (ms)',
+            'A dealt match one of whose players is gone (see the next setting) is handed to the other after '
+            . 'this long. It never fires while both are present.'],
+        'tournament_gone_secs' => [60, 'A seated player unheard from for this long is gone (seconds)',
+            'A player of the match in flight the server has had no request from for this long counts as gone: '
+            . 'the walkover fires against them, and the deadlock re-deal never runs for them. Shorter than the '
+            . 'online window because a seated client polls every few seconds.'],
         'tournament_deadlock_ms' => [150000, 'A match neither present player can connect is re-dealt, then voided, after (ms)',
             'A dealt match between two online players that never started is re-dealt after this long, and voided '
             . 'on the second lapse.'],
