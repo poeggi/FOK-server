@@ -361,7 +361,6 @@ expect "and a member cannot take a reserved slot" '"error":"monitor taken"' "$R"
 # A screen never takes a seat, so a tournament being watched still seats
 # its full eight. It falls out of the row state: a monitor is not a
 # member, and only members get into an event's tournament.
-setting tournament_create_cooldown 0
 R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"eid\":\"$EID4\"}")
 MTID=$(evfield "$R" tid)
 MCODE=$(evfield "$R" code)

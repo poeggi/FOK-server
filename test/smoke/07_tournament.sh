@@ -16,26 +16,8 @@
 # knockout fold) is unit-tested in test/unit.php against Bracket directly.
 # What only real HTTP can show is what this file checks: the wire.
 
-tourney() { # tourney <json-body> : POST to api/tournament.php, print the body
-    curl -s -X POST -H 'Content-Type: application/json' -d "$1" "$BASE/api/tournament.php"
-}
-tcode() { # like tourney, but prints the HTTP status instead
-    curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-        -d "$1" "$BASE/api/tournament.php"
-}
-# A no-match grep exits 1, which would abort the run under `set -e` instead of
-# failing an assertion - so the extractor swallows it (see 05_items.sh).
-tfield() { echo "$1" | grep -oE "\"$2\":\"[0-9A-Za-z]+\"" | head -1 | cut -d'"' -f4 || true; }
-act() { # act <id> <action> <tid>
-    tourney "{\"id\":\"$1\",\"action\":\"$2\",\"tid\":\"$3\"}"
-}
-result() { # result <id> <tid> <nid> <outcome> <mine> <theirs>
-    tourney "{\"id\":\"$1\",\"action\":\"result\",\"tid\":\"$2\",\"nid\":\"$3\",\"outcome\":\"$4\",\"score\":[$5,$6]}"
-}
-hellot() { # hello asking for the lobbies announced on the caller's address
-    curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"tourneys\":true}" "$BASE/api/hello.php"
-}
+# The tournament helpers (tourney, tcode, tfield, act, result, hellot) live
+# in lib.sh: 08_events.sh and 09_sweep.sh use them too.
 # A well-formed tid that names nothing.
 NOTID=00000000000000000000000000000000
 
@@ -199,10 +181,17 @@ expect "and there is no match left in flight" '"cursor":null' "$R"
 R=$(hellot "$ID2")
 expect "the winner is told it is over" 'podium' "$R"
 
+# Measured against the stamp of T1's create, which is a wall clock: the walk
+# above is sixty-odd requests and can outlast the default cooldown on a slow
+# or busy runner. Widen the window where the suite may (the stamp itself
+# lives at least 60 s, see TourneyStore::CD_TTL_MIN), so this asserts the
+# rule and not how fast the last minute went.
+if [ "$ADMIN" -eq 1 ]; then setting tournament_create_cooldown 600; fi
 R=$(tcode "{\"id\":\"$ID1\",\"action\":\"create\"}")
 expect "a host may not open lobbies back to back" '429' "$R"
 R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
 expect "and is told how long to wait" '"retry_after":' "$R"
+if [ "$ADMIN" -eq 1 ]; then setting tournament_create_cooldown 10; fi
 
 # --- The lobby the host walks away from. The host owns the LOBBY and only the
 # lobby: leaving one that never started ends it, where leaving a running
@@ -251,7 +240,6 @@ if [ "$ADMIN" -eq 1 ]; then
     if [ "$T4" = "$T3" ]; then echo "FAIL replace returned the same tid"; fail=1; fi
     R=$(act "$ID2" join "$T3")
     expect "and the one it replaced is gone" '"error":"no such tournament"' "$R"
-    setting tournament_create_cooldown 10
 
     # The popup the Matches card opens: who is seated, what it is waiting on,
     # and the button that ends one nobody is asking about any more.
@@ -293,7 +281,6 @@ fi
 # the ladder still climbs one per round from there, and a level the game does
 # not have is clamped rather than refused.
 if [ "$ADMIN" -eq 1 ]; then
-    setting tournament_create_cooldown 0
     R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"lvl\":4}")
     expect "a create names the level its first round is played at" '"lvl":4' "$R"
     TL=$(tfield "$R" tid)
@@ -310,14 +297,12 @@ if [ "$ADMIN" -eq 1 ]; then
     TL2=$(tfield "$R" tid)
     R=$(act "$ID1" leave "$TL2")
     setting tournament_max_level 10
-    setting tournament_create_cooldown 10
 fi
 
 # --- A speed tournament (4.10). The flag is the host's and the server only
 # carries it: onto the lobby, which is where a player decides whether to join
 # one, and onto every roles sheet the tournament deals.
 if [ "$ADMIN" -eq 1 ]; then
-    setting tournament_create_cooldown 0
     R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"speed\":true}")
     expect "a create can declare every round a speed round" '"speed":true' "$R"
     TS=$(tfield "$R" tid)
@@ -332,64 +317,6 @@ if [ "$ADMIN" -eq 1 ]; then
     expect "a create that says nothing plays the ordinary mix" '"speed":false' "$R"
     TS2=$(tfield "$R" tid)
     R=$(act "$ID1" leave "$TS2")
-    setting tournament_create_cooldown 10
-fi
-
-# --- The sweep for a tournament nobody is at. Its logic (who counts as gone,
-# which seat keeps it alive) is unit-tested against the presence entries; what
-# only real HTTP can show is the two things asserted here: that an ordinary
-# client request carries the sweep at all, and that an admin one does NOT -
-# reading the dashboard must never be what ends a tournament.
-if [ "$ADMIN" -eq 1 ]; then
-    setting tournament_create_cooldown 0
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
-    T5=$(tfield "$R" tid)
-    expect "one more lobby, to be swept" '"tid":' "$R"
-    setting tournament_sweep_secs 0
-    R=$(hellot "$ID2")
-    expect "a client request with nobody idle sweeps nothing" '"ok":true' "$R"
-    R=$(act "$ID1" state "$T5")
-    expect "and the lobby is still open" '"state":"open"' "$R"
-    # Everyone counts as gone from here on, so only the next request decides.
-    setting tournament_idle_ttl 0
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
-    expect "the dashboard still lists it" "\"tid\":\"$T5\"" "$R"
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=tourney&tid=$T5")
-    expect "so reading the card is not what ends one" '"state":"open"' "$R"
-    R=$(hellot "$ID2")
-    expect "a client request is" '"ok":true' "$R"
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=tourney&tid=$T5")
-    expect "and the tournament nobody was at is ended" '"state":"abandoned"' "$R"
-    setting tournament_idle_ttl 180
-    setting tournament_sweep_secs 30
-    setting tournament_create_cooldown 10
-fi
-
-# The gate: at most one sweep every tournament_sweep_secs across the server,
-# so a busy minute cannot turn this into per-request work. Held first by an
-# ordinary request, then proven to hold by a lobby that survives a sweep it
-# would otherwise not have.
-if [ "$ADMIN" -eq 1 ]; then
-    setting tournament_sweep_secs 300
-    R=$(hellot "$ID2")
-    expect "a client request takes the sweep gate" '"ok":true' "$R"
-    setting tournament_create_cooldown 0
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
-    T6=$(tfield "$R" tid)
-    expect "a lobby opened behind the held gate" '"tid":' "$R"
-    setting tournament_idle_ttl 0
-    R=$(hellot "$ID2")
-    expect "a second client request inside the gate" '"ok":true' "$R"
-    R=$(act "$ID1" state "$T6")
-    expect "sweeps nothing, however idle everyone is" '"state":"open"' "$R"
-    setting tournament_sweep_secs 0
-    R=$(hellot "$ID2")
-    expect "and the request past the gate" '"ok":true' "$R"
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=tourney&tid=$T6")
-    expect "is the one that ends it" '"state":"abandoned"' "$R"
-    setting tournament_idle_ttl 180
-    setting tournament_sweep_secs 30
-    setting tournament_create_cooldown 10
 fi
 
 # The match neither player can connect. Presence cannot see this one - both
@@ -401,7 +328,6 @@ fi
 # other deadline here is, and the pair never calls start.php - which is
 # exactly the condition being tested.
 if [ "$ADMIN" -eq 1 ]; then
-    setting tournament_create_cooldown 0
     R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
     T7=$(tfield "$R" tid)
     C7=$(tfield "$R" code)

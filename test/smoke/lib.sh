@@ -196,4 +196,59 @@ fi
 if [ "$ADMIN" -eq 1 ]; then
     setting friend_rate_interval 0
     setting friend_rate_burst 1000000
+    # The tournament sweep gate is an apcu_add with the setting as its TTL,
+    # and apcu_add never renews a key that exists. With the default 30 s every
+    # part below re-takes it at some unknowable moment, and 09_sweep.sh's
+    # gate test - which needs the gate HELD across its own few requests -
+    # passes or fails on where that expiry happens to fall. So the first
+    # client request of the run takes it for longer than any run lasts, and
+    # 09 finds it held. 09 sets the gap to 0 wherever it wants a sweep, which
+    # bypasses the key, and puts the default back at its end.
+    setting tournament_sweep_secs 900
 fi
+
+# ---- helpers more than one part uses -------------------------------------
+# A part has to be able to run without the parts before it (the remote run
+# groups them), so anything two parts share is defined here, once.
+
+# A start carries a sync proof (pts) in server-clock ms. Rather than read
+# /api/time.php for every one, learn the client<->server skew ONCE and then
+# compute pts locally - the server tolerates minutes of drift, so second
+# resolution is ample. (The pts logic itself is exercised in unit.php.)
+# Millisecond-resolution local clock; the round-trip latency biases SKEW
+# slightly negative, so a computed pts lands just in the PAST - never the
+# future the sync gate rejects.
+_srv_ms=$(curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2)
+SKEW=$(( _srv_ms - $(date +%s%3N) ))
+now_ms() { echo $(( $(date +%s%3N) + SKEW )); }
+start_req_private() { # id peer epoch reason pts
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5,\"duel_private\":true}" \
+        "$BASE/api/start.php"
+}
+start_req() { # id peer epoch reason pts
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5}" \
+        "$BASE/api/start.php"
+}
+
+tourney() { # tourney <json-body> : POST to api/tournament.php, print the body
+    curl -s -X POST -H 'Content-Type: application/json' -d "$1" "$BASE/api/tournament.php"
+}
+tcode() { # like tourney, but prints the HTTP status instead
+    curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+        -d "$1" "$BASE/api/tournament.php"
+}
+# A no-match grep exits 1, which would abort the run under `set -e` instead of
+# failing an assertion - so the extractor swallows it (see 05_items.sh).
+tfield() { echo "$1" | grep -oE "\"$2\":\"[0-9A-Za-z]+\"" | head -1 | cut -d'"' -f4 || true; }
+act() { # act <id> <action> <tid>
+    tourney "{\"id\":\"$1\",\"action\":\"$2\",\"tid\":\"$3\"}"
+}
+result() { # result <id> <tid> <nid> <outcome> <mine> <theirs>
+    tourney "{\"id\":\"$1\",\"action\":\"result\",\"tid\":\"$2\",\"nid\":\"$3\",\"outcome\":\"$4\",\"score\":[$5,$6]}"
+}
+hellot() { # hello asking for the lobbies announced on the caller's address
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\",\"tourneys\":true}" "$BASE/api/hello.php"
+}

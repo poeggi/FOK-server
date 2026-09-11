@@ -1,23 +1,5 @@
-# A start carries a sync proof (pts) in server-clock ms. Rather than read
-# /api/time.php for every one, learn the client<->server skew ONCE and then
-# compute pts locally - the server tolerates minutes of drift, so second
-# resolution is ample. (The pts logic itself is exercised in unit.php.)
-# Millisecond-resolution local clock; the round-trip latency biases SKEW
-# slightly negative, so a computed pts lands just in the PAST - never the
-# future the sync gate rejects.
-_srv_ms=$(curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2)
-SKEW=$(( _srv_ms - $(date +%s%3N) ))
-now_ms() { echo $(( $(date +%s%3N) + SKEW )); }
-start_req_private() { # id peer epoch reason pts
-    curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5,\"duel_private\":true}" \
-        "$BASE/api/start.php"
-}
-start_req() { # id peer epoch reason pts
-    curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5}" \
-        "$BASE/api/start.php"
-}
+# The clock skew and the start helpers live in lib.sh: 05_items.sh needs
+# them too, and a part must be able to run without the ones before it.
 
 # Both peers request the start near-simultaneously, like real clients.
 # Wait ONLY for the two curls - a bare wait would also wait for the
@@ -128,12 +110,16 @@ R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID1&peer=$ID
 expect "relay does not echo to sender" '204' "$R"
 curl -s "$BASE/api/relay.php?id=$ID2&peer=$ID1" > /dev/null
 
-# Long-poll times out to 204 and actually holds the request.
-T0=$(date +%s)
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1&wait=2")
-T1=$(date +%s)
-expect "relay long-poll times out to 204" '204' "$R"
-if [ $((T1 - T0)) -ge 1 ]; then echo "ok   relay long-poll held the request"; else echo "FAIL relay long-poll returned too fast"; fail=1; fi
+# Long-poll times out to 204 and actually holds the request. Local only:
+# the hold loop is the same code everywhere, and the host's tolerance for a
+# held request is proven by the 9 s poll cap test.
+if [ "$REMOTE" -eq 0 ]; then
+    T0=$(date +%s)
+    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2&peer=$ID1&wait=2")
+    T1=$(date +%s)
+    expect "relay long-poll times out to 204" '204' "$R"
+    if [ $((T1 - T0)) -ge 1 ]; then echo "ok   relay long-poll held the request"; else echo "FAIL relay long-poll returned too fast"; fail=1; fi
+fi
 
 # =====================================================================
 # Connection edge cases. An invite or a relayed connection must ALWAYS

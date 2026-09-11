@@ -305,13 +305,17 @@ else
     # client's own next report is what settles it again.
     R=$(curl -s "$BASE/api/poll.php?id=$ID1&db=1&wait=3")
     expect "a poll reporting a stale debug state is answered at once" '"debug":false' "$R"
-    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&db=1&wait=1")
-    expect "but a standing disagreement is not answered twice" '204' "$R"
+    if [ "$REMOTE" -eq 0 ]; then
+        R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&db=1&wait=1")
+        expect "but a standing disagreement is not answered twice" '204' "$R"
+    fi
     curl -s "$BASE/api/poll.php?id=$ID1&db=0" > /dev/null
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=users")
     expect "and the poll carries the client's report back" '"debug":false,"debug_active":false' "$R"
-    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&db=0&wait=1")
-    expect "an agreeing report holds as any other poll does" '204' "$R"
+    if [ "$REMOTE" -eq 0 ]; then
+        R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&db=0&wait=1")
+        expect "an agreeing report holds as any other poll does" '204' "$R"
+    fi
 
     # Client details popup: one condensed view of everything about an id.
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=client&id=$ID1")
@@ -597,6 +601,14 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
     expect "the tournament cap answers its own default" \
         "\"key\":\"tournament_max_players\",\"value\":$D,\"default\":$D" "$R"
+    # The friend-request throttle lib.sh switched off for the whole suite
+    # goes back to its defaults the same way, or a persistent install keeps
+    # two override rows and its anti-probe guard stays off between runs.
+    setting friend_rate_interval 1
+    setting friend_rate_burst 10
+    setting tournament_sweep_secs 30
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
+    expect "and so does the friend-request throttle" '"key":"friend_rate_burst","value":10,"default":10' "$R"
 
     if [ "$REMOTE" -eq 1 ]; then
         # Remove this run's test data from the remote instance.
@@ -606,7 +618,8 @@ else
         done
         curl -s -X POST -H 'Content-Type: application/json' \
             -d "{\"id\":\"$ID1\",\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php" > /dev/null
-        for pid in "$ID1" "$ID2" "$ID3" "$ID4"; do
+        # EXTRA_IDS is what the parallel groups used (see test/smoke.sh).
+        for pid in "$ID1" "$ID2" "$ID3" "$ID4" ${EXTRA_IDS:-}; do
             curl -s -b "$COOKIES" -X POST -d "id=$pid" "$BASE/admin/api.php?action=delete_player" > /dev/null
         done
         curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_seen" > /dev/null

@@ -183,11 +183,16 @@ T1=$(date +%s)
 expect "long poll returns pending signal" '"type":"ice"' "$R"
 if [ $((T1 - T0)) -le 1 ]; then echo "ok   long poll answers immediately"; else echo "FAIL long poll took $((T1 - T0))s with pending signal"; fail=1; fi
 
-T0=$(date +%s)
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID2&wait=2")
-T1=$(date +%s)
-expect "long poll times out to 204" '204' "$R"
-if [ $((T1 - T0)) -ge 1 ]; then echo "ok   long poll held the request"; else echo "FAIL long poll returned too fast ($((T1 - T0))s)"; fail=1; fi
+# Held to its deadline on purpose. What that proves is the hold loop, which
+# php -S proves identically; the one HOST property - a request may sit
+# for the whole cap - is the 9 s cap test, which stays on every run.
+if [ "$REMOTE" -eq 0 ]; then
+    T0=$(date +%s)
+    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID2&wait=2")
+    T1=$(date +%s)
+    expect "long poll times out to 204" '204' "$R"
+    if [ $((T1 - T0)) -ge 1 ]; then echo "ok   long poll held the request"; else echo "FAIL long poll returned too fast ($((T1 - T0))s)"; fail=1; fi
+fi
 
 # A duel is stated per player: each peer announces itself, so one peer having
 # said so counts one. The figure is cached, and every edge drops that cache -
@@ -298,8 +303,10 @@ R=$(curl -s "$BASE/api/poll.php?id=$ID1&de=nonsense")
 expect "a bogus duel end is refused" '"error":"invalid de"' "$R"
 R=$(curl -s "$BASE/api/poll.php?id=$ID1&db=nonsense")
 expect "a bogus debug report is refused" '"error":"invalid db"' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&wait=1")
-expect "a poll asking for none of them still answers 204" '204' "$R"
+if [ "$REMOTE" -eq 0 ]; then
+    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1&wait=1")
+    expect "a poll asking for none of them still answers 204" '204' "$R"
+fi
 # The contract promises any hold up to 9 s (the default ask is 5): a longer
 # ask is served as the cap, measured in whole seconds with room on each side.
 T0=$(date +%s)
