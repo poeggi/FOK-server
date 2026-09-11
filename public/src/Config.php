@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.13.3';
+const FOK_SERVER_VERSION = '1.13.4';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -141,16 +141,11 @@ define('FOK_APCU_NS', FOK_ENV === 'staging' ? 'fok:stg:' : 'fok:');
 // .htaccess (written by Db::get, the same line src/.htaccess carries)
 // keeps Apache from serving: fok-server-data/ for live, and beside it
 // fok-server-data-staging/ for staging, whose docroot is the staging/
-// subdirectory. The deploy never touches either. An install whose data
-// still sits beside the docroot is read from there until it is moved.
+// subdirectory. The deploy never touches either.
 // FOK_DATA_DIR env var overrides the location (used by the test suite).
-define('FOK_DATA_DIR', getenv('FOK_DATA_DIR') ?: (function (): string {
-    $name = FOK_ENV === 'staging' ? 'fok-server-data-staging' : 'fok-server-data';
-    $live = FOK_ENV === 'staging' ? dirname(FOK_DOCROOT) : FOK_DOCROOT;
-    $dir = $live . '/' . $name;
-    $beside = dirname($live) . '/' . $name;
-    return !is_dir($dir) && is_dir($beside) ? $beside : $dir;
-})());
+define('FOK_DATA_DIR', getenv('FOK_DATA_DIR') ?: (FOK_ENV === 'staging'
+    ? dirname(FOK_DOCROOT) . '/fok-server-data-staging'
+    : FOK_DOCROOT . '/fok-server-data'));
 define('FOK_DB_FILE', FOK_DATA_DIR . '/fok.db');
 define('FOK_ADMIN_HASH_FILE', FOK_DATA_DIR . '/admin.hash');
 define('FOK_BACKUP_DIR', FOK_DATA_DIR . '/backups');
