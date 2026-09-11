@@ -1551,6 +1551,11 @@ final class Tournament
             // of its rounds fast would then need no new field.
             'speed' => self::isSpeed($t),
             'stakes' => $t['stakes'],
+            // The event this tournament belongs to, null outside one - as the
+            // lobby projection has always carried it, and as the contract
+            // promised of this sheet: a monitor routes the sheet by it,
+            // holding no tid of its own to match against.
+            'eid' => $t['eid'] ?? null,
             'players' => [$a, $b],
             'feeder' => $a,
             'primaries' => array_slice($spectators, 0, 2),
@@ -1629,6 +1634,7 @@ final class Tournament
             self::event($t, [
                 'event' => 'roles-patch',
                 'nid' => $nid,
+                'eid' => $t['eid'] ?? null,
                 'primaries' => array_slice($spectators, 0, 2),
                 'secondaries' => array_slice($spectators, 2),
             ] + (isset($roles['monitor']) ? ['monitor' => $roles['monitor']] : []));

@@ -2449,14 +2449,14 @@ payload carries `tid`.
                   players:[{id,name}], reason?}
                  someone joined or left; `reason` explains an abandon
     roles        {event, tid, round, stage, match, of, nid, hm, lvl,
-                  speed, stakes, players, feeder, primaries, secondaries,
-                  names, you, monitor?}
+                  speed, stakes, eid, players, feeder, primaries,
+                  secondaries, names, you, monitor?}
                  a match is up. `match`/`of` are its 1-based position in
                  the stage. `you` differs per recipient. `monitor` (4.14)
                  is the event's monitor holder when this is an event
                  tournament and somebody holds the slot, and ABSENT
                  otherwise - see The monitor as a spectator.
-    roles-patch  {event, tid, nid, primaries, secondaries, monitor?}
+    roles-patch  {event, tid, nid, eid, primaries, secondaries, monitor?}
                  the spectator tree changed; the match is unaffected
     standings    {event, tid, rows:[{seat,id,pts,diff,rank,adv}],
                   advancers:[id, ...]}

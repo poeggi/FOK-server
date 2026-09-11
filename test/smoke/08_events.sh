@@ -390,6 +390,7 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID3\"}" "
 expect "the screen is dealt the roles sheet with the players" 'event\":\"roles' "$R"
 expect "which names the screen as the monitor" "\\\"monitor\\\":\\\"$ID3\\\"" "$R"
 expect "with no seat of its own" 'you\":\"idle' "$R"
+expect "and the event it belongs to, which is how a screen routes it" "\\\"eid\\\":\\\"$EID4\\\"" "$R"
 expect "and nothing to wait for before it asks" 'after_ms\":0' "$R"
 refute "while it is in none of the sheet's lists" "\\\"players\\\":[\\\"$ID3" "$R"
 R=$(evact "$ID3" monitor "$EID4")
