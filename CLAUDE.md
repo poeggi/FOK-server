@@ -134,9 +134,14 @@ endpoint - it is the contract the FOK-snake client is built against.
 
 Update all four together or CI/state drifts: the endpoint, docs/API.md,
 README.md's sketch, and the tests (test/unit.php for logic,
-test/smoke.sh for the HTTP behavior - a thin runner that sources the
-feature parts in test/smoke/*.sh in order; add HTTP tests to the matching
-part, they share one server and run top to bottom).
+test/smoke.sh for the HTTP behavior - a runner that sources the feature
+parts in test/smoke/*.sh. Locally they run in order against one php -S;
+against staging they run as THREE PARALLEL GROUPS that share nothing -
+not an id, not a settings key they change - followed by 09_sweep and
+06_admin in sequence. Add an HTTP test to the matching part; a NEW part
+must be placed in a group whose ids and settings it does not touch, and
+anything the tail reads from it goes through the env hand-off in
+smoke.sh. Helpers used by more than one part live in lib.sh).
 
 ## Workflow
 

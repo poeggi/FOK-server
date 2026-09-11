@@ -517,9 +517,12 @@ only with a new reason.
 SHIPPED. Steps 1 to 7 went out as 1.10.0 (2026-09-10, API 4.11, schema
 44/45), and 1.11.0 shortened the printed key to 11 characters so the
 poster is readable by the game's own scanner (API 4.12, and `join` takes
-the scanned code with no eid beside it). Live and staging answer 1.11.2 /
-4.12. The steps are kept below as the record of what was built and in what
-order. STEP 8 IS OUTSTANDING and is FOK-snake's own work.
+the scanned code with no eid beside it). 4.13 (1.12.0) let the printed key
+join an event that has not started; 4.14 (1.13.0) named the monitor on the
+roles sheet and put it in the tournament's audience. The steps are kept
+below as the record of what was built and in what order. STEP 8, the
+client half, SHIPPED as FOK-snake 4.4.24 through 4.4.36 on 2026-09-10 and
+2026-09-11; nothing in it is outstanding.
 
 1. CONTRACT FIRST. docs/API.md: a new "Events" section (identifiers, the
    URL shape and its 53-byte budget, the door and the two waits, join/

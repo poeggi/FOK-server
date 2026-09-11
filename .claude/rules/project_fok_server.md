@@ -94,17 +94,24 @@ Three traps that cost whole sessions:
    from a green pre-commit hook.
 2. The staging smoke runs against a PERSISTENT staging DB, so tests
    depending on accumulated rows can fail there and nowhere else.
-3. TWO PUSHES INSIDE alert_cooldown (900 s) FAIL THE SECOND ONE'S SMOKE.
-   The six admin assertions of the shape "this condition gets logged"
-   (bogus, friend-spam, the four item verdicts) each need Alerts::raise
-   to write a row, and its de-duplication gate is an APCu key per TYPE -
+3. TWO PUSHES INSIDE alert_cooldown FAIL THE SECOND ONE'S SMOKE. The six
+   admin assertions of the shape "this condition gets logged" (bogus,
+   friend-spam, the four item verdicts) each need Alerts::raise to write
+   a row, and its de-duplication gate is an APCu key per TYPE -
    `apcu_add(alert:<type>, ttl = alert_cooldown)`, deliberately NOT the
    alerts table, so clearing alerts does not reset it and staging keeps
    it across a deploy. The second run's raises are suppressed, nothing is
    there to assert, and live stays pinned at the previous release (trap 1).
-   Seen on 2026-09-10, two pushes 14 minutes apart. It is not flaky and
-   not a regression: wait out the window and re-run the failed job
-   (POST actions/runs/<id>/rerun-failed-jobs), which is what fixed it.
+   It is not flaky and not a regression: wait out the window and re-run
+   the failed job (POST actions/runs/<id>/rerun-failed-jobs).
+   THE WINDOW IS 60 s since 1.13.2 (it was 900 s, and cost a release on
+   2026-09-10 and again on 2026-09-11 - two pushes 14 and 10 minutes
+   apart). The number is an operator's re-notification cadence, not a
+   system constant: one row per condition per window on the dashboard,
+   and the same key will one day stand between an incident and a phone.
+   The user set it to a minute deliberately. It is a SETTING, so an
+   install that ever wrote the key from the config card keeps its own
+   value; check the card after a deploy.
 
 ## Host facts (shared hosting, PHP fpm-fcgi)
 

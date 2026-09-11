@@ -61,6 +61,15 @@ Reading caveats:
   Holds 4: 129. Holds 6: 134. Holds 9: 129, then 1 on the repeat. A HELD
   POLL is therefore what provokes it: it occupies a child for its whole
   wait, so it is the thing that raises the mark.
+- OPEN, 2026-09-11: the fork explanation does NOT cover every ~130 ms
+  row. The operator's idle laptop produces them two minutes apart on an
+  idle server, depth 1, and the Worker column says REUSED - which a fresh
+  fork cannot read as, the mark being pid plus kernel start time. The
+  number is constant (129-134), which also rules out a deferred tail or
+  any contention (those vary). It is unexplained and is a PRIORITY TODO
+  in CLAUDE.local.md: investigate with a cross-repo audit and a local
+  simulation of server and client, do not theorise. Do not quote this
+  paragraph as the answer to a reused row.
 - Which request pays the fork is an accident of arrival order, so the
   SCRIPT on such a row says nothing about that script. A screen that puts
   one request beside the poll it holds is simply where a session first

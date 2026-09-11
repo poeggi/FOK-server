@@ -66,7 +66,7 @@ final class Settings
         'alert_load_per_core' => [2, 'Alert: 1-minute load per CPU core above'],
         'alert_online' => [200, 'Alert: concurrent online players above'],
         'alert_invalid_per_min' => [30, 'Alert: invalid requests per IP per minute above'],
-        'alert_cooldown' => [900, 'Alert de-duplication window (seconds)'],
+        'alert_cooldown' => [60, 'Alert de-duplication window (seconds)'],
         'alert_ttl_days' => [30, 'Remove alerts that have been read after N days (0 = never)'],
         // Item registry (see Items, Ledger). match_open_max_ms is the grace a
         // claim gets AFTER its duel stops reporting in - the window while the
