@@ -17,9 +17,10 @@ require_once __DIR__ . '/../src/Qr.php';
  *
  * It is drawn in the GAME's own typeface (Press Start 2P, the face FOK-snake
  * sets its menus in), because the poster is the first thing a player sees of
- * the event and it should look like the thing it lets them into. The face is
- * used where it reads at a glance - the name, the code, the labels - and not
- * for the description, which is prose and would be punishing in it.
+ * the event and it should look like the thing it lets them into. The
+ * description is set in it too: it is the room's motto, the one line the
+ * game's own event screen draws in that face, so the poster says it the
+ * same way - and a long one steps down and is cut on a line, never mid-glyph.
  */
 header('Cache-Control: no-store');
 Auth::startSession();
@@ -73,16 +74,16 @@ $asset = '../assets/PressStart2P-Regular.woff2?v=' . FOK_SERVER_VERSION;
     --line: #d5dae0;
     --accent: #12894b;
     --snake: #7fff7f;
-    --apple: #ff5f56;
 }
+/* The dark paper IS the title block's black, so the block dissolves into the
+   sheet and one black stands behind the wordmark. */
 html.dark {
     --ink: #e6edf3;
     --ink-soft: #8b98a5;
-    --paper: #0d1117;
+    --paper: #0b0f14;
     --line: #2a3442;
     --accent: #3ddc84;
     --snake: #7fff7f;
-    --apple: #ff5f56;
 }
 
 * { box-sizing: border-box; }
@@ -111,7 +112,13 @@ body {
     box-shadow: 0 2px 18px rgba(0,0,0,0.45);
 }
 
-.pixel { font-family: 'Press Start 2P', 'Courier New', monospace; }
+/* The face has no emoji, so one in a name or a motto falls through to the
+   platform's own emoji face - named, so the fallback is the same face on
+   every machine the poster is opened on. */
+.pixel {
+    font-family: 'Press Start 2P', 'Segoe UI Emoji', 'Apple Color Emoji',
+        'Noto Color Emoji', 'Courier New', monospace;
+}
 
 .titleblock {
     width: 100%; padding: 7mm 6mm 6mm; margin-bottom: 6mm;
@@ -126,22 +133,27 @@ body {
     color: #4a7a4a; white-space: pre; text-shadow: 0 0 0.3mm #4a7a4a;
 }
 h1 {
-    margin: 0; font-size: 8mm; line-height: 1.35;
+    margin: 0; font-size: 9.5mm; line-height: 1.35;
     text-wrap: balance; overflow-wrap: anywhere;
 }
-/* A long name would push the QR off the page, so it steps down instead. */
-h1.long { font-size: 6mm; }
-h1.longer { font-size: 4.6mm; }
+/* A long name would push the QR off the page, so it steps down instead. The
+   face is a square em, so 18 characters at 9.5mm is one line of the 174mm
+   the sheet has and the two longer tiers each wrap to two. */
+h1.long { font-size: 7mm; }
+h1.longer { font-size: 5.4mm; }
 
+/* The motto sits close under the name, as the game's event screen puts it.
+   The face is a square em, so a tier is a character count per line times a
+   line count, and the cut is on a LINE (line-clamp), never through a glyph:
+   3 lines of 30 at 4.6mm, 5 of 46 at 3mm, 7 of 60 at 2.4mm. */
 .descr {
-    margin: 6mm auto 0; max-width: 140mm;
-    font-size: 4.2mm; line-height: 1.45; color: var(--ink-soft);
-    max-height: 22mm; overflow: hidden;
+    margin: 3mm auto 0; max-width: 140mm;
+    font-size: 4.6mm; line-height: 1.5; color: var(--ink-soft);
+    display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
+    -webkit-line-clamp: 3; line-clamp: 3;
 }
-/* 500 characters is what the field takes, so prose steps down the way the
-   name does rather than pushing the QR off the sheet. */
-.descr.long { font-size: 3.6mm; }
-.descr.longer { font-size: 3.1mm; }
+.descr.long { font-size: 3mm; -webkit-line-clamp: 5; line-clamp: 5; }
+.descr.longer { font-size: 2.4mm; -webkit-line-clamp: 7; line-clamp: 7; }
 .when {
     margin: 5mm 0 0; font-size: 3.2mm; letter-spacing: 0.08em;
     color: var(--ink-soft);
@@ -165,7 +177,9 @@ html.dark .qr { box-shadow: 0 0 0 0.8mm var(--accent); }
     color: var(--ink); word-break: break-all;
 }
 .how { margin: 4mm 0 0; font-size: 3.6mm; color: var(--ink-soft); }
-.snake { display: block; width: 62mm; max-width: 100%; margin: 7mm auto 0; }
+/* The box is wider than the snake so its glow has room; the snake itself is
+   the same 62mm it always was. */
+.snake { display: block; width: 68mm; max-width: 100%; margin: 7mm auto 0; }
 
 .foot {
     margin-top: auto; padding-top: 6mm; width: 100%;
@@ -220,7 +234,7 @@ $dsize = strlen($descr) > 220 ? ' longer' : (strlen($descr) > 90 ? ' long' : '')
     <h1 class="pixel<?= $size ?>"><?= $e($name) ?></h1>
 
     <?php if ($descr !== ''): ?>
-        <p class="descr<?= $dsize ?>"><?= $e($descr) ?></p>
+        <p class="descr pixel<?= $dsize ?>"><?= $e($descr) ?></p>
     <?php endif; ?>
 
     <?php if ($card['starts'] !== null || $card['ends'] !== null): ?>
@@ -241,10 +255,42 @@ $dsize = strlen($descr) > 220 ? ' longer' : (strlen($descr) > 90 ? ' long' : '')
     <!-- The snake as the game draws it (js/render.js drawSnakeG): a
          20-unit grid, 18x18 segments inset by 1 so the cells stay
          separate, the body darkening towards the tail, the head
-         brighter and rounder with its two eyes. -->
-    <svg class="snake" viewBox="-2 -5 284 108"
-         role="img" aria-label="A snake, chasing an apple">
-        <g>
+         brighter and rounder with its two eyes, and the whole of it lit
+         the way the wordmark is. Ahead of it the gem as drawGem draws
+         the plain one: a cyan diamond, white at the tip, in its halo.
+         The box is the grid plus room for the glow on every side. -->
+    <svg class="snake" viewBox="-14 -5 310 108"
+         role="img" aria-label="A snake, chasing a gem">
+        <defs>
+            <filter id="snakeglow" x="-15%" y="-40%" width="130%" height="180%">
+                <feGaussianBlur in="SourceAlpha" stdDeviation="4" result="b"/>
+                <feFlood flood-color="#7fff7f" flood-opacity="0.9"/>
+                <feComposite in2="b" operator="in" result="g"/>
+                <feMerge>
+                    <feMergeNode in="g"/><feMergeNode in="g"/>
+                    <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+            </filter>
+            <filter id="gemglow" x="-150%" y="-100%" width="400%" height="300%">
+                <feGaussianBlur in="SourceAlpha" stdDeviation="3.5" result="b"/>
+                <feFlood flood-color="#00ffff" flood-opacity="0.9"/>
+                <feComposite in2="b" operator="in" result="g"/>
+                <feMerge>
+                    <feMergeNode in="g"/><feMergeNode in="g"/>
+                    <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+            </filter>
+            <linearGradient id="gemfill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#ffffff"/>
+                <stop offset="0.35" stop-color="#00ffff"/>
+                <stop offset="1" stop-color="#006688"/>
+            </linearGradient>
+            <radialGradient id="gemhalo">
+                <stop offset="0" stop-color="#00ffff" stop-opacity="0.35"/>
+                <stop offset="1" stop-color="#00ffff" stop-opacity="0"/>
+            </radialGradient>
+        </defs>
+        <g filter="url(#snakeglow)">
             <rect x="1" y="61" width="18" height="18" rx="3" fill="hsl(120,65%,22%)"></rect>
             <rect x="21" y="61" width="18" height="18" rx="3" fill="hsl(120,65%,23%)"></rect>
             <rect x="41" y="61" width="18" height="18" rx="3" fill="hsl(120,65%,24%)"></rect>
@@ -263,9 +309,10 @@ $dsize = strlen($descr) > 220 ? ' longer' : (strlen($descr) > 90 ? ' long' : '')
             <rect x="221" y="61" width="18" height="18" rx="5" fill="var(--snake)"></rect>
             <rect x="234" y="63" width="3" height="3" fill="#001500"></rect>
             <rect x="234" y="74" width="3" height="3" fill="#001500"></rect>
-            <rect x="261" y="61" width="18" height="18" rx="5" fill="var(--apple)"></rect>
-            <rect x="269" y="56" width="2" height="6" fill="#2f7d2f"></rect>
         </g>
+        <circle cx="270" cy="70" r="20" fill="url(#gemhalo)"></circle>
+        <polygon points="270,61 275.9,70 270,79 264.1,70" fill="url(#gemfill)"
+                 filter="url(#gemglow)"></polygon>
     </svg>
 
     <div class="foot pixel">
