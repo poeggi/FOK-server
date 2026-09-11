@@ -26,6 +26,14 @@ group() { # group <name> <id1> <id2> <id3> <id4> <part>...
             source "test/smoke/$p.sh"
         done
         echo "$fail" > "$DATA/fail.$name"
+        # What the tail reads back from this group: the debug pin 02 minted,
+        # the two frozen instances 05 left and whose they are. Only what is
+        # set, so sourcing every group's file clobbers nothing.
+        {
+            [ -n "${DPIN:-}" ] && echo "DPIN=$DPIN"
+            [ -n "${U4:-}" ] && echo "U4=$U4 U5=${U5:-} ITEM_A=$ID1 ITEM_B=$ID2"
+            true
+        } > "$DATA/env.$name"
     ) > "$DATA/out.$name" 2>&1 &
     GPID=$!
 }
@@ -56,6 +64,8 @@ if [ "$REMOTE" -eq 1 ] && [ -z "${SMOKE_SEQUENTIAL:-}" ]; then
     wait "$P_CORE" "$P_ITEMS" "$P_TOURNEY" || true
     for g in core items tourney; do
         cat "$DATA/out.$g"
+        # shellcheck disable=SC1090
+        [ -s "$DATA/env.$g" ] && source "$DATA/env.$g"
         # A group that died before writing its count failed.
         gf=$(cat "$DATA/fail.$g" 2>/dev/null || echo 1)
         if [ "$gf" -ne 0 ]; then fail=1; fi

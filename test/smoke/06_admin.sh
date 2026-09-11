@@ -162,28 +162,30 @@ else
 
     # A freeze is terminal until somebody decides, so the card that lists the
     # frozen instances is also where they are settled. 05_items.sh left two:
+    # 05_items.sh ran these as ITEM_A/ITEM_B - its own ids on a parallel run
+    # (see test/smoke.sh), ID1/ID2 on a sequential one.
     # U4 frozen on a forged attestation, U5 on contradictory claims.
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item&uid=$U4")
     expect "one instance reads back in full" "\"uid\":\"$U4\"" "$R"
     expect "with the verdict that froze it" '"frozen_why":"tag_invalid"' "$R"
-    expect "and who was holding it" "\"owner\":\"$ID1\"" "$R"
+    expect "and who was holding it" "\"owner\":\"${ITEM_A:-$ID1}\"" "$R"
     expect "and what the ledger still has on it" '"kind":"mint"' "$R"
     expect "with the names those ids resolve to" '"names":' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item&uid=nothex")
     expect "a malformed uid is rejected" '"error":"invalid uid"' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item&uid=00000000000000000000000000000000")
     expect "a uid the registry never minted is a 404" '"error":"unknown item"' "$R"
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item_resolve&uid=$U4&to=$ID2")
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item_resolve&uid=$U4&to=${ITEM_B:-$ID2}")
     expect "resolving via GET rejected" '"error":"POST only"' "$R"
     R=$(curl -s -b "$COOKIES" -X POST -d "uid=$U4&to=nothex" "$BASE/admin/api.php?action=item_resolve")
     expect "resolving to a malformed id is rejected" '"error":"invalid id"' "$R"
-    R=$(curl -s -b "$COOKIES" -X POST -d "uid=$U4&to=$ID2" "$BASE/admin/api.php?action=item_resolve")
+    R=$(curl -s -b "$COOKIES" -X POST -d "uid=$U4&to=${ITEM_B:-$ID2}" "$BASE/admin/api.php?action=item_resolve")
     expect "an operator hands the frozen instance to a player" '"ok":true' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=item&uid=$U4")
     expect "which takes it out of the frozen state" '"frozen":false' "$R"
-    expect "and gives it to who was named" "\"owner\":\"$ID2\"" "$R"
+    expect "and gives it to who was named" "\"owner\":\"${ITEM_B:-$ID2}\"" "$R"
     expect "recording the verdict in the ledger" '"kind":"resolve"' "$R"
-    R=$(curl -s -b "$COOKIES" -X POST -d "uid=$U4&to=$ID1" "$BASE/admin/api.php?action=item_resolve")
+    R=$(curl -s -b "$COOKIES" -X POST -d "uid=$U4&to=${ITEM_A:-$ID1}" "$BASE/admin/api.php?action=item_resolve")
     expect "an instance back in play cannot be resolved again" '"error":"not a frozen instance"' "$R"
     R=$(curl -s -b "$COOKIES" -X POST -d "uid=$U5" "$BASE/admin/api.php?action=item_resolve")
     expect "naming nobody drops the instance instead" '"ok":true' "$R"
@@ -195,11 +197,11 @@ else
     # The findings behind the tally. Both instances above have just left the
     # frozen state - U4 handed to a player, U5 dropped - so this is also the
     # proof that a finding outlives what it was found on.
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=$ID2")
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=${ITEM_B:-$ID2}")
     expect "a player's findings read back" '"why":"tag_invalid"' "$R"
     expect "naming the instance the verdict was reached on" "\"uid\":\"$U4\"" "$R"
     expect "and it survives the instance being released" '"state":"released"' "$R"
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=$ID1")
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=${ITEM_A:-$ID1}")
     expect "the other verdict is recorded against the other player" '"why":"contradiction"' "$R"
     expect "and survives the instance being dropped entirely" '"state":"gone"' "$R"
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=nothex")
@@ -209,16 +211,16 @@ else
 
     # Reviewing is the operator saying it has been read: it clears the queue
     # and moves nothing else.
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes_review&id=$ID2")
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes_review&id=${ITEM_B:-$ID2}")
     expect "reviewing via GET rejected" '"error":"POST only"' "$R"
-    R=$(curl -s -b "$COOKIES" -X POST -d "id=$ID2" "$BASE/admin/api.php?action=disputes_review")
+    R=$(curl -s -b "$COOKIES" -X POST -d "id=${ITEM_B:-$ID2}" "$BASE/admin/api.php?action=disputes_review")
     expect "an operator marks a player's findings reviewed" '"ok":true' "$R"
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=$ID2")
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=disputes&id=${ITEM_B:-$ID2}")
     expect "the tally itself never moves backwards" "$(strict '"disputed":1')" "$R"
     expect "only the reviewed mark catches up to it" "$(strict '"reviewed":1')" "$R"
-    R=$(curl -s -b "$COOKIES" -X POST -d "id=$ID2" "$BASE/admin/api.php?action=disputes_review")
+    R=$(curl -s -b "$COOKIES" -X POST -d "id=${ITEM_B:-$ID2}" "$BASE/admin/api.php?action=disputes_review")
     expect "a second review has nothing left to do" '"error":"nothing to review"' "$R"
-    curl -s -b "$COOKIES" -X POST -d "id=$ID1" "$BASE/admin/api.php?action=disputes_review" > /dev/null
+    curl -s -b "$COOKIES" -X POST -d "id=${ITEM_A:-$ID1}" "$BASE/admin/api.php?action=disputes_review" > /dev/null
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=items")
     expect "and a reviewed queue is an empty one" "$(strict '"disputed":[]')" "$R"
 
