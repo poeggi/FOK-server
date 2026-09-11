@@ -99,6 +99,17 @@ lower bound). api/t.txt is a STATIC file stamped by mod_headers %t so it
 never queues for a worker. Output is BUFFERED (~64KB), so no SSE -
 project_fok_server_streaming.md.
 
+The FTP login is JAILED IN THE DOCROOT: `..` is the docroot itself, so
+nothing beside it can be listed, uploaded or renamed over FTP. Anything
+above the docroot is reached only by PHP, which runs as the account owner
+and owns every file - the one-time maintenance script in CLAUDE.md is the
+tool (a rename of a directory took under a millisecond). The docroot's
+parent is the MAIN DOMAIN'S docroot, so a sibling directory is
+web-reachable there, and the app itself answers under a second origin
+(www.<main domain>/fok-server/). That is why the data dirs live INSIDE
+the docroot behind their own .htaccess (1.13.3): a location the code can
+shield beats one it cannot see.
+
 ## Ephemeral state lives in APCu
 
 SQLite has ONE writer and that writer, not CPU, is the ceiling - so:
