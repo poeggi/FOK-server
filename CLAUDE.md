@@ -18,8 +18,10 @@ The measurements and decisions behind the rules below are in
   machine only.
 - Every PHP file starts with declare(strict_types=1) (CI enforces).
 - LF line endings; PowerShell scripts are the only CRLF exception.
-- Runtime data (SQLite db, admin.hash, backups) lives ABOVE the docroot
-  in ../fok-server-data/, never under public/.
+- Runtime data (SQLite db, admin.hash, backups) lives in fok-server-data/
+  INSIDE the live docroot (staging: fok-server-data-staging/ beside it),
+  shielded by the .htaccess Db::get writes there. Never under public/ in
+  the repo, and the deploy never touches it.
 
 ## Architecture invariants
 

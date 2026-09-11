@@ -6,9 +6,9 @@ require_once __DIR__ . '/Config.php';
 /**
  * Reader for the server error log (the file error_log is pinned to in
  * Config.php). Admin-only, surfaced in the dashboard Logs tab. PHP writes
- * this file in the data dir, which is above the docroot and so neither
- * web-served nor reachable over FTP - the admin UI is the only way to read
- * it. Only the tail is read, so a long-lived unrotated log never loads whole.
+ * this file in the data dir, which is neither web-served nor reachable
+ * over FTP - the admin UI is the only way to read it. Only the tail is
+ * read, so a long-lived unrotated log never loads whole.
  */
 final class Logs
 {

@@ -212,8 +212,9 @@ Run the same checks before every commit via the hook (once per clone):
     git config core.hooksPath .githooks
 
 Runtime data (SQLite db, admin credential hash, backups) lives in
-../fok-server-data/ ABOVE the docroot, created by the server at first run.
-It is never web-accessible and never part of this repo.
+fok-server-data/ inside the docroot, created by the server at first run
+together with the .htaccess that denies every request to it. It is never
+part of this repo and the deploy never touches it.
 
 ## Local development and tests
 
@@ -235,8 +236,9 @@ The server is PRODUCTION: it must stay up, and update downtime is
 minimized by never deploying untested code to the live webroot. The
 staging environment is a full copy of the app in the staging/
 subdirectory of the live webroot (https://.../staging/) with its OWN
-database and admin hash (../fok-server-data-staging/); the code detects
-this via its directory name (FOK_ENV) and marks the admin UI (STAGING).
+database and admin hash (fok-server-data-staging/ beside the live
+fok-server-data/); the code detects this via its directory name (FOK_ENV)
+and marks the admin UI (STAGING).
 
 Deployment is CI/CD: every push to main runs this pipeline in GitHub
 Actions (.github/workflows/ci.yml), no exceptions and no manual steps:

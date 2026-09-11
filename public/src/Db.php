@@ -58,6 +58,12 @@ final class Db
             if (!is_dir(FOK_DATA_DIR)) {
                 mkdir(FOK_DATA_DIR, 0770, true);
             }
+            // The data dir sits in the docroot; this line is what keeps
+            // Apache from serving it, exactly as src/.htaccess does for the
+            // sources. php -S ignores it, like every .htaccess.
+            if (!is_file(FOK_DATA_DIR . '/.htaccess')) {
+                file_put_contents(FOK_DATA_DIR . '/.htaccess', "Require all denied\n");
+            }
             $pdo = new LoadPDO('sqlite:' . FOK_DB_FILE, null, null, [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,

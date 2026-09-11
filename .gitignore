@@ -1,5 +1,7 @@
-# Runtime data (lives above the docroot on the server, never in the repo)
+# Runtime data (a local php -S run without FOK_DATA_DIR creates it under
+# public/; never in the repo)
 fok-server-data/
+fok-server-data-staging/
 *.db
 *.db-wal
 *.db-shm

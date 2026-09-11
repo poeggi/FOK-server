@@ -134,6 +134,13 @@ ok(Util::ipNet('2a01:db8:1:2::1') !== Util::ipNet('2a01:db8:1:3::1'),
 ok(Util::ipNet('2a01:db8:1:2::1') !== Util::ipNet('1.2.3.4'),
     'and a v6 network is never a v4 address');
 
+// Db: the data dir sits in the docroot, so opening the database is what
+// shields it - the same line src/.htaccess carries.
+Db::get();
+ok(is_file($tmp . '/.htaccess'), 'the data dir carries a .htaccess');
+ok(file_get_contents($tmp . '/.htaccess') === file_get_contents(__DIR__ . '/../public/src/.htaccess'),
+    'and it is the src/ deny line');
+
 // Presence: registration and counting
 Presence::touch('aaaaaaaa', '1.2.3.4');
 Presence::touch('bbbbbbbb', '5.6.7.8');
@@ -3614,6 +3621,7 @@ foreach (glob($tmp . '/*') ?: [] as $f) {
         unlink($f);
     }
 }
+@unlink($tmp . '/.htaccess');
 @rmdir($tmp . '/backups');
 @rmdir($tmp);
 

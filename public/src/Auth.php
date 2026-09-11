@@ -9,7 +9,7 @@ require_once __DIR__ . '/Alerts.php';
 /**
  * Admin authentication. Credentials are NEVER stored in code or repo:
  * the server keeps only a password_hash() of "user:pass" in a file
- * above the docroot, written once during setup.
+ * in the data dir, written once during setup.
  */
 final class Auth
 {

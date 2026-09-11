@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.13.2';
+const FOK_SERVER_VERSION = '1.13.3';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -137,19 +137,28 @@ define('FOK_ENV', basename(FOK_DOCROOT) === 'staging' ? 'staging' : 'live');
 // environments sharing them would only ever confuse their own test clients.
 define('FOK_APCU_NS', FOK_ENV === 'staging' ? 'fok:stg:' : 'fok:');
 
-// Data lives ABOVE the (live) docroot so it is never web-accessible.
+// Data lives INSIDE the live docroot, in a directory of its own that a
+// .htaccess (written by Db::get, the same line src/.htaccess carries)
+// keeps Apache from serving: fok-server-data/ for live, and beside it
+// fok-server-data-staging/ for staging, whose docroot is the staging/
+// subdirectory. The deploy never touches either. An install whose data
+// still sits beside the docroot is read from there until it is moved.
 // FOK_DATA_DIR env var overrides the location (used by the test suite).
-define('FOK_DATA_DIR', getenv('FOK_DATA_DIR') ?: (FOK_ENV === 'staging'
-    ? dirname(FOK_DOCROOT, 2) . '/fok-server-data-staging'
-    : dirname(FOK_DOCROOT) . '/fok-server-data'));
+define('FOK_DATA_DIR', getenv('FOK_DATA_DIR') ?: (function (): string {
+    $name = FOK_ENV === 'staging' ? 'fok-server-data-staging' : 'fok-server-data';
+    $live = FOK_ENV === 'staging' ? dirname(FOK_DOCROOT) : FOK_DOCROOT;
+    $dir = $live . '/' . $name;
+    $beside = dirname($live) . '/' . $name;
+    return !is_dir($dir) && is_dir($beside) ? $beside : $dir;
+})());
 define('FOK_DB_FILE', FOK_DATA_DIR . '/fok.db');
 define('FOK_ADMIN_HASH_FILE', FOK_DATA_DIR . '/admin.hash');
 define('FOK_BACKUP_DIR', FOK_DATA_DIR . '/backups');
 
-// Errors and warnings are pinned to a file in the data dir. That dir sits
-// ABOVE the docroot, so the log is never web-served; and the host's default
-// error-log destination is not reachable over our deploy (FTP) access, which
-// stops at the docroot - so this pin is what lets the admin Logs tab read it.
+// Errors and warnings are pinned to a file in the data dir, which is never
+// web-served; and the host's default error-log destination is not reachable
+// over our deploy (FTP) access, which stops at the docroot - so this pin is
+// what lets the admin Logs tab read it.
 define('FOK_ERROR_LOG', FOK_DATA_DIR . '/php-error.log');
 ini_set('error_log', FOK_ERROR_LOG);
 // The Logs tab reads at most this much of the log's tail (newest entry
