@@ -86,6 +86,16 @@ EVERY upload, including a hand-run `deploy.ps1 -Only`, or a partial
 emergency deploy would leave the verify reporting the release before the
 one the webroot is running.
 
+THE UPLOAD PLAN IS ONE LEVEL DEEP. tools/deploy.sh builds it with
+`changed_in <dir>`, which emits a changed file only when its path under
+that top-level directory has no further slash, while the manifest is a
+full `find` - so a NESTED file (public/assets/fonts/x.woff2) is hashed as
+landed and never uploaded, and live 404s while the deploy reports success.
+Every asset sits flat in assets/ for this reason (the Press Start 2P font
+included). Do not nest a file under public/ without teaching changed_in to
+recurse first; test the plan by running changed_in against a fake CHANGED
+list before pushing.
+
 Three traps that cost whole sessions:
 
 1. A failing staging smoke SILENTLY PINS LIVE at the last green commit
