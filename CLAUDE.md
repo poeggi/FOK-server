@@ -51,7 +51,15 @@ The measurements and decisions behind the rules below are in
   measurement. It batches a tick into one request, and admin/api.php
   asks for the database WHERE IT IS USED, never at the top (a tick
   carrying only presence and duels opens no connection). Load::markStart
-  stays at the top.
+  stays at the top. ONE REQUEST AT A TIME: an open admin page occupies
+  at most ONE worker at any moment. Every request to admin/api.php -
+  reads, saves, downloads - goes through the wire in admin.js (onWire),
+  one after another, and the polled reads that come due while one is out
+  ride in the single batch behind it (sendBatch waits for the wire before
+  it takes the batch). A refresh button, a tab's first read, the client
+  popup's timer and the page load all queue there; only the poster page
+  (a navigation) and a second tab are outside it. Nothing is refused
+  server-side and nothing should be: a refusal costs a worker too.
 - apcu_inc does NOT refresh a key's TTL, apcu_store resets it on every
   write, so a counter pair written the two ways expires UNEVENLY.
   Ordinary expiry is a MISSING key, an eviction is a key present and

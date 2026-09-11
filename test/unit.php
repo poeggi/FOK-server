@@ -1122,6 +1122,14 @@ Settings::set('ices_max', 99);
 ok(Settings::int('ices_max') === 99, 'setting override readable');
 $all = Settings::all();
 ok(is_string($all[0]['label']) && $all[0]['label'] !== '', 'settings carry labels');
+ok(is_string($all[0]['help']) && $all[0]['help'] !== '', 'settings carry help text');
+$helped = 0;
+foreach (Settings::DEFS as $def) {
+    if (count($def) === 3 && is_string($def[2]) && strlen($def[2]) >= 20) {
+        $helped++;
+    }
+}
+ok($helped === count(Settings::DEFS), 'every setting carries a help text');
 $threw = false;
 try {
     Settings::set('bogus_key', 1);

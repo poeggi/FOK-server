@@ -32,8 +32,13 @@ else
     expect "a frozen instance is resolved from the card it is listed on" 'function showItem' "$JS_ASSET"
     expect "a tournament is read and ended from the card it is listed on" 'function showTourney' "$JS_ASSET"
     expect "and the class is taken off again on its own" '_flashOff' "$JS_ASSET"
+    expect "admin requests go out one at a time" 'function onWire' "$JS_ASSET"
+    expect "a download rides the same wire" 'function download(' "$JS_ASSET"
+    expect "a batch waits for the wire before it is taken" 'await wire;' "$JS_ASSET"
+    expect "every filtered list builds its field through one helper" 'function liveFilter' "$JS_ASSET"
     CSS_ASSET=$(curl -s "$BASE/assets/admin.css?v=$VER")
     expect "hidden class wins the cascade" 'display: none !important' "$CSS_ASSET"
+    expect "a cell carrying a tooltip says so" 'td[title]' "$CSS_ASSET"
     expect "the header stacks instead of breaking on a phone" '@media (max-width: 560px)' "$CSS_ASSET"
     # The global td rule is nowrap; the popup value cell must override it or
     # a long alert message runs off the side instead of growing the popup.
@@ -373,6 +378,7 @@ else
     expect "connections refresh interval defaults to 1 s" '"default":1,"label":"Connections card refresh interval' "$R"
     expect "duels refresh interval defaults to 5 s" '"default":5,"label":"Duels card refresh interval' "$R"
     expect "statistics refresh interval defaults to 10 s" '"default":10,"label":"Statistics card refresh interval' "$R"
+    expect "every setting carries its help text" '"label":"Statistics card refresh interval (seconds, 0 = off)","help":"' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=backup_create")
     expect "backup via GET rejected" '"error":"POST only"' "$R"

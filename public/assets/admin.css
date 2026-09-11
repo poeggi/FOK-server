@@ -152,7 +152,9 @@ button.small {
 /* Every refresh flashes its own button, so an automatic one looks like the
    click that would have done the same thing and a tile that keeps itself up
    to date says so. One look for the cards, the popups and the graphs -
-   whatever refreshes, this is what it looks like.
+   whatever refreshes, this is what it looks like. It lights when the answer
+   LANDS, not when the refresh is asked for: requests go out one at a time
+   (admin.js onWire), so the lit button is the one being worked on.
 
    The lit state is a plain CLASS and deliberately not an animation: iOS
    Safari suppresses CSS animations under Reduce Motion and in Low Power
@@ -191,8 +193,8 @@ button.iconbtn:disabled:hover { border-color: var(--border); }
 .card-body input[type="number"] { width: 90px; padding: 3px 6px; }
 .card form > button { margin-top: 10px; }
 
-/* Registered-users live filter. */
-input.usearch { width: 100%; margin: 6px 0 8px; padding: 5px 8px; -webkit-appearance: none; }
+/* The live filter above a list (liveFilter in admin.js). */
+input.livefilter { width: 100%; margin: 6px 0 8px; padding: 5px 8px; -webkit-appearance: none; }
 
 
 /* ------------------------------------------------- surfaces: card, popup */
@@ -297,9 +299,9 @@ th { color: var(--muted); font-weight: normal; }
    space, which is how a single digit ends up in a column as wide as a word. */
 th.tight, td.tight { width: 1%; }
 
-/* A header short enough to need explaining carries it as a tooltip, and says
-   so the same way the gauges do (see .stat[title]). */
-th[title] { cursor: help; }
+/* A header or a cell short enough to need explaining carries it as a tooltip,
+   and says so the same way the gauges do (see .stat[title]). */
+th[title], td[title] { cursor: help; }
 
 th.sortable { cursor: pointer; user-select: none; }
 th.sort-asc::after, th.sort-desc::after {

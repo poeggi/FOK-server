@@ -12,10 +12,55 @@
 
 const API = 'api.php';
 
-async function call(query, opts) {
-    const res = await fetch(API + '?action=' + query, opts);
-    if (res.status === 401) { location.reload(); throw new Error('session expired'); }
-    return res.json();
+// ONE request at a time. An open admin page occupies at most one PHP worker,
+// on a host that has about twenty for every player as well: every request to
+// api.php - a read, a save, a download - waits for the one before it to
+// finish, however that one ended. Nothing is refused and nothing is dropped;
+// what arrives while the wire is busy goes out next. The polled reads gain
+// from the wait (see sendBatch): what comes due while a request is out rides
+// in the one batch behind it.
+let wire = Promise.resolve();
+
+function onWire(work) {
+    const p = wire.then(work, work);
+    wire = p.catch(() => {});
+    return p;
+}
+
+function call(query, opts) {
+    return onWire(async () => {
+        const res = await fetch(API + '?action=' + query, opts);
+        if (res.status === 401) { location.reload(); throw new Error('session expired'); }
+        return res.json();
+    });
+}
+
+// A file the operator asked for, fetched over the same wire and handed to
+// the browser as a download, so it never opens a worker beside a tick. The
+// name is the one the server sends.
+async function download(query, filename) {
+    let blob;
+    try {
+        blob = await onWire(async () => {
+            const res = await fetch(API + '?action=' + query);
+            if (res.status === 401) { location.reload(); throw new Error('session expired'); }
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.blob();
+        });
+    } catch (e) {
+        alert('Download failed: ' + e.message);
+        return;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = el('a');
+    a.href = url;
+    a.download = filename;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    // Not at once: the browser starts the download from the click on its
+    // own time, and an object URL revoked before then downloads nothing.
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 // The cards that poll. An admin request costs far more in fixed overhead
@@ -44,6 +89,9 @@ async function api(action, opts) {
 }
 
 async function sendBatch() {
+    // Taken only once the wire is free: whatever came due while a request
+    // was out is in the map by then and goes in this one request.
+    await wire;
     const asked = due;
     due = null;
     try {
@@ -199,14 +247,21 @@ function iconBtn(svg, title) {
     return b;
 }
 
-// Trigger a browser download of one debug dataset as debug-<pin>.json.
+// The live filter above a list: what is typed hides the rows that do not
+// carry it. Every list that can be filtered builds its field here (the
+// players, the configuration); the caller keeps the text across refreshes.
+function liveFilter(placeholder, value, onInput) {
+    const s = el('input', 'livefilter');
+    s.type = 'search';
+    s.placeholder = placeholder;
+    s.value = value;
+    s.oninput = onInput;
+    return s;
+}
+
+// One debug dataset, as debug-<pin>.json.
 function downloadPin(pin) {
-    const a = el('a');
-    a.href = API + '?action=debug_get&pin=' + pin;
-    a.download = 'debug-' + pin + '.json';
-    document.body.append(a);
-    a.click();
-    a.remove();
+    return download('debug_get&pin=' + pin, 'debug-' + pin + '.json');
 }
 
 // Connection states as tracked by src/ConnTrack.php.
@@ -384,8 +439,11 @@ function makeModal(nameText, guarded) {
 
 // A minimal read-only popup (no refresh timer) for content that does not fit
 // inline, e.g. a full alert message.
-function infoModal(titleText, bodyNode) {
+// idText is the muted line under the name: the key of the thing the popup
+// is about, where it has one.
+function infoModal(titleText, bodyNode, idText) {
     const { overlay, head, title, close, body } = makeModal(titleText);
+    if (idText) title.append(el('span', 'modal-id', idText));
     head.append(title, close);
     body.append(bodyNode);
     document.body.append(overlay);
@@ -465,9 +523,9 @@ async function showClient(id) {
 
     body._sid = 'client';
     const load = async () => {
-        flash(refresh);
         try {
             const d = await api('client&id=' + id);
+            flash(refresh);
             if (!d.ok) throw new Error(d.error || 'failed');
             name.textContent = d.client.name || '(no name)';
             renderClientBody(body, overlay, d, load);
@@ -559,7 +617,7 @@ function renderClientBody(body, overlay, d, reload) {
         // Manual recovery: download the config WITHOUT the token, as the
         // snake-fok-backup.json the game imports directly.
         const dl = el('button', 'small', 'download backup');
-        dl.onclick = () => { window.location = API + '?action=vault_export&id=' + c.id; };
+        dl.onclick = () => download('vault_export&id=' + c.id, 'snake-fok-backup-' + c.id + '.json');
         // Clear the token so a client that lost it can re-enroll on its next
         // backup (the data is kept).
         const rst = el('button', 'small', 'reset token');
@@ -578,9 +636,10 @@ function renderClientBody(body, overlay, d, reload) {
     body.append(tbl);
 }
 
-// Registered-users live filter (id or name), kept across the manual
-// refreshes that follow a debug toggle or a delete.
+// The live filters (players by id or name, settings by key, label or help),
+// kept across the refreshes that rebuild their lists.
 let usersFilter = '';
+let configFilter = '';
 
 // ---------------------------------------------------------- tabbed cards
 //
@@ -676,7 +735,7 @@ async function renderDebug(box) {
     master.onchange = () => { for (const c of cbs) c.checked = master.checked; updateBar(); };
     // Toggling all must not also sort the (empty) checkbox column.
     master.addEventListener('mousedown', (e) => e.stopPropagation());
-    dlSel.onclick = () => selected().forEach((pin, i) => setTimeout(() => downloadPin(pin), i * 200));
+    dlSel.onclick = async () => { for (const pin of selected()) await downloadPin(pin); };
     delSel.onclick = () => {
         const pins = selected();
         if (!pins.length) return;
@@ -1083,11 +1142,11 @@ async function showGaugeCharts(gauge, srcId) {
     // a sampled level and the table under the graphs are then the reading
     // the bubble behind the popup is showing, not the one it opened on.
     const load = async () => {
-        flash(refresh);
         const g = (lastGauges[srcId] || []).find((x) => x.label === gauge.label) || gauge;
         let hist;
         try {
             hist = await api(byMin ? 'load_min' : 'load');
+            flash(refresh);
         } catch (e) {
             body.replaceChildren(el('div', 'error', 'The history could not be read.'));
             return;
@@ -1536,9 +1595,9 @@ async function showDisputes(id) {
     body._sid = 'disputes';
     const refresh = el('button', 'small refresh', 'refresh');
     const load = async () => {
-        flash(refresh);
         try {
             const d = await api('disputes&id=' + id);
+            flash(refresh);
             name.textContent = d.name || '(no name)';
             renderDisputesBody(body, overlay, id, d);
             restoreScroll(body);
@@ -1637,9 +1696,9 @@ async function showItem(uid) {
     body._sid = 'item';
     const refresh = el('button', 'small refresh', 'refresh');
     const load = async () => {
-        flash(refresh);
         try {
             const d = await api('item&uid=' + uid);
+            flash(refresh);
             name.textContent = d.item.item_id;
             renderItemBody(body, overlay, uid, d);
             restoreScroll(body);
@@ -2008,9 +2067,9 @@ async function showEvent(eid) {
     body._sid = 'event';
     const refresh = el('button', 'small refresh', 'refresh');
     const load = async () => {
-        flash(refresh);
         try {
             const d = await api('event&eid=' + eid);
+            flash(refresh);
             name.textContent = d.name;
             renderEventBody(body, overlay, eid, d);
             restoreScroll(body);
@@ -2262,9 +2321,9 @@ async function showTourney(tid) {
     body._sid = 'tourney';
     const refresh = el('button', 'small refresh', 'refresh');
     const load = async () => {
-        flash(refresh);
         try {
             const d = await api('tourney&tid=' + tid);
+            flash(refresh);
             name.textContent = d.code;
             renderTourneyBody(body, overlay, tid, d);
             restoreScroll(body);
@@ -2498,10 +2557,7 @@ function renderUsers(box, d) {
     box.replaceChildren();
     // Live filter over id and name; the last known IP moved to the
     // per-client details popup (click an id), so it is off the list.
-    const search = el('input', 'usearch');
-    search.type = 'search';
-    search.placeholder = 'Filter by ID or name...';
-    search.value = usersFilter;
+    const search = liveFilter('Filter by ID or name...', usersFilter, () => applyFilter());
     box.append(search);
     const table = el('table');
     table.append(row(['ID', 'Name', 'First', 'Last', 'N', 'Lat', 'Debug', ''], 'th'));
@@ -2553,7 +2609,6 @@ function renderUsers(box, d) {
             r.classList.toggle('hidden', !!usersFilter && !r._search.includes(usersFilter));
         }
     };
-    search.oninput = applyFilter;
     applyFilter();
     const legend = el('p', 'muted', 'Debug: pending = set, applies on client connect;');
     legend.append(el('br'), ' self = the client turned it on.');
@@ -2908,9 +2963,28 @@ const MODULES = [
             box.replaceChildren();
             const form = el('form');
             const table = el('table');
+            // Over the label, the key and the help text, so a row is found by
+            // whichever of the three the operator has in mind.
+            const applyFilter = () => {
+                configFilter = search.value.trim().toLowerCase();
+                for (const r of table.querySelectorAll('tr')) {
+                    r.classList.toggle('hidden', !!configFilter && !r._search.includes(configFilter));
+                }
+            };
+            const search = liveFilter('Filter settings by name, key or help...', configFilter, applyFilter);
+            box.append(search);
             for (const s of d.settings) {
                 const r = el('tr');
                 const label = el('td', '', s.label);
+                // What the number does, as the tooltip the gauges and headers
+                // carry, with the key under it for whoever reads the code.
+                label.title = s.help + '\n\n' + s.key;
+                // A tap gets the same text as a popup: a phone has no hover.
+                label.onclick = () => {
+                    const b = el('div');
+                    b.append(el('p', '', s.help), el('p', 'muted', 'default ' + s.default));
+                    infoModal(s.label, b, s.key);
+                };
                 const input = el('input');
                 input.type = 'number';
                 input.name = s.key;
@@ -2919,8 +2993,10 @@ const MODULES = [
                 const val = el('td');
                 val.append(input);
                 r.append(label, val, el('td', 'muted', 'default ' + s.default));
+                r._search = (s.key + ' ' + s.label + ' ' + s.help).toLowerCase();
                 table.append(r);
             }
+            applyFilter();
             form.append(table);
             // "Apply and Save": these settings take effect on the next
             // request, not on a restart - the button says so.
@@ -2937,7 +3013,8 @@ const MODULES = [
 
             const row2 = el('div', 'exportrow');
             const exp = el('a', '', 'Export config');
-            exp.href = API + '?action=config_export';
+            exp.href = '#';
+            exp.onclick = (ev) => { ev.preventDefault(); download('config_export', 'fok-config.json'); };
             const impLabel = el('label', '', 'Import config: ');
             const impFile = el('input');
             impFile.type = 'file';
@@ -3033,7 +3110,11 @@ const MODULES = [
             for (const b of d.backups) {
                 const r = row([b.name, fmtBytes(b.size)]);
                 const a = el('a', '', 'download');
-                a.href = API + '?action=backup_download&file=' + encodeURIComponent(b.name);
+                a.href = '#';
+                a.onclick = (ev) => {
+                    ev.preventDefault();
+                    download('backup_download&file=' + encodeURIComponent(b.name), b.name);
+                };
                 const td = el('td');
                 td.append(a);
                 r.append(td);
@@ -3347,8 +3428,10 @@ function intervalControl(key, title, slim) {
 function refreshModule(id) {
     const mod = MODULES.find((m) => m.id === id);
     const box = boxes[id];
-    flash(refreshBtn[id]);
-    Promise.resolve(mod.refresh(box)).then(() => restoreScroll(box)).catch((e) => {
+    // Lit when the update LANDS, not when it is asked for: a refresh can
+    // wait on the wire behind another request, and the flash is what says
+    // the tile just changed - so what is lit is what is being worked on.
+    Promise.resolve(mod.refresh(box)).then(() => { flash(refreshBtn[id]); restoreScroll(box); }).catch((e) => {
         box.replaceChildren(el('p', 'error', 'Error: ' + e.message));
     });
 }
