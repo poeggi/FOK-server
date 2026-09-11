@@ -1,199 +1,152 @@
 # Server dossier: invariants, host facts, deploy traps, decisions
 
 Central game server for FOK Snake. PRODUCTION - the operational hard
-rules (deploy == push to main, ASCII-only, credentials) are in CLAUDE.md;
-this file holds the measurements, traps and decisions that are not
-obvious from the code. Per-release narrative lives in git log and
-docs/API.md.
+rules are in CLAUDE.md; this file holds the measurements, traps and
+decisions that are not obvious from the code. Per-release narrative is
+in git log and docs/API.md.
 
 ## Version rules
 
-The API CONTRACT is a MAJOR.MINOR string and clients gate on MAJOR only;
-a MINOR may be RE-RELEASED with new optional fields, so clients must
-FEATURE-DETECT and never version-gate an optional feature. Dropping an
-OPTIONAL field is likewise not a MAJOR break when the contract already
-requires an absent field to mean the client's own default; docs/API.md
-records such withdrawals. FOK_SERVER_VERSION (implementation) is
-independent and bumps every release: a release that MOVES THE CONTRACT
-bumps the middle digit and resets the last one (1.4.18 -> 1.5.0), any
-other one bumps the last digit, tagged as a bare number
-(feedback_fok_server_version_bump.md).
-Some releases shipped untagged, so match the next release number to the
-LIVE version.txt, never to the last git tag. docs/API.md is THE client
-contract and must stay in step.
+The API contract is MAJOR.MINOR and clients gate on MAJOR only; a MINOR
+may be re-released with new optional fields, so clients feature-detect
+and never version-gate an optional feature. Dropping an OPTIONAL field
+is not a MAJOR break when the contract already says an absent field
+means the client's own default; docs/API.md records such withdrawals.
+FOK_SERVER_VERSION bumps every release: a contract move bumps the middle
+digit and resets the last (1.4.18 -> 1.5.0), anything else bumps the
+last; tags are bare numbers. Some releases shipped untagged, so match
+the next number to the LIVE version.txt, never to the last git tag.
 
 ## Pacing
 
-hello `pace` is {hold} only. Heartbeat 60 s (API 4.5; a client beats 30 s
-against an older server), poll wait 5 s (up to 9 s served) and the
-100 ms request gap are
-contract constants in docs/API.md (Pacing) - a number
-that never changes belongs in the contract, not on the wire; LESS
-mechanism, not more. Do not re-add pace_hello_ms / pace_gap_ms (removed;
-stale settings rows for them are harmless, Settings::all() iterates DEFS)
-or a spread/jitter field (pace.spread_ms was withdrawn: per-session
-jitter only pays at a client count this host will not see). Every window
-a heartbeat keeps alive - online, duel, auto-accept, conn TTL, signal TTL
-- is 120 s and is checked through Util::since with FOK_BEAT_JITTER (1 s)
-of grace, so nothing reads as gone before 121 s. A smoke that changes
-signal_ttl puts back the DEFS default, or it pins staging.
+hello `pace` is {hold} only. Heartbeat 60 s, poll wait 5 s (up to 9 s
+served) and the 100 ms request gap are contract constants in docs/API.md
+- a number that never changes belongs in the contract, not on the wire.
+Do not re-add pace_hello_ms / pace_gap_ms or a jitter field. Every
+window a heartbeat keeps alive (online, duel, auto-accept, conn TTL,
+signal TTL) is 120 s, checked through Util::since with FOK_BEAT_JITTER
+(1 s) of grace. A smoke that changes signal_ttl puts the DEFS default
+back.
+
 ONE REQUEST AT A TIME (4.10): while a poll is parked a client sends
-nothing else that starts PHP - what is due waits for the poll to answer.
-A SECOND is allowed only where waiting would be worse (the duel
-handshake), a THIRD never, and t.txt is exempt because it never reaches
-a worker. Nothing of this is enforced and nothing should be (see
-project_fok_server_queue_wait.md); the queue gauge is the only place a
-breach shows, as the request beside a parked poll paying the ~130 ms
-fork.
-THE PTS GATE has two sides and they are not symmetric. Ahead:
-pts_ahead_max_ms (200) - past half of it a warning line, past the whole
-of it 400 plus an error line and the bogus alert. Behind:
-start_sync_max_age_ms (1000) on a begin-play start only, 400 plus an
-error line. Before 4.10 the ahead line was at ZERO, which refused honest
-clients whose only fault was anchoring beside their own traffic. Two
-things decided the shape: the trip already pays for a clock that is
-slightly fast (nowMs is read after the network AND after the queue
-wait), so a reading that still lands ahead is an anchor off by more than
-the trip; and nothing downstream reads the value, so the 400 exists ONLY
-because a server log is invisible to the client - a client told nothing
-repairs nothing and plays desynced matches. The log has three levels the
-server states outright now: Alerts::warn / Alerts::error beside
-Alerts::note, and raise() takes the level for its own line.
+nothing else that starts PHP; a second only for the duel handshake, a
+third never, t.txt exempt. Nothing is enforced and nothing should be
+(project_fok_server_queue_wait.md).
+
+THE PTS GATE is asymmetric. Ahead: pts_ahead_max_ms (200) - past half a
+warning line, past all of it 400 plus an error line and the bogus alert.
+Behind: start_sync_max_age_ms (1000) on a begin-play start only, 400
+plus an error line. The trip already pays for a slightly fast clock
+(nowMs is read after the network and the queue wait), so a reading still
+ahead is an anchor off by more than the trip. The 400 exists ONLY
+because a server log is invisible to the client. Log levels:
+Alerts::note / warn / error; raise() takes the level for its own line.
+
 tourney_after_step_ms (100) staggers the follow-up calls a pushed
-tournament event provokes, per RECIPIENT, capped at the client's 1000 ms
-guard. Per recipient, not per event: one transition pushes several events
-to each seat, and a budget spread over the EVENTS once put the eight
-roles callbacks inside ~130 ms - the measured peak of a tournament.
+tournament event provokes, per RECIPIENT (one transition pushes several
+events to each seat), capped at the client's 1000 ms guard.
 
 ## Deploy
 
-Pipeline: checks -> staging (own data dir + admin hash, FOK_ENV-detected)
--> remote smoke -> live -> verify version. Never manual-deploy except
-emergencies. Upload order is src/ THEN assets/ THEN pages: assets before
-pages, or a mid-window fetch caches stale content under the new immutable
-?v= URL for a year; src/ first, or new endpoints run against the old
-schema (both failure modes happened live). The remote smoke dominates
-push-to-live time and is real request work through a keep-alive tunnel,
-not handshake waste (grep the deploy log for `tunnel` before
-re-theorising).
+Pipeline: checks -> staging (own data dir + admin hash) -> remote smoke
+-> live -> verify version. Never manual-deploy except emergencies.
+Upload order is src/ THEN assets/ THEN pages: assets before pages, or a
+mid-window fetch caches stale content under the new immutable ?v= URL
+for a year; src/ first, or new endpoints run against the old schema. The
+remote smoke is real request work through a keep-alive tunnel (grep the
+deploy log for `tunnel` before re-theorising): ~70 s, most of it the
+~130 ms round trip from the Azure runner. Levers left, neither taken: an
+EU runner, or a host-only profile on staging.
 
-What the verify reads is api/version.txt, a STATIC file both deploy paths
-write from Config.php plus the target environment (tools/make-version.sh)
-before the tree is hashed. It renames in the api/ tier, after src/ and
-assets/, so live answering the new number proves the rest landed - the
-ordering argument is in feedback_verify_on_the_real_host.md. It rides
-EVERY upload, including a hand-run `deploy.ps1 -Only`, or a partial
-emergency deploy would leave the verify reporting the release before the
-one the webroot is running.
+api/version.txt is a STATIC file both deploy paths write
+(tools/make-version.sh) before the tree is hashed, renamed in the api/
+tier after src/ and assets/, so live answering the new number proves the
+rest landed. It rides every upload, `deploy.ps1 -Only` included.
 
-THE UPLOAD PLAN IS ONE LEVEL DEEP. tools/deploy.sh builds it with
-`changed_in <dir>`, which emits a changed file only when its path under
-that top-level directory has no further slash, while the manifest is a
-full `find` - so a NESTED file (public/assets/fonts/x.woff2) is hashed as
-landed and never uploaded, and live 404s while the deploy reports success.
-Every asset sits flat in assets/ for this reason (the Press Start 2P font
-included). Do not nest a file under public/ without teaching changed_in to
-recurse first; test the plan by running changed_in against a fake CHANGED
-list before pushing.
+THE UPLOAD PLAN IS ONE LEVEL DEEP. tools/deploy.sh's `changed_in` emits
+a changed file only when its path under the top-level directory has no
+further slash, while the manifest is a full `find` - so a NESTED file is
+hashed as landed and never uploaded, and live 404s while the deploy
+reports success. Every asset sits flat in assets/ (the font included).
+Test the plan with changed_in against a fake CHANGED list before nesting
+anything.
 
-Three traps that cost whole sessions:
+Three traps:
 
 1. A failing staging smoke SILENTLY PINS LIVE at the last green commit
-   while staging shows the new version - always curl /api/version.txt on
-   LIVE after a push and check the CI conclusion; never infer "deployed"
-   from a green pre-commit hook.
-2. The staging smoke runs against a PERSISTENT staging DB, so tests
-   depending on accumulated rows can fail there and nowhere else.
-3. TWO PUSHES INSIDE alert_cooldown FAIL THE SECOND ONE'S SMOKE. The six
-   admin assertions of the shape "this condition gets logged" (bogus,
-   friend-spam, the four item verdicts) each need Alerts::raise to write
-   a row, and its de-duplication gate is an APCu key per TYPE -
-   `apcu_add(alert:<type>, ttl = alert_cooldown)`, deliberately NOT the
-   alerts table, so clearing alerts does not reset it and staging keeps
-   it across a deploy. The second run's raises are suppressed, nothing is
-   there to assert, and live stays pinned at the previous release (trap 1).
-   It is not flaky and not a regression: wait out the window and re-run
-   the failed job (POST actions/runs/<id>/rerun-failed-jobs).
-   THE WINDOW IS 60 s since 1.13.2 (it was 900 s, and cost a release on
-   2026-09-10 and again on 2026-09-11 - two pushes 14 and 10 minutes
-   apart). The number is an operator's re-notification cadence, not a
-   system constant: one row per condition per window on the dashboard,
-   and the same key will one day stand between an incident and a phone.
-   The user set it to a minute deliberately. It is a SETTING, so an
-   install that ever wrote the key from the config card keeps its own
-   value; check the card after a deploy.
+   while staging shows the new version - always curl /api/version.txt
+   on LIVE after a push and check the CI conclusion.
+2. The staging smoke runs against a PERSISTENT staging DB; a test that
+   depends on accumulated rows can fail there and nowhere else.
+3. TWO PUSHES INSIDE alert_cooldown FAIL THE SECOND ONE'S SMOKE. Six
+   admin assertions need Alerts::raise to write a row, and its dedup
+   gate is `apcu_add(alert:<type>, ttl = alert_cooldown)` - deliberately
+   not the alerts table, so clearing alerts does not reset it and
+   staging keeps it across a deploy. Not flaky: wait out the window and
+   re-run the failed job (POST actions/runs/<id>/rerun-failed-jobs). The
+   window is 60 s since 1.13.2 (900 cost two releases). It is a SETTING;
+   an install that wrote the key from the config card keeps its own.
 
 ## Host facts (shared hosting, PHP fpm-fcgi)
 
-opcache YES, fastcgi_finish_request YES, APCu YES (verified shared across
-worker pids, so it is a real IPC bus). Do not re-probe by hand -
-src/Caps.php assesses once per FOK_SERVER_VERSION and the admin
-Performance tab can force a re-check. Capacity MEASURED, not guessed:
-~20-21 concurrent PHP requests (probe with concurrent poll.php?wait=N
-holds - the one endpoint that writes nothing - and ramp until the wall
-clock doubles; from one IP it is a lower bound). The clock source
-api/t.txt is a STATIC file stamped by Apache mod_headers %t, precisely so
-it never queues for a worker. Output is BUFFERED (~64KB) so
-SSE/streaming push is not viable - project_fok_server_streaming.md.
+opcache YES, fastcgi_finish_request YES, APCu YES and shared across
+worker pids (a real IPC bus). Do not re-probe by hand - src/Caps.php
+assesses once per FOK_SERVER_VERSION; the admin Performance tab can
+force a re-check. Capacity MEASURED: ~20-21 concurrent PHP requests
+(probe with concurrent poll.php?wait=N holds, the one endpoint that
+writes nothing, and ramp until the wall clock doubles; from one IP a
+lower bound). api/t.txt is a STATIC file stamped by mod_headers %t so it
+never queues for a worker. Output is BUFFERED (~64KB), so no SSE -
+project_fok_server_streaming.md.
 
 ## Ephemeral state lives in APCu
 
-SQLite has ONE writer for the whole database and that writer, not CPU, is
-the ceiling - so:
+SQLite has ONE writer and that writer, not CPU, is the ceiling - so:
 
-- The signal MAILBOX is APCu-only: per-recipient seq/ack window; delivery
-  CLAIMS each message with apcu_delete so two overlapping polls can never
-  both be handed one. The undelivered-invite receipt is a separate watch
-  entry that must be deleted only AFTER the expiry check - deleting it
-  for a message dropped as expired destroys the evidence.
-- PRESENCE itself (Presence.php): one entry per player, and every request
-  a beat, poll.php included. The row sees a SESSION: one upsert when a
-  beat finds no live entry, one write-back by the rate-gated fold (the
+- The signal MAILBOX is APCu-only: per-recipient seq/ack window;
+  delivery CLAIMS each message with apcu_delete so two overlapping polls
+  can never both be handed one. The undelivered-invite receipt is a
+  separate watch entry, deleted only AFTER the expiry check.
+- PRESENCE (Presence.php): one entry per player, every request a beat,
+  poll.php included. The row sees a SESSION: one upsert when a beat
+  finds no live entry, one write-back by the rate-gated fold (the
   deferred tail of Util::bumpNow) once the entry is older than every
-  window that reads it; a rename is written through, identity not being
-  presence. The duel heartbeat stays a row write (item claims
-  read duels.last_seen). player_nets is gone (schema 41); the networks
-  ride in the entry.
-- Presence::counts cache.
+  window that reads it; a rename is written through. The duel heartbeat
+  stays a row write (item claims read duels.last_seen). The networks
+  ride in the entry (player_nets is gone, schema 41).
 - Request COUNTERS are write-behind (Counters.php): apcu_inc per minute,
-  a closed minute folded into the durable table in one upsert. Gotchas:
-  a per-minute "already flushed" marker permanently retires that minute
-  and silently drops every later count, so there is NO marker - the fold
-  is idempotent via claim() (only the caller whose apcu_delete wins may
-  write) and the scan is rate-gated instead. A YmdHi stamp used as an
-  array key comes back as an INT and must be cast back.
+  a closed minute folded into the durable table in one upsert. NO
+  "already flushed" marker (it retires the minute and drops every later
+  count): the fold is idempotent via claim() and rate-gated. A YmdHi
+  stamp used as an array key comes back as an INT; cast it.
 - Tournament state (TourneyStore.php): apcu_add is the atomic
-  test-and-set for the host claim, join code and per-tournament lock
-  (replaced ~76 writer-lock acquisitions per 8-player run).
-- NO SQLITE FALLBACK BY DESIGN: a host without usable APCu answers 503
-  plus a perf alert, because an untested fallback only moves the outage
-  into the write lock.
+  test-and-set for the host claim, join code and per-tournament lock.
+- NO SQLITE FALLBACK for moved state, by design: a host without usable
+  APCu answers 503 plus a perf alert. Caches (Settings, Caps, the event
+  layer) fall through.
 - Settings::int and Caps::get memoize PER REQUEST, which is what makes
   the poll.php hold loop touch zero database - do not "optimize" that
   away.
 
-apcu_inc does NOT refresh the TTL of a key it increments while apcu_store
-resets it on every write, so a counter pair written the two ways expires
-UNEVENLY - see CLAUDE.md for the eviction-vs-expiry alert rule.
+apcu_inc does NOT refresh the TTL of a key it increments while
+apcu_store resets it on every write, so a counter pair written the two
+ways expires UNEVENLY - CLAUDE.md has the eviction-vs-expiry alert rule.
 
 ## SQLite invariants, do not relearn
 
-- `DELETE ... RETURNING` IS A WRITE and holds the write lock until the
-  statement finishes. Never prepare one above a long-poll hold loop or
-  keep the handle alive - that pins the single writer for the whole poll.
-  Prepare per drain, fetchAll, closeCursor() immediately (the
-  Signals::expire shape). Never re-execute a handle left dirty by a
-  failed attempt: SQLITE_MISUSE (21).
-- Wrap writes in Db::retry; a transient SQLITE_BUSY must be RETHROWN, not
-  swallowed as a domain error (Debug::submit once reported "PIN taken"
-  for one and cost a flaky CI run).
-- PDO binds an integer parameter as TEXT, and when the other side of the
-  comparison is an EXPRESSION (not a column) SQLite ranks every integer
-  below every string - CAST(? AS INTEGER) is required. This silently
-  disarmed the admin lockout once.
-- Settings stores a row ONLY for an override: a changed DEFS default does
-  not reach installs that ever wrote the key, and a row set from the
-  admin config screen still wins.
+- `DELETE ... RETURNING` IS A WRITE and holds the lock until the
+  statement finishes. Never prepare one above a long-poll hold loop;
+  prepare per drain, fetchAll, closeCursor() at once (the Signals::expire
+  shape). Never re-execute a handle left dirty by a failed attempt:
+  SQLITE_MISUSE (21).
+- Wrap writes in Db::retry; a transient SQLITE_BUSY must be RETHROWN,
+  never swallowed as a domain error.
+- PDO binds an integer parameter as TEXT, and against an EXPRESSION (not
+  a column) SQLite ranks every integer below every string - CAST(? AS
+  INTEGER). This silently disarmed the admin lockout once.
+- Settings stores a row ONLY for an override; a changed DEFS default does
+  not reach an install with a row, and a row set from the config card
+  wins. Saving the default from the card deletes the row.
 - The all-digit-id integer-key trap and the microtime pairing order are
   in project_fok_server_db_plan.md.
 
@@ -203,340 +156,228 @@ Item instances have 32-hex uids and the SERVER owns them: ownership is
 one row in `items`, which is what kills backup-restore save-scumming. A
 transfer MOVES the row under a compare-and-swap and can never mint one,
 so the population is conserved. The CAS tests owner and frozen alongside
-seq, which is what makes the claim DECISION READS safe outside BEGIN
-IMMEDIATE (a stale snapshot is told to re-read); only the contradiction
-check runs INSIDE the lock, because that is the only look that can see a
-claim committing alongside this one. Transfers are CLAIMS against a
-match: start.php hands each peer the pair's `mid` and its OWN per-peer
+seq, which makes the claim DECISION READS safe outside BEGIN IMMEDIATE;
+only the contradiction check runs INSIDE the lock. Transfers are CLAIMS
+against a match: start.php hands each peer the pair's `mid` and its OWN
 attestation secret (minted inside Starts::request's BEGIN IMMEDIATE,
-never exposed to admin, never logged), and a claim carries
-tag = substr(hash_hmac('sha256', "$mid|$tick|$ws_digest",
-hex2bin($secretHex)), 0, 16) - the two client traps are hex-DECODING the
-32-hex secret to 16 raw bytes and an UNPADDED decimal tick.
+never exposed to admin, never logged); a claim carries tag =
+substr(hash_hmac('sha256', "$mid|$tick|$ws_digest", hex2bin($secretHex)),
+0, 16) - the client traps are hex-DECODING the secret to 16 raw bytes
+and an UNPADDED decimal tick.
 
-Claim ladder: a LOSS settles at once (nobody lies to lose one); an
-unwitnessed gain is `held` until the peer attests or claim_grace_ms
-passes; a forged tag (tag_invalid) or opposite claims for one
-mid/uid/tick (contradiction) FREEZES the instance and raises a fraud
-alert. Those are the ONLY two paths that may freeze; the first verdict
-stands (the freeze UPDATE carries WHERE frozen = 0) and
-frozen_at/frozen_why record which (since schema 39). Freezing is terminal
-until an operator clears it.
+Claim ladder: a LOSS settles at once; an unwitnessed gain is `held`
+until the peer attests or claim_grace_ms passes; a forged tag
+(tag_invalid) or opposite claims for one mid/uid/tick (contradiction)
+FREEZES the instance and raises a fraud alert - the ONLY two freeze
+paths; the first verdict stands (WHERE frozen = 0), frozen_at /
+frozen_why record which (schema 39). Freezing is terminal until an
+operator clears it.
 
-A verdict is an EVENT, not a property of the instance it froze: resolving one
-clears frozen_why and may drop the row outright, so the instance can never be
-the record of what was found on it, and the per-player tally could say a
-finding existed while nothing could say which. Since schema 42 the finding
-goes to `item_disputes` (uid, player, why, mid, tick, created, seen), written
-inside the SAME transaction as the freeze and the tally, so a verdict cannot
-exist without a record of it. The admin card lists players whose findings are
-UNREVIEWED (claims_disputed > claims_disputed_seen), the count opens them, and
-marking them reviewed moves only the seen mark - the tally is the forensic
-record and never goes backwards. Releasing an instance stays a separate
-decision in its own popup: "I have read this" and "here is my verdict" must
-not be one button. A finding from before schema 42 has no row and never will,
-so the popup reports the difference rather than showing an empty table. A claim whose uid exists but is registered
-to somebody else is a STALE WARDROBE (a restored config backup or an
-unsynced duel loss): Alerts::note, never a raised item_counterfeit;
-nothing moves, the instance is never frozen, and the client drops it at
-its next list. A restore can never freeze an item.
+A verdict is an EVENT, not a property of the instance: since schema 42
+it goes to `item_disputes`, written in the SAME transaction as the
+freeze and the tally. The admin card lists players with UNREVIEWED
+findings (claims_disputed > claims_disputed_seen); marking reviewed moves
+only the seen mark, the tally never goes backwards; releasing an
+instance stays a separate popup. A claim whose uid is registered to
+somebody else is a STALE WARDROBE (restored backup or unsynced loss):
+Alerts::note, nothing moves, never frozen; the client drops it at its
+next list.
 
-`matches.closed` is written by NOTHING (since 1.6.1) and the column is left
-in the schema only because dropping one rebuilds a table on the money path.
-Whether a match is still being played is DERIVED from the duel heartbeat -
-Items::MATCH_LIVE_DUEL, shared by the sweep, the housekeeping card and
-Items::openMatches - because the server never reliably learns that a match
-ended: a bye travels over the open DataChannel and never arrives. A stored
-flag therefore only ever marked the endings that happened to pass through
-signaling, and the admin tile read high for every one that did not. The `ledger` table is
-audit-ONLY, never read to decide ownership. LIMIT: minting is still
-client-trusted (the coin economy is client-side), so items are conserved
-and auditable, NOT unforgeable - do not describe or extend the registry
-as anti-forgery; moving generation server-side is the open TODO.
+`matches.closed` is written by NOTHING (since 1.6.1); whether a match is
+live is DERIVED from the duel heartbeat (Items::MATCH_LIVE_DUEL), because
+a bye travels over the DataChannel and never arrives. `ledger` is
+audit-ONLY. LIMIT: minting is client-trusted, so items are conserved and
+auditable, NOT unforgeable - never describe or extend the registry as
+anti-forgery.
 
 ## Friend presence deltas (since API 4.6)
 
-The four friend-facing screens used to tick hello every 5 s with the whole
-id list and read the whole status table back - about 92 percent of all
-hello traffic, each one a friendship lookup plus a presence lookup plus
-the touch. 4.6 replaces it with a cursor: `friends_since` on hello, `fs`
-on poll, no ids on the wire, and the caller's ACCEPTED friends answered as
+A cursor replaced the id-list polling that was 92 percent of hello
+traffic: `friends_since` on hello, `fs` on poll, answered as
 `friends_delta` + `friends_at` + `friends_more`.
 
-THE INVARIANT: the steady state costs APCu only. Nothing changed is ONE
-apcu_fetch (the watch stamp and the due stamp together); a read that finds
-something changed adds one bulk fetch of the caller's friends. SQLite is
-touched twice and only twice: a cold friend-list cache reads the friends
-table, and a cursor-0 read looks up names for friends with no entry left.
-Never the duels table, never on a steady-state poll, and nothing scans the
-keyspace.
+THE INVARIANT: the steady state costs APCu only - one apcu_fetch (watch
+stamp and due stamp together); a change adds one bulk fetch of the
+caller's friends. SQLite twice only: a cold friend-list cache reads the
+friends table, a cursor-0 read looks up names for friends with no entry
+left. Never the duels table; nothing scans the keyspace.
 
 - Every fact lives in the PRESENCE ENTRY: `chg` (ms of the last
-  transition) and `duel` (the last duel beat, seconds). Playing is
-  therefore derived per player from a window, not read off the duels row -
-  which is why both peers stamp their own entry and neither writes the
-  other's.
-- TRANSITIONS are the only pushes: coming online, a rename, and a player's
-  own not-playing -> playing edge. Each stamps `chg` and FANS OUT to the
-  accepted friends, bumping their watch key. Going offline and leaving a
-  duel push nothing - they are the absence of a beat and are derived at
-  read time from the same windows every other reader uses.
-- Three APCu key families, all per environment: `fl:<id>` the caller's
-  accepted-friend ids (invalidated at every friends-table write, never
-  aged into a stale roster), `fw:<id>` the last push aimed at that caller,
-  `fd:<id>` the earliest future moment a window lapse could change
-  something for them. Fast path: cursor >= fw and now < fd means nothing
-  changed.
-- A held poll checks the same two keys beside the mailbox, so a transition
-  wakes every subscriber within the poll's check interval. It is NOT a
-  mailbox message: `signals` stays exactly what it was, and a 200 woken by
-  a delta carries an empty one.
-- The cap (`friends_delta_max`, 64) never splits a stamp tie - a page runs
-  past the cap to the end of the tie instead. Splitting one would strand a
-  friend in the wrong state forever, because the client would advance its
-  cursor past the rows it never got.
-- `friends` on hello still answers exactly as in 4.5 when `friends_since`
-  is absent. The deployed client sends ids; ignoring them outright would
-  have broken every live player until they updated.
+  transition) and `duel` (last duel beat, s). Playing is derived per
+  player from a window; both peers stamp their own entry.
+- TRANSITIONS are the only pushes: coming online, a rename, the caller's
+  own not-playing -> playing edge. Each stamps `chg` and bumps the
+  accepted friends' watch keys. Going offline and leaving a duel push
+  nothing; they are derived at read time.
+- Keys, per environment: `fl:<id>` accepted-friend ids (invalidated at
+  every friends-table write), `fw:<id>` the last push aimed at the
+  caller, `fd:<id>` the earliest future lapse. cursor >= fw and now < fd
+  means nothing changed.
+- A held poll checks the same two keys beside the mailbox. It is NOT a
+  mailbox message: a 200 woken by a delta carries an empty `signals`.
+- The cap (`friends_delta_max`, 64) never splits a stamp tie - a page
+  runs to the end of the tie, or a friend is stranded in the wrong state.
 
 ## Duel announcement (since API 4.7)
 
-A duel is stated the way being online is - an edge in, an edge out, a window
-that expires when neither arrives - and the edge IN is start.php, NOT the
-heartbeat. Both peers already call start.php where play begins, so the duel
-is on record from that moment and from two independent callers. Before this,
-duel_with on hello was the only caller of Presence::touchDuel, so a friend's
-WATCH row was up to a beat late, never appeared at all for a match shorter
-than the gap to the next beat, and then stood for the rest of the online
-window after the match ended.
+A duel is stated like being online - an edge in, an edge out, a window
+that expires when neither arrives - and the edge IN is start.php (both
+peers call it where play begins), not the heartbeat.
 
-- The announcement runs AFTER Starts::request has issued a start. A 409 means
-  the caller is not in the pair's current run, and announcing a duel for it
-  would offer a feed of a match nobody is playing.
-- A tournament match calls start.php itself like any other duel, so it is
-  announced by the same line and no tournament code knows about any of this.
-- `duel_end` on hello is the other edge, naming the peer left. Once the
-  DataChannel is open a bye goes peer-to-peer and the server never sees it,
-  so the end must be STATED; absence cannot mean it, because a client closed
-  mid-match sends nothing ever again. A hello may carry duel_end and
-  duel_with together - the end is applied first, so a rematch announced in
-  one request lands on the new pairing.
-- TWO CLOCKS, deliberately apart. FOK_DUEL_SEEN_WINDOW (90 s, the presence
-  entry) is the spectate offer and bounds a client that crashed;
-  FOK_DUEL_WINDOW (120 s, the duels row) is unchanged because an item claim's
-  deadline is measured from it and a claim legitimately arrives after the
-  last tick. Wrong about the offer is cosmetic and the next beat repairs it;
-  wrong about the other costs somebody an item. Do not merge them.
-- `duel_private` (hello and start.php alike) is COUNTED, never ATTRIBUTED: in
-  the playing figure, holding the duel window, on the operator's dashboard,
-  and absent from a delta's playing. A property of
-  the duel, not a latch - stated on every request that holds the duel up, so
-  omitting it makes the duel public again from that request on.
-- The transition fan-out keys on what a FRIEND can see (playing && !private),
-  which is what makes a privacy toggle mid-match an ordinary transition
-  instead of a case of its own, and stops a private duel waking every
-  friend's held poll for a state that reads identical.
-- Presence::playingOf reads the ENTRIES, not the duels table: it and the
-  delta are two ways of asking one question, and answering it off the table
-  would let a client ask the older way and learn about a private duel. The
-  playing figure counts entries in the pass that already counts online,
-  private ones included. So the duels table is now read by the item registry
-  and the housekeeping and by NOTHING else, and touchDuel's upsert no longer
-  reads a row back.
-- EVERY start begins play (REASONS is first/rematch and nothing else), so
-  every one mints a fresh match. A rematch names epoch 0 exactly as a first
-  start does, so the epoch's ORDERING can no longer tell a leftover line
-  from a live one - what does is the pair of (epoch, reason) plus a
-  PAIR_WINDOW_MS (5 s) freshness window on the read. Before 1.6.0 the
-  staleness test relied on in-run halts advancing the epoch, which the
-  client stopped sending in 2026-09; a relay rematch inside KEEP_MS was
-  therefore being handed the PREVIOUS match's start_pts. The row is still
-  kept KEEP_MS (5 min) because matchInfo reads its mid with no window and a
-  claim attests against that match long after the duel goes quiet.
-- Cost added to start.php: one duels upsert on a latency-sensitive endpoint
-  that already takes the writer for Starts::request. The local smoke is
-  single-threaded and proves nothing about it - watch for INSERT INTO duels
-  in the admin worst-access list.
+- The announcement runs AFTER Starts::request issued a start; a 409
+  means the caller is not in the pair's current run.
+- A tournament match calls start.php like any duel, so it is announced
+  by the same line.
+- `duel_end` on hello is the other edge: a bye goes peer-to-peer once
+  the DataChannel is open, so the end must be STATED. A hello may carry
+  duel_end and duel_with together - the end is applied first.
+- TWO CLOCKS, deliberately apart: FOK_DUEL_SEEN_WINDOW (90 s, the
+  presence entry) is the spectate offer; FOK_DUEL_WINDOW (120 s, the
+  duels row) is what an item claim's deadline is measured from. Do not
+  merge them.
+- `duel_private` (hello and start.php) is COUNTED, never ATTRIBUTED, and
+  is stated on every request that holds the duel up. The fan-out keys on
+  what a friend can see (playing && !private), so a privacy toggle
+  mid-match is an ordinary transition.
+- Presence::playingOf reads the ENTRIES, never the duels table (that
+  would leak a private duel). The duels table is read by the item
+  registry and the housekeeping and by NOTHING else.
+- EVERY start begins play (REASONS is first/rematch only) and mints a
+  fresh match. A rematch is epoch 0 like a first start, so the epoch's
+  ordering cannot tell a leftover line from a live one - (epoch, reason)
+  plus PAIR_WINDOW_MS (5 s) on the read does. The row is kept KEEP_MS
+  (5 min) because matchInfo reads its mid with no window.
+- start.php pays one duels upsert on a latency-sensitive endpoint; the
+  local smoke proves nothing about it - watch for INSERT INTO duels in
+  the admin worst-access list.
 
 ## Tournament mode (since API 4.1)
 
-THE INVARIANT, do not erode: the server orchestrates and settles ONLY -
-schedule, roles, results, standings, bracket - and NEVER carries a byte
-of match or spectator traffic; a tournament match is an ordinary P2P duel
-and THAT PAIR calls start.php itself, which keeps start.php the sole
-mid/secret authority. relay.php stays deprecated and untouched
-(project_fok_relay_apcu.md).
+THE INVARIANT: the server orchestrates and settles ONLY - schedule,
+roles, results, standings, bracket - and NEVER carries a byte of match or
+spectator traffic; a tournament match is an ordinary P2P duel and THAT
+PAIR calls start.php, which keeps start.php the sole mid/secret
+authority.
 
-Shape: public/api/tournament.php is ONE POST with an action switch
-(create/join/leave/start/state/result/standdown/orphan/continue);
-Tournament.php holds the state machine, Bracket.php the pure
-seating/schedule/tie-break math (no DB, no clock, so unit-testable).
-'tourney' is a RESERVED server-generated signal type drained through
-hello/poll (a forged one would rewrite a bracket on someone else's
-screen); 'watch' IS client-sendable. DEADLINES ARE SETTLED LAZILY on the
-next request that touches the tournament - there is no cron - so a client
-that stops asking can hang a walkover for as long as it is there; the
-client must poll state whenever a tournament is running and it is not in a
-match. ONE deadline is different, because its subject is that nobody is
-asking: Tournament::sweep ends a tournament none of whose seats has been
-seen for tournament_idle_ttl (180 s, chosen to match tournament_walkover_ms
-and to sit above the 120 s online window). It rides the deferred tail of
-ANY client request (Util::bumpNow, gated by tournament_sweep_secs = 30 s,
-reading the small fok:tlive: cards rather than a bracket), and is excluded
-on the admin scripts - reading the dashboard must not be what ends a
-tournament, which is the promise listLive/detail make. The test is
-PRESENCE, never activity: a long match transitions rarely. Before 1.7.0
-nothing did this and an abandoned run stood for tournament_run_ttl (1 h),
-listed and holding its host's one-per-host claim. Result ladder:
-a reported LOSS settles at once, a lone win/draw is held
-~tournament_result_ms, a contradiction FREEZES the node.
-THERE ARE TWO WAYS A NODE NOBODY PLAYED ENDS, and they are deliberately
-disjoint. Presence decides the first: tournament_walkover_ms (180 s) hands
-the node to whoever stayed, but only where the other seat reads OFFLINE -
-a slow match between two people who are both there is never taken away
-from them. The second is the case presence cannot see, both awake and no
-link between them: tournament_deadlock_ms (150 s) re-deals the node once
-and voids it on the second lapse, and it fires ONLY where no match was
-ever observed between the two seats. That test is Presence::duelSeenSince
-and it reads the duels ROW, never the entries - endDuel clears an entry
-and the question has to stay answered afterwards - as the LAST gate, after
-the deadline and after both seats read online, so only a node about to be
-settled pays for it. If either seat is gone this rule stands aside; the
-win belongs to whoever turned up and a void must never take it. A VOID
-carries `draw` TRUE (the verdict that advances an empty slot instead of
-replaying an unplayable node) plus `why`, 'gone' or 'unplayed' - the two
-read as opposite things on a bracket, and a client testing `draw` first
-would tell two people who never connected that they drew. A round is
-played at level = min(start + round - 1, tournament_max_level=10), where
-start is the create's `lvl` (4.9, default 1, clamped on the way in), and
-that cap MUST NOT exceed MAX_LEVELS in the client's js/assets.js; `stage`
-rides as a TOKEN the client words itself. A stored tournament carrying no
-`lvl` reads as 1, which is the store's own shape rather than a compat
-shim. Between rounds advance() stops on a gate
-the host clears with `continue`, and the break clears itself on a TTL so
-a host who closed the browser cannot wedge it. The HOST leaving a running
-tournament ABANDONS it for everyone; a guest's identical `leave` is a
-forfeit - the server is the only thing that tells them apart. ANNOUNCE IS
-BY NETWORK PER FAMILY (the presence entry, one network per family,
-matched within tournament_announce_window 180 s), because on a dual-stack
-LAN the host
-and joiner never share an address; hello's optional "nets" is a CLAIM,
-never evidence (a claim never displaces a live observation and cannot be
-rewritten faster than 60 s). There is no server-side field check for "my
-phone cannot see the lobby on my PC" any more - net.php is gone (1.9.1),
-and test/live-protocol.sh asks www4/www6.poggensee.it/ip instead, which
-answers both whether the family works and what address it presents.
+Shape: public/api/tournament.php is ONE POST with an action switch;
+Tournament.php holds the state machine, Bracket.php the pure seating /
+schedule / tie-break math (no DB, no clock). 'tourney' is a RESERVED
+server-generated signal type; 'watch' is client-sendable. DEADLINES ARE
+SETTLED LAZILY on the next request that touches the tournament (no
+cron), so the client must poll state whenever a tournament runs and it
+is not in a match. Tournament::sweep ends a tournament none of whose
+seats has been seen for tournament_idle_ttl (180 s); it rides the
+deferred tail of any client request (gated by tournament_sweep_secs) and
+is excluded on admin scripts - reading the dashboard must not end a
+tournament. The test is PRESENCE, never activity.
+
+Result ladder: a reported LOSS settles at once, a lone win/draw is held
+~tournament_result_ms, a contradiction FREEZES the node. TWO WAYS A NODE
+NOBODY PLAYED ENDS, deliberately disjoint: tournament_walkover_ms
+(180 s) hands the node to whoever stayed, only where the other seat
+reads OFFLINE; tournament_deadlock_ms (150 s) re-deals once and voids on
+the second lapse, ONLY where both seats read online and no match was
+ever observed between them (Presence::duelSeenSince reads the duels ROW,
+since endDuel clears the entry, as the LAST gate so only a node about to
+be settled pays for it). A VOID carries `draw` TRUE plus `why` 'gone' or
+'unplayed'.
+
+A round is played at level = min(start + round - 1,
+tournament_max_level = 10), start = the create's `lvl` (default 1,
+clamped); the cap MUST NOT exceed MAX_LEVELS in the client's
+js/assets.js. Between rounds advance() stops on a gate the host clears
+with `continue`, self-clearing on a TTL. The HOST leaving ABANDONS the
+tournament; a guest's `leave` is a forfeit. ANNOUNCE IS BY NETWORK PER
+FAMILY (the presence entry, matched within tournament_announce_window
+180 s) because on a dual-stack LAN the host and joiner never share an
+address; hello's `nets` is a CLAIM that never displaces a live
+observation. test/live-protocol.sh learns its own address from
+www4/www6.poggensee.it/ip.
 
 ## Testing lessons
 
-The LOCAL SMOKE IS SINGLE-THREADED and therefore CANNOT reproduce SQLite
-writer contention: a green unit+smoke run is NOT evidence that a locking
-or concurrency fix works - say so plainly. Contention fixes have twice
-shipped green and only real 2-client traffic showed the truth; one was
-strictly worse than what it replaced. Never pin a test to a real deadline
-(walkover_ms=1 measured against the ms a node was dealt was flaky 1 run
-in 3 and silently skipped a deploy). Bare `wait` in smoke.sh waits on the
-backgrounded php -S forever - wait on explicit curl PIDs; the test server
-uses a random port. Utility .hidden must be !important
-(equal-specificity .dashboard display:grid overrides it) and h2 checks
-must be case-insensitive (HTTP/2 lowercases header names).
+The LOCAL SMOKE IS SINGLE-THREADED and CANNOT reproduce SQLite writer
+contention: a green run is NOT evidence that a locking fix works - say
+so. Never pin a test to a real deadline (walkover_ms=1 was flaky 1 in 3
+and skipped a deploy). Bare `wait` in smoke.sh waits on the backgrounded
+php -S forever - wait on explicit curl PIDs. Utility .hidden must be
+!important; h2 header checks must be case-insensitive. Read the whole
+output of a rig, not a grep for FAIL ("unbound variable" does not start
+with FAIL).
 
 ## Decided, do not re-open
 
-- relay_max_payload STAYS 2048: the 1280 MTU rule is a UDP/DataChannel
-  concern; relay.php is HTTP over TCP, and a base64 packet of 1280
-  binary bytes is 1708 chars, so 1280 would reject a maximum-size
-  packet. The relay payload ENCODING is the CLIENT's choice and stays
-  out of docs/API.md.
+- relay_max_payload STAYS 2048: relay.php is HTTP over TCP, and a base64
+  packet of 1280 binary bytes is 1708 chars. The relay payload encoding
+  is the client's choice and stays out of docs/API.md.
 - NEVER CHAIN TWO confirm() DIALOGS: a browser may suppress the second
-  from the same gesture, and a suppressed confirm() returns CANCEL, so
-  the click vanishes with no request and no error. Arm-then-confirm in
-  the card instead, with the armed state outside the DOM.
-- No admin surface for a frozen knockout node; no explanatory prose under
-  the admin tournament tables.
-- sys_getloadavg on shared hosting measures the WHOLE machine, so the
-  load alert is a "host is thrashing" signal per core, never our
-  capacity gauge.
-- Admin restore is verify -> snapshot -> page copy (Backup::restore). The
-  copy goes through SQLite's backup API, never a file swap, because
-  admin/api.php holds a Db::get() across the whole request. An upload is
-  refused unless it passes quick_check, has a players table and carries a
-  schema this release can run (the ladder only goes forward). Afterwards
-  the per-environment APCu stores (presence, conn, matchmaking, counter
-  buffer) and the request's own deferred tail go, so nothing describing
-  the replaced database writes into the restored one; the bare-prefix
-  stores stay, being shared with the other environment. Persistent PDO
-  stays off: Db::close() only drops the reference.
+  and a suppressed confirm() returns CANCEL. Arm-then-confirm in the
+  card, with the armed state outside the DOM.
+- No admin surface for a frozen knockout node; no explanatory prose
+  under the admin tournament tables.
+- sys_getloadavg measures the WHOLE shared machine: the load alert is a
+  "host is thrashing" signal, never our capacity gauge.
+- Admin restore is verify -> snapshot -> page copy (Backup::restore)
+  through SQLite's backup API, never a file swap (admin/api.php holds a
+  Db::get() across the request). An upload must pass quick_check, have a
+  players table and carry a schema this release can run. Afterwards the
+  per-environment APCu stores and the request's deferred tail go; the
+  bare-prefix stores stay. Persistent PDO stays off.
 
 ## Known dead weight
 
-REMOVED in 1.6.0, all of it surface no client ever reached for, and all of
-it a withdrawal on the SAME contract minor (4.7) - the version says what the
-contract PERMITS, not what the server implements, so dropping what nothing
-asks for does not move it:
+REMOVED in 1.6.0, all on contract minor 4.7 (the version says what the
+contract PERMITS; dropping what nothing asks for does not move it):
+hello's `friends` id list and its four status maps (with
+Presence::playingOf and Friends::acceptedOf); start.php's in-run
+reasons, `Skew.php`, `resync`, start_pair_skew_ms; the `chat` signal
+type; stats.php, PStats and the pstats table (schema 43).
 
-- hello's `friends` id list and the `friends_online` / `friends_latency` /
-  `friends_name` / `friends_playing` maps. The delta (4.6) is the only way
-  to ask now. `Presence::playingOf` and `Friends::acceptedOf` went with it,
-  having had no other caller.
-- start.php's in-run reasons (level/respawn/resume), `Skew.php`, `resync`
-  and start_pair_skew_ms - see Duel announcement for what replaced the
-  epoch's staleness test.
-- the `chat` signal type, chat_max_len and FOK_CHAT_MAX_LEN.
-- stats.php, PStats and the pstats table (schema 43 drops it).
+REMOVED in 1.9.1 (4.10): net.php; version.php (api/version.txt now);
+the contract's demand that a client check the version.
 
-LEFT, and why: the relay - the client uses it behind its RELAY ONLY toggle,
-so it is the only way to play without WebRTC; removal is a MAJOR contract
-change and the admin 'relaying' gauge decides it, not a survey. And ~36 of
-59 settings are contract numbers read at one site: no wire cost, admin
-clutter only, and turning them into constants would churn the config
-export/import path for nothing.
+LEFT, and why: the relay - the only way to play without WebRTC; removal
+is a MAJOR contract change and the admin 'relaying' gauge decides it.
+~36 of 59 settings are contract numbers read at one site: admin clutter
+only, and constants would churn config export/import for nothing.
 
-REMOVED in 1.9.1, same rule, same contract minor (4.10):
+Used and fine: q_ms, pace.hold, nets, after_ms, the delta's latency,
+backup.php, debug/submit.php, time.php (t.txt fallback, and the smoke's
+up-probe and origin-allowlist assertions).
 
-- net.php. No client ever called it; the live-protocol harness was the only
-  caller and now asks www4/www6.poggensee.it/ip.
-- version.php, which is api/version.txt now - see Deploy above.
-- the contract's demand that a client check the version. `api` rides every
-  hello and poll body and what a client does with it is its own business.
-  docs/API.md also stopped naming PHP and Apache outside a URL.
+## Open - parked until n:db_skip > 0 on the admin worst-access list
 
-Used and fine: q_ms, pace.hold, nets (Presence::announceNet reads them),
-after_ms, the delta's latency, backup.php, debug/submit.php, time.php
-(t.txt fallback, and the smoke's up-probe and origin-allowlist assertions -
-a static file cannot consult the allowlist and can answer before the server
-is ready to).
-
-## Open
-
-- `starts` to APCu, no fallback. The row is TWO things: a disposable epoch
-  line (epoch, start_pts, reason - "dropping the row is always safe") and a
-  durable `mid`, which is the handle to the match secrets a claim attests
-  against. Only the second must survive, and it may be a denormalised copy -
-  `matches` already holds (mid, a, b, opened) with the matches_pair index,
-  so matchInfo could read the pair's newest match instead. That would leave
-  `starts` holding nothing durable and let the whole table move to shared
-  memory, taking the last SQL write off the signaling path (the reset at
-  invite/invite-relay/offer). Eviction is benign there, which is what makes
-  no-fallback the right shape: request() already treats a missing row as
-  fresh.
-  THE HARD PART, and why this is not done: the mint must stay in SQLite, so
-  splitting the epoch line off breaks an atomicity that is one transaction
-  today - the thing that guarantees both peers read the same mid and the
-  same start_pts. It needs a lock key via apcu_add plus whole-entry
-  read-modify-write, the shape TourneyStore already uses for the host claim.
-  The race it introduces is exactly what a single-threaded local smoke
-  cannot exercise, and the failure mode is two peers on different mids,
-  which costs a player an item. Do it as its own release, never folded into
-  another.
-  NOT a way out: putting the epoch on the match row and deleting `starts`.
-  A rematch is epoch 0 just like a first start (the in-run halts are P2P
-  now), so without the reset at a pairing BEGIN the two are
-  indistinguishable. The signaling reset is load-bearing; it can only be
+- `starts` to APCu, no fallback. The row is TWO things: a disposable
+  epoch line (epoch, start_pts, reason) and a durable `mid`, which
+  `matches` already holds (mid, a, b, opened, matches_pair index) - so
+  matchInfo could read the pair's newest match and the whole table could
+  move to shared memory, taking the last SQL write off the signaling
+  path (the reset at invite/invite-relay/offer). THE HARD PART: the mint
+  stays in SQLite, so splitting the epoch line off breaks the one
+  transaction that guarantees both peers the same mid and start_pts. It
+  needs an apcu_add lock plus whole-entry read-modify-write (the
+  TourneyStore host-claim shape); the race is what a single-threaded
+  smoke cannot exercise, and the failure is two peers on different mids
+  - a lost item. Own release, never folded in. NOT a way out: the epoch
+  on the match row and no `starts` - a rematch is epoch 0 like a first
+  start, so the reset at a pairing BEGIN is load-bearing; it can be
   moved off SQL, never removed.
-
-- tournament_create_cooldown is charged off the host's newest row with no
-  state filter, so abandoning an open lobby locks the host out for the
-  rest of the window (the floor is deliberate, the wording is not).
+- Split the database into two files (assessed 2026-09-08). Measured on
+  Linux: BEGIN IMMEDIATE takes the write lock on EVERY ATTACHed
+  database, a bare single-statement write locks only its file, and one
+  transaction over two WAL files commits but not atomically. So: TWO
+  CONNECTIONS, the game handle never ATTACHes ops (pin with a unit
+  assertion on PRAGMA database_list), Db::ops() opened lazily. Ops takes
+  counters, alerts, admin_fails, debug; settings and caps stay game-side
+  (read on nearly every request, written almost never). Couplings to
+  break: Items::mint's per-hour quota in `counters` inside the items
+  transaction (give the quota its own game-side table); Util::hourly
+  task 1 raising an alert inside a tryWrite; Housekeeping::sweep's five
+  DELETEs under one tryWrite. Invariant it creates: nothing may ever
+  need one atomic commit across the two files. Second argument: the
+  counters churn (the minute-bucket and hour prunes) is what crosses
+  wal_autocheckpoint, and it would leave the game file.
+- Alert delivery backends (the TODO in src/Alerts.php): a dispatch step
+  inside raise(); channel undecided.
 - signal.php could allow-list message types and bind `from` to the
-  sender - low priority.
+  sender - part of the anti-DoS review (CLAUDE.local.md).

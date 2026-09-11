@@ -1,168 +1,116 @@
 # FOK-server - notes for AI sessions
 
 Repo: FOK-server (our own code; PRODUCTION - push to main == deploy).
-Work ONLY on this repo; never touch another repo unless explicitly instructed otherwise.
+Work ONLY on this repo; never touch another repo unless explicitly
+instructed otherwise.
 
 Read README.md for what this is; read docs/API.md before touching any
 endpoint - it is the contract the FOK-snake client is built against.
+The measurements and decisions behind the rules below are in
+.claude/rules/project_fok_server.md.
 
 ## Hard rules
 
-- ASCII only in every file. No smart quotes, em dashes, arrows or
-  section signs (CI enforces this).
-- Never put credentials anywhere in the repo: no FTP/deploy passwords,
-  no admin credentials, no tokens, not even in commit messages or the
-  admin hash itself (CI greps for leak patterns). Deploy credentials
-  live in ~/.fok-server-deploy.json on the developer machine only.
+- ASCII only in every file (CI enforces).
+- Never put credentials anywhere in the repo, not even in commit
+  messages or the admin hash itself (CI greps for leak patterns).
+  Deploy credentials live in ~/.fok-server-deploy.json on the developer
+  machine only.
 - Every PHP file starts with declare(strict_types=1) (CI enforces).
-- LF line endings (.gitattributes enforces); PowerShell scripts are the
-  only CRLF exception.
+- LF line endings; PowerShell scripts are the only CRLF exception.
 - Runtime data (SQLite db, admin.hash, backups) lives ABOVE the docroot
   in ../fok-server-data/, never under public/.
 
 ## Architecture invariants
 
 - Shared hosting: Apache + PHP-FPM only. No daemons, no WebSockets, no
-  cron. Anything real-time is client-polled HTTP or peer-to-peer WebRTC.
-  The server relays SDP/ICE signaling only and never carries an
-  RTCPeerConnection (there is no TURN). Game traffic normally goes P2P
-  and never touches the server; the ONE exception is the relay fallback
-  (api/relay.php), where WebRTC is abandoned and opaque in-duel messages
-  go over HTTP instead - capped, because it costs workers. The relay
-  fallback is DEPRECATED (still live); do not extend it. Removal plan and
-  the full delete manifest: docs/DEPRECATED-relay.md.
-- There is no persistent state: PHP dies at the end of every request, so
-  the database IS the state and "background" work piggybacks on the next
-  request (TTL sweeps, expiry, monitoring). Cost per request must stay
-  flat in the number of players (see README "Capacity and limits").
-- That piggybacked work goes through Util::defer, which runs it after the
-  response is flushed (fastcgi_finish_request). ONLY defer what the
-  client never observes - monitoring, counters, sweeps. A client can send
-  its next request the moment the response lands and that request may
-  overtake the deferred work, so anything readable back must happen
-  before the answer. Deferring does NOT free the worker: it buys latency
-  and determinism, never capacity.
-- The clock source (api/t.txt) is a STATIC file whose timestamp comes
-  from mod_headers %t in public/.htaccess - deliberately not PHP, so it
-  never queues for an FPM worker (that wait is invisible to PHP and would
-  land in the client's clock offset). It protects the STAMP, not the round
-  trip: a t.txt request still shares an HTTP/2 connection with everything
-  else the client has in flight, and live measurement shows tens of ms of
-  wait on ALREADY WARM workers, i.e. contention above the pool, in the
-  layer a static file also sits in. Hence the 4.4 rule that a client
-  anchors its clock when the wire is quiet, never beside the ICE
-  handshake. It must stay no-store, and its header must stay in
-  Access-Control-Expose-Headers or browsers cannot read it. php -S
-  ignores .htaccess, so only staging/live can verify it.
-- The same mod_headers block stamps the receive time into a REQUEST
-  header (RequestHeader set X-Request-Start "%t"), which PHP subtracts
-  from REQUEST_TIME_FLOAT to get the time the request spent queued for a
-  worker (Load::queueUs). It must stay "set", which overwrites, so a
-  client cannot forge its own wait, and the absence of the header must
-  stay ordinary rather than an error - php -S ignores .htaccess, so the
-  smoke tests never see it. This is the only saturation signal PHP can
-  have: while a request waits for a worker, no PHP is running to time it.
-- The admin dashboard is EXCLUDED from that measurement (Util::noteQueue
-  via isAdminScript) and must stay excluded. It polls only while somebody
-  is watching the gauge it feeds, so counting it makes the observer the
-  measurement - it filled the entire worst-case list the day that list
-  shipped. Excluding it is not a licence to let it be expensive: it
-  batches a whole tick into one request and runs on ONE clock so that the
-  cards due together actually land in the same turn of the event loop.
-  It was 95 percent of all requests on this server, so admin/api.php asks
-  for the database WHERE IT IS USED, never at the top: a tick carrying
-  only presence and duels is answered from shared memory and opens no
-  connection at all. Do not hoist a `$db = Db::get()` back to the top of
-  that file. Load::markStart stays there, though - it is the CPU baseline
-  every other endpoint pays on its own open, and without it the one screen
-  being measured would be the one reporting no CPU.
-- apcu_inc does NOT refresh the TTL of a key it increments - its ttl
-  argument applies only to the key it creates - while apcu_store resets
-  the TTL on every write. A pair of counters written the two different
-  ways therefore expires UNEVENLY, however busy it is: Signals and
-  RelayStore keep a sequence (inc) beside an ack (store), so the sequence
-  goes first and the survivor reads as "impossible". Ordinary expiry is a
-  MISSING key, an eviction is a key that is present and wrong; alert only
-  on the second, or a routine daily event pages somebody (Signals::any).
-- Server-issued starts are keyed on (pair, epoch), never on the pair
-  alone: both peers name the epoch so the answer cannot depend on when
-  either asks. A pair-only key silently handed a late peer a different
-  start. The epoch is scoped to one connection and resets where a pairing
-  BEGINS (invite/invite-relay/offer in signal.php) - NOT on 'bye': once
-  the DataChannel is open the bye goes peer-to-peer and the server never
-  sees it, so a bye-keyed reset left the finished line standing and 409'd
-  the pair's rematch. The server sees every begin; it does not see every
-  end. Dropping the row is always safe, missing one breaks a rematch.
-- public/ mirrors the webroot 1:1; deploy is a dumb FTPS file copy
+  cron. Real-time is client-polled HTTP or peer-to-peer WebRTC; the
+  server relays SDP/ICE signaling only (no TURN). The ONE exception is
+  the relay fallback (api/relay.php): DEPRECATED, still live, do not
+  extend it (docs/DEPRECATED-relay.md has the delete manifest).
+- No persistent state: the database IS the state, and "background" work
+  piggybacks on the next request through Util::defer, which runs after
+  the response is flushed. ONLY defer what the client never observes
+  (monitoring, counters, sweeps) - the client's next request may
+  overtake the deferred work. Deferring buys latency, never capacity.
+  Cost per request must stay flat in the number of players.
+- The clock source api/t.txt is a STATIC file stamped by mod_headers %t
+  in public/.htaccess - never PHP, so it never queues for a worker. It
+  protects the stamp, not the round trip: a client anchors its clock
+  when the wire is quiet (API 4.4). It must stay no-store and its header
+  in Access-Control-Expose-Headers. The same block stamps X-Request-Start
+  into a REQUEST header, which PHP subtracts from REQUEST_TIME_FLOAT for
+  the queue wait (Load::queueUs); it must stay "set" (overwrites, so a
+  client cannot forge it) and its absence must stay ordinary, since
+  php -S ignores .htaccess.
+- The admin dashboard is EXCLUDED from the queue measurement
+  (Util::noteQueue via isAdminScript) and must stay excluded: it polls
+  only while somebody watches, so counting it makes the observer the
+  measurement. It batches a tick into one request, and admin/api.php
+  asks for the database WHERE IT IS USED, never at the top (a tick
+  carrying only presence and duels opens no connection). Load::markStart
+  stays at the top.
+- apcu_inc does NOT refresh a key's TTL, apcu_store resets it on every
+  write, so a counter pair written the two ways expires UNEVENLY.
+  Ordinary expiry is a MISSING key, an eviction is a key present and
+  wrong; alert only on the second (Signals::any).
+- Server-issued starts are keyed on (pair, epoch), never the pair alone.
+  The epoch resets where a pairing BEGINS (invite/invite-relay/offer in
+  signal.php), NOT on 'bye' - a bye goes peer-to-peer once the
+  DataChannel is open and the server never sees it. Dropping the row is
+  always safe, missing one breaks a rematch.
+- public/ mirrors the webroot 1:1; deploy is a dumb FTPS copy
   (tools/deploy.sh in CI, tools/deploy.ps1 by hand). No build step, no
-  composer, no dependencies.
-- SQLite via PDO in WAL mode, schema auto-created in src/Db.php. The
-  FOK_DATA_DIR env var overrides the data location (tests rely on it).
-- Schema changes go through the migration ladder in Db::migrate (PRAGMA
-  user_version): append a new "if ($v < N)" step with ALTER/CREATE
-  statements that are safe on live data; never edit an existing step.
-- Player IDs are 8 lowercase hex chars (32-bit), validated everywhere
-  with Util::isValidId. They are public identities, not secrets.
-- Score entries must keep field parity with the FOK-snake local top-10
-  entry: name (max 15 = client MAX_NAME), score, level, diff, color,
-  shopItems, date (DD.MM.YY). Submissions store seed + inputs verbatim
-  for future replay validation; validated stays 0 until that exists.
+  dependencies. Every asset sits FLAT in assets/ - the upload plan is
+  one level deep.
+- SQLite via PDO in WAL mode, schema auto-created in src/Db.php;
+  FOK_DATA_DIR overrides the data location (tests rely on it). Schema
+  changes append an "if ($v < N)" step to Db::migrate that is safe on
+  live data; never edit an existing step.
+- Player IDs are 8 lowercase hex chars, validated with Util::isValidId.
+  Public identities, not secrets.
+- Score entries keep field parity with the FOK-snake local top-10 entry:
+  name (max 15), score, level, diff, color, shopItems, date (DD.MM.YY).
+  Submissions store seed + inputs verbatim; validated stays 0 until
+  replay validation exists.
 - Item ownership (src/Items.php) is answered from the items row and ONLY
-  from it: one row per instance, moved by compare-and-swap on its seq, so
-  a claim is idempotent. The hash-chained ledger is audit-only and gets
-  checkpointed and truncated, so it can never be read to decide who owns
-  what. MINTING stays client-trusted (the coin economy is on the client),
-  so the registry makes items conserved and auditable, not unforgeable -
-  do not describe or extend it as anti-forgery. The per-match attestation
-  secrets are minted inside the start transaction (Items::openMatch, from
-  Starts::request); each peer is told only its own, and they are never
-  logged nor returned by the admin API. Freezing an instance is terminal
-  until an operator clears it, and only the two provable-tampering paths
-  may reach it.
-- The admin dashboard is modular: one self-contained object per card in
-  MODULES (public/assets/admin.js). Extend by appending a module, never
-  by special-casing the framework code.
-- New tunable values go into Settings::DEFS (src/Settings.php) with a
-  label; they then appear in the admin config card automatically. Read
-  them with Settings::int, never a bare constant.
-- New monitored conditions call Alerts::raise(type, message); raising is
-  de-duplicated per type within the alert_cooldown window. External
-  delivery backends (Telegram/SMS/Email) are the marked TODO in
-  src/Alerts.php - implement them as a dispatch step inside raise().
+  from it: one row per instance, moved by compare-and-swap on its seq.
+  The ledger is audit-only and truncated. MINTING stays client-trusted:
+  the registry makes items conserved and auditable, not unforgeable.
+  Per-match attestation secrets are minted inside the start transaction;
+  each peer is told only its own, never logged nor returned by the admin
+  API. Freezing is terminal until an operator clears it, and only the
+  two provable-tampering paths reach it.
+- The admin dashboard is modular: one object per card in MODULES
+  (public/assets/admin.js). Extend by appending a module, never by
+  special-casing the framework.
+- New tunables go into Settings::DEFS with a label and read through
+  Settings::int, never a bare constant.
+- New monitored conditions call Alerts::raise(type, message),
+  de-duplicated per type within alert_cooldown. External delivery is the
+  marked TODO in src/Alerts.php.
 
 ## When changing the API
 
-Update all four together or CI/state drifts: the endpoint, docs/API.md,
-README.md's sketch, and the tests (test/unit.php for logic,
-test/smoke.sh for the HTTP behavior - a runner that sources the feature
-parts in test/smoke/*.sh. Locally they run in order against one php -S;
-against staging they run as THREE PARALLEL GROUPS that share nothing -
-not an id, not a settings key they change - followed by 09_sweep and
-06_admin in sequence. Add an HTTP test to the matching part; a NEW part
-must be placed in a group whose ids and settings it does not touch, and
-anything the tail reads from it goes through the env hand-off in
-smoke.sh. Helpers used by more than one part live in lib.sh).
+Update all four together: the endpoint, docs/API.md, README.md's sketch,
+and the tests (test/unit.php for logic, test/smoke.sh for HTTP - a
+runner sourcing test/smoke/*.sh; locally in order against one php -S,
+against staging as THREE PARALLEL GROUPS that share nothing, then
+09_sweep and 06_admin in sequence). A NEW part goes in a group whose ids
+and settings it does not touch; what the tail reads from it goes through
+the env hand-off in smoke.sh. Shared helpers live in lib.sh.
 
 ## Workflow
 
-- The server is PRODUCTION and must stay up. Deploying == pushing to
-  main: GitHub Actions runs checks, deploys staging, smokes it, then
-  deploys live and verifies the reported version (see README "Staging
-  and deploy"). Do NOT run manual deploys except in emergencies, and
-  then always staging first (tools/deploy.ps1 -Staging + remote smoke
-  before tools/deploy.ps1).
-- Bump FOK_SERVER_VERSION with every release commit - the live-verify
-  step compares it against what the deployed server reports. A change
-  under public/assets/ ALWAYS needs a bump even if nothing else moved:
-  asset URLs carry ?v=<version> and are cached immutably, so shipping a
-  second file under a version that was already deployed leaves browsers
-  on the old one for a year.
+- Deploying == pushing to main: GitHub Actions runs checks, deploys
+  staging, smokes it, deploys live and verifies the reported version. No
+  manual deploys except emergencies, and then staging first
+  (tools/deploy.ps1 -Staging + remote smoke before tools/deploy.ps1).
+- Bump FOK_SERVER_VERSION with every release commit. ANY change under
+  public/assets/ needs a bump: asset URLs carry ?v=<version> and are
+  cached immutably.
 - bash test/checks.sh runs everything CI runs (needs php CLI; the
-  pre-commit hook in .githooks/ does this automatically and skips
-  gracefully when php is missing).
-- The smoke test only covers php -S; .htaccess behavior (src/ blocking,
-  HTTPS redirect) exists only on the real Apache, so staging verifies
-  those too.
-- One-time server maintenance (writing admin.hash, resetting the db)
-  is done by uploading a temporary PHP script via FTPS, invoking it
-  once over HTTPS, and deleting it immediately.
+  pre-commit hook in .githooks/ does it and skips without php).
+- .htaccess behavior exists only on the real Apache; staging verifies it.
+- One-time server maintenance: upload a temporary PHP script via FTPS,
+  invoke it once over HTTPS, delete it immediately.

@@ -1,201 +1,108 @@
 # Queue-wait gauge: how to read it, and the three levers
 
 The admin "Queue mean | worst" gauge measures Apache-accepted ->
-PHP-started (`Load::queueUs`, X-Request-Start vs REQUEST_TIME_FLOAT),
-i.e. the handoff to FPM: the wait for a free PHP worker, plus anything
-else that delays the handoff on a machine we share. No server code runs
-in that window.
+PHP-started (`Load::queueUs`, X-Request-Start vs REQUEST_TIME_FLOAT):
+the handoff to FPM - the wait for a free worker plus anything else that
+delays the handoff on a shared machine. No server code runs in it.
 
-Single isolated worst rows in the tens of ms on a sub-ms mean are NOISE -
-a quiet pool, not a problem. Saturation on this gauge starts in the
-hundreds of ms. The trigger for any new admission work: a run (or real
-traffic) that puts the MEAN into tens of ms with SEVERAL DIFFERENT
-clients in the worst list. One client, one row, is not evidence. A high
-Deep value at a burst moment usually means one client stacked its own
-requests - the last request in is not the cause.
+Single worst rows in the tens of ms on a sub-ms mean are NOISE.
+Saturation starts in the hundreds. The trigger for any new admission
+work: a MEAN in tens of ms with SEVERAL DIFFERENT clients in the worst
+list. One client, one row, is not evidence.
 
 NOTHING IS ENFORCED ON hello AND NOTHING SHOULD BE: the wait is over
-before hello.php runs, refusing a heartbeat is how a player reads as
-offline (Presence::touch / ConnTrack), and delaying one converts a queue
-wait into an occupied worker - the very resource being protected.
+before hello.php runs, refusing a heartbeat makes a player read as
+offline, and delaying one converts a queue wait into an occupied worker
+- the resource being protected.
 
-The three levers, already reasoned through - do not re-derive:
+The three levers, do not re-derive:
 
-1. Fewer requests in flight per client. SPENT (gap_ms plus the roster
-   folded onto hello, so the background gate is one request).
-2. Shorter worker occupancy. The only lever with room left, but it buys
-   queue time by raising request count - the trade settled when Holds.php
-   admission control shipped. The contract's default hold is 5 s and
-   the cap (FOK_POLL_WAIT_MAX) stays 9: what the client asks for is
-   where this lever is pulled, the cap only bounds it. Reopen the cap
-   only with the trigger above in hand.
-3. More workers. NOT ours - shared-host pool (~20). Same wall that killed
-   SSE.
+1. Fewer requests in flight per client. SPENT (gap_ms, the roster folded
+   onto hello, one request at a time).
+2. Shorter worker occupancy. The only lever with room, but it buys queue
+   time with request count - settled when Holds.php shipped. The default
+   hold is 5 s, the cap (FOK_POLL_WAIT_MAX) 9; reopen the cap only with
+   the trigger above in hand.
+3. More workers. NOT ours - shared-host pool (~20).
 
-Reading caveats:
+Reading rules, each measured against live:
 
-- The floor is ~1 ms, not 0, and it is very stable. That is what the
-  handoff costs. Measured against live on 2026-09-08 by reading `q_ms`
-  off hello.php from outside: thirty-odd requests over HTTP/2 and over
-  HTTP/1.1, on fresh and on reused connections, six different clients at
-  once, twelve streams multiplexed on one connection - every one of them
-  1 ms. A row in the tens of ms is therefore a REAL stall, not an
-  artefact of how the window is drawn.
-- The request BODY is NOT in the window, however much it looks like it
-  should be. php-fpm stamps REQUEST_TIME_FLOAT when the FastCGI params
-  record arrives; the body streams in after that. A body held back
-  600 ms and a genuine 100-continue round trip both still report 1 ms.
-  So a client's round trip cannot explain a reading and neither can a
-  slow uplink - do not re-propose either. Nothing in hello.php can cause
-  its own queue wait.
-- Nor can a client's own siblings: twelve of one client's requests in
-  flight on a single HTTP/2 connection all read 1 ms.
-- A row of ~130 ms is THE POOL GROWING BY ONE CHILD, and it reproduces on
-  demand. Measured against live on 2026-09-09: hold N long polls open
-  (poll.php?wait=) and read `q_ms` off hello.php beside them. Six
-  concurrent short requests with no holds read 1 ms each, so concurrency
-  by itself is free. What costs is a level the pool has not served
-  before: the one request that takes concurrency to a new high-water mark
-  waits while a child is forked, and every request behind it - and every
-  repeat of that level afterwards - reads 1 ms. Holds 0 and 2: 1 ms.
-  Holds 4: 129. Holds 6: 134. Holds 9: 129, then 1 on the repeat. A HELD
-  POLL is therefore what provokes it: it occupies a child for its whole
-  wait, so it is the thing that raises the mark.
-- OPEN, 2026-09-11: the fork explanation does NOT cover every ~130 ms
-  row. The operator's idle laptop produces them two minutes apart on an
-  idle server, depth 1, and the Worker column says REUSED - which a fresh
-  fork cannot read as, the mark being pid plus kernel start time. The
-  number is constant (129-134), which also rules out a deferred tail or
-  any contention (those vary). It is unexplained and is a PRIORITY TODO
-  in CLAUDE.local.md: investigate with a cross-repo audit and a local
-  simulation of server and client, do not theorise. Do not quote this
+- The floor is ~1 ms and very stable (2026-09-08: thirty-odd requests,
+  h2 and h1.1, fresh and reused connections, six clients at once, twelve
+  streams on one connection - every one 1 ms). A row in the tens of ms
+  is a REAL stall.
+- The request BODY is NOT in the window: php-fpm stamps
+  REQUEST_TIME_FLOAT when the params record arrives, the body streams
+  after. A body held 600 ms and a 100-continue both read 1 ms. Neither a
+  client's round trip, nor a slow uplink, nor its own HTTP/2 siblings
+  can explain a reading - do not re-propose them.
+- A row of ~130 ms beside HELD POLLS is THE POOL GROWING BY ONE CHILD
+  (2026-09-09: holds 0 and 2 read 1 ms; holds 4, 6, 9 read 129-134 on
+  the first request at that level and 1 on the repeat). Which request
+  pays is an accident of arrival order, so the SCRIPT on such a row says
+  nothing about that script (how friend.php was once reported slow).
+- OPEN: the fork does NOT cover every ~130 ms row - the operator's idle
+  laptop produces them two minutes apart, depth 1, Worker REUSED. That
+  is the PRIORITY TODO in CLAUDE.local.md; do not quote the fork
   paragraph as the answer to a reused row.
-- Which request pays the fork is an accident of arrival order, so the
-  SCRIPT on such a row says nothing about that script. A screen that puts
-  one request beside the poll it holds is simply where a session first
-  reaches a new mark, and the row names whichever of the two arrived
-  second. That is how the friends screen came to be reported as slow on
-  2026-09-09 (friend.php, 132 ms, depth 2): its roster read travels
-  beside the held poll, and friend.php itself answers at the round-trip
-  floor.
-- The Worker column is worth reading first. The mark names the process
-  incarnation (the id plus its start time out of /proc/self/stat): a
-  bare process id comes round on this host often enough that a fresh
-  child would read as reused, which is the one answer that column must
-  never give.
-- What is left for a row in the TENS of ms is the machine we share, and
-  it is NARROWED, not known. Six and twelve in flight leave our own pool
-  nowhere near its ~20 ceiling, so it is not a worker of ours. The two
-  candidates left are a cold filesystem lookup (Apache walks the
-  directory and parses .htaccess on every request, and a dentry miss on
-  shared storage costs tens of ms) and a wait for a CPU slice (one CFS
-  period is ~24-48 ms). Both are binary, which is why those readings are
-  1 ms or ~30 ms with nothing between, and neither can be reproduced
-  from outside: hammering keeps the cache warm and the process
-  runnable. To tell them apart, record sys_getloadavg per core on the
-  row - high says the neighbours, near zero says storage. Not done;
-  three rows a day against a 0.9 ms mean does not earn it yet.
-- Deep is a floor, not a count - siblings that finish during the wait are
-  not in it (see Util::noteCaller).
-- The minute fold is invisible: Counters::hit() runs flushDue() in the
-  deferred tail, after cost() has been computed, so the fold's own time
-  never shows in the per-script .ms column yet occupies the worker.
-- The worst table is 24 h and the graph is 60 min: a row older than an
-  hour is simply out of the graph's window and nothing is wrong. A
-  continuous MEAN plateau across a disputed minute proves the bucket
-  existed.
+- The Worker column names the process incarnation (pid plus kernel
+  start time out of /proc/self/stat); a bare pid comes round often
+  enough that a fresh child would read as reused.
+- A row in the TENS of ms is the machine we share, NARROWED, not known:
+  a cold filesystem lookup (Apache parses .htaccess per request; a
+  dentry miss on shared storage costs tens of ms) or a CPU slice wait (a
+  CFS period is ~24-48 ms). Both binary, neither reproducible from
+  outside. To tell them apart record sys_getloadavg per core on the row
+  - not done, three rows a day does not earn it.
+- Deep is a floor, not a count (Util::noteCaller). The minute fold runs
+  in the deferred tail after cost() is computed, so it never shows in
+  the .ms column yet occupies the worker. The worst table is 24 h, the
+  graph 60 min.
 
 ## DB wait gauge (since 1.5.0)
 
-Two different things, deliberately kept apart:
+- WAIT is `BEGIN IMMEDIATE` and nothing else (Friends, Items, Starts,
+  Db::tryWrite take it). A reading is QUANTIZED to ~1.1, ~3.2, ~8.4,
+  ~18.4, ~33.6, ~53.7 ms - SQLite's busy handler sleeping 1, 2, 5, 10,
+  15, 20 ms - and OVERSTATES the hold by up to the next step.
+  Uncontended is microseconds and never reaches the list
+  (Load::SLOW_FLOOR_US 1 ms); only 8.4 and up say a writer was really in
+  the way.
+- TOOK is every other statement's duration; a bare write that waited out
+  busy_timeout counts the wait as part of it and the split cannot be
+  made - do not re-propose it.
+- Both are booked in the deferred tail (Load::flush) in the queue
+  gauge's shapes. The connection open is excluded (Load::openDone). The
+  worst list keeps the slowest access OF EACH REQUEST.
+- A COMMIT row reads `COMMIT <Class::method> <n>p`: the caller off the
+  stack at BEGIN IMMEDIATE (Load::txCaller, skipping Db and LoadPDO),
+  and the WAL's growth in frames (exact: one writer held it across the
+  span). `ckpt` means the log SHRANK - the commit crossed
+  wal_autocheckpoint.
+- `n:db_skip` is the housekeeping declining to queue for the writer
+  (Db::tryWrite) - the only reading that says contention was real.
+- `PRAGMA wal_checkpoint(PASSIVE)` is the hourly drain (Db::drainWal, end
+  of the hourly tail). Measured: the cost is mostly FIXED per checkpoint
+  (606 pages 5.6 ms, 24544 pages 131 ms), so draining more often costs
+  MORE; do not lower wal_autocheckpoint (1000) and do not raise it. A big
+  log does not slow reads (the WAL index is a hash). If a busy hour
+  crosses the threshold too often, gate the drain on the -wal file size.
 
-- WAIT is `BEGIN IMMEDIATE` and nothing else - the one statement whose
-  whole job is taking the single writer, so its whole duration IS the
-  wait. Friends, Items, Starts and Db::tryWrite are the paths that take
-  it. A WAIT reading is QUANTIZED and reads only as one of
-  ~1.1, ~3.2, ~8.4, ~18.4, ~33.6, ~53.7 ms - never between. That is
-  SQLite's default busy handler sleeping 1, 2, 5, 10, 15, 20 ms, so the
-  number says which sleep the lock came free in, and it OVERSTATES the
-  real hold by up to the next step (measured on Linux against a holder
-  held for a known time). An uncontended acquisition is microseconds and
-  never reaches the list at all - Load::SLOW_FLOOR_US is 1 ms. So 3.1 ms
-  is the mildest contention that CAN be recorded, one rung above the
-  floor; only 8.4 and up say a writer was really in the way.
-- TOOK is every other statement's own duration. A bare write that waited
-  out busy_timeout counts that wait as part of it: SQLite does not report
-  the busy handler's sleep, so the split cannot be made there. Do not
-  re-propose splitting it.
+## APCu namespacing rule (from the 1.4.8 shared-counter bug)
 
-Both accumulate in the request and are booked once in the deferred tail
-(Load::flush), in the same sum/count/`x:` shapes the queue gauge uses, so
-the graphs and the worst list are the same code. The connection open is
-deliberately excluded (Load::openDone): five PRAGMAs and a schema read
-that every request pays identically would BE the mean.
+Counters::PREFIX and Presence::COUNTS_KEY build on FOK_APCU_NS because
+they are counted out of a PER-ENVIRONMENT database - a bare prefix let
+one FPM pool share them between live and staging (the tell: an Azure
+20.x address on hello.php is a CI runner). Rule for anything new:
+namespace it if it comes from or goes back into the database, OR if it
+is JUDGED against a store that is (the tournament store since 1.7.1: the
+sweep decides by per-environment presence, so on a shared prefix one CI
+push ended every live tournament). The bare-prefix stores (fok:hold:,
+fok:sg:, fok:rq:, fok:pid:, fok:flight:, fok:rr:, fok:skew:) hold no
+database-derived state and stay, as Config.php explains. The live prefix
+never changes; a namespacing fix only ever moves STAGING keys.
 
-The worst list keeps the slowest ACCESS OF EACH REQUEST, not every access
-- naming one costs a shared-memory read and write, and a request issuing
-twenty statements must not pay that twenty times.
-
-A COMMIT row reads `COMMIT <Class::method> <n>p`, because every contended
-path ends in a COMMIT and the bare word cannot say which one was slow. The
-caller is read off the stack at the BEGIN IMMEDIATE (Load::txCaller), which
-skips Db and LoadPDO, so a housekeeping commit names the TASK rather than
-Db::tryWrite and no call site carries a hand-written label. `<n>p` is the
-write-ahead log's growth over the transaction in frames (page + 24 bytes,
-page size never set so it is SQLite's default 4096), measured by two stats
-of the -wal file: exact, not sampled, because SQLite has one writer and the
-transaction held it across the whole span. `ckpt` in place of the count
-means the log SHRANK - the commit crossed wal_autocheckpoint and paid for
-the checkpoint SQLite charges to whichever write crosses the line, which is
-the usual explanation for a lone slow COMMIT on an otherwise flat graph.
-
-`n:db_skip` under the table is the housekeeping declining to queue for the
-writer (Db::tryWrite), not an error. It is the only reading that says
-contention was real rather than theoretical.
-
-A `PRAGMA wal_checkpoint(PASSIVE)` row is the hourly drain, not a fault.
-SQLite folds the write-ahead log back into the database file once it passes
-`wal_autocheckpoint` (1000 pages, left at the default) and charges the whole
-cost - the page copy plus the one fsync `synchronous = NORMAL` defers to
-exactly here - to whichever write crosses the line, which is routinely a
-player's. `Db::drainWal` does it at the end of the hourly tail instead,
-where the response has already gone out.
-
-Measured, so do not re-derive: the cost is mostly FIXED per checkpoint, not
-per page (606 pages 5.6 ms, 3028 pages 12.6 ms, 24544 pages 131 ms), so
-draining more often costs MORE in total - `wal_autocheckpoint = 200` took
-0.58 s where 1000 took 0.34 s on the same work. Do not lower it and do not
-raise it either: with the drain in place it is a backstop, and a backstop is
-set where its worst case is acceptable, not where it is rare. A big log does
-NOT slow reads (2.0 us per point read at 0 and at 36k pages) - the WAL index
-is a hash. Eight players in duels put roughly 1500 pages an hour into the
-log, two thirds of it the duel heartbeat (2 pages, and hello carries one per
-player per minute), so a busy hour still crosses the threshold about once;
-if that ever matters, gate the drain on the `-wal` file size in the same
-tail rather than raising the ceiling.
-
-APCu namespacing rule (from the shared-counter-buffer bug fixed in
-1.4.8): Counters::PREFIX and Presence::COUNTS_KEY build on FOK_APCU_NS
-because both are counted out of a PER-ENVIRONMENT database - a bare
-prefix let one FPM pool share them between live and staging, so the live
-worst list could show staging's rows (the tell: an Azure 20.x address on
-hello.php is a GitHub Actions runner, and CI only calls hello.php against
-staging). The other bare-prefix stores (fok:hold:, fok:sg:, fok:rq:,
-fok:pid:, fok:flight:, fok:rr:, fok:skew:) hold no
-database-derived state and are left alone on purpose, as Config.php
-explains. Rule for anything new: namespace it if it comes from or goes
-back into the database, OR if it is JUDGED against a store that is. The
-tournament store (fok:t: and its indexes, plus the fok:tsweep gate) is
-namespaced since 1.7.1 for the second reason: the sweep decides by the
-per-environment presence entries, so on a shared prefix one CI push
-ended every live tournament as "everyone left" (confirmed on the host
-2026-09-09: one live hello abandoned a staging lobby whose host had
-beaten 40 s before). The live prefix string stays unchanged, so a
-namespacing fix only ever moves STAGING keys.
-
-Counters::max() must keep its guarded write: CAS up to MAX_TRIES (8),
-then a GUARDED apcu_store - a bare store would lower the slot when a
-bigger peak lands inside the window, which is worse than dropping the
-reading. STILL OPEN: a minute whose APCu keys are never folded expires at
-BUCKET_TTL (900 s) and leaves the graph entirely - the remaining
-explanation if a worst-table-vs-graph mismatch shows up.
+Counters::max() keeps its guarded write: CAS up to MAX_TRIES (8), then a
+GUARDED apcu_store - a bare store would lower the slot. STILL OPEN: a
+minute never folded expires at BUCKET_TTL (900 s) and leaves the graph -
+the remaining explanation for a worst-table-vs-graph mismatch.
