@@ -141,7 +141,8 @@ major. Every minor since is additive; docs/API.md carries them one by one.
 - Runtime configuration: thresholds and abuse caps (admin lockout, mailbox
   cap, score throttle, alert limits) are editable in the
   admin config card and take effect immediately; code constants are only
-  the defaults.
+  the defaults. Every setting carries a help text (hover or tap its label)
+  and the card filters live by name, key or help.
 
 ## Layout
 
@@ -356,7 +357,12 @@ down rather than relying on being filtered out: one clock decides which
 cards are due so that everything due goes out in a single batched
 request, one-off reads join whatever batch is forming, and coming back to
 a backgrounded tab wakes only the cards that keep themselves current
-instead of all of them.
+instead of all of them. And it sends ONE request at a time: every call
+to admin/api.php, downloads included, waits for the one before it, so an
+open dashboard occupies at most one PHP worker, and the polled reads that
+come due while a request is out ride in the single batch behind it. The
+refresh flash lights when the answer lands, so the lit button is the one
+being worked on.
 
 Counter history is kept for 30 days as hour buckets and 2 hours as minute
 buckets, pruned by the same inline sweep as everything else, so the
