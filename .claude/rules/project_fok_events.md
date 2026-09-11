@@ -94,6 +94,15 @@ row state. A monitor still cannot JOIN a tournament: that tests
 `Events::isMember`, which is members only, so seeing a lobby and taking a
 seat stay different things.
 
+Since 1.13.0 (API 4.14) the monitor is also in the audience of the EVENT
+TOURNAMENT'S `tourney` signals, and the roles sheet names it (`monitor`)
+so every client grants it a feed, private duels included. Tournament.php
+resolves the holder through `monitorOf` at the flush and at the sheet, so
+it follows a slot that changes hands; `event()` adds it to every broadcast
+and `deal()` sends it its own sheet with `you: idle`. It is in none of the
+sheet's lists and takes no tree slot - that is the whole invisibility, and
+it is what keeps 'a monitor takes no seat' true.
+
 ## The roster is the server's, and one path writes it
 
 `Events::setMember` is the ONE path behind the organizer's `roster` verb and

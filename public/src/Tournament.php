@@ -166,7 +166,7 @@ final class Tournament
                     });
                 }
             }
-            $pending = [$t['host'], $t['events']];
+            $pending = [$t['host'], $t['events'], self::monitorOf($t)];
         } finally {
             TourneyStore::unlock($tid);
             // A transition that threw stored nothing, so what it queued
@@ -174,7 +174,7 @@ final class Tournament
             $due = self::$afterUnlock;
             self::$afterUnlock = [];
         }
-        self::flush($pending[0], $pending[1]);
+        self::flush($pending[0], $pending[1], $pending[2]);
         foreach ($due as $fn) {
             $fn();
         }
@@ -225,11 +225,19 @@ final class Tournament
      * must retry the signal (Signals::send does) rather than replay the
      * transition that produced it.
      */
-    private static function flush(string $from, array $events): void
+    private static function flush(string $from, array $events, ?string $monitor = null): void
     {
         $step = Settings::int('tourney_after_step_ms');
         $seatOf = [];
         foreach ($events as [$to, $payload]) {
+            // The event's monitor is not a seat: the stagger exists to spread
+            // the seats' follow-up calls, and a screen on a wall makes none
+            // that compete with them.
+            if ($monitor !== null && $to === $monitor) {
+                $payload['after_ms'] = 0;
+                Signals::send($from, $to, 'tourney', (string)json_encode($payload));
+                continue;
+            }
             // after_ms (4.4): a round board wakes every participant in the
             // same instant and they all call back together - the ICE burst
             // again, eight-handed, and on a host whose cost is paid per
@@ -249,13 +257,42 @@ final class Tournament
         }
     }
 
-    /** Queues one event per participant, or per id in $only. */
+    /**
+     * Queues one event per participant, or per id in $only. A BROADCAST on an
+     * event tournament also reaches the event's monitor (4.14): it is the
+     * screen that shows this tournament, and it should move with it rather
+     * than on its own lease. A targeted send ($only) does not - the caller
+     * decides the monitor's copy, see deal().
+     */
     private static function event(array &$t, array $payload, ?array $only = null): void
     {
         $payload['tid'] = $t['tid'];
-        foreach ($only ?? array_column($t['players'], 'id') as $pid) {
+        $to = $only ?? array_column($t['players'], 'id');
+        if ($only === null) {
+            $mon = self::monitorOf($t);
+            if ($mon !== null && !in_array($mon, $to, true)) {
+                $to[] = $mon;
+            }
+        }
+        foreach ($to as $pid) {
             $t['events'][] = [$pid, $payload];
         }
+    }
+
+    /**
+     * The event's monitor holder for an event tournament, or null: no eid, or
+     * nobody holding the slot. The reserved id if the event names one, else
+     * the free lease while it stands (Events::monitorHolder). Read at the
+     * moment it is asked, so a slot that changes hands is followed.
+     */
+    private static function monitorOf(array $t): ?string
+    {
+        $eid = $t['eid'] ?? null;
+        if (!is_string($eid) || $eid === '') {
+            return null;
+        }
+        $card = Events::card($eid);
+        return $card === null ? null : Events::monitorHolder($card);
     }
 
     // ---- Small readers ----------------------------------------------------
@@ -1490,6 +1527,11 @@ final class Tournament
             $names[$pid] = $info[$pid]['name'] ?? null;
         }
         [$pos, $of] = self::position($t, $nid);
+        // The event's monitor (4.14), named so every client grants it a feed
+        // - a private duel included - while nothing lists, draws or counts
+        // it: it is in none of players, primaries, secondaries or names and
+        // takes no tree slot. Absent when there is no event or no holder.
+        $mon = self::monitorOf($t);
         return [
             'event' => 'roles',
             'round' => (int)$node['round'],
@@ -1515,7 +1557,7 @@ final class Tournament
             'secondaries' => array_slice($spectators, 2),
             'names' => (object)$names,
             'spectators' => $spectators,
-        ];
+        ] + ($mon === null ? [] : ['monitor' => $mon]);
     }
 
     /** 1-based position of a node within its stage, and that stage's total. */
@@ -1543,6 +1585,12 @@ final class Tournament
             $you = in_array($p['id'], $roles['players'], true) ? 'play'
                 : (in_array($p['id'], $spectators, true) ? 'spectate' : 'idle');
             self::event($t, $roles + ['you' => $you], [$p['id']]);
+        }
+        // The monitor's copy: it has no seat, so `you` is idle, and a holder
+        // who is also seated already has theirs.
+        $mon = $roles['monitor'] ?? null;
+        if ($mon !== null && !self::isMember($t, $mon)) {
+            self::event($t, $roles + ['you' => 'idle'], [$mon]);
         }
     }
 
@@ -1583,7 +1631,7 @@ final class Tournament
                 'nid' => $nid,
                 'primaries' => array_slice($spectators, 0, 2),
                 'secondaries' => array_slice($spectators, 2),
-            ]);
+            ] + (isset($roles['monitor']) ? ['monitor' => $roles['monitor']] : []));
             return ['ok' => true];
         });
     }

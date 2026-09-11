@@ -375,11 +375,34 @@ R=$(tourney "{\"id\":\"$ID3\",\"action\":\"join\",\"code\":\"$MCODE\"}")
 expect "nor by its code" '"error":"not in the event"' "$R"
 R=$(evact "$ID3" monitor "$EID4")
 expect "while it watches the same tournament as the screen" "\"tid\":\"$MTID\"" "$R"
+
+# THE MONITOR AS A SPECTATOR (4.14). Once a match is up, the roles sheet
+# names the screen - so every client grants it a feed, private duels
+# included - and the screen receives the tournament's signals like a seat
+# would, while sitting in none of the sheet's lists. A member joins, the
+# host starts, and the sheet is dealt.
+R=$(tourney "{\"id\":\"$ID2\",\"action\":\"join\",\"tid\":\"$MTID\"}")
+expect "a member joins the tournament the screen watches" '"event":"lobby"' "$R"
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID3\"}" "$BASE/api/hello.php" > /dev/null
+R=$(tourney "{\"id\":\"$ID1\",\"action\":\"start\",\"tid\":\"$MTID\"}")
+expect "and the host starts it" '"ok":true' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID3\"}" "$BASE/api/hello.php")
+expect "the screen is dealt the roles sheet with the players" 'event\":\"roles' "$R"
+expect "which names the screen as the monitor" "\\\"monitor\\\":\\\"$ID3\\\"" "$R"
+expect "with no seat of its own" 'you\":\"idle' "$R"
+expect "and nothing to wait for before it asks" 'after_ms\":0' "$R"
+refute "while it is in none of the sheet's lists" "\\\"players\\\":[\\\"$ID3" "$R"
+R=$(evact "$ID3" monitor "$EID4")
+expect "the monitor read carries the same sheet" "\"monitor\":\"$ID3\"" "$R"
+R=$(act "$ID1" state "$MTID")
+expect "and so does a player's own read" "\"monitor\":\"$ID3\"" "$R"
+refute "the screen is never among the players" "\"players\":[\"$ID3" "$R"
 R=$(tourney "{\"id\":\"$ID1\",\"action\":\"leave\",\"tid\":\"$MTID\"}")
 expect "the host closes it again" '"ok":true' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID3\"}" "$BASE/api/hello.php")
 expect "and is told when it is over" '"over\":true' "$R"
+expect "by the tournament's own signal as well as the event's" 'host ended it' "$R"
 
 # The operator's two id fields search by name, which is how one is set at all.
 R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=player_find&q=SMOKE")

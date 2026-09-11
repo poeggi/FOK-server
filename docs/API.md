@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.13", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.14", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -55,7 +55,9 @@ is refused - added in 4.10, or events: a room an operator opens, whose
 members get in by scanning a code, whose roster lives only on the server
 and whose tournaments nobody outside it can see - added in 4.11, its
 printed key shortened to fit the code the game itself can scan in 4.12 and
-that key made to join an event that has not started yet in 4.13) is
+that key made to join an event that has not started yet in 4.13, the
+event's monitor named on the roles sheet and sent the tournament's
+signals in 4.14) is
 available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
@@ -556,7 +558,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.13",               contract version, see Versioning
+      "api": "4.14",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a free
@@ -970,7 +972,7 @@ not its hello is on time - and needs no hello to stay online at all.
 Every answer WITH A BODY carries `api` and `debug` (4.9), beside the
 `signals` array:
 
-      "api": "4.13",             the contract version, re-read here for
+      "api": "4.14",             the contract version, re-read here for
                                 the same reason hello carries it: it
                                 un-latches a client after a rollback
       "debug": false,           the server's debug instruction for this
@@ -1188,6 +1190,12 @@ Types (fixed set, anything else is rejected):
               (clients cannot send it: 400)         "request"|"accepted"
                                                      |"expired",
                                                     "from": "8-hex"}
+              Sent to every party that did not make the call, on both
+              edges: the peer on a request (or "accepted" when the peer's
+              auto-accept completed it in the same call), the requester
+              on an accept. LOAD-BEARING, not a toast: the client re-reads
+              its roster on it and keeps an unread mark from the rows, so
+              dropping or batching it costs more than a missed line.
     undelivered  RESERVED - server-generated only payload: JSON {"event":
               (clients cannot send it: 400)         "undelivered",
                                                     "peer": "8-hex",
@@ -2442,10 +2450,13 @@ payload carries `tid`.
                  someone joined or left; `reason` explains an abandon
     roles        {event, tid, round, stage, match, of, nid, hm, lvl,
                   speed, stakes, players, feeder, primaries, secondaries,
-                  names, you}
+                  names, you, monitor?}
                  a match is up. `match`/`of` are its 1-based position in
-                 the stage. `you` differs per recipient.
-    roles-patch  {event, tid, nid, primaries, secondaries}
+                 the stage. `you` differs per recipient. `monitor` (4.14)
+                 is the event's monitor holder when this is an event
+                 tournament and somebody holds the slot, and ABSENT
+                 otherwise - see The monitor as a spectator.
+    roles-patch  {event, tid, nid, primaries, secondaries, monitor?}
                  the spectator tree changed; the match is unaffected
     standings    {event, tid, rows:[{seat,id,pts,diff,rank,adv}],
                   advancers:[id, ...]}
@@ -2618,7 +2629,7 @@ still be read back, and an abandoned one after
 bracket to come back to. After that the tid is simply unknown, and `state`
 answers 404.
 
-## Events (4.13)
+## Events (4.14)
 
 An EVENT is a room an operator opens on the server: a LAN party, a club
 night, a stand at a fair. A player gets in by scanning its QR code -
@@ -2639,7 +2650,13 @@ An event tournament is an ORDINARY tournament: same lifecycle, same
 bracket, same deadlines, same caps, same requests (see Tournament mode).
 `eid` on it is a tag and a membership check on the way in, nothing more.
 
-CHANGED IN 4.13, and it is the only change since 4.12: THE PRINTED KEY
+CHANGED IN 4.14, and it is the only change since 4.13: THE MONITOR IS A
+SPECTATOR OF THE EVENT'S TOURNAMENT, invisibly - the roles sheet names it
+in `monitor` so every client grants it a feed, and it receives the
+tournament's `tourney` signals like a seat would, while being in none of
+the sheet's lists and taking no tree slot. See The monitor as a spectator.
+
+CHANGED IN 4.13: THE PRINTED KEY
 JOINS AN EVENT THAT HAS NOT STARTED. A scan of an `upcoming` event's key
 now admits exactly as it does on an active one - a member row at an open
 door, a pending one at a closed door - and the answer carries `starts`, so
@@ -2944,6 +2961,38 @@ of the match in flight; the monitor asks one of them to watch with the
 ordinary `watch` signal and the feed is peer to peer, exactly as it is for
 a tournament spectator. No match traffic passes through the server for a
 monitor either.
+
+### The monitor as a spectator (4.14)
+
+Before 4.14 a monitor learned that a match was up only from its own
+`monitor` read, on whatever cadence it asked - so it joined every round
+late, and a player who had made their duels private refused its feed,
+nothing ever having granted it. Two additions close that, and both are
+INVISIBLE to everyone else:
+
+- THE SHEET NAMES IT. `roles` and `roles-patch` carry `monitor`: the
+  event's monitor holder at the moment the sheet is built - the reserved
+  id if the event names one, else the free holder while its lease stands.
+  Absent when the tournament has no event or nobody holds the slot. It is
+  NOT in `players`, `primaries`, `secondaries`, `spectators` or `names`
+  and takes no tree slot: no client lists, draws or counts it. What a
+  client does with it is grant that id a feed - a private duel included -
+  when it asks with `watch`.
+- IT IS IN THE AUDIENCE. The monitor holder receives every `tourney`
+  signal of an event tournament - `lobby`, `roles` (with `you: "idle"`,
+  it has no seat), `roles-patch`, `standings`, `round`, `result`,
+  `freeze`, `over` - through the ordinary mailbox, so a screen moves with
+  the tournament instead of on its lease. Its `after_ms` is 0: the stagger
+  spreads the seats' follow-up calls, and a screen makes none that compete.
+  Drain the mailbox on whatever poll the screen holds; a full mailbox
+  fails only for its own recipient.
+
+The holder is resolved when a sheet is built and when a transition is
+flushed, so a slot that changes hands is followed from the next one. A
+screen that claims the slot after a node was dealt is not on that node's
+sheet - a private feeder refuses it until the next deal, while the `monitor`
+read still shows it the bracket meanwhile. Reading the monitor is still
+inert on every deadline.
 
 Reading the monitor NEVER settles a deadline. Everywhere else a request
 from a participant is what runs a tournament's clock; this one is inert on
