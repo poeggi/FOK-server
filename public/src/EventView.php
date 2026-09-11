@@ -52,7 +52,13 @@ final class EventView
             return $out;
         }
         $out['members'] = Events::counts($card['eid'])['members'];
-        $ach = $rowState === 'member' ? Events::ach($card) : null;
+        // Joining an event that has not happened yet earns nothing yet. The
+        // achievement rides EVERY member answer, so it arrives by itself on
+        // the first read after the start and needs no moment of its own -
+        // and an event that has since paused or ended keeps it, because the
+        // person was there.
+        $ach = $rowState === 'member' && Events::stateOf($card, $now) !== 'upcoming'
+            ? Events::ach($card) : null;
         if ($ach !== null) {
             $out['ach'] = $ach;
         }

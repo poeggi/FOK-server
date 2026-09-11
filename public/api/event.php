@@ -190,8 +190,15 @@ switch ($action) {
         if ($row !== null && $row['state'] === 'banned') {
             Util::fail('banned', 403);
         }
+        // A POSTER GOES UP BEFORE THE EVENT, which is what the printed key is
+        // for: long-lived, on a wall, and the only code somebody walking past
+        // can have. So a key admits while the event is still `upcoming` - they
+        // get their row, and the event rides their `events` list with its own
+        // start stamp until it begins. A PASS does not: it is minted from the
+        // clock by a member, and an upcoming event mints none.
         $state = Events::stateOf($card, $now);
-        if ($state !== 'active') {
+        $early = $state === 'upcoming' && $via === 'key';
+        if ($state !== 'active' && !$early) {
             Util::fail($state === 'upcoming' ? 'not started' : $state, 409);
         }
         $was = $row === null ? null : $row['state'];

@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.12", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.13", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -54,7 +54,8 @@ poll is parked, with a margin a clock reading may be ahead by before it
 is refused - added in 4.10, or events: a room an operator opens, whose
 members get in by scanning a code, whose roster lives only on the server
 and whose tournaments nobody outside it can see - added in 4.11, its
-printed key shortened to fit the code the game itself can scan in 4.12) is
+printed key shortened to fit the code the game itself can scan in 4.12 and
+that key made to join an event that has not started yet in 4.13) is
 available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
@@ -555,7 +556,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.12",               contract version, see Versioning
+      "api": "4.13",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a free
@@ -969,7 +970,7 @@ not its hello is on time - and needs no hello to stay online at all.
 Every answer WITH A BODY carries `api` and `debug` (4.9), beside the
 `signals` array:
 
-      "api": "4.12",             the contract version, re-read here for
+      "api": "4.13",             the contract version, re-read here for
                                 the same reason hello carries it: it
                                 un-latches a client after a rollback
       "debug": false,           the server's debug instruction for this
@@ -2617,7 +2618,7 @@ still be read back, and an abandoned one after
 bracket to come back to. After that the tid is simply unknown, and `state`
 answers 404.
 
-## Events (4.12)
+## Events (4.13)
 
 An EVENT is a room an operator opens on the server: a LAN party, a club
 night, a stand at a fair. A player gets in by scanning its QR code -
@@ -2638,11 +2639,18 @@ An event tournament is an ORDINARY tournament: same lifecycle, same
 bracket, same deadlines, same caps, same requests (see Tournament mode).
 `eid` on it is a tag and a membership check on the way in, nothing more.
 
-CHANGED IN 4.12, and it is the only change since 4.11: the printed key is
-11 characters and names its own event, so `join` takes `{id, code}` with
-no `eid` beside it. 4.11 had a 16-character key in a 63-byte URL, which no
-version 3 code can hold - so the poster could not be read by the game's own
-scanner, which was the whole point of it. Nothing else moved.
+CHANGED IN 4.13, and it is the only change since 4.12: THE PRINTED KEY
+JOINS AN EVENT THAT HAS NOT STARTED. A scan of an `upcoming` event's key
+now admits exactly as it does on an active one - a member row at an open
+door, a pending one at a closed door - and the answer carries `starts`, so
+a client knows what it is waiting for. A PASS still does not: it is minted
+from the clock by a member, and an upcoming event mints none. The
+achievement waits for the start too. `paused` and `ended` are unchanged and
+still refuse both codes.
+
+The reason is the poster. The key is long-lived and printed, it goes on a
+wall days ahead, and somebody walking past it had no way to accept before -
+they were told to come back and remember to scan again.
 
 ### Identifiers
 
@@ -2698,8 +2706,10 @@ in the app is the wrong poster.
 An event's state is DERIVED at read time, never swept: there is no cron
 here, so nothing fires at a scheduled moment and nothing needs to.
 
-    upcoming   visible to its members; nobody can join yet, no passes,
-               no tournaments
+    upcoming   visible to its members, and a scan of the PRINTED KEY
+               joins - a poster is on a wall before the event, so the
+               code on it works before it too. No passes, no
+               tournaments, and no achievement until it starts
     active     joins, passes and tournaments
     paused     no joins, no passes, no new tournaments; a tournament
                already running plays on
@@ -2985,7 +2995,8 @@ Errors:
                              expired pass, OR the caller has no row for
                              an event that does exist. ONE answer for
                              all four, so nothing can be enumerated
-    409  "not started"       the event is upcoming
+    409  "not started"       the event is upcoming - a pass only, the
+                             printed key joins an upcoming event
     409  "paused"
     409  "ended"
     409  "scheduled"         run/pause/end on a scheduled event

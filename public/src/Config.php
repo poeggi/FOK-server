@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.11.4';
+const FOK_SERVER_VERSION = '1.12.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -116,7 +116,7 @@ const FOK_SERVER_VERSION = '1.11.4';
 // already requires an absent one to be treated as the client's own default -
 // which for the beat IS the contract's constant, and for a jitter budget is
 // no jitter. A client that read them keeps working exactly as before.
-const FOK_API_VERSION = '4.12';
+const FOK_API_VERSION = '4.13';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');

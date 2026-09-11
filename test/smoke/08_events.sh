@@ -392,6 +392,50 @@ expect "the screen being the one row only the operator sees" '"state":"monitor"'
 R=$(evadmin event_delete "eid=$EID4")
 expect "the reserved event is deleted again" '"ok":true' "$R"
 
+# ---- the poster works before the event does ----
+#
+# A printed key goes on a wall days ahead, so scanning it joins an event that
+# has not started. A PASS does not: it is minted from the clock by a member,
+# and an upcoming event mints none. The achievement waits for the start as
+# well - joining something that has not happened earns nothing yet.
+R=$(evadmin event_create "name=srv-CI-soon" "organizer=$ID1" "closed=0" \
+    "mode=active" "ach_name=EARLY BIRD" "ach_desc=Joined srv-CI-soon")
+EID5=$(evfield "$R" eid)
+expect "an operator opens an event that will be scanned early" '"ok":true' "$R"
+R=$(curl -s -b "$COOKIES" "$BASE/admin/event.php?eid=$EID5")
+KEY5=$(echo "$R" | grep -oE "class=\"code pixel\">[0-9A-Z]{11}<" | grep -oE "[0-9A-Z]{11}" | head -1 || true)
+expect "whose poster carries a key" "$KEY5" "$R"
+# Minted while it is still active, because that is the only time one exists.
+R=$(evact "$ID1" pass "$EID5")
+PASS5=$(echo "$R" | grep -oE "\"code\":\"[0-9A-Z]{6}\"" | head -1 | cut -d'"' -f4 || true)
+expect "and a pass while it is running" '"slots":' "$R"
+# SCHEDULED, which is what a future event is: the state is derived from
+# the stamps and the clock, so moving `starts` is what makes it upcoming.
+# Events::edit deliberately does not write `mode` - a scheduled event walks
+# itself and its organizer cannot drive it.
+NOW5=$(date +%s)
+R=$(evadmin event_edit "eid=$EID5" "starts=$((NOW5 + 3600))")
+expect "the operator schedules it for an hour from now" '"ok":true' "$R"
+R=$(evact "$ID1" state "$EID5")
+expect "which is what it reads as" '"state":"upcoming"' "$R"
+
+R=$(evjoin "$ID2" "$KEY5")
+expect "a printed key joins an event that has not started" '"you":{"state":"member"' "$R"
+expect "and the answer says what it is waiting for" '"state":"upcoming"' "$R"
+refute "with no achievement for an event that has not happened" '"ach"' "$R"
+R=$(evpass "$ID3" "$EID5" "$PASS5")
+expect "while a pass is still refused before the start" '"error":"not started"' "$R"
+R=$(evact "$ID2" pass "$EID5")
+expect "and an upcoming event mints none either" '"error":"not started"' "$R"
+
+R=$(evadmin event_edit "eid=$EID5" "starts=$((NOW5 - 60))")
+expect "the event's start moment passes" '"ok":true' "$R"
+R=$(evact "$ID2" state "$EID5")
+expect "and the early member is simply in it" '"you":{"state":"member"' "$R"
+expect "with the achievement arriving on the first read after that" '"ach":' "$R"
+R=$(evadmin event_delete "eid=$EID5")
+expect "the early event is deleted again" '"ok":true' "$R"
+
 # ---- cleanup: the smoke leaves no event behind ----
 
 # Whatever this file lowered goes back to its default, or the install

@@ -136,8 +136,10 @@ run/pause/end. Nothing announces the scheduled moments: members get
 starts/ends in every state answer and derive them on the synced server
 clock (the contract states facts, not cadence).
 
-    upcoming visible to members, no joins yet (key and pass both 409
-             'not started'), no passes, no tournaments
+    upcoming visible to members; the printed KEY joins (a poster is up
+             before the event, so its code works before it too), a pass
+             is still 409 'not started', no passes, no tournaments, and
+             no achievement until it starts
     active   joins, passes, tournaments
     paused   no joins, no passes, no new tournaments; a running
              tournament plays on

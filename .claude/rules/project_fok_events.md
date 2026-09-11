@@ -44,6 +44,15 @@ An EVENT before its start is `upcoming`. A MEMBER ROW before approval is
 `pending`. They meet in one answer as `state` and `you.state` and must never
 share a name.
 
+UPCOMING IS NOT A CLOSED DOOR. Since 1.12.0 (API 4.13) a scan of the
+PRINTED KEY joins one, because the poster is on a wall days before the
+event and that key is the only code somebody walking past can have. A PASS
+still cannot: it is minted from the clock by a member, and an upcoming
+event mints none - so `join` takes the state gate and the via together.
+The achievement waits for the start as well, gated in EventView::forCaller
+on the state rather than on a moment, because it rides every member answer
+and therefore arrives by itself.
+
 ## State is derived, never swept
 
 `Events::stateOf` is a pure function of (mode, starts, ends, now). There is
