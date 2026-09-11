@@ -796,23 +796,6 @@ final class Presence
     }
 
     /**
-     * Removes a player and everything about them that is only PRESENCE: the
-     * friendships (each friend gets a best-effort 'friend' {event:"expired"}
-     * signal, and one that is offline reconciles its list against friend.php
-     * on next start), the entry, the connection state, and the player row
-     * itself.
-     *
-     * What it deliberately leaves is property and history - items, the
-     * config vault, the career stats, the scores. An id belongs to the
-     * client and comes back with it (touch() re-registers an unknown id in
-     * silence), so a player returning after the TTL finds them again. A
-     * caller that means to confiscate as well says so where it can be read
-     * as a decision (see delete_player in admin/api.php).
-     *
-     * The single removal path: the TTL sweep and the admin button both come
-     * through here, so the two cannot clean up different halves of a player.
-     */
-    /**
      * The names a set of ids goes by, in ONE query. An id on screen always
      * carries its name; an id with no row answers nothing, which is a real
      * answer (a player can expire and leave what it owned behind).
@@ -838,6 +821,24 @@ final class Presence
         }
         return $names;
     }
+
+    /**
+     * Removes a player and everything about them that is only PRESENCE: the
+     * friendships (each friend gets a best-effort 'friend' {event:"expired"}
+     * signal, and one that is offline reconciles its list against friend.php
+     * on next start), the entry, the connection state, and the player row
+     * itself.
+     *
+     * What it deliberately leaves is property and history - items, the
+     * config vault, the career stats, the scores. An id belongs to the
+     * client and comes back with it (touch() re-registers an unknown id in
+     * silence), so a player returning after the TTL finds them again. A
+     * caller that means to confiscate as well says so where it can be read
+     * as a decision (see delete_player in admin/api.php).
+     *
+     * The single removal path: the TTL sweep and the admin button both come
+     * through here, so the two cannot clean up different halves of a player.
+     */
     public static function forget(string $id): void
     {
         $db = Db::get();

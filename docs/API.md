@@ -2990,6 +2990,8 @@ Errors:
     400  bad input (unknown action, malformed id, eid or code)
     403  "banned"            the caller's row is banned
     403  "not the organizer" an organizer-only action
+    403  "the organizer"     `leave`, from the organizer: they cannot
+                             leave their own event
     403  "not a member"      a members-only action from a pending row
     404  "no such event"     no such eid, OR a wrong key, OR a wrong or
                              expired pass, OR the caller has no row for

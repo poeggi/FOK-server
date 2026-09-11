@@ -271,8 +271,10 @@ final class Events
     }
 
     /**
-     * How many have joined, and how many are waiting.
-     * @return array{members: int, pending: int, banned: int}
+     * How many have joined, how many are waiting, and the screen. Four
+     * figures because a monitor is counted APART from the members rather
+     * than among them - it is in the event without being at it.
+     * @return array{members: int, pending: int, banned: int, monitor: int}
      */
     public static function counts(string $eid): array
     {
@@ -532,13 +534,27 @@ final class Events
      */
     public static function claimMonitor(array $card, string $id): bool
     {
-        $holder = self::monitorHolder($card);
-        if ($holder !== null && $holder !== $id) {
+        // A RESERVED slot is decided by the column and needs no claim: it is
+        // that screen's whether it is asking or not.
+        if ($card['monitor'] !== null) {
+            return $card['monitor'] === $id;
+        }
+        if (!Caps::apcu()) {
+            return true;
+        }
+        $key = self::MON . $card['eid'];
+        // apcu_add is the test-and-set, the shape TourneyStore uses for the
+        // host claim: two screens asking in the same instant both read an
+        // empty slot, and only one of them may be told it has it.
+        if (apcu_add($key, $id, self::MON_TTL)) {
+            return true;
+        }
+        if (apcu_fetch($key) !== $id) {
             return false;
         }
-        if (Caps::apcu()) {
-            apcu_store(self::MON . $card['eid'], $id, self::MON_TTL);
-        }
+        // Ours already: this is the renewal, and it is the only write that
+        // may overwrite the key.
+        apcu_store($key, $id, self::MON_TTL);
         return true;
     }
 
@@ -846,6 +862,14 @@ final class Events
         if ($changed) {
             self::forgetMine($id);
             self::forgetCounts($eid);
+            // A row that stops being the monitor stops being the RESERVED
+            // one too. setMonitorId keeps the column and the row together
+            // in the other direction; without this the column can outlive
+            // the row it named, and then monitorHolder answers somebody the
+            // monitor action itself refuses - a slot nobody at all can take.
+            if ($set !== 'monitor' && (self::card($eid)['monitor'] ?? null) === $id) {
+                self::edit($eid, ['monitor' => null]);
+            }
         }
         return $changed;
     }

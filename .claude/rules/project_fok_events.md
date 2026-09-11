@@ -53,6 +53,14 @@ The achievement waits for the start as well, gated in EventView::forCaller
 on the state rather than on a moment, because it rides every member answer
 and therefore arrives by itself.
 
+The pass half of that gate is NEARLY UNREACHABLE and must stay. A pass is
+valid for 20 s and an upcoming event mints none, so reaching the 409 takes
+a pass minted while the event was active and the event then scheduled into
+the future within its slot - which is precisely what the smoke engineers to
+test it. A wrong or expired pass answers 404 long before this line. It is a
+guard, not dead code: the day something else can mint one, it is the only
+thing standing between a pass and a room that is not open.
+
 ## State is derived, never swept
 
 `Events::stateOf` is a pure function of (mode, starts, ends, now). There is

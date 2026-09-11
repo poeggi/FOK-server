@@ -3436,6 +3436,22 @@ $evFreed = Events::rowOf($evMon['eid'], '22227e57');
 ok($evFreed !== null && $evFreed['state'] === 'member',
     'and clearing the reservation puts that row back too');
 
+// A ROW that stops being the monitor stops being the RESERVED one: the
+// column cannot outlive the row it named, or the slot is held for somebody
+// the monitor action itself refuses and nobody else can ever take it.
+Events::setMonitorId($evMon['eid'], '33337e57');
+ok((Events::card($evMon['eid']) ?? [])['monitor'] === '33337e57',
+    'a screen is reserved by naming it');
+Events::setMember($evMon['eid'], '33337e57', 'banned');
+ok((Events::card($evMon['eid']) ?? [])['monitor'] === null,
+    'and banning that row gives the reservation up with it');
+ok(Events::monitorHolder(Events::card($evMon['eid']) ?? []) === null,
+    'so the slot is held by nobody rather than by somebody refused at the door');
+ok(Events::claimMonitor(Events::card($evMon['eid']) ?? [], '22227e57'),
+    'and the next screen can take it');
+Events::setMember($evMon['eid'], '33337e57', 'none');
+Events::releaseMonitor($evMon['eid'], '22227e57');
+
 // ASKING IS NOT TAKING: whether an event offers a screen rides every
 // answer, because the call that would otherwise reveal it takes the lease.
 $evAsk = Events::card($evMon['eid']) ?? [];

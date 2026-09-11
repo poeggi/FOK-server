@@ -271,7 +271,10 @@ switch ($action) {
             event_unknown();
         }
         if (Events::isOrganizer($card, $id)) {
-            Util::fail('not the organizer', 403);
+            // NOT 'not the organizer', which is the opposite of the reason:
+            // they are refused BECAUSE they are the organizer, and a client
+            // that shows the string would tell them so.
+            Util::fail('the organizer', 403);
         }
         Events::setMember($eid, $id, 'none');
         Util::jsonOut(['ok' => true]);

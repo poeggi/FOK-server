@@ -213,7 +213,9 @@ expect "and the row is gone" '"error":"no such event"' "$R"
 R=$(evjoin "$ID3" "$KEY1")
 expect "so they may scan their way back in" '"you":{"state":"member"' "$R"
 R=$(evact "$ID1" leave "$EID1")
-expect "but the organizer cannot leave its own event" '"error":"not the organizer"' "$R"
+# The refusal names the REASON, which is that they are the organizer - not
+# 'not the organizer', which is the opposite and is what a client shows.
+expect "but the organizer cannot leave its own event" '"error":"the organizer"' "$R"
 
 R=$(evact "$ID2" run "$EID1")
 expect "a plain member cannot run the event" '"error":"not the organizer"' "$R"

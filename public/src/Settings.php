@@ -124,7 +124,7 @@ final class Settings
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)'],
         'admin_duels_refresh_secs' => [5, 'Duels card refresh interval (seconds, 0 = off)'],
         'admin_perf_refresh_secs' => [5, 'Server performance card refresh interval (seconds, 0 = off)'],
-        'admin_stats_refresh_secs' => [5, 'Statistics card refresh interval (seconds, 0 = off)'],
+        'admin_stats_refresh_secs' => [10, 'Statistics card refresh interval (seconds, 0 = off)'],
     ];
 
     // Only the rows that OVERRIDE a default are stored and cached; a key at

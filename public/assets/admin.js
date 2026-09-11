@@ -405,9 +405,27 @@ function confirmModal(titleText, message, confirmLabel, onConfirm, extra) {
     // What a destructive action is about to take, itemised. A sentence can
     // carry a warning; only a list can carry an inventory.
     if (extra) body.append(extra);
+    // A destructive action that FAILED must not look like one that worked.
+    // The dialog stays up and says so rather than closing on the press, and
+    // it waits for an async callback before deciding which of the two it
+    // was - every confirm in the dashboard inherits this.
+    const err = el('p', 'error');
+    err.hidden = true;
+    body.append(err);
     const foot = el('div', 'modal-foot');
     const go = el('button', 'small', confirmLabel);
-    go.onclick = () => { closeModal(overlay); onConfirm(); };
+    go.onclick = async () => {
+        go.disabled = true;
+        err.hidden = true;
+        try {
+            await onConfirm();
+            closeModal(overlay);
+        } catch (e) {
+            go.disabled = false;
+            err.textContent = 'Failed: ' + (e && e.message ? e.message : e);
+            err.hidden = false;
+        }
+    };
     foot.append(go);
     body.append(foot);
     document.body.append(overlay);
@@ -2013,8 +2031,14 @@ function renderEventBody(body, overlay, eid, d) {
 
     // The controls first, because an operator opens this popup to DO
     // something. A scheduled event walks itself, so it offers only its end.
+    // The answer is READ, not assumed: call() only throws on a 401, so a
+    // refused action arrives as an ordinary {ok:false} body and would
+    // otherwise reload this popup unchanged and say nothing.
     const act = async (action, extra) => {
-        await api(action, { method: 'POST', body: form({ eid, ...(extra || {}) }) });
+        const r = await api(action, { method: 'POST', body: form({ eid, ...(extra || {}) }) });
+        if (!r || r.ok !== true) {
+            throw new Error((r && r.error) || 'refused');
+        }
         refreshModule('events');
         return showEventReload(body, overlay, eid);
     };
@@ -2075,7 +2099,10 @@ function renderEventBody(body, overlay, eid, d) {
             + 'holds about it. There is no undo and no backup of it. Ending the '
             + 'event instead freezes it and keeps all of this readable.',
             'Purge it', async () => {
-                await api('event_delete', { method: 'POST', body: form({ eid }) });
+                const r = await api('event_delete', { method: 'POST', body: form({ eid }) });
+                if (!r || r.ok !== true) {
+                    throw new Error((r && r.error) || 'refused');
+                }
                 closeModal(overlay);
                 refreshModule('events');
             }, list);
