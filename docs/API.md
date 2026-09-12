@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.16", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.15", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -57,8 +57,8 @@ and whose tournaments nobody outside it can see - added in 4.11, its
 printed key shortened to fit the code the game itself can scan in 4.12 and
 that key made to join an event that has not started yet in 4.13, the
 event's monitor named on the roles sheet and sent the tournament's
-signals in 4.14, the walkover clock on that sheet in 4.15, an ended
-event restarted by its operator in 4.16) is available, and
+signals in 4.14, the walkover clock on that sheet in 4.15) is
+available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
 
@@ -558,7 +558,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.16",               contract version, see Versioning
+      "api": "4.15",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a free
@@ -972,7 +972,7 @@ not its hello is on time - and needs no hello to stay online at all.
 Every answer WITH A BODY carries `api` and `debug` (4.9), beside the
 `signals` array:
 
-      "api": "4.16",             the contract version, re-read here for
+      "api": "4.15",             the contract version, re-read here for
                                 the same reason hello carries it: it
                                 un-latches a client after a rollback
       "debug": false,           the server's debug instruction for this
@@ -2647,7 +2647,7 @@ still be read back, and an abandoned one after
 bracket to come back to. After that the tid is simply unknown, and `state`
 answers 404.
 
-## Events (4.16)
+## Events (4.14)
 
 An EVENT is a room an operator opens on the server: a LAN party, a club
 night, a stand at a fair. A player gets in by scanning its QR code -
@@ -2667,15 +2667,6 @@ makes a restored config fire a burst of requests.
 An event tournament is an ORDINARY tournament: same lifecycle, same
 bracket, same deadlines, same caps, same requests (see Tournament mode).
 `eid` on it is a tag and a membership check on the way in, nothing more.
-
-CHANGED IN 4.16: `ended` IS NO LONGER TERMINAL. An operator can restart
-an ended event from the dashboard, and it is `active` again - a
-scheduled one walks its schedule again, and an end that had already
-passed is cleared. It arrives like every other transition: an `event`
-signal carrying `state`, and the derived state on every answer after
-it. A client derives it as it derives the rest and forgets nothing on
-`ended`. Nothing in the game can undo an end: the organizer's `end`
-still has no opposite.
 
 CHANGED IN 4.14, and it is the only change since 4.13: THE MONITOR IS A
 SPECTATOR OF THE EVENT'S TOURNAMENT, invisibly - the roles sheet names it
@@ -2759,10 +2750,14 @@ here, so nothing fires at a scheduled moment and nothing needs to.
                already running plays on
     ended      FROZEN: no joins, no passes, no new tournaments. Nothing
                in the game undoes it; an operator can restart the event
-               from the dashboard (4.16), and it is active again. A
-               tournament RUNNING at the moment of the end finishes
-               normally and is archived - it began while the event was
-               live, and a clock must not stop two players mid match.
+               from the dashboard, and it is active again - a scheduled
+               one walks its schedule again, with an end that had
+               passed cleared. The transition arrives like every other:
+               an `event` signal carrying `state`, and the derived
+               state on every answer after it. A tournament RUNNING at
+               the moment of the end finishes normally and is archived
+               - it began while the event was live, and a clock must
+               not stop two players mid match.
 
 A SCHEDULED event has `starts` and/or `ends` and walks itself: upcoming
 before `starts`, active after it, ended at `ends`. Nothing is pushed
@@ -2847,7 +2842,6 @@ a printed key has no eid to send.
     end       {id, eid}         -> {ok} organizer, unscheduled only.
                                    No verb here undoes it; the
                                    operator can restart the event
-                                   (4.16)
 
 `state` answers the caller's whole view of the event:
 

@@ -10,6 +10,13 @@ the contract counts - is 1.4.18 -> 1.5.0, never 1.4.19. Asked for on
 Outside an API change the middle digit still moves only on explicit
 instruction; ask if a change looks feature-sized.
 
+WHAT IS A CONTRACT CHANGE: something a client can see on the wire - a
+field, an action, an error, a value's meaning. A server behaviour the
+contract text merely described is NOT one, even where that text called
+it a guarantee: the operator's event restart (1.15.0) moved nothing on
+the wire and was bumped to 4.16 anyway; 1.15.1 put 4.15 back (asked for
+on 2026-09-12). Fix the sentence in docs/API.md, leave the number.
+
 Tag releases with the bare number (`0.16.2`, no `v` prefix).
 
 Versions only ever move FORWARD (the deploy's live-verify compares the

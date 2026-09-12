@@ -184,6 +184,16 @@ button.flashing {
     text-align: center;
 }
 
+/* A glyph button is a SQUARE the height of every other control: the refresh
+   and close every head carries, the download and trash of the bulk bar. The
+   square is what tells them apart from a text button at a glance, and the
+   height is what keeps them in line with the interval field beside them.
+   The glyphs themselves live in ICON (admin.js), one per meaning. */
+button.iconbtn {
+    width: var(--ctl-h);
+    padding: 0;
+    flex: none;
+}
 .iconbtn svg { display: block; }
 button.iconbtn:disabled { opacity: 0.4; cursor: default; }
 button.iconbtn:disabled:hover { border-color: var(--border); }

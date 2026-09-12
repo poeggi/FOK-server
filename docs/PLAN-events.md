@@ -146,7 +146,7 @@ clock (the contract states facts, not cadence).
     ended    FROZEN: no joins, no passes, no new tournaments. A
              tournament running at the moment of the end finishes and
              is archived (it began while the event was live). Only the
-             operator undoes it (event_reopen, 4.16): mode back to
+             operator undoes it (event_reopen): mode back to
              active, ended_at cleared, and an `ends` that has passed
              cleared with it - left in place it would end the event
              again on the next read.
@@ -359,7 +359,7 @@ would ever give it a row.
 
 ENDING an event freezes it and KEEPS everything: the roster, the
 archive, the record of every evening it ran. It is not destructive, and
-since 4.16 not final either: Restart, in End's place on the popup, puts
+since 1.15.0 not final either: Restart, in End's place on the popup, puts
 it back in play (event_reopen), clearing a scheduled end that has
 passed. The organizer has no such verb.
 

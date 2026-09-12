@@ -72,7 +72,7 @@ putting a clock in shared memory.
 ## What is terminal, and what merely freezes
 
 - ENDING an event freezes it and keeps everything. Only the operator undoes
-  it: `event_reopen` (1.15.0, API 4.16) sets it active again and clears a
+  it: `event_reopen` (1.15.0) sets it active again and clears a
   scheduled end that has passed, or the next read would end it again.
   Nothing in the game has that verb. A tournament running at the moment of
   the end FINISHES and is archived: it began while the event was live, and

@@ -194,6 +194,12 @@ const ICON = {
     trash: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" '
         + 'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
         + '<path d="M3 4h10M6 4V2.5h4V4M5 4l.6 9h4.8L11 4"/></svg>',
+    refresh: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" '
+        + 'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+        + '<path d="M13.4 9.5A5.5 5.5 0 1 1 12.3 4.1L14 6"/><path d="M14 2.5V6h-3.5"/></svg>',
+    close: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" '
+        + 'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+        + '<path d="M4 4l8 8M12 4l-8 8"/></svg>',
 };
 
 // The ONE scrolling child of a card body or a tab panel (see the height
@@ -239,12 +245,22 @@ function bubbles(box, items) {
     box.append(grid);
 }
 
-function iconBtn(svg, title) {
-    const b = el('button', 'small iconbtn');
+function iconBtn(svg, title, cls) {
+    const b = el('button', 'small iconbtn' + (cls ? ' ' + cls : ''));
     b.innerHTML = svg;
     b.title = title;
     b.setAttribute('aria-label', title);
     return b;
+}
+
+// The two glyph buttons every head carries: they are controls of the FRAME,
+// so they look alike everywhere and unlike the actions on the content. The
+// refresh one is what flash() lights when the answer lands.
+function refreshBtn() {
+    return iconBtn(ICON.refresh, 'refresh', 'refresh');
+}
+function closeBtn() {
+    return iconBtn(ICON.close, 'close', 'close');
 }
 
 // The live filter above a list: what is typed hides the rows that do not
@@ -424,7 +440,7 @@ function makeModal(nameText, guarded) {
     const name = el('span', 'modal-name', nameText);
     title.append(name);
     const body = el('div', 'modal-body');
-    const close = el('button', 'small', 'close');
+    const close = closeBtn();
     close.onclick = () => closeModal(overlay);
     modal.append(head, body);
     overlay.append(modal);
@@ -457,7 +473,8 @@ function infoModal(titleText, bodyNode, idText) {
 // a note wedged into a toolbar does not.
 function confirmModal(titleText, message, confirmLabel, onConfirm, extra) {
     const { overlay, head, title, close, body } = makeModal(titleText);
-    close.textContent = 'cancel';
+    close.title = 'cancel';
+    close.setAttribute('aria-label', 'cancel');
     head.append(title, close);
     body.append(el('p', 'modal-msg', message));
     // What a destructive action is about to take, itemised. A sentence can
@@ -518,7 +535,7 @@ async function showClient(id) {
     // The head is built once and stays put; only the body re-renders, so
     // the interval control keeps focus and the popup does not flicker.
     const { overlay, head, title, name, body, close } = makeModal(id);
-    const refresh = el('button', 'small refresh', 'refresh');
+    const refresh = refreshBtn();
     title.append(el('span', 'modal-id', id));
 
     body._sid = 'client';
@@ -1134,7 +1151,7 @@ async function showGaugeCharts(gauge, srcId) {
     const ax = byMin ? AXIS.min : AXIS.hour;
     const name = gauge.label.replace(/\/(min|h)$/, '');
     const { overlay, head, title, close, body } = makeModal(name);
-    const refresh = el('button', 'small refresh', 'refresh');
+    const refresh = refreshBtn();
     body._sid = 'gauge:' + gauge.label;
 
     // The graph keeps step with the card it was opened from (see follows),
@@ -1593,7 +1610,7 @@ async function showDisputes(id) {
     title.append(el('span', 'modal-id', id));
 
     body._sid = 'disputes';
-    const refresh = el('button', 'small refresh', 'refresh');
+    const refresh = refreshBtn();
     const load = async () => {
         try {
             const d = await api('disputes&id=' + id);
@@ -1694,7 +1711,7 @@ async function showItem(uid) {
     title.append(el('span', 'modal-id', uid.slice(0, 8) + '..'));
 
     body._sid = 'item';
-    const refresh = el('button', 'small refresh', 'refresh');
+    const refresh = refreshBtn();
     const load = async () => {
         try {
             const d = await api('item&uid=' + uid);
@@ -2065,7 +2082,7 @@ async function showEvent(eid) {
     title.append(el('span', 'modal-id', eid));
 
     body._sid = 'event';
-    const refresh = el('button', 'small refresh', 'refresh');
+    const refresh = refreshBtn();
     const load = async () => {
         try {
             const d = await api('event&eid=' + eid);
@@ -2335,7 +2352,7 @@ async function showTourney(tid) {
     title.append(el('span', 'modal-id', tid.slice(0, 8) + '..'));
 
     body._sid = 'tourney';
-    const refresh = el('button', 'small refresh', 'refresh');
+    const refresh = refreshBtn();
     const load = async () => {
         try {
             const d = await api('tourney&tid=' + tid);
@@ -3229,7 +3246,7 @@ function sortable(table, id) {
 }
 
 const boxes = {};
-const refreshBtn = {};
+const cardRefresh = {};
 
 // ------------------------------------------------------- scroll and flash
 //
@@ -3447,7 +3464,7 @@ function refreshModule(id) {
     // Lit when the update LANDS, not when it is asked for: a refresh can
     // wait on the wire behind another request, and the flash is what says
     // the tile just changed - so what is lit is what is being worked on.
-    Promise.resolve(mod.refresh(box)).then(() => { flash(refreshBtn[id]); restoreScroll(box); }).catch((e) => {
+    Promise.resolve(mod.refresh(box)).then(() => { flash(cardRefresh[id]); restoreScroll(box); }).catch((e) => {
         box.replaceChildren(el('p', 'error', 'Error: ' + e.message));
     });
 }
@@ -3466,7 +3483,7 @@ function buildCards() {
         const card = el('section', 'card card-' + m.id);
         const head = el('h2');
         head.append(el('span', 'card-title', m.title));
-        const btn = el('button', 'small refresh', 'refresh');
+        const btn = refreshBtn();
         btn.onclick = () => refreshModule(m.id);
         if (m.every) head.append(intervalControl(m.every, m.title + ' refresh interval', true));
         head.append(btn);
@@ -3475,7 +3492,7 @@ function buildCards() {
         card.append(head, box);
         views[m.view || 'dash'].append(card);
         boxes[m.id] = box;
-        refreshBtn[m.id] = btn;
+        cardRefresh[m.id] = btn;
     }
 }
 
