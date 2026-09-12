@@ -145,7 +145,11 @@ clock (the contract states facts, not cadence).
              tournament plays on
     ended    FROZEN: no joins, no passes, no new tournaments. A
              tournament running at the moment of the end finishes and
-             is archived (it began while the event was live).
+             is archived (it began while the event was live). Only the
+             operator undoes it (event_reopen, 4.16): mode back to
+             active, ended_at cleared, and an `ends` that has passed
+             cleared with it - left in place it would end the event
+             again on the next read.
 
 DECIDED: the last line stands. The alternative - aborting the running
 tournament at the end moment - punishes two players mid match for a
@@ -248,7 +252,8 @@ Same shape as tournament.php: `{id, action, ...}`, one switch.
                                      [{at, code}, ...6]}
     run      {id, eid}           -> {ok}   organizer, unscheduled only
     pause    {id, eid}           -> {ok}
-    end      {id, eid}           -> {ok}   terminal
+    end      {id, eid}           -> {ok}   no organizer verb undoes it;
+                                     the operator's event_reopen does
     leave    {id, eid}           -> {ok}   a member removes itself; the
                                      same setMember path as a decline,
                                      the row goes and the person may
@@ -353,8 +358,10 @@ would ever give it a row.
 ## Ending and purging are two different decisions
 
 ENDING an event freezes it and KEEPS everything: the roster, the
-archive, the record of every evening it ran. It is terminal but it is
-not destructive, and the admin popup says so.
+archive, the record of every evening it ran. It is not destructive, and
+since 4.16 not final either: Restart, in End's place on the popup, puts
+it back in play (event_reopen), clearing a scheduled end that has
+passed. The organizer has no such verb.
 
 DELETING one PURGES it, and the operator gets a different and harder
 warning that itemises what goes: the event itself (so its printed QR
@@ -457,6 +464,8 @@ admin/api.php, all POST where they write, all in AUDIT:
                            event = new key)
     event_run / event_pause / event_end    (scheduled event: end only,
                            the other two 409 'scheduled')
+    event_reopen           ended only (409 'not ended'); active again,
+                           a past `ends` cleared, members announced
     event_roster           eid, id, set ('member'|'none'|'banned') - the
                            organizer's `roster` verb, same values, same
                            code path (Events::setMember). One power more

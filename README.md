@@ -85,7 +85,7 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   addresses the client reports about itself (hello "nets"), which rank
   below what the server saw for itself. The code remains the capability
   and the way in from anywhere else.
-- Events (contract 4.11 to 4.15): a room an operator opens - a LAN party,
+- Events (contract 4.11 to 4.16): a room an operator opens - a LAN party,
   a club night, a stand at a fair. A player gets in by scanning its QR:
   the printed key on the poster, or the 20-second pass a member shows on
   screen. The door is OPEN (a scan joins) or CLOSED (a scan asks, and the
@@ -101,7 +101,8 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   every player grants it a feed, it receives the tournament's signals,
   and it takes no seat and appears in no list. State is DERIVED, never
   swept: a scheduled event starts and ends on its own clock with nothing
-  fired at either moment.
+  fired at either moment. Ending an event freezes it and keeps every
+  record; only the operator can restart it, from the dashboard.
 - Connection tracking: per-client state of the current 1vs1 connection -
   idle, inviting, invited, connecting or playing, with the peer and
   whether the pair runs p2p or relayed. Inferred from traffic the server

@@ -198,6 +198,7 @@ const AUDIT = [
     'event_run' => 'ran the event',
     'event_pause' => 'paused the event',
     'event_end' => 'ended the event',
+    'event_reopen' => 'restarted the event',
     'event_roster' => 'changed the event roster of',
     'event_organizer' => 'named the organizer of',
     'event_delete' => 'deleted the event',
@@ -515,6 +516,26 @@ switch ($action) {
         if ($state !== $was) {
             EventView::announce($eid, ['event' => 'state', 'state' => $state]);
         }
+        Util::jsonOut(['ok' => true, 'state' => $state]);
+
+    case 'event_reopen':
+        // The one way back out of `ended`, and only the operator has it: the
+        // event is opened again for everyone. A scheduled end that has
+        // already passed goes with it, or the next read would end the event
+        // again; the operator gives it a new one through the edit.
+        requirePost();
+        $eid = requireEid('POST');
+        $card = Events::card($eid);
+        if ($card === null) {
+            Util::fail('unknown event', 404);
+        }
+        if (Events::stateOf($card) !== 'ended') {
+            Util::fail('not ended', 409);
+        }
+        Events::reopen($eid);
+        $fresh = Events::card($eid);
+        $state = $fresh === null ? 'active' : Events::stateOf($fresh);
+        EventView::announce($eid, ['event' => 'state', 'state' => $state]);
         Util::jsonOut(['ok' => true, 'state' => $state]);
 
     case 'event_roster':

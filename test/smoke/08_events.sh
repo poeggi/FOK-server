@@ -293,6 +293,17 @@ expect "and can never be run again" '"error":"ended"' "$R"
 R=$(evact "$ID2" state "$EID3")
 expect "though its members can still read it" '"state":"ended"' "$R"
 
+# ---- and the operator alone can restart it ----
+
+R=$(evadmin event_reopen "eid=$EID3")
+expect "the operator restarts the event" '"state":"active"' "$R"
+R=$(evjoin "$ID3" "$KEY3")
+expect "and a scan joins again" '"you":{"state":"member"' "$R"
+R=$(evadmin event_reopen "eid=$EID3")
+expect "a restart on an event that is not ended is refused" '"error":"not ended"' "$R"
+R=$(evadmin event_end "eid=$EID3")
+expect "and it can be ended again" '"state":"ended"' "$R"
+
 # ---- the monitor: one screen per event, held two different ways ----
 
 # Asking whether a screen is offered must not take the slot: the monitor
@@ -459,6 +470,16 @@ expect "the event's start moment passes" '"ok":true' "$R"
 R=$(evact "$ID2" state "$EID5")
 expect "and the early member is simply in it" '"you":{"state":"member"' "$R"
 expect "with the achievement arriving on the first read after that" '"ach":' "$R"
+# A scheduled end that has passed ends the event on its own; the restart
+# clears it, or the next read would end the event again.
+R=$(evadmin event_edit "eid=$EID5" "ends=$((NOW5 - 30))")
+expect "the event's end moment passes" '"ok":true' "$R"
+R=$(evact "$ID2" state "$EID5")
+expect "and the event reads as ended" '"state":"ended"' "$R"
+R=$(evadmin event_reopen "eid=$EID5")
+expect "the operator restarts a scheduled event that ran out" '"state":"active"' "$R"
+R=$(evact "$ID2" state "$EID5")
+expect "and the end that had passed is cleared" '"ends":null' "$R"
 R=$(evadmin event_delete "eid=$EID5")
 expect "the early event is deleted again" '"ok":true' "$R"
 

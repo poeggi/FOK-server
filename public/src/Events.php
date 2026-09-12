@@ -735,7 +735,8 @@ final class Events
     }
 
     /**
-     * run / pause / end. An ended event never leaves that state, and the
+     * run / pause / end. An ended event never leaves that state by this
+     * path - reopen() is the operator's way back and the only one - and the
      * moment it ended is recorded because the schedule cannot say it.
      */
     public static function setMode(string $eid, string $mode): void
@@ -745,6 +746,30 @@ final class Events
             Db::get()->prepare(
                 "UPDATE events SET mode = ?, ended_at = ? WHERE eid = ? AND mode != 'ended'"
             )->execute([$mode, $ended, $eid]);
+        });
+        self::forgetCard($eid);
+    }
+
+    /**
+     * The way back out of `ended`, and only the operator has it: the event
+     * is opened again for everyone. Mode goes to active, which an
+     * unscheduled event runs on and a scheduled one ignores in favour of
+     * its stamps - and an end that has already passed is cleared, because
+     * left in place it would end the event again on the very next read.
+     * The moment it ended is forgotten with it.
+     */
+    public static function reopen(string $eid, ?int $now = null): void
+    {
+        $now ??= time();
+        $card = self::card($eid);
+        if ($card === null) {
+            return;
+        }
+        $clear = $card['ends'] !== null && (int)$card['ends'] <= $now;
+        Db::retry(static function () use ($eid, $clear): void {
+            Db::get()->prepare('UPDATE events SET mode = ?, ended_at = NULL'
+                . ($clear ? ', ends = NULL' : '') . ' WHERE eid = ?')
+                ->execute(['active', $eid]);
         });
         self::forgetCard($eid);
     }

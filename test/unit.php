@@ -3306,6 +3306,30 @@ Events::setMode($evOpen['eid'], 'active');
 ok(Events::stateOf(Events::card($evOpen['eid']) ?? [], 5000) === 'ended',
     'and an ended event can never be run again');
 
+// The operator's way back: a restart puts an ended event in play again and
+// forgets the moment it ended.
+Events::reopen($evOpen['eid'], 5000);
+$evBack = Events::card($evOpen['eid']) ?? [];
+ok(Events::stateOf($evBack, 5000) === 'active', 'an operator restarts it, and it is active again');
+ok($evBack['ended_at'] === null, 'with the moment it ended forgotten');
+// A scheduled end that has passed would end the event again on the next
+// read, so the restart clears it; an end still ahead is kept.
+Events::edit($evOpen['eid'], ['starts' => 100, 'ends' => 200]);
+ok(Events::stateOf(Events::card($evOpen['eid']) ?? [], 5000) === 'ended',
+    'a schedule that ran out reads as ended');
+Events::reopen($evOpen['eid'], 5000);
+$evBack = Events::card($evOpen['eid']) ?? [];
+ok($evBack['ends'] === null && $evBack['starts'] === 100,
+    'a restart clears the end that has passed and keeps the start');
+ok(Events::stateOf($evBack, 5000) === 'active', 'so the event is active again');
+Events::setMode($evOpen['eid'], 'ended');
+Events::edit($evOpen['eid'], ['ends' => 9000]);
+Events::reopen($evOpen['eid'], 5000);
+$evBack = Events::card($evOpen['eid']) ?? [];
+ok($evBack['ends'] === 9000, 'an end still ahead is kept');
+ok(Events::stateOf($evBack, 5000) === 'active', 'and the event walks its schedule again');
+Events::edit($evOpen['eid'], ['starts' => null, 'ends' => null]);
+
 // The archive outlives everything: it is written whatever state the event
 // is in, because the match began while the event was live.
 Events::archive($evOpen['eid'], ['tid' => str_repeat('a', 32), 'host' => '11117e57',

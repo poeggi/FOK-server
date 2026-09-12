@@ -2123,17 +2123,33 @@ function renderEventBody(body, overlay, eid, d) {
         }
     }
     // Everything above acts ON the event; the two below END it, so they
-    // sit together at the right edge away from the rest.
+    // sit together at the right edge away from the rest. Restart takes
+    // End's place on an ended event: it is End's undo, and it is the
+    // operator's alone - nothing in the game has it.
     bar.append(el('span', 'grow'));
-    if (d.state !== 'ended') {
+    if (d.state === 'ended') {
+        const stale = d.scheduled && d.ends !== null && d.ends * 1000 <= Date.now();
+        const again = el('button', 'small', 'Restart');
+        again.title = 'Opens the event again for everyone.'
+            + (stale ? ' Its end has passed and is cleared.' : '');
+        again.onclick = () => confirmModal('Restart event',
+            'This opens ' + d.name + ' again for everyone: scans join, members show '
+            + 'passes and the organizer can start tournaments. '
+            + (stale ? 'Its scheduled end has passed and is cleared - edit the '
+                + 'event to give it a new one.'
+                : (d.scheduled ? 'It walks its schedule again.'
+                    : 'It runs until it is ended again.')),
+            'Restart it', () => act('event_reopen'));
+        bar.append(again);
+    } else {
         const end = el('button', 'small', 'End event');
         end.title = 'Freezes the event for everyone. A tournament already '
             + 'running plays on and is still archived.';
         end.onclick = () => confirmModal('End event',
             'This freezes ' + d.name + ' for everyone: no more joins, no more passes, '
-            + 'no new tournaments, and it can never be run again. A tournament '
-            + 'already running plays on and is archived, and everything the event '
-            + 'holds stays readable - use Delete to remove it.',
+            + 'no new tournaments, and only Restart on this dashboard undoes it. '
+            + 'A tournament already running plays on and is archived, and '
+            + 'everything the event holds stays readable - use Delete to remove it.',
             'End it', () => act('event_end'));
         bar.append(end);
     }
