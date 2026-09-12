@@ -3464,13 +3464,17 @@ function refreshModule(id) {
     // Lit when the update LANDS, not when it is asked for: a refresh can
     // wait on the wire behind another request, and the flash is what says
     // the tile just changed - so what is lit is what is being worked on.
-    Promise.resolve(mod.refresh(box)).then(() => { flash(cardRefresh[id]); restoreScroll(box); }).catch((e) => {
+    return Promise.resolve(mod.refresh(box)).then(() => { flash(cardRefresh[id]); restoreScroll(box); }).catch((e) => {
         box.replaceChildren(el('p', 'error', 'Error: ' + e.message));
     });
 }
 
+// The header's refresh button: it lights when the LAST card has landed,
+// so it reads as the one click that did all of them.
+let headRefresh = null;
+
 function refreshAll() {
-    for (const m of MODULES) refreshModule(m.id);
+    return Promise.all(MODULES.map((m) => refreshModule(m.id))).then(() => flash(headRefresh));
 }
 
 const views = {
@@ -3508,8 +3512,10 @@ toggle.onclick = () => {
 (async () => {
     await loadSettings();
     buildCards();
+    headRefresh = refreshBtn();
+    headRefresh.onclick = () => refreshAll();
     document.querySelector('header .hrefresh')
-        .append(intervalControl('admin_refresh_secs', 'Dashboard refresh interval'));
+        .append(intervalControl('admin_refresh_secs', 'Dashboard refresh interval'), headRefresh);
     refreshAll();
     applyIntervals();
 })();

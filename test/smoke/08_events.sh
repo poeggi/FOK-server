@@ -355,15 +355,17 @@ refute "but never the screen" "\"id\":\"$ID3\"" "$R"
 R=$(evact "$ID2" state "$EID4")
 expect "the member count leaves the screen out too" '"members":2' "$R"
 
-# A monitor may read the event and run itself. That is the whole list.
+# A monitor may read the event, run itself and put the live code on the
+# wall. That is the whole list.
 R=$(evact "$ID3" monitor "$EID4")
 expect "the reserved screen runs" '"reserved":true' "$R"
+expect "and is told how many of the members are here now" '"online":2' "$R"
 R=$(evact "$ID3" state "$EID4")
 expect "and may read the event" '"you":{"state":"monitor"' "$R"
 R=$(evact "$ID3" members "$EID4")
 expect "but not the roster" '"error":"monitor only"' "$R"
 R=$(evact "$ID3" pass "$EID4")
-expect "nor mint a pass" '"error":"monitor only"' "$R"
+expect "it mints the pass the wall shows" '"slots":[' "$R"
 R=$(evact "$ID3" leave "$EID4")
 expect "nor leave on its own" '"error":"monitor only"' "$R"
 R=$(evact "$ID2" monitor "$EID4")

@@ -85,8 +85,9 @@ header .logo { image-rendering: pixelated; }
 header h1 span { color: var(--accent); font-weight: normal; }
 /* Everything after the version line sits at the right edge. */
 header .version { margin-right: auto; }
-/* Keeps the 20px the nav sets between its own controls. */
-header .hrefresh { margin-right: 12px; }
+/* The interval field and the refresh-all button, spaced like a card head;
+   the margin keeps the 20px the nav sets between its own controls. */
+header .hrefresh { display: flex; align-items: center; gap: 10px; margin-right: 12px; }
 header a { color: var(--muted); }
 header nav { display: flex; align-items: center; gap: 20px; }
 
@@ -108,10 +109,12 @@ header nav { display: flex; align-items: center; gap: 20px; }
     header nav { grid-area: actions; justify-self: end; gap: 14px; }
 }
 
+/* The gear is the height of every other head control, so the bar is level. */
 #viewtoggle {
+    height: var(--ctl-h);
     font-size: 18px;
     line-height: 1;
-    padding: 4px 9px;
+    padding: 0 9px;
     background: transparent;
 }
 #viewtoggle.active { border-color: var(--accent); color: var(--accent); }

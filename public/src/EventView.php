@@ -198,6 +198,11 @@ final class EventView
         ];
         $out['members'] = $counts['members'];
         $out['pending'] = $counts['pending'];
+        // How many of the members are here right now - a COUNT, never who:
+        // presence stays friendship-gated, and the wall shows JOINED beside
+        // ONLINE. One roster read and one presence fetch per screen refresh.
+        $out['online'] = count(array_filter(Presence::heardWithin(
+            array_column(Events::members($card['eid'], false), 'id'), FOK_ONLINE_WINDOW)));
         $out['reserved'] = $card['monitor'] !== null;
         $out['archive'] = self::archive($card['eid']);
         $out['tourney'] = null;

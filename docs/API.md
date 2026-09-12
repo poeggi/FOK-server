@@ -2825,7 +2825,8 @@ a printed key has no eid to send.
     state     {id, eid}         -> {ok, ...} see below
     members   {id, eid}         -> {ok, members: [...]}
     pass      {id, eid}         -> {ok, step, valid, slots: [...]}
-                                   any member, while the event is active
+                                   any member, or the monitor, while the
+                                   event is active
     monitor   {id, eid}         -> {ok, ...} takes or renews the event's
                                    one monitor slot and answers the whole
                                    screen. See The monitor below
@@ -2943,7 +2944,9 @@ screen that rotates locally on the synced clock. Ask again before the
 last slot lapses.
 
 A pass names NO ISSUER. The server never learns who passed an event on,
-and cannot: there is no room for an issuer in 53 bytes.
+and cannot: there is no room for an issuer in 53 bytes. That is also why
+the monitor may mint one: the wall shows the live code between
+tournaments, and a code is a code whoever put it on a screen.
 
 ### The monitor
 
@@ -2968,6 +2971,9 @@ be: it is answered by taking it, or by 409 `monitor taken`.
                                                   everywhere else - see below
                             "members": 14,        who has joined
                             "pending": 3,         who is waiting to be
+                            "online": 9,          of the members, how many
+                                                  are here now - a count,
+                                                  never who (4.15 re-release)
                             "reserved": true,     this event names its screen
                             "archive": [...],     as `state` answers it
                             "tourney": {...}}     see below, or null
@@ -3048,13 +3054,16 @@ nobody left to approve it. From then on:
   is not told what changed shows the wrong room;
 - it is granted no achievement: the achievement is for joining, and a
   screen was posted rather than joined;
-- it may call `state` and `monitor` and NOTHING else. Every other action
-  answers 403 `monitor only`.
+- it may call `state`, `monitor` and `pass` and NOTHING else. Every other
+  action answers 403 `monitor only`. `pass` is what puts the live code on
+  the wall between tournaments (a 4.15 re-release; before it a monitor
+  was refused there too).
 
 Errors:
 
     403  "no monitor"     the event does not offer one
-    403  "monitor only"   a monitor tried anything but state or monitor
+    403  "monitor only"   a monitor tried anything but state, monitor or
+                          pass
     403  "not a member"   a pending row asked for the screen
     409  "monitor taken"  somebody else holds the slot
 
@@ -3077,8 +3086,8 @@ Errors:
     409  "scheduled"         run/pause/end on a scheduled event
     409  "monitor taken"     somebody else holds the monitor slot
     403  "no monitor"        the event offers no monitor
-    403  "monitor only"      a monitor tried anything but state or
-                             monitor
+    403  "monitor only"      a monitor tried anything but state, monitor
+                             or pass
     429  "too many attempts" too many wrong codes; `retry_after` is
                              seconds
 

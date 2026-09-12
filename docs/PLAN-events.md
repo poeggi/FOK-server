@@ -397,8 +397,9 @@ shows whatever is interesting at that moment.
   anybody else and is admitted at once - the operator already decided, so
   a closed door does not apply to it - but its row state is `monitor`,
   which means: absent from every participant list and from the member
-  count, no achievement (it did not join, it was posted), and exactly TWO
-  actions available to it, `state` and `monitor`. Everything else answers
+  count, no achievement (it did not join, it was posted), and exactly
+  THREE actions available to it, `state`, `monitor` and `pass` (the wall
+  shows the live code between tournaments). Everything else answers
   403 `monitor only`. Naming a monitor converts an existing row; clearing
   one puts that row back to `member`.
 - `monitor {id, eid}` is one request that both TAKES OR RENEWS the slot
@@ -722,10 +723,10 @@ The event monitor - a screen for a TV:
   and `you` reads `idle` because the monitor is not seated. Ask one of them
   to watch, exactly as a tournament spectator does. When the cursor moves,
   follow it to the next pair.
-- It never joins. The monitor is in no participant list, holds no pass, has
-  no achievement and cannot approve, leave, or open anything - the server
+- It never joins. The monitor is in no participant list, has no
+  achievement and cannot approve, leave, or open anything - the server
   refuses all of it with `monitor only`. The screen should not offer it
-  either.
+  either. It does mint the pass, so the idle wall can show the live QR.
 - More is planned for it later. Build the screen so a section can be added
   without rearranging it.
 

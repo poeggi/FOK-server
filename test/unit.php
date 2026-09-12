@@ -3601,6 +3601,13 @@ ok($evOrgMon['you']['organizer'] === true,
 $evResMon = EventView::monitor($evAsk, '33337e57', 'monitor', 5000);
 ok($evResMon['you']['state'] === 'monitor',
     'while a reserved screen reads monitor, because that is what its row says');
+// The wall shows JOINED beside ONLINE: how many members are here now, and
+// never who - a count is not presence.
+ok(is_int($evResMon['online']) && $evResMon['online'] <= $evResMon['members'],
+    'the screen is told how many of the members are here now');
+Presence::touch('11117e57', '1.2.3.4');
+ok(EventView::monitor($evAsk, '33337e57', 'monitor', 5000)['online'] >= 1,
+    'and a member that was just heard from counts');
 
 // The monitor reads the event, and earns nothing by watching it.
 Events::edit($evMon['eid'], ['ach_name' => 'ON AIR']);

@@ -102,11 +102,12 @@ if ($action === 'join') {
 }
 
 // A MONITOR is in the event without being at it - it is a screen on a
-// wall. It reads the event and it runs itself, and that is the whole list:
-// it is in no roster, holds no pass, and has no business with a door.
+// wall. It reads the event, it runs itself, and it shows the live pass
+// between tournaments so people join off the TV; that is the whole list:
+// it is in no roster and has no business with a door.
 $mine = $eid === '' ? null : Events::rowOf($eid, $id);
 if ($mine !== null && $mine['state'] === 'monitor'
-    && !in_array($action, ['state', 'monitor'], true)) {
+    && !in_array($action, ['state', 'monitor', 'pass'], true)) {
     Util::fail('monitor only', 403);
 }
 
@@ -240,16 +241,16 @@ switch ($action) {
         Util::jsonOut(['ok' => true,
             'members' => EventView::roster($card, $id, Events::isOrganizer($card, $id))]);
 
-    // Any member may pass the event on: that is what makes it spread in a
-    // room. The slots are minted from the clock, so nothing is stored and
-    // the server never learns who showed one.
+    // Any member may pass the event on, and so may the screen on the wall:
+    // that is what makes it spread in a room. The slots are minted from
+    // the clock, so nothing is stored and the server never learns who
+    // showed one.
     case 'pass':
-        if ($card === null || !Events::isMember($eid, $id)) {
-            $row = Events::rowOf($eid, $id);
-            if ($card === null || $row === null) {
-                event_unknown();
-            }
-            Util::fail($row['state'] === 'banned' ? 'banned' : 'not a member', 403);
+        if ($card === null || $mine === null) {
+            event_unknown();
+        }
+        if (!in_array($mine['state'], ['member', 'monitor'], true)) {
+            Util::fail($mine['state'] === 'banned' ? 'banned' : 'not a member', 403);
         }
         $state = Events::stateOf($card, $now);
         if ($state !== 'active') {

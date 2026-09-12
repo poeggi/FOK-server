@@ -119,7 +119,8 @@ is how any client learns it is in an event at all, so an organizer without a
 row could not see the event it runs.
 
 A MONITOR is a row that is not a participant: absent from every member list
-and count, no achievement, and exactly two actions (`state`, `monitor`).
+and count, no achievement, and exactly three actions (`state`, `monitor`,
+`pass` - the wall shows the live code between tournaments, 1.15.2).
 It never takes a tournament seat, so the cap of 8 is untouched - that falls
 out of the row state, not from seat arithmetic anywhere.
 
