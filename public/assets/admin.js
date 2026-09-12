@@ -2241,7 +2241,16 @@ function renderEventBody(body, overlay, eid, d) {
         s.onclick = () => showClient(d.monitor);
         kv('Monitor', [el('span', 'badge connecting', 'reserved'), s,
             el('span', 'muted', named(d.monitor))],
-            'holds the slot whether it is switched on or not');
+            'the seat is this screen\'s whenever it asks; while it is offline a member may stand in');
+        const h = d.monitor_holder;
+        if (h) {
+            const hs = el('span', 'id-link', h);
+            hs.onclick = () => showClient(h);
+            kv('Showing', [el('span', 'badge playing', h === d.monitor ? 'live' : 'stand-in'), hs,
+                el('span', 'muted', named(h))]);
+        } else {
+            kv('Showing', el('span', 'muted', 'nobody'));
+        }
     } else if (d.monitor_holder) {
         const s = el('span', 'id-link', d.monitor_holder);
         s.onclick = () => showClient(d.monitor_holder);

@@ -369,7 +369,40 @@ expect "it mints the pass the wall shows" '"slots":[' "$R"
 R=$(evact "$ID3" leave "$EID4")
 expect "nor leave on its own" '"error":"monitor only"' "$R"
 R=$(evact "$ID2" monitor "$EID4")
-expect "and a member cannot take a reserved slot" '"error":"monitor taken"' "$R"
+expect "and a member cannot take a reserved slot while its screen is online" '"error":"monitor taken"' "$R"
+
+# A RESERVATION IS A RIGHT OF WAY, NOT A HOLD. While the reserved screen is
+# offline a member may stand in; the screen takes the seat back by asking,
+# and the stand-in is told so rather than left to find out. The screen is
+# an id no other part touches, so the server has never heard from it, and
+# it is forgotten again at the end so a persistent instance keeps nothing.
+TV=7e57c0de
+evadmin delete_player "id=$TV" > /dev/null
+R=$(evadmin event_create "name=srv-CI-wall" "organizer=$ID1" "closed=0" "mode=active" "monitor=$TV")
+EID6=$(evfield "$R" eid)
+expect "an operator reserves the seat for a screen nobody has heard from" '"ok":true' "$R"
+R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=event&eid=$EID6")
+expect "which the dashboard shows as reserved" "\"monitor\":\"$TV\"" "$R"
+expect "and showing nothing" '"monitor_holder":null' "$R"
+R=$(evact "$ID1" monitor "$EID6")
+expect "so a member may stand in" '"reserved":true' "$R"
+expect "as the member it is" '"you":{"state":"member"' "$R"
+R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=event&eid=$EID6")
+expect "and the dashboard names the stand-in" "\"monitor_holder\":\"$ID1\"" "$R"
+R=$(evact "$ID1" monitor "$EID6")
+expect "who keeps the seat by asking" '"reserved":true' "$R"
+R=$(evact "$TV" monitor "$EID6")
+expect "until the reserved screen asks, which always succeeds" '"you":{"state":"monitor"' "$R"
+R=$(evact "$ID1" monitor "$EID6")
+expect "and the stand-in is refused at its next renewal" '"error":"monitor taken"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"}" "$BASE/api/hello.php")
+expect "having been told the screen took over" '"event\":\"monitor\"' "$R"
+R=$(evact "$TV" monitor "$EID6")
+expect "the screen renews like any holder" '"reserved":true' "$R"
+R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=event&eid=$EID6")
+expect "and the dashboard names it as showing" "\"monitor_holder\":\"$TV\"" "$R"
+R=$(evadmin delete_player "id=$TV")
+expect "the screen is forgotten with the run" '"ok":true' "$R"
 
 # A screen never takes a seat, so a tournament being watched still seats
 # its full eight. It falls out of the row state: a monitor is not a

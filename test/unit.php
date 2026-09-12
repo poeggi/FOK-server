@@ -3482,6 +3482,12 @@ ok($evMon['monitor_allowed'] === true, 'an event offers a monitor unless it is t
 ok($evMon['monitor'] === null, 'and reserves it for nobody by default');
 $evNoMon = Events::create(['name' => 'srv-CI-nomonitor', 'monitor_allowed' => false]);
 ok($evNoMon['monitor_allowed'] === false, 'an operator can decline to offer one');
+$evBorn = Events::create(['name' => 'srv-CI-born', 'organizer' => '11117e57', 'monitor' => '33337e57']);
+$evBornRow = Events::rowOf($evBorn['eid'], '33337e57');
+ok($evBornRow !== null && $evBornRow['state'] === 'monitor',
+    'a screen named at creation has its row from that moment, like the organizer');
+Events::setMember($evBorn['eid'], '33337e57', 'none');
+Events::setMember($evBorn['eid'], '11117e57', 'none');
 
 if (Caps::apcu()) {
     ok(Events::monitorHolder($evMon) === null, 'a free slot is held by nobody');
@@ -3496,18 +3502,45 @@ if (Caps::apcu()) {
     ok(Events::monitorHolder($evMon) === null, 'the holder gives it up and the slot is free');
 }
 
-// A RESERVATION outranks the lease: the screen holds its place while it is
-// switched off, which is the point of naming one.
+// A RESERVATION is a right of way, not a hold: the seat is the named
+// screen's whenever it asks, and while that screen is away the room may
+// keep the wall lit with a stand-in.
 Events::setMonitorId($evMon['eid'], '33337e57');
 $evMonCard = Events::card($evMon['eid']) ?? [];
 ok($evMonCard['monitor'] === '33337e57', 'an operator reserves the slot for one screen');
 $evPre = Events::rowOf($evMon['eid'], '33337e57');
 ok($evPre !== null && $evPre['state'] === 'monitor',
     'and naming it is granting it access: it has its row before it scans');
-ok(Events::monitorHolder($evMonCard) === '33337e57',
-    'which holds it with nothing running at all');
-ok(!Events::claimMonitor($evMonCard, '22227e57'), 'and nobody else can take it');
-ok(Events::claimMonitor($evMonCard, '33337e57'), 'while the reserved screen always can');
+if (Caps::apcu()) {
+    apcu_delete(FOK_APCU_NS . 'p:33337e57');
+    ok(Events::monitorHolder($evMonCard) === null,
+        'a reserved screen that is not asking shows nothing, so nobody holds the seat');
+    ok(Events::claimMonitor($evMonCard, '22227e57'),
+        'and while it is offline a member may stand in');
+    ok(Events::monitorHolder($evMonCard) === '22227e57', 'who then holds the seat');
+    ok(!Events::claimMonitor($evMonCard, '11117e57'), 'against everybody but the screen');
+    $evGone = null;
+    ok(Events::claimMonitor($evMonCard, '33337e57', $evGone) && $evGone === '22227e57',
+        'the reserved screen takes it back by asking, and is told whom it displaced');
+    ok(Events::monitorHolder($evMonCard) === '33337e57', 'and holds it');
+    ok(!Events::claimMonitor($evMonCard, '22227e57'),
+        'so the stand-in is refused at its next renewal');
+    ok(Events::claimMonitor($evMonCard, '33337e57', $evGone) && $evGone === null,
+        'while the screen renews like any holder, displacing nobody');
+    Events::releaseMonitor($evMon['eid'], '33337e57');
+    Presence::touch('33337e57', '1.2.3.4');
+    ok(!Events::claimMonitor($evMonCard, '22227e57'),
+        'a screen that is online but not asking still blocks the seat');
+    ok(Events::monitorHolder($evMonCard) === null, 'which nobody then holds');
+    apcu_delete(FOK_APCU_NS . 'p:33337e57');
+    ok(Events::claimMonitor($evMonCard, '22227e57'),
+        'until it is confirmed offline, when the room may stand in again');
+    Presence::touch('33337e57', '1.2.3.4');
+    ok(Events::claimMonitor($evMonCard, '22227e57'),
+        'and a stand-in already holding keeps renewing while the screen is merely online');
+    apcu_delete(FOK_APCU_NS . 'p:33337e57');
+    Events::releaseMonitor($evMon['eid'], '22227e57');
+}
 
 // The reserved screen is a ROW, and that row is not a participant.
 ok(Events::admit($evMon['eid'], '33337e57', true, 'key', true) === 'monitor',

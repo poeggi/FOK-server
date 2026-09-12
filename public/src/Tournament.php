@@ -281,9 +281,9 @@ final class Tournament
 
     /**
      * The event's monitor holder for an event tournament, or null: no eid, or
-     * nobody holding the slot. The reserved id if the event names one, else
-     * the free lease while it stands (Events::monitorHolder). Read at the
-     * moment it is asked, so a slot that changes hands is followed.
+     * nobody holding the slot - the lease holder, reserved screen or
+     * stand-in (Events::monitorHolder). Read at the moment it is asked, so a
+     * slot that changes hands is followed.
      */
     private static function monitorOf(array $t): ?string
     {

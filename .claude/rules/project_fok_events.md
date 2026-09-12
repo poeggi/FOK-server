@@ -134,7 +134,11 @@ this schema.
 ## The live layer is APCu, and it is a CACHE
 
 `ev:` (card), `em:` (the caller's rows), `en:` (counts), `ex:` (the fail
-throttle), `emon:` (the monitor lease) - all namespaced, all falling through
+throttle), `emon:` (the monitor lease: since 1.15.3 the ONE hold for
+reserved and free alike - the `monitor` column is a right of way that
+preempts the lease and, while its screen is online, refuses new takers;
+a stand-in may hold the lease while the screen is offline) - all
+namespaced, all falling through
 to SQLite when APCu is down. Unlike Signals or ConnTrack this is not moved
 state, so it must never grow a no-fallback path.
 

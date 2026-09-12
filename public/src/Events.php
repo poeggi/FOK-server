@@ -503,21 +503,16 @@ final class Events
     // ---------------------------------------------------------------
 
     /**
-     * Who currently holds an event's one monitor slot, or null.
-     *
-     * TWO WAYS TO HOLD IT, and the difference is the whole feature. A
-     * RESERVED monitor (the `monitor` column) holds it whether or not it is
-     * switched on: a screen in a hall is still that hall's screen while it is
-     * dark, and nobody should be able to take its place by being quicker. An
-     * unreserved slot is a LEASE in shared memory, taken by whoever asks
-     * first and given up by simply not asking again - so a TV that is
-     * unplugged frees it without anybody pressing anything.
+     * Who currently holds an event's one monitor slot, or null: the holder
+     * of the LEASE in shared memory, whoever that is. A reservation (the
+     * `monitor` column) is not a hold - it says whose the seat is whenever
+     * that screen asks, never that it is showing anything - so a dark
+     * reserved screen holds nothing, and whoever stands in for it is who is
+     * named here. That is what the feed grant on the roles sheet and the
+     * operator's popup need: the screen that shows the picture.
      */
     public static function monitorHolder(array $card): ?string
     {
-        if ($card['monitor'] !== null) {
-            return $card['monitor'];
-        }
         if (!Caps::apcu()) {
             return null;
         }
@@ -530,32 +525,45 @@ final class Events
      * the monitor asks on its own cadence and the lease follows it, so there
      * is nothing to press at either end.
      *
+     * THE RESERVED SCREEN HAS RIGHT OF WAY. Its claim always succeeds and
+     * displaces whoever was standing in, who is named in $displaced so the
+     * caller can tell them. Anybody else may TAKE the seat only while the
+     * reserved screen is away - not heard from within the online window -
+     * and keeps renewing a seat they hold until the screen asks again: a
+     * stand-in is dropped by the screen returning, not by its owner merely
+     * opening the game. So the seat is never empty while somebody wants
+     * it, and it is the reserved screen's the moment that screen asks.
+     *
      * @return bool false when somebody else holds it
      */
-    public static function claimMonitor(array $card, string $id): bool
+    public static function claimMonitor(array $card, string $id, ?string &$displaced = null): bool
     {
-        // A RESERVED slot is decided by the column and needs no claim: it is
-        // that screen's whether it is asking or not.
-        if ($card['monitor'] !== null) {
-            return $card['monitor'] === $id;
-        }
+        $displaced = null;
         if (!Caps::apcu()) {
             return true;
         }
         $key = self::MON . $card['eid'];
+        if ($card['monitor'] === $id) {
+            $was = apcu_fetch($key);
+            if (is_string($was) && $was !== $id) {
+                $displaced = $was;
+            }
+            apcu_store($key, $id, self::MON_TTL);
+            return true;
+        }
+        if (apcu_fetch($key) === $id) {
+            // Ours already: this is the renewal.
+            apcu_store($key, $id, self::MON_TTL);
+            return true;
+        }
+        if ($card['monitor'] !== null
+            && Presence::heardWithin([$card['monitor']], FOK_ONLINE_WINDOW)[$card['monitor']]) {
+            return false;
+        }
         // apcu_add is the test-and-set, the shape TourneyStore uses for the
         // host claim: two screens asking in the same instant both read an
         // empty slot, and only one of them may be told it has it.
-        if (apcu_add($key, $id, self::MON_TTL)) {
-            return true;
-        }
-        if (apcu_fetch($key) !== $id) {
-            return false;
-        }
-        // Ours already: this is the renewal, and it is the only write that
-        // may overwrite the key.
-        apcu_store($key, $id, self::MON_TTL);
-        return true;
+        return apcu_add($key, $id, self::MON_TTL);
     }
 
     /** The slot itself, dropped with the event that offered it. */
@@ -673,8 +681,14 @@ final class Events
             ]);
         });
         self::forgetCard($eid);
+        // Both named people are PRE-SUBSCRIBED at creation, exactly as they
+        // are when named later (setOrganizer / setMonitorId): naming is
+        // granting access, and the events list is how a client learns it.
         if ($row['organizer'] !== null) {
             self::setMember($eid, (string)$row['organizer'], 'member', 'admin');
+        }
+        if ($row['monitor'] !== null) {
+            self::setMember($eid, (string)$row['monitor'], 'monitor', 'admin');
         }
         return self::card($eid) ?? [];
     }

@@ -3001,8 +3001,8 @@ nothing ever having granted it. Two additions close that, and both are
 INVISIBLE to everyone else:
 
 - THE SHEET NAMES IT. `roles` and `roles-patch` carry `monitor`: the
-  event's monitor holder at the moment the sheet is built - the reserved
-  id if the event names one, else the free holder while its lease stands.
+  event's monitor holder at the moment the sheet is built - whoever holds
+  the seat, the reserved screen or a stand-in, while its lease stands.
   Absent when the tournament has no event or nobody holds the slot. It is
   NOT in `players`, `primaries`, `secondaries`, `spectators` or `names`
   and takes no tree slot: no client lists, draws or counts it. What a
@@ -3031,12 +3031,22 @@ match. The players' own requests do that.
 
 TWO WAYS THE SLOT IS HELD:
 
-- RESERVED. The event names a player as its monitor. That player holds the
-  slot whether or not it is switched on - a screen in a hall is still that
-  hall's screen while it is dark - and no one else can take it.
 - FREE. Whoever asks first holds it, and keeps it while it keeps asking.
   Stop asking and it lapses within the online window, so an unplugged TV
   frees the slot with nobody pressing anything.
+- RESERVED. The event names a player as its monitor, and the seat is that
+  screen's WHENEVER IT ASKS: its `monitor` call always succeeds. While the
+  reserved screen is OFFLINE - not heard from within the online window -
+  any member may take the seat as a STAND-IN, on the free terms above.
+  While the reserved screen is online nobody else may take the seat, but
+  a stand-in already holding it keeps renewing until the reserved screen
+  asks; that call displaces the stand-in, which is sent an `event` signal
+  `{"event": "monitor", "eid": ...}` and answers 409 `monitor taken` at
+  its next renewal. (A 4.15 re-release: before it the reservation was a
+  hold, and a dark reserved screen blocked the seat for everyone.)
+
+A stand-in reads exactly like a free holder: `you.state` is `member`,
+and `reserved` says the seat has an owner it is keeping warm for.
 
 A RESERVED MONITOR IS PRE-SUBSCRIBED and is NOT A PARTICIPANT. Naming it
 is granting it access: it has its row from that moment, so the event is in
@@ -3054,10 +3064,11 @@ nobody left to approve it. From then on:
   is not told what changed shows the wrong room;
 - it is granted no achievement: the achievement is for joining, and a
   screen was posted rather than joined;
-- it may call `state`, `monitor` and `pass` and NOTHING else. Every other
-  action answers 403 `monitor only`. `pass` is what puts the live code on
-  the wall between tournaments (a 4.15 re-release; before it a monitor
-  was refused there too).
+- it may call `state`, `monitor` and `pass` and NOTHING else - and scan
+  its own event again, since `join` answers a repeat as it answered the
+  first. Every other action answers 403 `monitor only`. `pass` is what
+  puts the live code on the wall between tournaments (a 4.15 re-release;
+  before it a monitor was refused there too).
 
 Errors:
 
@@ -3065,7 +3076,8 @@ Errors:
     403  "monitor only"   a monitor tried anything but state, monitor or
                           pass
     403  "not a member"   a pending row asked for the screen
-    409  "monitor taken"  somebody else holds the slot
+    409  "monitor taken"  somebody else holds the slot, or the seat is a
+                          reserved screen's and that screen is online
 
 ### Errors
 
@@ -3137,6 +3149,7 @@ Every payload carries `eid`:
     {"event": "tourney", "eid": "K7QM", "tid": "...", "code": "K7QMX2"}
         when the organizer opens a lobby.
     {"event": "tourney", "eid": "K7QM", "tid": "...", "over": true}
+    {"event": "monitor", "eid": "K7QM"}
         when that lobby stops being the event's live one - it finished,
         the host ended it, or an operator did. `code` is absent here and
         `over` is absent above, so the two are told apart by either.

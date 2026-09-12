@@ -224,7 +224,20 @@ final class EventView
      */
     public static function announce(string $eid, array $payload): void
     {
-        $ids = Events::audience($eid);
+        self::send($eid, Events::audience($eid), $payload);
+    }
+
+    /**
+     * Tells ONE member something only it needs to hear - the stand-in the
+     * reserved screen took the seat from. Same signal, same shape.
+     */
+    public static function tell(string $eid, string $to, array $payload): void
+    {
+        self::send($eid, [$to], $payload);
+    }
+
+    private static function send(string $eid, array $ids, array $payload): void
+    {
         if (!$ids) {
             return;
         }

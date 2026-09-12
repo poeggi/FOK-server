@@ -104,10 +104,12 @@ if ($action === 'join') {
 // A MONITOR is in the event without being at it - it is a screen on a
 // wall. It reads the event, it runs itself, and it shows the live pass
 // between tournaments so people join off the TV; that is the whole list:
-// it is in no roster and has no business with a door.
+// it is in no roster and has no business with a door. A scan of its own
+// event is not business with the door: a named screen has its row before
+// it scans, and join answers a repeat as it answered the first.
 $mine = $eid === '' ? null : Events::rowOf($eid, $id);
 if ($mine !== null && $mine['state'] === 'monitor'
-    && !in_array($action, ['state', 'monitor', 'pass'], true)) {
+    && !in_array($action, ['join', 'state', 'monitor', 'pass'], true)) {
     Util::fail('monitor only', 403);
 }
 
@@ -297,8 +299,14 @@ switch ($action) {
         if (!$card['monitor_allowed']) {
             Util::fail('no monitor', 403);
         }
-        if (!Events::claimMonitor($card, $id)) {
+        if (!Events::claimMonitor($card, $id, $displaced)) {
             Util::fail('monitor taken', 409);
+        }
+        if ($displaced !== null) {
+            // The stand-in is told the screen took over rather than left to
+            // find a 409 at its next renewal: a wall showing two pictures
+            // for half a minute is the whole cost of not saying.
+            EventView::tell($eid, $displaced, ['event' => 'monitor']);
         }
         Util::jsonOut(EventView::monitor($card, $id, $mine['state'], $now));
 

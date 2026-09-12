@@ -385,10 +385,14 @@ shows whatever is interesting at that moment.
   edit. An event that does not offer one answers 403 `no monitor`.
 - ONE monitor at a time. Two ways of holding the slot, and the difference
   is the whole feature:
-  - RESERVED (`monitor` on the events row, an operator names it): that
-    player holds the slot whether or not it is switched on. A screen in a
-    hall is still that hall's screen while it is dark, and nobody can take
-    its place by being quicker.
+  - RESERVED (`monitor` on the events row, an operator names it): the seat
+    is that screen's whenever it asks - its claim always succeeds and
+    displaces a stand-in, who is told with `{event: "monitor"}`. While the
+    reserved screen is offline any member may stand in on the free terms;
+    while it is online nobody else may take the seat (a stand-in holding
+    it keeps renewing until the screen asks). So a dark screen leaves the
+    seat to the room, and the room hands it back the moment the screen
+    comes on.
   - FREE (`monitor` null): a LEASE in shared memory (`emon:<eid>`,
     FOK_ONLINE_WINDOW), taken by whoever asks first and given up by simply
     not asking again. A TV that is unplugged frees the slot with nobody
