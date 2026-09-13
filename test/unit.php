@@ -2560,6 +2560,32 @@ $odd = array_filter(array_keys($load), static fn($b): bool =>
     !ctype_digit((string)$b) || strlen((string)$b) !== 10);
 ok($odd === [], 'the load graph sees only real hour buckets, never a total or a minute');
 
+// ---- The rolling windows -----------------------------------------------
+// The Live tile's two windows end NOW: the running minute is peeked out of
+// shared memory on top of the closed minutes, and the minute window is inside
+// the hour window, so the hour's worst can never read below the minute's.
+if (Caps::apcu()) {
+    Util::bump('rolltest');
+    Util::runDeferred();
+    Counters::max('q_us', 777777);
+    $peek = Counters::peek(gmdate('YmdHi'));
+    ok(($peek['rolltest'] ?? 0) >= 1, 'the running minute is readable before it closes');
+    ok(($peek['x:q_us'] ?? 0) >= 777777, 'peak included');
+    ok(Counters::peek(gmdate('YmdHi'))['rolltest'] === $peek['rolltest'],
+        'and peeking takes nothing out - the fold still finds it');
+    $live = AdminData::stats()['live'];
+    ok($live['min']['in'] >= 1 && $live['min']['q_max_us'] >= 777777,
+        'the minute window carries what was counted this very minute');
+    ok($live['hour']['in'] >= $live['min']['in'],
+        'the hour window holds at least the minute window');
+    ok($live['hour']['q_max_us'] >= $live['min']['q_max_us'],
+        'so the worst per hour is never below the worst per minute');
+    $hist = AdminData::hours();
+    ok(isset($hist['running']['rolltest']) && isset($hist['min']) && isset($hist['hour']),
+        'the per-script payload carries the running minute and both rolling windows');
+    ok(isset(AdminData::minutes()['running']), 'and so does the minute history');
+}
+
 // ---- The store's claims ----------------------------------------------
 // A host may run one tournament at a time, and a join code is unique among
 // the OPEN ones. Both are apcu_add(), which is the whole reason a create

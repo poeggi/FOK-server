@@ -111,12 +111,15 @@ final class AdminData
             $hours[$r['bucket']][$r['metric']] = (int)$r['value'];
         }
         // The three windows the per-script view offers, in one payload: the
-        // running totals, the 24 h of hour buckets the graphs are drawn from
-        // (the last complete hour is one of them), and the last complete
-        // minute. The minute is a single bucket, so carrying it here costs
-        // one small query and saves a second round trip per refresh.
+        // running totals, the 24 h of hour buckets the graphs are drawn from,
+        // and the two rolling windows the Live tile reads (see rolling), per
+        // endpoint. The running minute rides along too, still in shared
+        // memory: the graph adds it to the running hour so its last point is
+        // the hour so far, not the hour up to the last fold.
+        $r = self::rolling();
         return ['now' => time(), 'hours' => $hours, 'totals' => self::scriptTotals(),
-            'minute' => self::bucket(gmdate('YmdHi', time() - 60))];
+            'min' => $r['min'], 'hour' => $r['hour'],
+            'running' => Counters::peek(gmdate('YmdHi'))];
     }
 
     /**
@@ -148,38 +151,111 @@ final class AdminData
         foreach ($st->fetchAll() as $r) {
             $minutes[$r['bucket']][$r['metric']] = (int)$r['value'];
         }
-        return ['now' => time(), 'minutes' => $minutes];
+        // The running minute is not in the table yet (only a closed minute
+        // is folded); the graph draws it as its last, running point.
+        return ['now' => time(), 'minutes' => $minutes, 'running' => Counters::peek(gmdate('YmdHi'))];
     }
 
     /**
-     * The two windows the Live tab offers, each a COMPLETE one so the figure
-     * is a whole window every time it is read instead of a number climbing
-     * from zero: the last full minute and the last full hour. The same
-     * measurements in both, because a tile that mixes them - some per minute,
-     * some per hour - makes the operator do the conversion in their head.
+     * The two windows the Live tab offers, both ROLLING and both ending now:
+     * the last 60 seconds and the last 60 minutes. The same measurements in
+     * both, because a tile that mixes them - some per minute, some per hour -
+     * makes the operator do the conversion in their head.
+     *
+     * The counters are minute buckets, so a window is built from them: the
+     * running minute (peeked from shared memory, still being counted), then
+     * whole closed minutes, then the oldest minute PRO RATA for the seconds
+     * the window still reaches into it - so a total is 60 s or 60 min of
+     * traffic every time it is read, not up to twice that. A peak is never
+     * scaled: the worst case of a minute the window touches is in the window.
+     * The minute window is inside the hour window, so the hour's worst can
+     * never read below the minute's.
      */
     private static function live(): array
     {
         // A closed minute is buffered in shared memory until some request
         // folds it in (see Counters). On a quiet server that request may not
-        // have come yet, so ask for the fold here - otherwise the dashboard
-        // would read a minute that is still in APCu.
+        // have come yet, so ask for the fold here - otherwise the aggregate
+        // would miss a minute that is still in APCu.
         Counters::flushDue();
+        $r = self::rolling();
+        return ['min' => self::window($r['min']), 'hour' => self::window($r['hour'])];
+    }
+
+    /**
+     * The two rolling windows as raw metric maps - what the Live tile reduces
+     * (see live) and what the per-script table reads per endpoint. The
+     * caller has folded the closed minutes first (Counters::flushDue).
+     * @return array{min: array<string, int>, hour: array<string, int>}
+     */
+    private static function rolling(): array
+    {
+        $now = time();
+        $share = (60 - $now % 60) / 60;
+        $running = Counters::peek(gmdate('YmdHi', $now));
+        $last = self::bucket(gmdate('YmdHi', $now - 60));
+        // The 59 closed minutes before the running one, aggregated in SQL so
+        // the wire carries one row per metric rather than one per minute.
+        $body = self::span(gmdate('YmdHi', $now - 59 * 60), gmdate('YmdHi', $now - 60));
+        $edge = self::bucket(gmdate('YmdHi', $now - 60 * 60));
         return [
-            'min' => ['stamp' => gmdate('H:i', time() - 60)]
-                + self::window(gmdate('YmdHi', time() - 60)),
-            'hour' => ['stamp' => gmdate('H', time() - 3600) . ':00']
-                + self::window(gmdate('YmdH', time() - 3600)),
+            'min' => self::merge([[$running, 1.0], [$last, $share]]),
+            'hour' => self::merge([[$running, 1.0], [$body, 1.0], [$edge, $share]]),
         ];
     }
 
     /**
-     * One counter bucket, summed over the endpoints: the requests served, the
-     * gauges they accumulated, the worker time they held, the CPU they burned,
-     * the queries they caused, and which endpoint held the most worker time.
-     * Metric shapes are laid out in Counters: a bare name is an endpoint's
-     * request count, "n:" a counted total, "g:" a sampled level, and a dotted
-     * suffix the cost of the endpoint before the dot.
+     * Metric maps folded into one, each with the share of it that is in the
+     * window: totals add up scaled, a peak ("x:") is the worst of them, whole.
+     * @param list<array{array<string, int>, float}> $parts
+     * @return array<string, int>
+     */
+    private static function merge(array $parts): array
+    {
+        $out = [];
+        foreach ($parts as [$metrics, $share]) {
+            foreach ($metrics as $metric => $v) {
+                $metric = (string)$metric;
+                if (str_starts_with($metric, 'x:')) {
+                    $out[$metric] = max($out[$metric] ?? 0, (int)$v);
+                } else {
+                    $out[$metric] = ($out[$metric] ?? 0) + (int)round($v * $share);
+                }
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * The minute buckets from $from to $to inclusive, as one metric map:
+     * SQLite adds the totals and takes the worst of the peaks, so a whole
+     * hour costs one row per metric on the wire.
+     * @return array<string, int>
+     */
+    private static function span(string $from, string $to): array
+    {
+        $st = Db::get()->prepare("SELECT metric, SUM(value) AS s, MAX(value) AS m FROM counters
+                                  WHERE bucket >= ? AND bucket <= ? AND bucket GLOB '[0-9]*'
+                                    AND length(bucket) = 12
+                                  GROUP BY metric");
+        $st->execute([$from, $to]);
+        $out = [];
+        foreach ($st->fetchAll() as $r) {
+            $metric = (string)$r['metric'];
+            $out[$metric] = (int)(str_starts_with($metric, 'x:') ? $r['m'] : $r['s']);
+        }
+        $st->closeCursor();
+        return $out;
+    }
+
+    /**
+     * One metric map - a window's worth of counters - summed over the
+     * endpoints: the requests served, the gauges they accumulated, the worker
+     * time they held, the CPU they burned, the queries they caused, and which
+     * endpoint held the most worker time. Metric shapes are laid out in
+     * Counters: a bare name is an endpoint's request count, "n:" a counted
+     * total, "g:" a sampled level, and a dotted suffix the cost of the
+     * endpoint before the dot.
      */
     /**
      * Metrics the live window carries through as they are, metric => field.
@@ -206,14 +282,15 @@ final class AdminData
         'x:dbt_us' => 'dbt_max_us',
     ];
 
-    private static function window(string $bucket): array
+    private static function window(array $metrics): array
     {
         $out = ['in' => 0, 'out' => 0, 'db_writes' => 0, 'wall_ms' => 0, 'cpu_ms' => 0,
             'db' => 0, 'top' => null, 'top_ms' => 0];
         foreach (self::DIRECT as $field) {
             $out[$field] = 0;
         }
-        foreach (self::bucket($bucket) as $metric => $v) {
+        foreach ($metrics as $metric => $v) {
+            $metric = (string)$metric;
             if (isset(self::DIRECT[$metric])) {
                 $out[self::DIRECT[$metric]] = $v;
                 continue;

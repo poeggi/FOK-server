@@ -921,12 +921,17 @@ const AXIS = {
 // picking a unit per label put "17.9 s" over "0 ms". The colour comes from a
 // class so it stays on the palette (see admin.css), and the viewBox carries
 // the label gutters so nothing is clipped at any card width.
-function chart(box, title, data, fmt, cls, axis) {
+//
+// A RUNNING series ends on the bucket still being counted: its last segment
+// is dashed, its last point hollow and the head says "so far", so a partial
+// hour beside 24 whole ones reads as what it is rather than as a drop.
+function chart(box, title, data, fmt, cls, axis, running) {
     const ax = axis || AXIS.hour;
     const wrap = el('div', 'chartbox ' + cls);
     const head = el('div', 'chart-head');
-    head.append(el('span', 'chart-title', title),
-        el('span', 'chart-now', fmt(data[data.length - 1])));
+    head.append(el('span', 'chart-title', title));
+    if (running) head.append(el('span', 'chart-sofar muted', 'so far'));
+    head.append(el('span', 'chart-now', fmt(data[data.length - 1])));
     wrap.append(head);
 
     const W = 240, H = 62, L = 40, R = 4, T = 6, B = 13;
@@ -950,10 +955,18 @@ function chart(box, title, data, fmt, cls, axis) {
         add('text', { x: L - 5, y: y(v) + 3, 'text-anchor': 'end', class: 'tick' },
             fmt(v, max));
     }
+    const n = data.length;
     const pts = data.map((v, i) => x(i) + ',' + y(v)).join(' ');
     add('polygon', { points: L + ',' + y(0) + ' ' + pts + ' ' + (W - R) + ',' + y(0), class: 'area' });
-    add('polyline', { points: pts, class: 'line' });
-    add('circle', { cx: x(data.length - 1), cy: y(data[data.length - 1]), r: 2.2, class: 'dot' });
+    if (running && n > 1) {
+        add('polyline', { points: data.slice(0, n - 1).map((v, i) => x(i) + ',' + y(v)).join(' '),
+            class: 'line' });
+        add('line', { x1: x(n - 2), y1: y(data[n - 2]), x2: x(n - 1), y2: y(data[n - 1]),
+            class: 'line running' });
+    } else {
+        add('polyline', { points: pts, class: 'line' });
+    }
+    add('circle', { cx: x(n - 1), cy: y(data[n - 1]), r: 2.2, class: running ? 'dot running' : 'dot' });
     for (const [px, lab, anchor] of [[L, ax.start, 'start'],
         [x((data.length - 1) / 2), ax.mid, 'middle'], [W - R, 'now', 'end']]) {
         add('text', { x: px, y: H - 3, 'text-anchor': anchor, class: 'tick' }, lab);
@@ -962,12 +975,11 @@ function chart(box, title, data, fmt, cls, axis) {
     box.append(wrap);
 }
 
-// Live: the server's own gauges, over ONE window - the last complete minute
-// or the last complete hour, whichever the selector says. One window for the
-// whole tile: a tile reading "/min" on one bubble and "/h" on the next leaves
-// the conversion to whoever reads it, and the two never line up anyway. Both
-// windows are complete ones, so a figure is a whole window every time it is
-// read instead of a number climbing from zero.
+// Live: the server's own gauges, over ONE window - the last 60 seconds or
+// the last 60 minutes, whichever the selector says, both ending now (see
+// AdminData::live). One window for the whole tile: a tile reading "/min" on
+// one bubble and "/h" on the next leaves the conversion to whoever reads it,
+// and the two never line up anyway.
 //
 // Levels - what the server IS holding rather than what passed through it -
 // carry no window and read the same either way.
@@ -1172,7 +1184,13 @@ async function showGaugeCharts(gauge, srcId) {
         if (!overlay.isConnected) return;
         const charts = el('div', 'charts');
         const keys = byMin ? minuteKeys(hist.now) : hourKeys(hist.now);
-        const buckets = (byMin ? hist.minutes : hist.hours) || {};
+        const buckets = Object.assign({}, (byMin ? hist.minutes : hist.hours) || {});
+        // The last key is the RUNNING bucket. Its minute is still in shared
+        // memory (hist.running, see Counters::peek): the running minute IS
+        // that bucket, the running hour is its folded minutes plus it.
+        const runKey = keys[keys.length - 1];
+        buckets[runKey] = byMin ? (hist.running || {})
+            : withRunning(buckets[runKey] || {}, hist.running || {});
         for (const [t, cls, pick, fmt, level, reading] of g.charts) {
             const data = series(buckets, keys, pick, level);
             // A level is sampled once an hour (see Counters::sampleGauges),
@@ -1180,17 +1198,15 @@ async function showGaugeCharts(gauge, srcId) {
             // old and the graph would end on a figure the bubble beside it
             // disagrees with. The bubble is right - it is read on the spot -
             // so the last point is that reading, and "now" on the axis is
-            // true.
+            // true. A level is also the one series whose last point is not
+            // RUNNING: it is what the server holds right now, whole.
             if (level && reading !== undefined) data[data.length - 1] = reading;
             // A level reads the same however long the bucket was, and so
             // does a per-request figure - it is an average or a worst case
             // OVER the bucket, not an amount OF it. Only a true total
-            // carries the window in its title and only a true total is
-            // scaled pro rata: a mean queue wait multiplied up because the
-            // hour is half over would be an invention.
+            // carries the window in its title.
             const flat = level || g.perRequest === true;
-            chart(charts, flat ? t : t + (byMin ? '/min' : '/h'),
-                (flat || byMin) ? data : partHour(data, hist.now), fmt, cls, ax);
+            chart(charts, flat ? t : t + (byMin ? '/min' : '/h'), data, fmt, cls, ax, !level);
         }
         body.replaceChildren(charts);
         // The tile is on its minute window but this gauge is a LEVEL, read
@@ -1216,12 +1232,12 @@ async function showGaugeCharts(gauge, srcId) {
 function renderServerLive(box, d) {
     box.replaceChildren();
     const w = (d.live || {})[liveWindow]
-        || { stamp: '--', in: 0, out: 0, db_writes: 0, wall_ms: 0, cpu_ms: 0, db: 0, top: null,
+        || { in: 0, out: 0, db_writes: 0, wall_ms: 0, cpu_ms: 0, db: 0, top: null,
             q_mean_us: 0, q_max_us: 0, dbw_mean_us: 0, dbw_max_us: 0, db_skip: 0 };
     const m = d.apcu_mem || { used: 0, total: 0 };
     const per = liveWindow === 'min' ? '/min' : '/h';
-    const win = (liveWindow === 'min' ? 'Last full minute (' : 'Last full hour (')
-        + w.stamp + ' UTC), over all endpoints. ';
+    const win = (liveWindow === 'min' ? 'The last 60 seconds' : 'The last 60 minutes')
+        + ', ending now, over all endpoints. ';
     const now = 'Right now. ';
     // A level is only ever sampled hourly, so its graph is the day either
     // way; a total's graph follows the window (see showGaugeCharts).
@@ -1344,53 +1360,38 @@ function utcKey(unix, toMinute) {
         + p(t.getUTCHours()) + (toMinute ? p(t.getUTCMinutes()) : '');
 }
 
-// The 24 hour buckets ending with the running one, as the UTC stamps the
+// The 24 closed hour buckets and then the running one, as the UTC stamps the
 // counters are keyed by. Built from the axis rather than from the data, so
 // an hour with no traffic is a zero in its own place instead of a gap that
-// shifts the line.
+// shifts the line. The running hour is the last point, drawn as what it has
+// counted SO FAR and marked as running (see chart) - never scaled up: a
+// projection is an invention, and a marked partial is a fact.
 function hourKeys(now) {
-    // The running hour is only in the table once a minute of it has closed
-    // and been folded into it (see Counters::flushMinute). In the first
-    // minute of an hour there is nothing in it to draw and nothing to scale,
-    // so the graph ends on the hour before (see partHour).
-    const last = Math.floor((now % 3600) / 60) >= 1 ? 0 : 1;
     const keys = [];
-    for (let i = 23; i >= last; i--) {
+    for (let i = 24; i >= 0; i--) {
         keys.push(utcKey(now - i * 3600, false));
     }
     return keys;
 }
 
-// A totals series over hourKeys, with its running hour read pro rata. That
-// bucket holds only the minutes of the hour that have closed so far, so
-// plotted raw beside 23 whole hours it is a nosedive at the right edge - a
-// fraction of an hour drawn as if it were a whole one. Scaled up, the last
-// point is the rate the hour is running at, which is what every other point
-// on the graph already is.
-//
-// Totals only: a LEVEL is what the server is holding right now, not
-// something that accumulates over its bucket, so there is no fraction to
-// undo. The minute window needs none of this either - it ends on the last
-// CLOSED minute (see minuteKeys).
-function partHour(data, now) {
-    const done = Math.floor((now % 3600) / 60);
-    if (done < 1) return data;
-    const out = data.slice();
-    out[out.length - 1] = Math.round(out[out.length - 1] * 60 / done);
-    return out;
-}
-
-// The 60 minute buckets ending with the last complete one, as the UTC
-// stamps Counters::flushMinute keys them by. Built from the axis for the
-// same reason as hourKeys, and it ends one minute back because the running
-// minute is still being counted - drawn, it would be a dip to nearly zero
-// at the right edge of every graph.
+// The 60 closed minute buckets and then the running one, the same way.
 function minuteKeys(now) {
     const keys = [];
-    for (let i = 60; i >= 1; i--) {
+    for (let i = 60; i >= 0; i--) {
         keys.push(utcKey(now - i * 60, true));
     }
     return keys;
+}
+
+// The running hour's bucket with the running minute laid on top: totals add,
+// a peak ("x:") is the worse of the two - the same fold Counters::flushMinute
+// will do when the minute closes.
+function withRunning(hour, minute) {
+    const out = Object.assign({}, hour);
+    for (const k in minute) {
+        out[k] = k.indexOf('x:') === 0 ? Math.max(out[k] || 0, minute[k]) : (out[k] || 0) + minute[k];
+    }
+    return out;
 }
 
 // One row per endpoint out of one window's counters: the requests it served
@@ -1420,19 +1421,19 @@ function scriptRows(counts) {
 // hour buckets are pruned at 30 days.
 const SCRIPT_WINDOWS = {
     total: ['Total', 'Everything the counters still hold - hour buckets are kept for 30 days'],
-    hour: ['Hour', 'The last complete UTC hour'],
-    min: ['Minute', 'The last complete UTC minute'],
+    hour: ['Hour', 'The last 60 minutes, ending now'],
+    min: ['Minute', 'The last 60 seconds, ending now'],
 };
 
 // The counted metrics of the selected window, in the one shape scriptRows
-// reads. The last COMPLETE hour, not the running one: a partial hour would
-// read as a slump that is only the clock.
+// reads: the same two rolling windows the Live tile shows (AdminData::rolling),
+// so a figure here and a figure there are over the same seconds.
 function scriptCounts(d) {
     if (scriptWindow === 'hour') {
-        return (d.hours || {})[utcKey(d.now - 3600, false)] || {};
+        return d.hour || {};
     }
     if (scriptWindow === 'min') {
-        return d.minute || {};
+        return d.min || {};
     }
     return d.totals || {};
 }
@@ -1466,13 +1467,15 @@ function renderScripts(box, d) {
             el('span', 'detail-sub', 'per UTC hour, last 24 h'));
         view.append(head);
         const keys = hourKeys(d.now);
-        const at = (suffix) => partHour(
-            keys.map((k) => (d.hours[k] || {})[pickedScript + suffix] || 0), d.now);
+        const hours = Object.assign({}, d.hours || {});
+        const runKey = keys[keys.length - 1];
+        hours[runKey] = withRunning(hours[runKey] || {}, d.running || {});
+        const at = (suffix) => keys.map((k) => (hours[k] || {})[pickedScript + suffix] || 0);
         const charts = el('div', 'charts');
-        chart(charts, 'Requests', at(''), String, 'chart-req');
-        chart(charts, 'PHP worker time', at('.ms'), fmtMs, 'chart-wall');
-        chart(charts, 'CPU time', at('.cpu'), fmtMs, 'chart-cpu');
-        chart(charts, 'DB queries', at('.db'), String, 'chart-db');
+        chart(charts, 'Requests', at(''), String, 'chart-req', AXIS.hour, true);
+        chart(charts, 'PHP worker time', at('.ms'), fmtMs, 'chart-wall', AXIS.hour, true);
+        chart(charts, 'CPU time', at('.cpu'), fmtMs, 'chart-cpu', AXIS.hour, true);
+        chart(charts, 'DB queries', at('.db'), String, 'chart-db', AXIS.hour, true);
         view.append(charts);
         box.append(view);
         return;

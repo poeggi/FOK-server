@@ -129,7 +129,12 @@ SQLite has ONE writer and that writer, not CPU, is the ceiling - so:
   a closed minute folded into the durable table in one upsert. NO
   "already flushed" marker (it retires the minute and drops every later
   count): the fold is idempotent via claim() and rate-gated. A YmdHi
-  stamp used as an array key comes back as an INT; cast it.
+  stamp used as an array key comes back as an INT; cast it. The admin
+  Live tile's two windows are ROLLING (1.15.4): the running minute is
+  PEEKED out of APCu (Counters::peek, never claimed) on top of the closed
+  minutes, which SQLite aggregates in one GROUP BY (SUM, MAX for peaks);
+  the oldest minute pro rata. The graphs end on the running bucket,
+  marked, never projected.
 - Tournament state (TourneyStore.php): apcu_add is the atomic
   test-and-set for the host claim, join code and per-tournament lock.
 - NO SQLITE FALLBACK for moved state, by design: a host without usable

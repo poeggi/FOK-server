@@ -221,6 +221,34 @@ final class Counters
             && isset($e['v'], $e['t']) && (int)$e['t'] >= $cut));
     }
 
+    /**
+     * The running minute's buffered totals, read WITHOUT claiming them: the
+     * Live tile ends both its windows on the minute being counted, and the
+     * graphs draw it as their last, running point. Nothing is taken out of
+     * shared memory, so a reading is what has been counted so far and the
+     * fold still finds everything. Admin-only, hence Caps.
+     * @return array<string, int> metric => value, the request total as req_min
+     */
+    public static function peek(string $minute): array
+    {
+        if (Caps::apcu() !== true) {
+            return [];
+        }
+        $out = [];
+        $req = apcu_fetch(self::reqKey($minute), $ok);
+        if ($ok && (int)$req > 0) {
+            $out['req_min'] = (int)$req;
+        }
+        $prefix = self::PREFIX . "m:$minute:e:";
+        foreach (new APCUIterator('/^' . preg_quote($prefix, '/') . '/') as $e) {
+            $n = (int)$e['value'];
+            if ($n > 0) {
+                $out[substr((string)$e['key'], strlen($prefix))] = $n;
+            }
+        }
+        return $out;
+    }
+
     /** The worst cases on record, worst first. Admin-only, hence Caps. */
     public static function worstList(string $metric): array
     {

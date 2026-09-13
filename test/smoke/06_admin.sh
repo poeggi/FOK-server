@@ -111,8 +111,16 @@ else
     # The live gauges come in BOTH windows the tile offers, with the same
     # measurements in each - the tile picks one, it never mixes them.
     expect "admin stats carry the live load gauges" '"live":' "$R"
-    expect "the gauges cover the last full minute" '"min":' "$R"
-    expect "the gauges cover the last full hour" '"hour":' "$R"
+    expect "the gauges cover the last 60 seconds" '"min":' "$R"
+    expect "the gauges cover the last 60 minutes" '"hour":' "$R"
+    # Both windows end now, the minute inside the hour, so the hour's worst
+    # can never read below the minute's - the request that asks is itself
+    # in both.
+    QMIN=$(echo "$R" | grep -oE '"min":\{[^}]*"q_max_us":[0-9]+' | grep -oE '[0-9]+$' | head -1)
+    QHOUR=$(echo "$R" | grep -oE '"hour":\{[^}]*"q_max_us":[0-9]+' | grep -oE '[0-9]+$' | head -1)
+    [ -n "$QMIN" ] && [ -n "$QHOUR" ] && [ "$QHOUR" -ge "$QMIN" ] && \
+        echo "ok   the worst per hour is never below the worst per minute ($QHOUR >= $QMIN)" || \
+        { echo "FAIL the worst per hour is never below the worst per minute: hour=$QHOUR min=$QMIN"; fail=1; }
     expect "live load gauges include db writes" '"db_writes":' "$R"
     # What the window cost in worker time, folded from the per-metric
     # .ms/.cpu/.db counters the deferred bookkeeping writes.
@@ -140,6 +148,7 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=load_min")
     expect "admin minute history" '"ok":true' "$R"
     expect "the 60 min history is keyed by minute bucket" '"minutes":' "$R"
+    expect "and ends on the running minute, still in shared memory" '"running":' "$R"
 
     # Item registry card, over the data 05_items.sh left behind. The matches
     # table is only ever COUNTed here: a per-duel attestation secret must
