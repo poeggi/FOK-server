@@ -45,7 +45,7 @@
     --ctl-w: 52px;
     /* The height of a gauge bubble (see .stat): a one-line bubble is exactly
        this tall, and a row never drops below it. */
-    --stat-h: 48px;
+    --stat-h: 45px;
 
     --r-surface: 10px;    /* cards, popups */
     --r-ctl: 6px;         /* inputs, buttons, panes */
@@ -402,8 +402,11 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 /* A bubble holding a PAIR of numbers (rows / cap) needs two cells, or it
    wraps where the others do not. */
 .stat.wide { grid-column: span 2; }
-.stat-value { font-size: 16px; color: var(--accent); }
-.stat-label { font-size: 10px; color: var(--muted); }
+/* Two single lines, so the body's 1.45 leading is only air between them and
+   above and below; tightened, the two lines fit --stat-h with the 4px padding
+   and a label that wraps still gets a readable second line. */
+.stat-value { font-size: 16px; line-height: 1.2; color: var(--accent); }
+.stat-label { font-size: 10px; line-height: 1.3; color: var(--muted); }
 /* A gauge carrying its one line of explanation as a tooltip instead of as
    prose under the grid (the tip of a bubble, see admin.js). */
 .stat[title] { cursor: help; }
