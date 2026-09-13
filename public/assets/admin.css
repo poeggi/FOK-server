@@ -43,7 +43,8 @@
        always line up. Width holds a two-digit value plus the spinner. */
     --ctl-h: 26px;
     --ctl-w: 52px;
-    /* The floor of a gauge bubble (see .stat), so a row never drops below it. */
+    /* The height of a gauge bubble (see .stat): a one-line bubble is exactly
+       this tall, and a row never drops below it. */
     --stat-h: 48px;
 
     --r-surface: 10px;    /* cards, popups */
@@ -386,11 +387,15 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
     gap: 6px;
     margin-bottom: 8px;
 }
+/* The grid is usually the last thing on its panel, and a trailing margin
+   there is only scroll height: with 4px bubble padding this is what lets the
+   Live tab's four rows fit the --pane-h body without a scrollbar. */
+.statgrid:last-child { margin-bottom: 0; }
 .stat {
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 7px;
-    padding: 5px 6px;
+    border-radius: var(--r-ctl);
+    padding: 4px 6px;
     min-height: var(--stat-h);
     text-align: center;
 }

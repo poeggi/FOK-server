@@ -1444,10 +1444,16 @@ function scriptCounts(d) {
 // view instead of throwing the operator back to the list.
 let pickedScript = null;
 let scriptWindow = 'total';   // which of SCRIPT_WINDOWS the table is read over
-// What the last Clear statistics attempt did, kept on screen until something
-// else happens. It lives here rather than in the DOM because the card redraws
-// itself on its own interval and would wipe a note held in the card.
+// What the last Clear statistics attempt did, kept on screen for a few
+// seconds - the card's own interval, five at least - and then taken down
+// again. It lives here rather than in the DOM because the card redraws
+// itself on its own interval and would wipe a note held in the card;
+// clearNoteEl is wherever the note is drawn right now, so taking it down
+// costs no request and no redraw.
 let clearNote = '';
+let clearNoteEl = null;
+let clearNoteTimer = 0;
+const CLEAR_NOTE_MIN_MS = 5000;
 
 // The one Clear statistics button, in the bar of every tab that reads the
 // traffic history (Live, Per script): the same confirm, the same call, the
@@ -1475,6 +1481,12 @@ function clearStatsBtn(rerender) {
             pickedScript = null;
             refreshModule('perf');
             refreshModule('alerts');
+            clearTimeout(clearNoteTimer);
+            clearNoteTimer = setTimeout(() => {
+                clearNote = '';
+                if (clearNoteEl) clearNoteEl.remove();
+                clearNoteEl = null;
+            }, Math.max(periodOf('perf') * 1000, CLEAR_NOTE_MIN_MS));
         });
     return clear;
 }
@@ -1484,8 +1496,9 @@ function clearStatsBtn(rerender) {
 // broke to one word per line and pushed the button out of the card.
 function clearStatsNote(box) {
     if (clearNote) {
-        box.append(el('p', 'barnote' + (clearNote.startsWith('NOT ') ? ' error' : ' muted'),
-            clearNote));
+        clearNoteEl = el('p', 'barnote' + (clearNote.startsWith('NOT ') ? ' error' : ' muted'),
+            clearNote);
+        box.append(clearNoteEl);
     }
 }
 
