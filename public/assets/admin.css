@@ -43,6 +43,8 @@
        always line up. Width holds a two-digit value plus the spinner. */
     --ctl-h: 26px;
     --ctl-w: 52px;
+    /* The floor of a gauge bubble (see .stat), so a row never drops below it. */
+    --stat-h: 48px;
 
     --r-surface: 10px;    /* cards, popups */
     --r-ctl: 6px;         /* inputs, buttons, panes */
@@ -389,6 +391,7 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
     border: 1px solid var(--border);
     border-radius: 7px;
     padding: 5px 6px;
+    min-height: var(--stat-h);
     text-align: center;
 }
 /* A bubble holding a PAIR of numbers (rows / cap) needs two cells, or it
@@ -476,8 +479,10 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
    Tab row above the panel, active tab marked with an accent underline. It
    wraps rather than overflowing: a card with four tabs is narrower than its
-   labels on a phone. */
-.tabbar { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+   labels on a phone. The row sits 4px INTO the head gap so its labels start
+   where a bubble grid starts on the card beside it, and the panel below
+   gets those 4px within the same height budget. */
+.tabbar { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin: -4px 0 8px; }
 .tabbar .tab {
     background: transparent; border: 0; border-bottom: 2px solid transparent;
     border-radius: 0; padding: 4px 12px; color: var(--muted);
@@ -505,15 +510,11 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .chip.active { border-color: var(--accent); color: var(--accent); }
 
 /* A choice between exactly two windows, as one switch with the two named
-   either side of it rather than two chips. It is the shortest row on the
-   card on purpose: the height budget belongs to the bubbles below it, and a
-   chip row cost enough of it to cut the last one off. Either name is also a
-   target, so the switch never has to be hit precisely.
-   Every dimension here is the smallest one that still reads: the row is
-   pulled tight against the tabs above it and the switch is no taller than
-   the names beside it, because the pixels it gives up are the ones the last
-   bubble needs to fit on the card. */
-.switchrow { gap: 8px; margin: -2px 0 2px; font-size: 12px; }
+   either side of it rather than two chips. Either name is also a target, so
+   the switch never has to be hit precisely. The row is an ordinary toolbar
+   row - the Clear statistics button at its right edge gives it the same
+   height as the Per-script bar, so the two tabs' contents start level. */
+.switchrow { gap: 8px; font-size: 12px; }
 .swname { color: var(--muted); cursor: pointer; }
 .swname.on { color: var(--accent); }
 .switch {

@@ -1245,8 +1245,8 @@ function renderServerLive(box, d) {
     const graph = liveWindow === 'min' ? 'Click for the last 60 min.' : day;
 
     // The window is a choice between two, so it is one switch with the two
-    // named either side of it (see admin.css .switchrow) - the chip row it
-    // replaces was tall enough to cut the last bubble off the card.
+    // named either side of it (see admin.css .switchrow); the bar is the
+    // Per-script bar's twin, Clear statistics at its right edge included.
     const bar = toolbar();
     bar.classList.add('switchrow');
     const pick = (key) => () => { liveWindow = key; renderServerLive(box, d); };
@@ -1260,8 +1260,9 @@ function renderServerLive(box, d) {
     const right = el('span', 'swname' + (liveWindow === 'hour' ? ' on' : ''), 'Per hour');
     left.onclick = pick('min');
     right.onclick = pick('hour');
-    bar.append(left, sw, right);
+    bar.append(left, sw, right, el('span', 'grow'), clearStatsBtn(() => renderServerLive(box, d)));
     box.append(bar);
+    clearStatsNote(box);
 
     // Label, value and tip as shown; charts is what the click opens, each
     // entry [title, colour class, series, formatter, level?, reading now?].
@@ -1448,6 +1449,46 @@ let scriptWindow = 'total';   // which of SCRIPT_WINDOWS the table is read over
 // itself on its own interval and would wipe a note held in the card.
 let clearNote = '';
 
+// The one Clear statistics button, in the bar of every tab that reads the
+// traffic history (Live, Per script): the same confirm, the same call, the
+// same outcome line - so the verb is the same wherever the history is read.
+// $rerender redraws the tab that was used, so "Clearing..." shows at once.
+function clearStatsBtn(rerender) {
+    const clear = el('button', 'small', 'Clear statistics');
+    clear.title = 'Erases every figure and every graph on this card, for all '
+        + 'windows. Players, scores and the item registry are not touched.';
+    clear.onclick = () => confirmModal('Clear statistics',
+        'This erases every figure and every graph on this card, for all windows, '
+        + 'and there is no undo. Players, scores and the item registry are not '
+        + 'touched.',
+        'Erase the traffic history', async () => {
+            clearNote = 'Clearing...';
+            rerender();
+            try {
+                const r = await api('clear_stats', { method: 'POST' });
+                clearNote = r.ok
+                    ? 'Cleared ' + r.rows + ' stored rows and ' + r.keys + ' buffered counters.'
+                    : 'NOT cleared: ' + (r.error || 'the server refused');
+            } catch (e) {
+                clearNote = 'NOT cleared: ' + e.message;
+            }
+            pickedScript = null;
+            refreshModule('perf');
+            refreshModule('alerts');
+        });
+    return clear;
+}
+
+// The outcome is a whole sentence, so it gets a line of its own under the
+// bar. As a flex item in the toolbar it was squeezed between the controls,
+// broke to one word per line and pushed the button out of the card.
+function clearStatsNote(box) {
+    if (clearNote) {
+        box.append(el('p', 'barnote' + (clearNote.startsWith('NOT ') ? ' error' : ' muted'),
+            clearNote));
+    }
+}
+
 function renderScripts(box, d) {
     box.replaceChildren();
     const rows = scriptRows(scriptCounts(d));
@@ -1492,38 +1533,10 @@ function renderScripts(box, d) {
         };
         return c;
     };
-    bar.append(chip('total'), chip('hour'), chip('min'), el('span', 'grow'));
-    const clear = el('button', 'small', 'Clear statistics');
-    clear.title = 'Erases every per-script figure and every graph on this card, for all '
-        + 'three windows. Players, scores and the item registry are not touched.';
-    clear.onclick = () => confirmModal('Clear statistics',
-        'This erases every per-script figure and every graph on this card, for all '
-        + 'three windows, and there is no undo. Players, scores and the item '
-        + 'registry are not touched.',
-        'Erase the traffic history', async () => {
-            clearNote = 'Clearing...';
-            renderScripts(box, d);
-            try {
-                const r = await api('clear_stats', { method: 'POST' });
-                clearNote = r.ok
-                    ? 'Cleared ' + r.rows + ' stored rows and ' + r.keys + ' buffered counters.'
-                    : 'NOT cleared: ' + (r.error || 'the server refused');
-            } catch (e) {
-                clearNote = 'NOT cleared: ' + e.message;
-            }
-            pickedScript = null;
-            refreshModule('perf');
-            refreshModule('alerts');
-        });
-    bar.append(clear);
+    bar.append(chip('total'), chip('hour'), chip('min'), el('span', 'grow'),
+        clearStatsBtn(() => renderScripts(box, d)));
     box.append(bar);
-    // The outcome is a whole sentence, so it gets a line of its own. As a flex
-    // item in the toolbar it was squeezed between the window chips and the
-    // button, broke to one word per line and pushed the button out of the card.
-    if (clearNote) {
-        box.append(el('p', 'barnote' + (clearNote.startsWith('NOT ') ? ' error' : ' muted'),
-            clearNote));
-    }
+    clearStatsNote(box);
     if (!rows.length) {
         box.append(el('p', 'muted', scriptWindow === 'total'
             ? 'No traffic recorded yet.' : 'Nothing was served in that window.'));
