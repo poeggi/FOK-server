@@ -57,6 +57,6 @@ final class Scores
 
     public static function delete(int $id): void
     {
-        Db::get()->prepare('DELETE FROM scores WHERE id = ?')->execute([$id]);
+        Db::retry(static fn() => Db::get()->prepare('DELETE FROM scores WHERE id = ?')->execute([$id]));
     }
 }

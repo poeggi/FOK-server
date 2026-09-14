@@ -199,11 +199,21 @@ final class EventAdmin
         if ($tid !== null) {
             Tournament::abort($tid);
         }
+        // One transaction: the three tables go together or not at all.
         Db::retry(static function () use ($eid): void {
             $db = Db::get();
-            $db->prepare('DELETE FROM event_results WHERE eid = ?')->execute([$eid]);
-            $db->prepare('DELETE FROM event_members WHERE eid = ?')->execute([$eid]);
-            $db->prepare('DELETE FROM events WHERE eid = ?')->execute([$eid]);
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                $db->prepare('DELETE FROM event_results WHERE eid = ?')->execute([$eid]);
+                $db->prepare('DELETE FROM event_members WHERE eid = ?')->execute([$eid]);
+                $db->prepare('DELETE FROM events WHERE eid = ?')->execute([$eid]);
+                $db->exec('COMMIT');
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
+            }
         });
         Events::forgetCard($eid);
         Events::forgetCounts($eid);

@@ -509,9 +509,10 @@ final class Util
      * traffic, and it runs only while somebody is watching the very gauge
      * these metrics feed: left in, the observer fills its own measurement,
      * which is precisely what it did on the day the list was built. Judged
-     * by the script, the one thing here that a client cannot choose.
+     * by the script, the one thing here that a client cannot choose. The
+     * database gauges make the same exclusion (see Load::flushDbTime).
      */
-    private static function isAdminScript(): bool
+    public static function isAdminScript(): bool
     {
         return str_contains((string)($_SERVER['SCRIPT_NAME'] ?? ''), '/admin/');
     }
@@ -767,8 +768,11 @@ final class Util
         // release knows (see Housekeeping).
         $done = Db::tryWrite(static fn() => Housekeeping::sweep()) && $done;
         // A reading of the levels the dashboard graphs, which no counter
-        // accumulates (see Counters::sampleGauges).
-        $done = Db::tryWrite(static fn() => Counters::sampleGauges()) && $done;
+        // accumulates (see Counters::sampleGauges). Read BEFORE the writer
+        // is taken: the row count walks every table, and a read has no
+        // business inside the lock.
+        $levels = Counters::gaugeLevels();
+        $done = Db::tryWrite(static fn() => Counters::sampleGauges($levels)) && $done;
         $done = Db::tryWrite(static fn() => self::pruneCounters()) && $done;
         // The hour is closed only by a pass that did all of it. One that was
         // sent away comes back in a minute rather than an hour, and finds
@@ -805,11 +809,12 @@ final class Util
     private static function pruneCounters(): void
     {
         $db = Db::get();
-        $db->prepare(
-            "DELETE FROM counters
-             WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
-               AND bucket < ?"
-        )->execute([gmdate('YmdHi', time() - 7200)]);
+        // The length term is what reaches the partial index over the minute
+        // rows (schema 47): with it the writer holds a walk of two hours of
+        // minutes, without it a walk of the whole month of hours they sit
+        // among. Only a minute stamp is twelve characters long.
+        $db->prepare('DELETE FROM counters WHERE length(bucket) = 12 AND bucket < ?')
+            ->execute([gmdate('YmdHi', time() - 7200)]);
         $db->prepare(
             "DELETE FROM counters
              WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' AND bucket < ?"

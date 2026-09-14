@@ -294,25 +294,59 @@ final class Settings
 
     public static function set(string $key, int $value): void
     {
-        if (!isset(self::DEFS[$key])) {
-            throw new InvalidArgumentException("unknown setting $key");
-        }
-        // Row first, then the cache: a worker that reads between the two
-        // gets the new value, never a cached old one over a written row.
-        Db::retry(static function () use ($key, $value): void {
-            // A row IS the override, so the default is stored as no row at all.
-            // Writing it would pin today's number and shadow every later one -
-            // which is what a config export/import roundtrip does to every key
-            // it carries, and how an install ends up answering a cap the code
-            // no longer sets.
-            if ($value === self::DEFS[$key][0]) {
-                Db::get()->prepare('DELETE FROM settings WHERE key = ?')->execute([$key]);
-                return;
+        self::setMany([$key => $value]);
+    }
+
+    /**
+     * Several settings in ONE transaction, the cache dropped once after it.
+     * The config card posts every key it shows and an import carries a whole
+     * file; a write per key would take the single writer once per key and
+     * drop the cache as often, with every request in between reloading it
+     * from the table.
+     *
+     * @param array<string, int> $map
+     */
+    public static function setMany(array $map): void
+    {
+        foreach (array_keys($map) as $key) {
+            if (!isset(self::DEFS[$key])) {
+                throw new InvalidArgumentException("unknown setting $key");
             }
-            Db::get()->prepare(
-                'INSERT INTO settings (key, value) VALUES (?, ?)
-                 ON CONFLICT (key) DO UPDATE SET value = excluded.value'
-            )->execute([$key, $value]);
+        }
+        if ($map === []) {
+            return;
+        }
+        // Rows first, then the cache: a worker that reads between the two
+        // gets the new values, never cached old ones over written rows.
+        Db::retry(static function () use ($map): void {
+            $db = Db::get();
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                $drop = $db->prepare('DELETE FROM settings WHERE key = ?');
+                $put = $db->prepare(
+                    'INSERT INTO settings (key, value) VALUES (?, ?)
+                     ON CONFLICT (key) DO UPDATE SET value = excluded.value'
+                );
+                foreach ($map as $key => $value) {
+                    // A row IS the override, so the default is stored as no
+                    // row at all. Writing it would pin today's number and
+                    // shadow every later one - which is what a config
+                    // export/import roundtrip does to every key it carries,
+                    // and how an install ends up answering a cap the code no
+                    // longer sets.
+                    if ($value === self::DEFS[$key][0]) {
+                        $drop->execute([$key]);
+                    } else {
+                        $put->execute([$key, $value]);
+                    }
+                }
+                $db->exec('COMMIT');
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
+            }
         });
         self::forget();
     }

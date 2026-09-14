@@ -342,14 +342,28 @@ switch ($action) {
         // rather than deleting - that empty-id path is the guard here.
         $id = requireId('POST');
         // The player, their friendships and their presence go through the one
-        // removal path the TTL sweep uses, so the two cannot disagree.
-        Presence::forget($id);
+        // removal path the TTL sweep uses, so the two cannot disagree - and
+        // in ONE transaction, as the sweep runs it: a writer lost halfway
+        // through would leave the friendships gone and the player standing.
         // Their item instances go too, which is where this path parts from the
         // sweep on purpose: expiry only says a player has been away, and their
         // property waits for them (see Presence::forget), while an operator
         // removing a client is taking it away. The ledger is append-only audit
         // and stays: it records that the instances existed and where they went.
-        Db::get()->prepare('DELETE FROM items WHERE owner = ?')->execute([$id]);
+        Db::retry(static function () use ($id): void {
+            $db = Db::get();
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                Presence::forget($id);
+                $db->prepare('DELETE FROM items WHERE owner = ?')->execute([$id]);
+                $db->exec('COMMIT');
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
+            }
+        });
         Util::jsonOut(['ok' => true]);
 
     // ---- config vault (per-client backup) ----
@@ -722,13 +736,14 @@ switch ($action) {
                 Util::fail("invalid value for $key");
             }
         }
-        foreach ($map as $key => $value) {
-            Settings::set($key, $value);
-        }
+        Settings::setMany($map);
         Util::jsonOut(['ok' => true, 'settings' => Settings::all()]);
 
     case 'settings_save':
         requirePost();
+        // The whole form, validated first and written as one (see
+        // Settings::setMany): the card posts every key it shows.
+        $map = [];
         foreach (Settings::DEFS as $key => $def) {
             if (!isset($_POST[$key])) {
                 continue;
@@ -737,8 +752,9 @@ switch ($action) {
             if ($value === false || $value < 0 || $value > 1000000000) {
                 Util::fail("invalid value for $key");
             }
-            Settings::set($key, $value);
+            $map[$key] = $value;
         }
+        Settings::setMany($map);
         Util::jsonOut(['ok' => true, 'settings' => Settings::all()]);
 
     // ---- database backups ----

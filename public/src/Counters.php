@@ -69,6 +69,10 @@ final class Counters
     // the blunt way instead (see max).
     private const MAX_TRIES = 8;
 
+    // How many rows one statement of a history clear removes before the
+    // writer is handed back (see clearHistory).
+    private const CLEAR_SLICE = 5000;
+
     // Under a millisecond there is nothing to diagnose - the worker was
     // there for the taking - and without a floor an idle server would
     // rewrite the whole list on almost every request.
@@ -269,21 +273,32 @@ final class Counters
      * drawn (see the Live tab's graphs).
      *
      * Called on the hourly maintenance cadence, off the same gate as the
-     * player sweep (see Util::watch): one statement an hour.
+     * player sweep (see Util::watch): one statement an hour. Reading the
+     * levels and writing them are two calls on purpose: the row count walks
+     * every table, and the hourly tail takes the single writer only for the
+     * write (see Util::hourly).
+     *
+     * @return array<string,int> metric name (without the g:) => reading
      */
-    public static function sampleGauges(): void
+    public static function gaugeLevels(): array
     {
         require_once __DIR__ . '/Relay.php';
         $sma = Caps::apcu() ? apcu_sma_info(true) : false;
         $used = is_array($sma)
             ? (int)($sma['num_seg'] ?? 0) * (int)($sma['seg_size'] ?? 0) - (int)($sma['avail_mem'] ?? 0)
             : 0;
-        self::gauge([
+        return [
             'relaying' => Relay::activePairs(),
             'db_rows' => Db::rowCount(),
             'db_size' => is_file(FOK_DB_FILE) ? (int)filesize(FOK_DB_FILE) : 0,
             'apcu' => $used,
-        ]);
+        ];
+    }
+
+    /** Writes the levels gaugeLevels() read. @param array<string,int> $levels */
+    public static function sampleGauges(array $levels): void
+    {
+        self::gauge($levels);
     }
 
     /** @param array<string,int> $levels metric name (without the g:) => reading */
@@ -379,8 +394,6 @@ final class Counters
             $rows[] = '(?, ?, ?)';
             array_push($args, $minute, 'req_min', $req);
         }
-        $peaks = [];
-        $peakArgs = [];
         $prefix = self::PREFIX . "m:$minute:e:";
         foreach (new APCUIterator('/^' . preg_quote($prefix, '/') . '/') as $e) {
             $n = self::claim((string)$e['key']);
@@ -388,36 +401,27 @@ final class Counters
                 continue;
             }
             $metric = substr((string)$e['key'], strlen($prefix));
-            // A maximum goes in the other statement; everything else adds up
-            // (see max).
-            if (str_starts_with($metric, 'x:')) {
-                $peaks[] = '(?, ?, ?)';
-                array_push($peakArgs, $hour, $metric, $n);
-                $peaks[] = '(?, ?, ?)';
-                array_push($peakArgs, $minute, $metric, $n);
-                continue;
-            }
             $rows[] = '(?, ?, ?)';
             array_push($args, $hour, $metric, $n);
             $rows[] = '(?, ?, ?)';
             array_push($args, $minute, $metric, $n);
         }
-        $write = static function (array $rows, array $args, string $merge): void {
-            if ($rows === []) {
-                return;
-            }
-            Load::untracked(static fn() => Db::retry(static fn() => Db::get()->prepare(
-                'INSERT INTO counters (bucket, metric, value) VALUES ' . implode(', ', $rows) .
-                ' ON CONFLICT (bucket, metric) DO UPDATE SET value = ' . $merge
-            )->execute($args)));
-        };
+        if ($rows === []) {
+            return;
+        }
         // Adding, not replacing: an hour bucket collects sixty of these, and
         // a minute bucket must survive a late count arriving after its fold.
-        $write($rows, $args, 'value + excluded.value');
-        // The exception, and the reason there are two statements: an hour's
-        // worst reading is the worst of the minutes in it, and summing them
-        // would turn sixty ordinary waits into one impossible outlier.
-        $write($peaks, $peakArgs, 'MAX(value, excluded.value)');
+        // The one exception is a maximum (see max): an hour's worst reading
+        // is the worst of the minutes in it, and summing them would turn
+        // sixty ordinary waits into one impossible outlier. The merge is
+        // decided per row by the metric's name, so the whole minute is one
+        // statement and the writer is taken once for it.
+        Load::untracked(static fn() => Db::retry(static fn() => Db::get()->prepare(
+            'INSERT INTO counters (bucket, metric, value) VALUES ' . implode(', ', $rows)
+            . ' ON CONFLICT (bucket, metric) DO UPDATE SET value = CASE'
+            . " WHEN excluded.metric GLOB 'x:*' THEN MAX(value, excluded.value)"
+            . ' ELSE value + excluded.value END'
+        )->execute($args)));
     }
 
     /**
@@ -471,19 +475,30 @@ final class Counters
                 }
             }
         }
+        // In slices, each its own statement, so the writer is free between
+        // them: a month of history is tens of thousands of rows, and one
+        // DELETE over all of them holds the single writer for the whole
+        // walk - on the shared host, long enough for every duel to notice.
+        // Nothing lands between two slices that a later slice would not
+        // take: the buffer above is already empty, and a fold arriving from
+        // another worker meets the same filter.
         $rows = 0;
         Load::untracked(static function () use (&$rows): void {
-            $st = Db::retry(static function () {
-                $st = Db::get()->prepare(
-                    "DELETE FROM counters
-                     WHERE bucket GLOB '[0-9]*'
-                       AND (length(bucket) = 10 OR length(bucket) = 12)
-                       AND metric NOT GLOB 'mint_*'"
-                );
-                $st->execute();
-                return $st;
-            });
-            $rows = $st->rowCount();
+            do {
+                $n = (int)Db::retry(static function (): int {
+                    $st = Db::get()->prepare(
+                        "DELETE FROM counters WHERE rowid IN (
+                            SELECT rowid FROM counters
+                             WHERE bucket GLOB '[0-9]*'
+                               AND (length(bucket) = 10 OR length(bucket) = 12)
+                               AND metric NOT GLOB 'mint_*'
+                             LIMIT " . self::CLEAR_SLICE . ')'
+                    );
+                    $st->execute();
+                    return $st->rowCount();
+                });
+                $rows += $n;
+            } while ($n === self::CLEAR_SLICE);
         });
         return ['rows' => $rows, 'keys' => $keys];
     }

@@ -1120,6 +1120,13 @@ ok(Auth::login('u', 'p', '9.9.9.6'), 'other IP unaffected by lockout');
 ok(Settings::int('mailbox_cap') === FOK_MAILBOX_CAP, 'setting falls back to default');
 Settings::set('ices_max', 99);
 ok(Settings::int('ices_max') === 99, 'setting override readable');
+// Several at once go in one transaction, and a default among them is
+// stored as no row (see Settings::setMany).
+Settings::setMany(['ices_max' => 99, 'mailbox_cap' => FOK_MAILBOX_CAP]);
+$st = Db::get()->query("SELECT COUNT(*) FROM settings WHERE key = 'mailbox_cap'");
+ok(Settings::int('ices_max') === 99 && (int)$st->fetchColumn() === 0,
+    'a batch keeps the override and stores no row for a default');
+$st->closeCursor();
 $all = Settings::all();
 ok(is_string($all[0]['label']) && $all[0]['label'] !== '', 'settings carry labels');
 ok(is_string($all[0]['help']) && $all[0]['help'] !== '', 'settings carry help text');
@@ -1286,6 +1293,39 @@ Util::runDeferred();
 ok($reqMinOf() === $rm, 'twenty requests in one minute write nothing yet');
 Counters::flushDue(gmdate('YmdHi', time() + 60));
 ok($reqMinOf() === $rm + 20, 'and land as a single folded write');
+
+// A maximum folds as the worst of the readings, never their sum, in the
+// SAME statement as the totals: the merge is decided per row by the
+// metric's name (see Counters::flushMinute). Keyed on every hour bucket
+// rather than the current one, so a boundary during the run cannot split
+// the readings; the metric is this run's own, so a persisted table cannot
+// hold an older one.
+$pk = 'unit_pk' . getmypid();
+$peakOf = function () use ($pk): int {
+    $st = Db::get()->prepare('SELECT COALESCE(MAX(value), 0) FROM counters
+                              WHERE metric = ? AND length(bucket) = 10');
+    $st->execute(['x:' . $pk]);
+    $n = (int)$st->fetchColumn();
+    $st->closeCursor();
+    return $n;
+};
+Counters::max($pk, 700);
+Counters::flushDue(gmdate('YmdHi', time() + 60));
+Counters::max($pk, 300);
+Counters::flushDue(gmdate('YmdHi', time() + 60));
+ok($peakOf() === 700, 'a folded maximum is the worst of the readings, not their sum');
+Counters::max($pk, 900);
+Counters::flushDue(gmdate('YmdHi', time() + 60));
+ok($peakOf() === 900, 'and a larger one replaces it');
+
+// Every table is counted in one statement, and the row gauge is its sum.
+$tc = Db::tableCounts();
+ok(isset($tc['players'], $tc['counters']) && array_sum($tc) === Db::rowCount(),
+    'one statement counts every table, and the row gauge is its sum');
+// The minute rows carry their own index (schema 47), which is what keeps
+// the hourly prune off the month of hour rows they sort among.
+$idx = array_column(Db::get()->query('PRAGMA index_list(counters)')->fetchAll(), 'name');
+ok(in_array('idx_counters_minute', $idx, true), 'the minute buckets carry their partial index');
 
 // ... and that hit() still RETURNS that running total to its caller. Miss
 // it and reqPerMin reads 0, the sampling never hits a multiple of 25, and
@@ -2573,6 +2613,10 @@ if (Caps::apcu()) {
     ok(($peek['x:q_us'] ?? 0) >= 777777, 'peak included');
     ok(Counters::peek(gmdate('YmdHi'))['rolltest'] === $peek['rolltest'],
         'and peeking takes nothing out - the fold still finds it');
+    // The rolling windows are read once per REQUEST (see AdminData::rolling)
+    // and this suite is one process: the reading hours() took above would
+    // answer here, so it is dropped the way a fresh request finds it.
+    (new ReflectionProperty(AdminData::class, 'rolling'))->setValue(null, null);
     $live = AdminData::stats()['live'];
     ok($live['min']['in'] >= 1 && $live['min']['q_max_us'] >= 777777,
         'the minute window carries what was counted this very minute');

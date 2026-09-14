@@ -29,20 +29,28 @@ final class AdminData
     public static function stats(): array
     {
         $db = Db::get();
+        // Every table counted once, in one statement: the row gauge is the
+        // sum and two of the figures below are terms of it (see Db).
+        $counts = Db::tableCounts();
+        // Both friendship states out of one walk of the table.
+        $friends = ['accepted' => 0, 'pending' => 0];
+        foreach ($db->query('SELECT state, COUNT(*) AS n FROM friends GROUP BY state') as $r) {
+            $friends[(string)$r['state']] = (int)$r['n'];
+        }
         return [
             'counts' => Presence::counts(),
             'families' => Presence::families(),
             'relaying' => Relay::activePairs(),
-            'friendships' => (int)$db->query("SELECT COUNT(*) FROM friends WHERE state = 'accepted'")->fetchColumn(),
-            'friendships_pending' => (int)$db->query("SELECT COUNT(*) FROM friends WHERE state = 'pending'")->fetchColumn(),
-            'scores_total' => (int)$db->query('SELECT COUNT(*) FROM scores')->fetchColumn(),
-            'items_total' => (int)$db->query('SELECT COUNT(*) FROM items')->fetchColumn(),
+            'friendships' => $friends['accepted'],
+            'friendships_pending' => $friends['pending'],
+            'scores_total' => $counts['scores'],
+            'items_total' => $counts['items'],
             // Every transfer bumps the instance seq, so summing seq counts the
             // handovers the current population has been through. Read from
             // items rather than the ledger because the ledger is checkpointed
             // and trimmed, which would make a ledger count drop over time.
             'item_transfers' => (int)$db->query('SELECT COALESCE(SUM(seq), 0) FROM items')->fetchColumn(),
-            'db_rows' => Db::rowCount(),
+            'db_rows' => array_sum($counts),
             'live' => self::live(),
             // Live tournaments are held in shared memory, not in a table.
             'tourneys' => TourneyStore::usable() ? count(TourneyStore::all()) : 0,
@@ -186,10 +194,19 @@ final class AdminData
      * The two rolling windows as raw metric maps - what the Live tile reduces
      * (see live) and what the per-script table reads per endpoint. The
      * caller has folded the closed minutes first (Counters::flushDue).
+     *
+     * Read once per request: a batch tick asks for it from two cards (the
+     * stats payload and the history payload), and both describe the same
+     * instant, so the second asks the first rather than the database.
      * @return array{min: array<string, int>, hour: array<string, int>}
      */
+    private static ?array $rolling = null;
+
     private static function rolling(): array
     {
+        if (self::$rolling !== null) {
+            return self::$rolling;
+        }
         $now = time();
         $share = (60 - $now % 60) / 60;
         $running = Counters::peek(gmdate('YmdHi', $now));
@@ -198,7 +215,7 @@ final class AdminData
         // the wire carries one row per metric rather than one per minute.
         $body = self::span(gmdate('YmdHi', $now - 59 * 60), gmdate('YmdHi', $now - 60));
         $edge = self::bucket(gmdate('YmdHi', $now - 60 * 60));
-        return [
+        return self::$rolling = [
             'min' => self::merge([[$running, 1.0], [$last, $share]]),
             'hour' => self::merge([[$running, 1.0], [$body, 1.0], [$edge, $share]]),
         ];
@@ -451,11 +468,14 @@ final class AdminData
             $parties[] = $r['from'];
             $parties[] = $r['to'];
         }
+        // The population and the frozen part of it out of one walk: frozen
+        // is 0 or 1, so its sum is the count.
+        $tally = $db->query('SELECT COUNT(*) AS n, COALESCE(SUM(frozen), 0) AS f FROM items')->fetch();
         return [
             'now' => time(),
             'names' => (object)self::namesFor($parties),
-            'items_total' => (int)$db->query('SELECT COUNT(*) FROM items')->fetchColumn(),
-            'items_frozen' => (int)$db->query('SELECT COUNT(*) FROM items WHERE frozen = 1')->fetchColumn(),
+            'items_total' => (int)$tally['n'],
+            'items_frozen' => (int)$tally['f'],
             'matches_open' => Items::openMatches($db),
             'ledger_rows' => Ledger::rows($db),
             'ledger_max' => Settings::int('ledger_max_rows'),

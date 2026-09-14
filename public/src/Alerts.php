@@ -166,7 +166,7 @@ final class Alerts
 
     public static function markSeen(): void
     {
-        Db::get()->exec('UPDATE alerts SET seen = 1 WHERE seen = 0');
+        Db::retry(static fn() => Db::get()->exec('UPDATE alerts SET seen = 1 WHERE seen = 0'));
     }
 
     /**

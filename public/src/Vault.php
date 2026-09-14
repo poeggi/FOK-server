@@ -98,9 +98,11 @@ final class Vault
      */
     public static function resetToken(string $id): bool
     {
-        $st = Db::get()->prepare("UPDATE vault SET token_hash = '' WHERE id = ?");
-        $st->execute([$id]);
-        return $st->rowCount() > 0;
+        return (bool)Db::retry(static function () use ($id): bool {
+            $st = Db::get()->prepare("UPDATE vault SET token_hash = '' WHERE id = ?");
+            $st->execute([$id]);
+            return $st->rowCount() > 0;
+        });
     }
 
     /** @return array{payload:string,token_hash:string,updated:int}|null */

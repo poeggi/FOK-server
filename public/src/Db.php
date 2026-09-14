@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 46;
+    private const SCHEMA_VERSION = 47;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -100,18 +100,31 @@ final class Db
         'events', 'event_members', 'event_results'];
 
     /**
-     * How many rows the database holds, over every table above. One statement
-     * rather than a COUNT per table; COUNTED is a fixed allowlist and never
-     * user input.
+     * How many rows each table above holds, in ONE statement rather than a
+     * COUNT per table; COUNTED is a fixed allowlist and never user input.
+     * The Statistics card reads its own figures out of the same answer, so
+     * no table is walked twice for one tick.
+     * @return array<string, int> table => rows
      */
-    public static function rowCount(): int
+    public static function tableCounts(): array
     {
-        return (int)self::get()->query(
-            'SELECT ' . implode(' + ', array_map(
-                static fn($t) => "(SELECT COUNT(*) FROM $t)",
+        $row = self::get()->query(
+            'SELECT ' . implode(', ', array_map(
+                static fn($t) => "(SELECT COUNT(*) FROM $t) AS $t",
                 self::COUNTED
             ))
-        )->fetchColumn();
+        )->fetch();
+        $out = [];
+        foreach (self::COUNTED as $t) {
+            $out[$t] = (int)($row[$t] ?? 0);
+        }
+        return $out;
+    }
+
+    /** How many rows the database holds, over every table above. */
+    public static function rowCount(): int
+    {
+        return array_sum(self::tableCounts());
     }
 
     // Restore replaces the database file, so the handle must be droppable.
@@ -846,6 +859,19 @@ final class Db
         // 46 is a retired step: it repaired printed event keys of the
         // wrong length on the two installs that ran 1.10.x, and no
         // database made since holds one. The number stays reserved.
+        if ($v < 47) {
+            // The minute buckets are a small part of the counters table and
+            // the only rows the hourly prune deletes, but a twelve-digit
+            // stamp sorts in among the ten-digit hours of its own day, so
+            // without an index of their own finding them means walking the
+            // whole month of hours under the single writer. This partial
+            // index holds just the minute rows; the prune and the Live tab's
+            // minute reads walk them alone. A query reaches it only through
+            // the same length(bucket) = 12 term, verbatim - a GLOB on its
+            // own still walks the primary key.
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_counters_minute
+                            ON counters (bucket) WHERE length(bucket) = 12');
+        }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that
         // must not touch the single SQLite writer while they idle.

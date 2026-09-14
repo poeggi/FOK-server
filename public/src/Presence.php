@@ -194,7 +194,12 @@ final class Presence
         if ($ended === []) {
             return;
         }
-        Db::retry(static function () use ($ended): void {
+        // One transaction, taken WITHOUT waiting (see Db::tryWrite): this
+        // runs in a deferred tail, where waiting for the writer would hold
+        // a worker for work that is due again in FOLD_EVERY seconds anyway.
+        // A fold that lost the writer leaves its entries standing for the
+        // next one.
+        $written = Db::tryWrite(static function () use ($ended): void {
             $st = Db::get()->prepare(
                 'UPDATE players SET last_seen = ?, latency = ? WHERE id = ? AND last_seen <= ?'
             );
@@ -202,6 +207,9 @@ final class Presence
                 $st->execute([(int)$e['seen'], $e['lat'], $id, (int)$e['seen']]);
             }
         });
+        if (!$written) {
+            return;
+        }
         foreach ($ended as $id => $e) {
             $cur = apcu_fetch(self::PREFIX . $id);
             if (is_array($cur) && (int)$cur['seen'] === (int)$e['seen']) {
@@ -490,7 +498,8 @@ final class Presence
      */
     public static function setDebug(string $id, bool $on): void
     {
-        Db::get()->prepare('UPDATE players SET debug = ? WHERE id = ?')->execute([(int)$on, $id]);
+        Db::retry(static fn() => Db::get()->prepare('UPDATE players SET debug = ? WHERE id = ?')
+            ->execute([(int)$on, $id]));
         $e = self::entryOf($id);
         if ($e !== null) {
             $e['wish'] = $on;

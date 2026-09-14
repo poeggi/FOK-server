@@ -384,21 +384,29 @@ final class Load
      */
     private static function flushDbTime(): void
     {
-        if (self::$lockN > 0) {
-            Counters::add('n:dbw_us', self::$lockUs);
-            Counters::add('n:dbw_n', self::$lockN);
-            Counters::max('dbw_us', self::$lockMax);
-        }
-        if (self::$sqlN > 0) {
-            Counters::add('n:dbt_us', self::$sqlUs);
-            Counters::add('n:dbt_n', self::$sqlN);
-            Counters::max('dbt_us', self::$sqlMax);
-        }
-        if (self::$slowest !== null) {
-            Counters::worst('db_us', self::$slowest['us'], Util::who() + [
-                'q' => self::$slowest['sql'],
-                'lk' => self::$slowest['lock'] ? 1 : 0,
-            ]);
+        // The dashboard's own accesses are not booked, exactly as its queue
+        // wait is not (see Util::noteQueue): it reads only while somebody is
+        // watching the gauge this feeds, and its per-table counts would be
+        // the slowest access of many a quiet minute - the observer as the
+        // measurement. How many queries it issued still lands under its own
+        // script in the per-script view (see Counters::cost).
+        if (!Util::isAdminScript()) {
+            if (self::$lockN > 0) {
+                Counters::add('n:dbw_us', self::$lockUs);
+                Counters::add('n:dbw_n', self::$lockN);
+                Counters::max('dbw_us', self::$lockMax);
+            }
+            if (self::$sqlN > 0) {
+                Counters::add('n:dbt_us', self::$sqlUs);
+                Counters::add('n:dbt_n', self::$sqlN);
+                Counters::max('dbt_us', self::$sqlMax);
+            }
+            if (self::$slowest !== null) {
+                Counters::worst('db_us', self::$slowest['us'], Util::who() + [
+                    'q' => self::$slowest['sql'],
+                    'lk' => self::$slowest['lock'] ? 1 : 0,
+                ]);
+            }
         }
         self::$lockUs = self::$lockN = self::$lockMax = 0;
         self::$sqlUs = self::$sqlN = self::$sqlMax = 0;

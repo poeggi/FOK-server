@@ -162,7 +162,25 @@ ways expires UNEVENLY - CLAUDE.md has the eviction-vs-expiry alert rule.
   INTEGER). This silently disarmed the admin lockout once.
 - Settings stores a row ONLY for an override; a changed DEFS default does
   not reach an install with a row, and a row set from the config card
-  wins. Saving the default from the card deletes the row.
+  wins. Saving the default from the card deletes the row. Several keys
+  go through Settings::setMany: one transaction, one cache drop.
+- `counters` carries a PARTIAL index over the minute rows, `WHERE
+  length(bucket) = 12` (schema 47, 1.15.8): a twelve-digit stamp sorts in
+  among the ten-digit hours of its own day, so without it the hourly
+  prune walked the month of hour rows under the writer (8 ms local for
+  3.8k rows, 2.7 ms with it). A query reaches the index only through
+  that exact term; a GLOB alone walks the primary key. The fold writes
+  hour and minute rows, sums and peaks, in ONE upsert whose ON CONFLICT
+  decides SUM or MAX per row by the metric's name.
+- A bulk DELETE holds the writer for its whole walk: clear_stats goes in
+  slices of 5000 rows (`rowid IN (SELECT rowid ... LIMIT n)`), 60 ms in
+  one statement locally, 15 ms a slice. Same shape for anything that
+  removes more than a few thousand rows at once.
+- Reads have no business inside a write lock: the hourly gauge sample
+  reads its levels (the 16-table row count) before Db::tryWrite and
+  writes inside it. The admin's own accesses are booked in NO gauge
+  (Load::flushDbTime tests Util::isAdminScript like noteQueue does);
+  its query count still lands under its own script.
 - The all-digit-id integer-key trap and the microtime pairing order are
   in project_fok_server_db_plan.md.
 

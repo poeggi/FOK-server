@@ -87,8 +87,10 @@ final class Debug
             return 0;
         }
         $marks = implode(',', array_fill(0, count($pins), '?'));
-        $st = Db::get()->prepare('DELETE FROM debug WHERE pin IN (' . $marks . ')');
-        $st->execute($pins);
-        return $st->rowCount();
+        return (int)Db::retry(static function () use ($marks, $pins): int {
+            $st = Db::get()->prepare('DELETE FROM debug WHERE pin IN (' . $marks . ')');
+            $st->execute($pins);
+            return $st->rowCount();
+        });
     }
 }

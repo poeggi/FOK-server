@@ -46,9 +46,10 @@ The measurements and decisions behind the rules below are in
   client cannot forge it) and its absence must stay ordinary, since
   php -S ignores .htaccess.
 - The admin dashboard is EXCLUDED from the queue measurement
-  (Util::noteQueue via isAdminScript) and must stay excluded: it polls
-  only while somebody watches, so counting it makes the observer the
-  measurement. It batches a tick into one request, and admin/api.php
+  (Util::noteQueue via isAdminScript) and from the database access
+  gauges (Load::flushDbTime, the same test) and must stay excluded: it
+  polls only while somebody watches, so counting it makes the observer
+  the measurement. It batches a tick into one request, and admin/api.php
   asks for the database WHERE IT IS USED, never at the top (a tick
   carrying only presence and duels opens no connection). Load::markStart
   stays at the top. ONE REQUEST AT A TIME: an open admin page occupies
