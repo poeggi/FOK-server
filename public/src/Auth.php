@@ -18,14 +18,47 @@ final class Auth
         if (session_status() === PHP_SESSION_ACTIVE) {
             return;
         }
+        // A store of our own under the data dir, which the deploy never
+        // touches and whose .htaccess shields it - so only the lifetime
+        // set here decides when a login is forgotten (FOK_SESSION_DIR).
+        if (!is_dir(FOK_SESSION_DIR)) {
+            Db::ensureDataDir();
+            mkdir(FOK_SESSION_DIR, 0700);
+        }
+        ini_set('session.save_path', FOK_SESSION_DIR);
+        ini_set('session.gc_maxlifetime', (string)FOK_ADMIN_SESSION_SECS);
+        // A host may leave collection to a cron over its own directory,
+        // which never sees ours: one request in a hundred sweeps it here.
+        ini_set('session.gc_probability', '1');
+        ini_set('session.gc_divisor', '100');
         session_name('FOKADMIN');
         session_set_cookie_params([
+            'lifetime' => FOK_ADMIN_SESSION_SECS,
             'httponly' => true,
             'samesite' => 'Lax',
             'secure' => (($_SERVER['HTTPS'] ?? '') !== ''),
             'path' => (FOK_ENV === 'staging' ? '/staging' : '') . '/admin/',
         ]);
         session_start();
+    }
+
+    /**
+     * Re-stamps the cookie's expiry. PHP sends the cookie once, when the
+     * session is issued, so on its own a login would end a fixed time after
+     * it began however much the operator used it; the page load calls this
+     * and the server side slides by itself, on every request.
+     */
+    public static function refreshCookie(): void
+    {
+        $p = session_get_cookie_params();
+        setcookie(session_name(), session_id(), [
+            'expires' => time() + FOK_ADMIN_SESSION_SECS,
+            'path' => $p['path'],
+            'domain' => $p['domain'],
+            'secure' => $p['secure'],
+            'httponly' => $p['httponly'],
+            'samesite' => $p['samesite'],
+        ]);
     }
 
     public static function isLoggedIn(): bool

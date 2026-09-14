@@ -19,6 +19,9 @@ if (($_GET['do'] ?? '') === 'logout') {
 }
 
 $loggedIn = Auth::isLoggedIn();
+if ($loggedIn) {
+    Auth::refreshCookie();
+}
 // Shown in both the header and the footer; the h1 already names the server.
 $verline = 'v' . FOK_SERVER_VERSION . ' (API v' . FOK_API_VERSION . ')';
 ?>

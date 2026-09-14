@@ -435,6 +435,10 @@ host-level. If this outgrows shared hosting, fix workers first.
   hash are in this repo. Excessive failed logins block the source IP
   (default: 5 fails -> 300 s, configurable in the admin config card) and
   raise an alert; a single failed attempt is logged, not alerted.
+- An admin login lasts 30 days from the last page load, in the browser and
+  on the server. Sessions live in fok-server-data/sessions/, a store of the
+  server's own, so the host's idle window cannot end them. The admin
+  Properties card shows the store and the lifetime.
 - Admin audit trail: every state-changing admin action writes one log line
   naming what was done, to what, and from which IP - and only once it has
   actually succeeded. The two that replace live state wholesale (settings

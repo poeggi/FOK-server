@@ -46,6 +46,23 @@ final class Db
      */
     private const BUSY_SEC = 1;
 
+    /**
+     * The data dir sits in the docroot; the .htaccess written here is what
+     * keeps Apache from serving it, exactly as src/.htaccess does for the
+     * sources. php -S ignores it, like every .htaccess. Called before the
+     * database is opened and before the admin session store is created
+     * under it (Auth::startSession), so neither finds the dir unshielded.
+     */
+    public static function ensureDataDir(): void
+    {
+        if (!is_dir(FOK_DATA_DIR)) {
+            mkdir(FOK_DATA_DIR, 0770, true);
+        }
+        if (!is_file(FOK_DATA_DIR . '/.htaccess')) {
+            file_put_contents(FOK_DATA_DIR . '/.htaccess', "Require all denied\n");
+        }
+    }
+
     public static function get(): PDO
     {
         if (self::$pdo === null) {
@@ -55,15 +72,7 @@ final class Db
             // from here is the request's own burn and not the worker's whole
             // life (see Load::markStart).
             Load::markStart();
-            if (!is_dir(FOK_DATA_DIR)) {
-                mkdir(FOK_DATA_DIR, 0770, true);
-            }
-            // The data dir sits in the docroot; this line is what keeps
-            // Apache from serving it, exactly as src/.htaccess does for the
-            // sources. php -S ignores it, like every .htaccess.
-            if (!is_file(FOK_DATA_DIR . '/.htaccess')) {
-                file_put_contents(FOK_DATA_DIR . '/.htaccess', "Require all denied\n");
-            }
+            self::ensureDataDir();
             $pdo = new LoadPDO('sqlite:' . FOK_DB_FILE, null, null, [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,

@@ -14,6 +14,9 @@ foreach (glob($tmp . '/*') ?: [] as $f) {
         unlink($f);
     }
 }
+foreach (glob($tmp . '/sessions/*') ?: [] as $f) {
+    unlink($f);
+}
 
 require_once __DIR__ . '/../public/src/Util.php';
 require_once __DIR__ . '/../public/src/Counters.php';
@@ -1161,6 +1164,14 @@ for ($i = 0; $i < FOK_ADMIN_MAX_FAILS; $i++) {
 }
 ok(!Auth::login('u', 'p', '9.9.9.7'), 'locked out after repeated failures');
 ok(Auth::login('u', 'p', '9.9.9.6'), 'other IP unaffected by lockout');
+// The session store is the server's own directory with its own lifetime,
+// so nothing else's collection ends a login (Auth::startSession).
+ok(ini_get('session.save_path') === FOK_SESSION_DIR && is_dir(FOK_SESSION_DIR),
+    'admin sessions live in the data dir');
+ok((int)ini_get('session.gc_maxlifetime') === FOK_ADMIN_SESSION_SECS,
+    'the server forgets a login after its own lifetime');
+ok(session_get_cookie_params()['lifetime'] === FOK_ADMIN_SESSION_SECS,
+    'the cookie lasts as long as the server side');
 
 // Settings: defaults fall through, overrides stick
 ok(Settings::int('mailbox_cap') === FOK_MAILBOX_CAP, 'setting falls back to default');
@@ -3909,9 +3920,14 @@ ok(str_contains($qrSvg, '<rect'), 'drawn as rects, with no image library anywher
 ok(substr_count($qrSvg, '<rect') < 29 * 29,
     'one rect per dark run rather than per module');
 
-// Cleanup
+// Cleanup. The session is written at shutdown, which is after this, so it
+// is closed here first and its file goes with the rest.
+session_write_close();
 Db::close();
 foreach (glob($tmp . '/backups/*') ?: [] as $f) {
+    unlink($f);
+}
+foreach (glob($tmp . '/sessions/*') ?: [] as $f) {
     unlink($f);
 }
 foreach (glob($tmp . '/*') ?: [] as $f) {
@@ -3921,6 +3937,7 @@ foreach (glob($tmp . '/*') ?: [] as $f) {
 }
 @unlink($tmp . '/.htaccess');
 @rmdir($tmp . '/backups');
+@rmdir($tmp . '/sessions');
 @rmdir($tmp);
 
 echo "OK ($tests assertions)\n";

@@ -3141,6 +3141,14 @@ const MODULES = [
             // What every request pays before any work; the first one after a
             // deploy also carries the migration, so read it twice.
             prop('DB open', d.db_boot_us + ' us this request');
+            // Where a login lives and for how long. 'own store' is the
+            // directory under the data dir that Auth::startSession asks
+            // for; anything else means the host kept its own directory,
+            // and with it its own idle window.
+            const ss = d.session_secs;
+            prop('Admin session', d.session_handler + ', '
+                + (d.session_own ? 'own store' : 'host store ' + d.session_path) + ', '
+                + (ss >= 86400 ? Math.round(ss / 86400) + ' days' : Math.round(ss / 60) + ' min'));
             box.append(table);
         },
     },

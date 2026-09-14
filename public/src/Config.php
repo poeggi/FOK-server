@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.15.11';
+const FOK_SERVER_VERSION = '1.15.12';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -149,6 +149,12 @@ define('FOK_DATA_DIR', getenv('FOK_DATA_DIR') ?: (FOK_ENV === 'staging'
 define('FOK_DB_FILE', FOK_DATA_DIR . '/fok.db');
 define('FOK_ADMIN_HASH_FILE', FOK_DATA_DIR . '/admin.hash');
 define('FOK_BACKUP_DIR', FOK_DATA_DIR . '/backups');
+// The admin session store. PHP's garbage collection sweeps whatever
+// directory a script's save_path names, with THAT script's lifetime; in
+// the host's shared default directory every other script on the account
+// sweeps ours at the host's default idle window (24 minutes). A directory
+// of our own is swept by nobody else (Auth::startSession).
+define('FOK_SESSION_DIR', FOK_DATA_DIR . '/sessions');
 
 // Errors and warnings are pinned to a file in the data dir, which is never
 // web-served; and the host's default error-log destination is not reachable
@@ -356,3 +362,7 @@ const FOK_ALLOWED_ORIGINS = [
 
 const FOK_ADMIN_MAX_FAILS = 5;
 const FOK_ADMIN_LOCK_SECONDS = 300;
+// How long an admin login lasts: on the server since the last request, in
+// the browser since the last page load (Auth::refreshCookie). A constant
+// rather than a setting because it is read before any database is open.
+const FOK_ADMIN_SESSION_SECS = 30 * 86400;

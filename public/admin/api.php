@@ -280,6 +280,13 @@ switch ($action) {
             'apcu' => function_exists('apcu_enabled') && apcu_enabled(),
             'deferred_flush' => function_exists('fastcgi_finish_request'),
             'db_boot_us' => (int)round(Db::bootUs()),
+            // The admin session store, read back from the running server:
+            // whether the ini writes in Auth::startSession took on this
+            // host, and the lifetime a login actually gets.
+            'session_handler' => (string)ini_get('session.save_handler'),
+            'session_path' => (string)ini_get('session.save_path'),
+            'session_own' => ini_get('session.save_path') === FOK_SESSION_DIR,
+            'session_secs' => (int)ini_get('session.gc_maxlifetime'),
         ]);
 
     case 'conns':

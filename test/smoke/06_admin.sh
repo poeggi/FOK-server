@@ -95,6 +95,12 @@ else
     expect "props reports apcu availability" '"apcu":' "$R"
     expect "props reports deferred-flush availability" '"deferred_flush":' "$R"
     expect "props reports what opening the db cost" '"db_boot_us":' "$R"
+    # The admin session store is the server's own directory with its own
+    # lifetime; against staging this is the proof that the ini writes in
+    # Auth::startSession take on the real host.
+    expect "props reports the session handler" '"session_handler":' "$R"
+    expect "props reports the session store is our own" '"session_own":true' "$R"
+    expect "props reports the session lifetime" '"session_secs":2592000' "$R"
 
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=stats")
     expect "admin stats" '"ok":true' "$R"
