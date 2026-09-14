@@ -932,18 +932,31 @@ final class Events
         }
         $got = (string)Db::retry(static function () use ($eid, $id, $state, $via, $now): string {
             $db = Db::get();
-            $st = $db->prepare('SELECT state FROM event_members WHERE eid = ? AND id = ?');
-            $st->execute([$eid, $id]);
-            $was = $st->fetchColumn();
-            $st->closeCursor();
+            $read = static function () use ($db, $eid, $id): string|false {
+                $st = $db->prepare('SELECT state FROM event_members WHERE eid = ? AND id = ?');
+                $st->execute([$eid, $id]);
+                $was = $st->fetchColumn();
+                $st->closeCursor();
+                return $was === false ? false : (string)$was;
+            };
+            $was = $read();
             if ($was !== false) {
-                return (string)$was;
+                return $was;
             }
-            $db->prepare('INSERT INTO event_members (eid, id, state, asked, joined, via)
-                          VALUES (?,?,?,?,?,?)')
-               ->execute([$eid, $id, $state, $now,
-                          $state === 'pending' ? null : $now, $via]);
-            return $state;
+            // The INSERT arbitrates, not the read above it: two scans of one
+            // code by one client in the same instant both find no row, and
+            // only one of them may create it. ON CONFLICT DO NOTHING is that
+            // test in one statement, with no lock spanning a read - and the
+            // one that lost answers what the winner wrote, exactly as a
+            // repeat scan does.
+            $st = $db->prepare('INSERT INTO event_members (eid, id, state, asked, joined, via)
+                                VALUES (?,?,?,?,?,?) ON CONFLICT (eid, id) DO NOTHING');
+            $st->execute([$eid, $id, $state, $now, $state === 'pending' ? null : $now, $via]);
+            if ($st->rowCount() > 0) {
+                return $state;
+            }
+            $was = $read();
+            return $was === false ? $state : $was;
         });
         self::forgetMine($id);
         self::forgetCounts($eid);

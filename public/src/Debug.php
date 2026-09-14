@@ -26,7 +26,8 @@ final class Debug
     {
         $db = Db::get();
         $now = time();
-        $db->prepare('DELETE FROM debug WHERE created < ?')->execute([$now - FOK_DEBUG_TTL]);
+        Db::retry(static fn() => $db->prepare('DELETE FROM debug WHERE created < ?')
+            ->execute([$now - FOK_DEBUG_TTL]));
         $ins = $db->prepare('INSERT INTO debug (pin, payload, bytes, created) VALUES (?, ?, ?, ?)');
         for ($try = 0; $try < 30; $try++) {
             $pin = str_pad((string)random_int(0, 9999), 4, '0', STR_PAD_LEFT);

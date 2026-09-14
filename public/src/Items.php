@@ -233,39 +233,41 @@ final class Items
         $hour = gmdate('YmdH');
         $metric = 'mint_' . $id;
         $cap = Settings::int('mint_max_per_hour');
-        $db->exec('BEGIN IMMEDIATE');
-        try {
-            $st = $db->prepare('SELECT value FROM counters WHERE bucket = ? AND metric = ?');
-            $st->execute([$hour, $metric]);
-            $count = (int)$st->fetchColumn();
-            $st->closeCursor();
-            if ($count >= $cap) {
-                $db->exec('ROLLBACK');
-                return ['throttled' => true];
+        // Re-runnable as a whole: a lost race for the writer rolls the
+        // transaction back before anything is counted or minted, and the
+        // quota is read again under the lock on the next attempt. The
+        // finished hours' quota buckets are pure counters once the hour has
+        // passed, and the hourly prune drops them (see Util::pruneCounters).
+        return Db::retry(static function () use ($db, $id, $itemId, $origin, $now, $hour, $metric, $cap): array {
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                $st = $db->prepare('SELECT value FROM counters WHERE bucket = ? AND metric = ?');
+                $st->execute([$hour, $metric]);
+                $count = (int)$st->fetchColumn();
+                $st->closeCursor();
+                if ($count >= $cap) {
+                    $db->exec('ROLLBACK');
+                    return ['throttled' => true];
+                }
+                $db->prepare(
+                    'INSERT INTO counters (bucket, metric, value) VALUES (?, ?, 1)
+                     ON CONFLICT (bucket, metric) DO UPDATE SET value = value + 1'
+                )->execute([$hour, $metric]);
+                $uid = self::newId();
+                $db->prepare(
+                    'INSERT INTO items (uid, item_id, owner, seq, origin, minted, frozen)
+                     VALUES (?, ?, ?, 0, ?, ?, 0)'
+                )->execute([$uid, $itemId, $id, $origin, $now]);
+                Ledger::append($db, 'mint', $uid, '', $id, '', 0, $now);
+                $db->exec('COMMIT');
+                return ['uid' => $uid, 'seq' => 0];
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
             }
-            $db->prepare(
-                'INSERT INTO counters (bucket, metric, value) VALUES (?, ?, 1)
-                 ON CONFLICT (bucket, metric) DO UPDATE SET value = value + 1'
-            )->execute([$hour, $metric]);
-            $uid = self::newId();
-            $db->prepare(
-                'INSERT INTO items (uid, item_id, owner, seq, origin, minted, frozen)
-                 VALUES (?, ?, ?, 0, ?, ?, 0)'
-            )->execute([$uid, $itemId, $id, $origin, $now]);
-            Ledger::append($db, 'mint', $uid, '', $id, '', 0, $now);
-            $db->exec('COMMIT');
-            // Old per-id mint buckets are pure counters once the hour passes.
-            Util::defer(static function () use ($hour): void {
-                Db::get()->prepare("DELETE FROM counters WHERE metric LIKE 'mint\\_%' ESCAPE '\\' AND bucket < ?")
-                    ->execute([$hour]);
-            });
-            return ['uid' => $uid, 'seq' => 0];
-        } catch (Throwable $e) {
-            if ($db->inTransaction()) {
-                $db->exec('ROLLBACK');
-            }
-            throw $e;
-        }
+        });
     }
 
     /**
@@ -294,39 +296,44 @@ final class Items
             return self::wardrobe($id);
         }
         $now = Util::nowMs();
-        $db->exec('BEGIN IMMEDIATE');
-        try {
-            // Read again under the lock. The unlocked look only established
-            // that there was work to do; two launches arriving together would
-            // otherwise both mint the same amnesty.
-            if (!self::seeded($db, $id)) {
-                $source = $vaultItems !== null ? $vaultItems : $clientItems;
-                $ids = [];
-                foreach ($source as $item) {
-                    if (self::isValidItemId($item) && !in_array($item, $ids, true)) {
-                        $ids[] = $item;
+        // Re-runnable: a lost race for the writer rolls everything back and
+        // the guard is read again under the lock on the next attempt.
+        Db::retry(static function () use ($db, $id, $clientItems, $vaultItems, $now): void {
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                // Read again under the lock. The unlocked look only
+                // established that there was work to do; two launches
+                // arriving together would otherwise both mint the same
+                // amnesty.
+                if (!self::seeded($db, $id)) {
+                    $source = $vaultItems !== null ? $vaultItems : $clientItems;
+                    $ids = [];
+                    foreach ($source as $item) {
+                        if (self::isValidItemId($item) && !in_array($item, $ids, true)) {
+                            $ids[] = $item;
+                        }
+                        if (count($ids) >= self::SEED_MAX) {
+                            break;
+                        }
                     }
-                    if (count($ids) >= self::SEED_MAX) {
-                        break;
+                    foreach ($ids as $item) {
+                        $uid = self::newId();
+                        $db->prepare(
+                            'INSERT INTO items (uid, item_id, owner, seq, origin, minted, frozen)
+                             VALUES (?, ?, ?, 0, ?, ?, 0)'
+                        )->execute([$uid, $item, $id, 'legacy', $now]);
+                        Ledger::append($db, 'mint', $uid, '', $id, '', 0, $now);
                     }
+                    $db->prepare('UPDATE players SET items_seeded = 1 WHERE id = ?')->execute([$id]);
                 }
-                foreach ($ids as $item) {
-                    $uid = self::newId();
-                    $db->prepare(
-                        'INSERT INTO items (uid, item_id, owner, seq, origin, minted, frozen)
-                         VALUES (?, ?, ?, 0, ?, ?, 0)'
-                    )->execute([$uid, $item, $id, 'legacy', $now]);
-                    Ledger::append($db, 'mint', $uid, '', $id, '', 0, $now);
+                $db->exec('COMMIT');
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
                 }
-                $db->prepare('UPDATE players SET items_seeded = 1 WHERE id = ?')->execute([$id]);
+                throw $e;
             }
-            $db->exec('COMMIT');
-        } catch (Throwable $e) {
-            if ($db->inTransaction()) {
-                $db->exec('ROLLBACK');
-            }
-            throw $e;
-        }
+        });
         return self::wardrobe($id);
     }
 
@@ -508,20 +515,23 @@ final class Items
                     // Opening the hold is the only write on this path, so it
                     // is the only thing that takes the lock. It looks again
                     // inside: two unconfirmed claims arriving together would
-                    // otherwise each open a hold of their own.
-                    $db->exec('BEGIN IMMEDIATE');
-                    try {
-                        if (self::firstHold($db, $mid, $uid, $tick, $from, $to) === null) {
-                            Ledger::append($db, 'dispute', $uid, $from, $to, $mid, $tick, $now);
+                    // otherwise each open a hold of their own. Re-runnable
+                    // for the same reason: the look inside decides.
+                    Db::retry(static function () use ($db, $mid, $uid, $tick, $from, $to, $now, $id): void {
+                        $db->exec('BEGIN IMMEDIATE');
+                        try {
+                            if (self::firstHold($db, $mid, $uid, $tick, $from, $to) === null) {
+                                Ledger::append($db, 'dispute', $uid, $from, $to, $mid, $tick, $now);
+                            }
+                            self::bumpClaim($id, 'claims_untagged');
+                            $db->exec('COMMIT');
+                        } catch (Throwable $e) {
+                            if ($db->inTransaction()) {
+                                $db->exec('ROLLBACK');
+                            }
+                            throw $e;
                         }
-                        self::bumpClaim($id, 'claims_untagged');
-                        $db->exec('COMMIT');
-                    } catch (Throwable $e) {
-                        if ($db->inTransaction()) {
-                            $db->exec('ROLLBACK');
-                        }
-                        throw $e;
-                    }
+                    });
                 } else {
                     // The hold is already open, so this is a repeat poll on
                     // it and the tally is the only write. Alone it has no
@@ -537,55 +547,61 @@ final class Items
         }
 
         // The write, and the only place a settling claim takes the lock.
-        $db->exec('BEGIN IMMEDIATE');
-        try {
-            // The contradiction check runs again here, and this is the run
-            // that decides: the look outside cannot see a contradicting claim
-            // that is committing at that very moment, and a serialised look
-            // is the whole point of the check. One indexed lookup, on a path
-            // that is about to write anyway.
-            if (self::contradicted($db, $mid, $uid, $tick, $from, $to)) {
-                self::freezeInTx($db, $uid, 'contradiction');
-                // The tally and the finding ride the same transaction as the
-                // freeze they record: a verdict and its accounting are one
-                // fact, and taking the writer again for them is a lock the
-                // whole database would queue behind.
-                self::bumpClaim($id, 'claims_disputed');
-                self::noteDispute($db, $uid, $id, 'contradiction', $mid, $tick);
-                $db->exec('COMMIT');
-                Alerts::raise('item_contradiction', "Contradictory claims: uid $uid from player $id");
-                return ['ok' => false, 'code' => 409, 'error' => 'contradiction'];
-            }
+        // Re-runnable as a whole: everything that decides is read again
+        // under the lock, and a lost race for the writer must not fail a
+        // claim mid-duel that was otherwise good.
+        return Db::retry(static function () use ($db, $mid, $uid, $tick, $from, $to, $now, $id, $seq, $peerConfirmed): array {
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                // The contradiction check runs again here, and this is the
+                // run that decides: the look outside cannot see a
+                // contradicting claim that is committing at that very
+                // moment, and a serialised look is the whole point of the
+                // check. One indexed lookup, on a path that is about to
+                // write anyway.
+                if (self::contradicted($db, $mid, $uid, $tick, $from, $to)) {
+                    self::freezeInTx($db, $uid, 'contradiction');
+                    // The tally and the finding ride the same transaction as
+                    // the freeze they record: a verdict and its accounting
+                    // are one fact, and taking the writer again for them is
+                    // a lock the whole database would queue behind.
+                    self::bumpClaim($id, 'claims_disputed');
+                    self::noteDispute($db, $uid, $id, 'contradiction', $mid, $tick);
+                    $db->exec('COMMIT');
+                    Alerts::raise('item_contradiction', "Contradictory claims: uid $uid from player $id");
+                    return ['ok' => false, 'code' => 409, 'error' => 'contradiction'];
+                }
 
-            // 6. Conservative move: compare-and-swap on seq, and on the owner
-            // and the freeze flag with it. Those three were read outside the
-            // lock, so this swap - not that read - is what arbitrates: a
-            // snapshot that went stale in between matches no row, and the
-            // client is told to re-read, which is the answer the loser of a
-            // race has always been given.
-            $st = $db->prepare(
-                'UPDATE items SET owner = ?, seq = seq + 1
-                 WHERE uid = ? AND seq = ? AND owner = ? AND frozen = 0'
-            );
-            $st->execute([$to, $uid, $seq, $from]);
-            if ($st->rowCount() === 0) {
+                // 6. Conservative move: compare-and-swap on seq, and on the
+                // owner and the freeze flag with it. Those three were read
+                // outside the lock, so this swap - not that read - is what
+                // arbitrates: a snapshot that went stale in between matches
+                // no row, and the client is told to re-read, which is the
+                // answer the loser of a race has always been given.
+                $st = $db->prepare(
+                    'UPDATE items SET owner = ?, seq = seq + 1
+                     WHERE uid = ? AND seq = ? AND owner = ? AND frozen = 0'
+                );
+                $st->execute([$to, $uid, $seq, $from]);
+                if ($st->rowCount() === 0) {
+                    $db->exec('COMMIT');
+                    return ['ok' => false, 'code' => 409, 'error' => 'lost race, re-read'];
+                }
+                // 7. Chain the transfer into the ledger.
+                Ledger::append($db, 'transfer', $uid, $from, $to, $mid, $tick, $now);
+                // The claim tally rides the same transaction: adding one to a
+                // statistics column is not worth its own turn at a lock the
+                // whole database queues behind.
+                self::bumpClaim($id, $peerConfirmed ? 'claims_ok' : 'claims_untagged');
                 $db->exec('COMMIT');
-                return ['ok' => false, 'code' => 409, 'error' => 'lost race, re-read'];
+                return ['ok' => true, 'seq' => $seq + 1, 'state' => $peerConfirmed ? 'confirmed' : 'settled'];
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
             }
-            // 7. Chain the transfer into the ledger.
-            Ledger::append($db, 'transfer', $uid, $from, $to, $mid, $tick, $now);
-            // The claim tally rides the same transaction: adding one to a
-            // statistics column is not worth its own turn at a lock the whole
-            // database queues behind.
-            self::bumpClaim($id, $peerConfirmed ? 'claims_ok' : 'claims_untagged');
-            $db->exec('COMMIT');
-            return ['ok' => true, 'seq' => $seq + 1, 'state' => $peerConfirmed ? 'confirmed' : 'settled'];
-        } catch (Throwable $e) {
-            if ($db->inTransaction()) {
-                $db->exec('ROLLBACK');
-            }
-            throw $e;
-        }
+        });
     }
 
     /**

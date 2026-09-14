@@ -65,6 +65,11 @@ switch ($action) {
         // counts every attempt so a hammer trips the cooldown and backs off.
         $gate = Friends::rateHit($id);
         if ($gate['blocked']) {
+            // The spam ban (see below) outranks the throttle and is read off
+            // the same row, so a banned id costs no writer take.
+            if ($gate['why'] === 'banned') {
+                Util::fail('friend requests banned', 429);
+            }
             if ($gate['tripped']) {
                 // Crossing the burst threshold into the cooldown once is
                 // ordinary - an impatient tapper does it - so it is noted and
@@ -79,13 +84,6 @@ switch ($action) {
             }
             $msg = $gate['why'] === 'cooldown' ? 'friend request cooldown' : 'friend requests too fast';
             Util::jsonOut(['ok' => false, 'error' => $msg, 'retry_after' => $gate['retry']], 429);
-        }
-        $st = Db::get()->prepare('SELECT friend_ban_until FROM players WHERE id = ?');
-        $st->execute([$id]);
-        $bannedUntil = (int)$st->fetchColumn();
-        $st->closeCursor();
-        if ($bannedUntil > time()) {
-            Util::fail('friend requests banned', 429);
         }
         // An id no player has ever registered: report it back instead of
         // recording a dead pending row and notifying nobody.
@@ -111,12 +109,27 @@ switch ($action) {
             $st->closeCursor();
             if ($unanswered > Settings::int('friend_req_max')) {
                 $ban = Settings::int('friend_ban_seconds');
-                $db->prepare('UPDATE players SET friend_ban_until = ? WHERE id = ?')
-                    ->execute([time() + $ban, $id]);
-                $st = $db->prepare("DELETE FROM friends WHERE requester = ? AND state = 'pending'");
-                $st->execute([$id]);
+                // The ban and the purge are one verdict: neither may land
+                // without the other, so they take the writer once, together.
+                $purged = (int)Db::retry(static function () use ($db, $id, $ban): int {
+                    $db->exec('BEGIN IMMEDIATE');
+                    try {
+                        $db->prepare('UPDATE players SET friend_ban_until = ? WHERE id = ?')
+                            ->execute([time() + $ban, $id]);
+                        $st = $db->prepare("DELETE FROM friends WHERE requester = ? AND state = 'pending'");
+                        $st->execute([$id]);
+                        $n = $st->rowCount();
+                        $db->exec('COMMIT');
+                        return $n;
+                    } catch (Throwable $e) {
+                        if ($db->inTransaction()) {
+                            $db->exec('ROLLBACK');
+                        }
+                        throw $e;
+                    }
+                });
                 Alerts::raise('friend-spam',
-                    "Friend-request spam: $id banned for {$ban}s, " . $st->rowCount() . ' pending requests purged');
+                    "Friend-request spam: $id banned for {$ban}s, $purged pending requests purged");
                 Util::fail('friend request spam - banned', 429);
             }
         }

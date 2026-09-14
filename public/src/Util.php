@@ -805,20 +805,31 @@ final class Util
      * lifetime totals and the meta rows, whose buckets are not numeric, are
      * never touched, and every endpoint books four of them an hour now that
      * it also carries its cost.
+     *
+     * The item registry's per-player mint quota shares the hour buckets
+     * (see Items::mint) and is a pure counter once its hour has passed. It
+     * goes here too, over a bounded range of the last day's hours: a walk
+     * of a day rather than of the month, and never on the mint path itself.
+     * A bucket older than the range is an hour bucket like any other and
+     * leaves with the 30 days.
      */
     private static function pruneCounters(): void
     {
         $db = Db::get();
+        $now = time();
         // The length term is what reaches the partial index over the minute
         // rows (schema 47): with it the writer holds a walk of two hours of
         // minutes, without it a walk of the whole month of hours they sit
         // among. Only a minute stamp is twelve characters long.
         $db->prepare('DELETE FROM counters WHERE length(bucket) = 12 AND bucket < ?')
-            ->execute([gmdate('YmdHi', time() - 7200)]);
+            ->execute([gmdate('YmdHi', $now - 7200)]);
         $db->prepare(
             "DELETE FROM counters
              WHERE bucket GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' AND bucket < ?"
-        )->execute([gmdate('YmdH', time() - 30 * 86400)]);
+        )->execute([gmdate('YmdH', $now - 30 * 86400)]);
+        $db->prepare(
+            "DELETE FROM counters WHERE bucket >= ? AND bucket < ? AND metric GLOB 'mint_*'"
+        )->execute([gmdate('YmdH', $now - 25 * 3600), gmdate('YmdH', $now)]);
     }
 
     /**

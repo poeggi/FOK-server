@@ -46,10 +46,10 @@ final class Starts
     // epoch" - the old test for a leftover line - can no longer happen.
     private const PAIR_WINDOW_MS = 5000;
 
-    // How long the ROW itself is kept, which is a different question and a
-    // much longer one: matchInfo reads the pair's mid off it with no window
-    // at all, and an item claim may attest against that match well after the
-    // duel goes quiet. Housekeeping's horizon, not the pairing window.
+    // How long the ROW itself is kept, which is a different question: past
+    // PAIR_WINDOW_MS nothing answers from it (the match's mid and secret
+    // ride the start answer, and a claim reads the match by its mid), so
+    // dropping it is Housekeeping's horizon, not the pairing window's.
     private const KEEP_MS = 300000;
 
     // One predicate for the sweep and for the card that promises it; they
@@ -66,11 +66,24 @@ final class Starts
     public static function forget(string $id, string $peer): void
     {
         [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
+        // A row is there only after a recent duel of this pair, so most
+        // setups have nothing to drop - and a DELETE that matches nothing
+        // still takes the writer, waiting behind whoever holds it. One
+        // primary-key read spares the take in that case; the DELETE below
+        // stays the arbiter for the row it does find.
+        $db = Db::get();
+        $st = $db->prepare('SELECT 1 FROM starts WHERE a = ? AND b = ?');
+        $st->execute([$a, $b]);
+        $found = $st->fetchColumn() !== false;
+        $st->closeCursor();
+        if (!$found) {
+            return;
+        }
         // This runs on the signaling path, beside the pair's own start, so it
         // is the write most likely to want the writer at the moment somebody
         // else has it. One statement, and re-runnable: it removes a row.
-        Db::retry(static function () use ($a, $b): void {
-            Db::get()->prepare('DELETE FROM starts WHERE a = ? AND b = ?')->execute([$a, $b]);
+        Db::retry(static function () use ($db, $a, $b): void {
+            $db->prepare('DELETE FROM starts WHERE a = ? AND b = ?')->execute([$a, $b]);
         });
     }
 
@@ -130,7 +143,7 @@ final class Starts
      * rematch, identical in both fields.
      *
      * @param array<string, mixed>|false $row
-     * @return array{0:int}|null
+     * @return array{start_pts:int, mid:string}|null
      */
     private static function settled(array|false $row, int $epoch, string $reason): ?array
     {
@@ -138,17 +151,23 @@ final class Starts
             return null;
         }
         if ((int)$row['epoch'] === $epoch && (string)$row['reason'] === $reason) {
-            return [(int)$row['start_pts']];
+            return ['start_pts' => (int)$row['start_pts'], 'mid' => (string)$row['mid']];
         }
         return null;
     }
 
     /**
-     * The pair's start PTS for this (epoch, reason): issued on the first
+     * The pair's start for this (epoch, reason): issued on the first
      * request, repeated verbatim to the second peer. Every start begins play,
-     * so every one of them mints the pair a fresh match.
+     * so every one of them mints the pair a fresh match, and the answer
+     * carries that match's mid and the CALLER'S OWN secret, never the
+     * peer's (see docs/API.md). The peer that minted has both in hand; the
+     * peer answered off the stored row reads its own off the match, by the
+     * mid that row already names - neither reads the start row twice.
+     *
+     * @return array{start_pts:int, mid:string, secret:string}
      */
-    public static function request(string $id, string $peer, int $epoch, string $reason): int
+    public static function request(string $id, string $peer, int $epoch, string $reason): array
     {
         [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
         $db = Db::get();
@@ -168,10 +187,10 @@ final class Starts
         // and none of it writes anything.
         $settled = self::settled(self::read($db, $a, $b, Util::nowMs()), $epoch, $reason);
         if ($settled !== null) {
-            return $settled[0];
+            return $settled + ['secret' => Items::matchSecret($db, $settled['mid'], $id === $a)];
         }
 
-        return (int)Db::retry(static function () use ($db, $a, $b, $epoch, $reason, $lead): int {
+        $issued = Db::retry(static function () use ($db, $a, $b, $epoch, $reason, $lead): array {
             $db->exec('BEGIN IMMEDIATE');
             try {
                 // The clock is read AFTER the lock: what was spent waiting for
@@ -184,7 +203,7 @@ final class Starts
                 $settled = self::settled($row, $epoch, $reason);
                 if ($settled !== null) {
                     $db->exec('COMMIT');
-                    return $settled[0];
+                    return $settled;
                 }
                 $startPts = $now + $lead;
 
@@ -192,7 +211,7 @@ final class Starts
                 // here, in this same transaction, so it is atomic with the
                 // start row and both peers read one consistent mid (see
                 // Items::openMatch).
-                $mid = Items::openMatch($db, $a, $b, $now)['mid'];
+                $match = Items::openMatch($db, $a, $b, $now);
 
                 $db->prepare(
                     'INSERT INTO starts (a, b, start_pts, created, epoch, reason, mid)
@@ -200,7 +219,7 @@ final class Starts
                      ON CONFLICT (a, b) DO UPDATE SET start_pts = excluded.start_pts,
                          created = excluded.created, epoch = excluded.epoch,
                          reason = excluded.reason, mid = excluded.mid'
-                )->execute([$a, $b, $startPts, $now, $epoch, $reason, $mid]);
+                )->execute([$a, $b, $startPts, $now, $epoch, $reason, $match['mid']]);
                 // One duel, counted INSIDE the transaction that mints its
                 // match rather than by taking the writer a second time the
                 // moment this one lets go. Reached exactly once per duel,
@@ -209,7 +228,10 @@ final class Starts
                 // reliably learn that a match ended (see forget).
                 Stats::bumpIn($db, ['duel_started' => 1]);
                 $db->exec('COMMIT');
-                return $startPts;
+                // Both secrets, because the mint made both; the caller's own
+                // is picked out below and the other never leaves this class.
+                return ['start_pts' => $startPts, 'mid' => $match['mid'],
+                    'sec_a' => $match['sec_a'], 'sec_b' => $match['sec_b']];
             } catch (Throwable $e) {
                 // SQLite auto-rolls back on some faults; a bare ROLLBACK would
                 // then throw and mask the real error.
@@ -219,28 +241,11 @@ final class Starts
                 throw $e;
             }
         });
-    }
-
-    /**
-     * The pair's open match as this caller sees it: its mid and the caller's
-     * OWN secret only (never the peer's). start.php reads this after a start
-     * is issued and returns both to the caller (see docs/API.md). Empty when
-     * the pair has no open match - a lone in-run start with no begin behind
-     * it, which a real duel never reaches.
-     *
-     * @return array{mid:string, secret:string}
-     */
-    public static function matchInfo(string $id, string $peer): array
-    {
-        [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
-        $db = Db::get();
-        $st = $db->prepare('SELECT mid FROM starts WHERE a = ? AND b = ?');
-        $st->execute([$a, $b]);
-        $mid = (string)($st->fetchColumn() ?: '');
-        $st->closeCursor();
-        if ($mid === '') {
-            return ['mid' => '', 'secret' => ''];
+        if (isset($issued['sec_a'])) {
+            return ['start_pts' => $issued['start_pts'], 'mid' => $issued['mid'],
+                'secret' => $id === $a ? (string)$issued['sec_a'] : (string)$issued['sec_b']];
         }
-        return ['mid' => $mid, 'secret' => Items::matchSecret($db, $mid, $id === $a)];
+        // Settled under the lock by the peer's mint: its secret is on the match.
+        return $issued + ['secret' => Items::matchSecret($db, $issued['mid'], $id === $a)];
     }
 }

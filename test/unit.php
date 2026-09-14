@@ -400,6 +400,14 @@ for ($i = 0; $i < 4; $i++) {
 }
 ok($g['tripped'] === true && $g['escalated'] === true && $g['retry'] === 3600,
     'a second burst within the repeat window escalates to the long cooldown');
+// The spam ban outranks the throttle and is read off the same row before
+// any transaction: a banned id is turned away without a writer take.
+Db::get()->prepare('UPDATE players SET friend_ban_until = ? WHERE id = ?')
+    ->execute([time() + 600, 'f1f10001']);
+$g = Friends::rateHit('f1f10001');
+ok($g['blocked'] === true && $g['why'] === 'banned' && $g['retry'] > 0 && $g['retry'] <= 600,
+    'a banned id is turned away before the throttle');
+Db::get()->prepare('UPDATE players SET friend_ban_until = 0 WHERE id = ?')->execute(['f1f10001']);
 Settings::set('friend_rate_interval', 1);
 Settings::set('friend_rate_burst', 10);
 Settings::set('friend_rate_cooldown', 60);
@@ -506,10 +514,26 @@ mmWipe();
 // reported latency, however wild, does not move it.
 Db::get()->prepare('UPDATE players SET latency = 9000 WHERE id = ?')->execute(['aaaaaaaa']);
 $t0 = Util::nowMs();
-$s1 = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'first');
-$s2 = Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first');
+$r1 = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'first');
+$r2 = Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first');
+$s1 = $r1['start_pts'];
+$s2 = $r2['start_pts'];
 ok($s1 === $s2, 'both peers receive the identical start pts');
 ok($s1 >= $t0 + 1000 && $s1 <= Util::nowMs() + 1000, 'the lead is a flat 1000 ms');
+// The match rides the same answer: the minting peer has both secrets in
+// hand, the peer answered off the row reads its own off the match, and each
+// is told only its own (see Starts::request).
+$secrets = (function (string $mid): array {
+    $st = Db::get()->prepare('SELECT sec_a, sec_b FROM matches WHERE mid = ?');
+    $st->execute([$mid]);
+    $row = $st->fetch();
+    $st->closeCursor();
+    return $row === false ? [] : $row;
+})($r1['mid']);
+ok($r1['mid'] === $r2['mid'] && strlen($r1['mid']) === 32, 'both peers are told the same match');
+ok(($secrets['sec_a'] ?? '') === $r1['secret'] && ($secrets['sec_b'] ?? '') === $r2['secret']
+    && $r1['secret'] !== $r2['secret'],
+    'and each its own secret: the minter from its mint, the peer from the match');
 Db::get()->prepare('UPDATE players SET latency = 40 WHERE id = ?')->execute(['aaaaaaaa']);
 
 // The race a pair-only key lost: a peer whose request lands after the
@@ -518,7 +542,7 @@ Db::get()->prepare('UPDATE players SET latency = 40 WHERE id = ?')->execute(['aa
 $passed = Util::nowMs() - 1000;
 Db::get()->prepare('UPDATE starts SET start_pts = ? WHERE a = ? AND b = ?')
     ->execute([$passed, 'aaaaaaaa', 'bbbbbbbb']);
-$late = Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first');
+$late = Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first')['start_pts'];
 ok($late === $passed, 'a late peer gets the same start, already in the past');
 
 // Only play BEGINNING is asked about now; the halts within a run are settled
@@ -530,9 +554,9 @@ ok(Starts::REASONS === ['first', 'rematch'], 'a start begins play, or it is not 
 // A relay rematch reuses the hub with no new offer, so nothing clears the
 // line for it (see signal.php) - without this it would read back the moment
 // the pair already played to.
-$again = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'rematch');
+$again = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'rematch')['start_pts'];
 ok(is_int($again) && $again !== $passed, 'a rematch at the same epoch is a moment of its own');
-ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'rematch') === $again, 'and the peer joins that one');
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'rematch')['start_pts'] === $again, 'and the peer joins that one');
 
 $startRow = (function (): array {
     $st = Db::get()->prepare('SELECT epoch, reason FROM starts WHERE a = ? AND b = ?');
@@ -547,7 +571,7 @@ ok((int)$startRow['epoch'] === 0 && $startRow['reason'] === 'rematch',
 // the pair gets a new moment rather than the one that has already passed.
 Db::get()->prepare('UPDATE starts SET start_pts = ? WHERE a = ? AND b = ?')
     ->execute([Util::nowMs() - 60000, 'aaaaaaaa', 'bbbbbbbb']);
-$fresh = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'rematch');
+$fresh = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'rematch')['start_pts'];
 ok($fresh > Util::nowMs(), 'a start older than the pairing window is not this start');
 
 // The epoch counts halts within ONE connection, so the pair's next duel
@@ -556,13 +580,13 @@ ok($fresh > Util::nowMs(), 'a start older than the pairing window is not this st
 // the server never sees it (see signal.php), so a rematch would otherwise
 // hit the finished line and 409 until the row aged out.
 Starts::forget('aaaaaaaa', 'bbbbbbbb');
-$again = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'first');
+$again = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'first')['start_pts'];
 ok($again > Util::nowMs(), 'a rematch on a fresh epoch line gets a start');
 // Pair-scoped: bye is not friendship-gated, so a stranger saying bye must
 // not reach a duel it has nothing to do with. The pair's peer still joining
 // the SAME moment is what says the row survived.
 Starts::forget('aaaaaaaa', 'cccccccc');
-ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first') === $again,
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first')['start_pts'] === $again,
     "a stranger's bye leaves the pair's start alone");
 
 // A row past the keep window is one no stale-epoch guard can reach any more,
@@ -572,14 +596,14 @@ Starts::forget('aaaaaaaa', 'bbbbbbbb');
 Starts::request('aaaaaaaa', 'bbbbbbbb', 3, 'first');
 Db::get()->prepare('UPDATE starts SET start_pts = ? WHERE a = ? AND b = ?')
     ->execute([Util::nowMs() - 600000, 'aaaaaaaa', 'bbbbbbbb']);
-$aged = Starts::request('aaaaaaaa', 'bbbbbbbb', 3, 'first');
+$aged = Starts::request('aaaaaaaa', 'bbbbbbbb', 3, 'first')['start_pts'];
 ok(is_int($aged) && $aged > Util::nowMs(),
     'a start past the keep window reads as absent, and a fresh one is issued');
 
 // One duel is one count: the second peer and every repeat are answered from
 // the stored row, so the tally counts duels rather than requests.
 $startedBefore = Stats::all()['duel_started'] ?? 0;
-ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 3, 'first') === $aged, 'the peer joins that same start');
+ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 3, 'first')['start_pts'] === $aged, 'the peer joins that same start');
 ok((Stats::all()['duel_started'] ?? 0) === $startedBefore,
     'and a start already issued counts no second duel');
 
@@ -1618,8 +1642,28 @@ Settings::set('mint_max_per_hour', 1);
 ok(isset(Items::mint('cc33cc33', 'boots', 'box')['uid']), 'the first mint of the hour goes through');
 ok(isset(Items::mint('cc33cc33', 'boots', 'box')['throttled']), 'the next one is throttled');
 Settings::set('mint_max_per_hour', 60);
-// mint queues a deferred prune; run it here rather than let the shutdown
-// handler reopen the database after the cleanup below has closed it.
+// A finished hour's quota buckets leave with the hourly prune, never on the
+// mint path: one from two hours ago goes, one for an hour not yet closed
+// stays (an hour ahead, so a boundary during the run cannot move it).
+$mintRows = function (string $bucket): int {
+    $st = Db::get()->prepare("SELECT COUNT(*) FROM counters WHERE bucket = ? AND metric = 'mint_cc33cc33'");
+    $st->execute([$bucket]);
+    $n = (int)$st->fetchColumn();
+    $st->closeCursor();
+    return $n;
+};
+$oldHour = gmdate('YmdH', time() - 7200);
+$nextHour = gmdate('YmdH', time() + 3600);
+foreach ([$oldHour, $nextHour] as $bucket) {
+    Db::get()->prepare("INSERT INTO counters (bucket, metric, value) VALUES (?, 'mint_cc33cc33', 3)
+        ON CONFLICT (bucket, metric) DO UPDATE SET value = 3")->execute([$bucket]);
+}
+(new ReflectionMethod(Util::class, 'pruneCounters'))->invoke(null);
+ok($mintRows($oldHour) === 0 && $mintRows($nextHour) === 1,
+    'the hourly prune drops a finished hour\'s mint buckets and keeps an open one');
+Db::get()->prepare("DELETE FROM counters WHERE bucket = ? AND metric = 'mint_cc33cc33'")->execute([$nextHour]);
+// Whatever is deferred by now runs here, not in the shutdown handler after
+// the cleanup below has closed the database.
 Util::runDeferred();
 
 // Backup: create produces a valid snapshot, restore brings data back

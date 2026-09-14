@@ -43,10 +43,12 @@ final class Scores
         if ($name === '') {
             $name = 'ANONYMOUS';
         }
-        Db::get()->prepare(
+        // A score a player just earned must not be lost to a busy second on
+        // the writer: retried like every other write that matters.
+        Db::retry(static fn() => Db::get()->prepare(
             'INSERT INTO scores (player_id, name, score, level, diff, color, shop_items, seed, inputs, completed, platform, validated, created)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)'
-        )->execute([$playerId, $name, $score, $level, $diff, $color, $shopItems, $seed, $inputs, (int)$completed, $platform, time()]);
+        )->execute([$playerId, $name, $score, $level, $diff, $color, $shopItems, $seed, $inputs, (int)$completed, $platform, time()]));
 
         $rank = Db::get()->prepare('SELECT COUNT(*) FROM scores WHERE score > ?');
         $rank->execute([$score]);

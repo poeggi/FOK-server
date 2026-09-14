@@ -280,7 +280,12 @@ peers call it where play begins), not the heartbeat.
   fresh match. A rematch is epoch 0 like a first start, so the epoch's
   ordering cannot tell a leftover line from a live one - (epoch, reason)
   plus PAIR_WINDOW_MS (5 s) on the read does. The row is kept KEEP_MS
-  (5 min) because matchInfo reads its mid with no window.
+  (5 min) as housekeeping's horizon; past the window nothing reads it.
+  The match's mid and the caller's secret ride the start answer
+  (Starts::request, 1.15.9): the minting peer has both secrets from the
+  mint, the settled peer reads its own off the match by the row's mid.
+- Starts::forget reads before it deletes: a DELETE that matches nothing
+  still takes the writer, and most duel setups have no leftover row.
 - start.php pays one duels upsert on a latency-sensitive endpoint; the
   local smoke proves nothing about it - watch for INSERT INTO duels in
   the admin worst-access list.
@@ -386,7 +391,7 @@ up-probe and origin-allowlist assertions).
 - `starts` to APCu, no fallback. The row is TWO things: a disposable
   epoch line (epoch, start_pts, reason) and a durable `mid`, which
   `matches` already holds (mid, a, b, opened, matches_pair index) - so
-  matchInfo could read the pair's newest match and the whole table could
+  start.php could read the pair's newest match and the whole table could
   move to shared memory, taking the last SQL write off the signaling
   path (the reset at invite/invite-relay/offer). THE HARD PART: the mint
   stays in SQLite, so splitting the epoch line off breaks the one

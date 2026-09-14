@@ -28,41 +28,45 @@ final class Friends
         // BEGIN IMMEDIATE serializes the read-decide-write so two crossing
         // requests (A->B and B->A at once) cannot both insert the same
         // (a,b) key: one records pending, the other sees it and matches.
-        $db->exec('BEGIN IMMEDIATE');
-        try {
-            $st = $db->prepare('SELECT state, requester FROM friends WHERE a = ? AND b = ?');
-            $st->execute([$a, $b]);
-            $row = $st->fetch();
-            $st->closeCursor();
-            if ($row) {
-                if ($row['state'] === 'accepted') {
+        // Re-runnable: the read under the lock decides, and a lost race for
+        // the writer rolls back before anything is written.
+        return Db::retry(static function () use ($db, $a, $b, $me, $now): array {
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                $st = $db->prepare('SELECT state, requester FROM friends WHERE a = ? AND b = ?');
+                $st->execute([$a, $b]);
+                $row = $st->fetch();
+                $st->closeCursor();
+                if ($row) {
+                    if ($row['state'] === 'accepted') {
+                        $db->exec('COMMIT');
+                        return ['state' => 'accepted', 'changed' => false];
+                    }
+                    if ($row['requester'] !== $me) {
+                        // The peer asked first; my request answers it.
+                        $db->prepare('UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ?')
+                            ->execute(['accepted', $now, $a, $b]);
+                        $db->exec('COMMIT');
+                        FriendFeed::forgetPair($a, $b);
+                        return ['state' => 'accepted', 'changed' => true];
+                    }
                     $db->exec('COMMIT');
-                    return ['state' => 'accepted', 'changed' => false];
+                    return ['state' => 'pending', 'changed' => false];
                 }
-                if ($row['requester'] !== $me) {
-                    // The peer asked first; my request answers it.
-                    $db->prepare('UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ?')
-                        ->execute(['accepted', $now, $a, $b]);
-                    $db->exec('COMMIT');
-                    FriendFeed::forgetPair($a, $b);
-                    return ['state' => 'accepted', 'changed' => true];
-                }
+                $db->prepare(
+                    'INSERT INTO friends (a, b, state, requester, created, updated) VALUES (?, ?, ?, ?, ?, ?)'
+                )->execute([$a, $b, 'pending', $me, $now, $now]);
                 $db->exec('COMMIT');
-                return ['state' => 'pending', 'changed' => false];
+                return ['state' => 'pending', 'changed' => true];
+            } catch (Throwable $e) {
+                // SQLite auto-rolls back on some faults; a bare ROLLBACK
+                // would then throw and mask the real error.
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
             }
-            $db->prepare(
-                'INSERT INTO friends (a, b, state, requester, created, updated) VALUES (?, ?, ?, ?, ?, ?)'
-            )->execute([$a, $b, 'pending', $me, $now, $now]);
-            $db->exec('COMMIT');
-            return ['state' => 'pending', 'changed' => true];
-        } catch (Throwable $e) {
-            // SQLite auto-rolls back on some faults; a bare ROLLBACK
-            // would then throw and mask the real error.
-            if ($db->inTransaction()) {
-                $db->exec('ROLLBACK');
-            }
-            throw $e;
-        }
+        });
     }
 
     /** True once $id has a players row: it has contacted the server at
@@ -92,9 +96,10 @@ final class Friends
      * row already (the caller's Presence::touch guarantees it).
      *
      * @return array{blocked: bool, retry: int, why: string, tripped: bool, escalated: bool}
-     *   why is 'interval', 'cooldown' or '' (allowed); retry is the seconds
-     *   to wait; tripped is true only on the request that STARTS a cooldown;
-     *   escalated is true only when that trip landed the long cooldown.
+     *   why is 'banned' (the spam ban, see friend.php), 'interval',
+     *   'cooldown' or '' (allowed); retry is the seconds to wait; tripped is
+     *   true only on the request that STARTS a cooldown; escalated is true
+     *   only when that trip landed the long cooldown.
      */
     public static function rateHit(string $id): array
     {
@@ -108,74 +113,86 @@ final class Friends
         // Fast path: a plain read (no writer lock in WAL) short-circuits a
         // client that is already cooling down - the common abusive case -
         // without contending for the single writer. The authoritative check
-        // is repeated inside the transaction below against a race.
-        $st = $db->prepare('SELECT friend_req_cooldown_until FROM players WHERE id = ?');
+        // is repeated inside the transaction below against a race. The spam
+        // ban (see friend.php) is read off the same row and outranks the
+        // throttle: a banned id is turned away here, before any transaction,
+        // so it costs no writer take however hard it hammers.
+        $st = $db->prepare('SELECT friend_req_cooldown_until, friend_ban_until FROM players WHERE id = ?');
         $st->execute([$id]);
-        $cd0 = (int)$st->fetchColumn();
+        $row = $st->fetch();
         $st->closeCursor();
+        $ban = (int)($row['friend_ban_until'] ?? 0);
+        if ($ban > $now) {
+            return ['blocked' => true, 'retry' => $ban - $now, 'why' => 'banned', 'tripped' => false, 'escalated' => false];
+        }
+        $cd0 = (int)($row['friend_req_cooldown_until'] ?? 0);
         if ($cd0 > $now) {
             return ['blocked' => true, 'retry' => $cd0 - $now, 'why' => 'cooldown', 'tripped' => false, 'escalated' => false];
         }
         // Serialize the read-decide-write so two bursts cannot both slip past
         // the streak check (see Friends::request for the same guard).
-        $db->exec('BEGIN IMMEDIATE');
-        try {
-            $st = $db->prepare(
-                'SELECT friend_req_last, friend_req_streak, friend_req_cooldown_until, friend_req_last_trip FROM players WHERE id = ?'
-            );
-            $st->execute([$id]);
-            $row = $st->fetch();
-            $st->closeCursor();
-            $last = (int)($row['friend_req_last'] ?? 0);
-            $streak = (int)($row['friend_req_streak'] ?? 0);
-            $cd = (int)($row['friend_req_cooldown_until'] ?? 0);
-            $lastTrip = (int)($row['friend_req_last_trip'] ?? 0);
-            if ($cd > $now) {
+        // Re-runnable: everything is read again under the lock.
+        return Db::retry(static function () use ($db, $id, $now, $interval, $burst, $cooldown, $repeatWindow, $cooldownHard): array {
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                $st = $db->prepare(
+                    'SELECT friend_req_last, friend_req_streak, friend_req_cooldown_until, friend_req_last_trip FROM players WHERE id = ?'
+                );
+                $st->execute([$id]);
+                $row = $st->fetch();
+                $st->closeCursor();
+                $last = (int)($row['friend_req_last'] ?? 0);
+                $streak = (int)($row['friend_req_streak'] ?? 0);
+                $cd = (int)($row['friend_req_cooldown_until'] ?? 0);
+                $lastTrip = (int)($row['friend_req_last_trip'] ?? 0);
+                if ($cd > $now) {
+                    $db->exec('COMMIT');
+                    return ['blocked' => true, 'retry' => $cd - $now, 'why' => 'cooldown', 'tripped' => false, 'escalated' => false];
+                }
+                // A real pause (idle for a whole cooldown) starts the streak over.
+                if ($last > 0 && $now - $last >= $cooldown) {
+                    $streak = 0;
+                }
+                $tooFast = $last > 0 && $now - $last < $interval;
+                $streak++;
+                $newCd = 0;
+                $newTrip = $lastTrip;
+                $why = '';
+                $tripped = false;
+                $escalated = false;
+                $dur = $cooldown;
+                if ($streak > $burst) {
+                    // A burst trip. If this id already tripped within the
+                    // repeat window, it came straight back and burst again -
+                    // a persistent abuser - so escalate from the short
+                    // cooldown to the long one.
+                    $escalated = $lastTrip > 0 && $now - $lastTrip < $repeatWindow;
+                    $dur = $escalated ? $cooldownHard : $cooldown;
+                    $newCd = $now + $dur;
+                    $newTrip = $now;
+                    $why = 'cooldown';
+                    $tripped = true;
+                } elseif ($tooFast) {
+                    $why = 'interval';
+                }
+                $db->prepare(
+                    'UPDATE players SET friend_req_last = ?, friend_req_streak = ?, friend_req_cooldown_until = ?, friend_req_last_trip = ? WHERE id = ?'
+                )->execute([$now, $streak, $newCd, $newTrip, $id]);
                 $db->exec('COMMIT');
-                return ['blocked' => true, 'retry' => $cd - $now, 'why' => 'cooldown', 'tripped' => false, 'escalated' => false];
+                if ($why === 'cooldown') {
+                    return ['blocked' => true, 'retry' => $dur, 'why' => 'cooldown', 'tripped' => $tripped, 'escalated' => $escalated];
+                }
+                if ($why === 'interval') {
+                    return ['blocked' => true, 'retry' => max(1, $interval), 'why' => 'interval', 'tripped' => false, 'escalated' => false];
+                }
+                return ['blocked' => false, 'retry' => 0, 'why' => '', 'tripped' => false, 'escalated' => false];
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
             }
-            // A real pause (idle for a whole cooldown) starts the streak over.
-            if ($last > 0 && $now - $last >= $cooldown) {
-                $streak = 0;
-            }
-            $tooFast = $last > 0 && $now - $last < $interval;
-            $streak++;
-            $newCd = 0;
-            $newTrip = $lastTrip;
-            $why = '';
-            $tripped = false;
-            $escalated = false;
-            $dur = $cooldown;
-            if ($streak > $burst) {
-                // A burst trip. If this id already tripped within the repeat
-                // window, it came straight back and burst again - a persistent
-                // abuser - so escalate from the short cooldown to the long one.
-                $escalated = $lastTrip > 0 && $now - $lastTrip < $repeatWindow;
-                $dur = $escalated ? $cooldownHard : $cooldown;
-                $newCd = $now + $dur;
-                $newTrip = $now;
-                $why = 'cooldown';
-                $tripped = true;
-            } elseif ($tooFast) {
-                $why = 'interval';
-            }
-            $db->prepare(
-                'UPDATE players SET friend_req_last = ?, friend_req_streak = ?, friend_req_cooldown_until = ?, friend_req_last_trip = ? WHERE id = ?'
-            )->execute([$now, $streak, $newCd, $newTrip, $id]);
-            $db->exec('COMMIT');
-            if ($why === 'cooldown') {
-                return ['blocked' => true, 'retry' => $dur, 'why' => 'cooldown', 'tripped' => $tripped, 'escalated' => $escalated];
-            }
-            if ($why === 'interval') {
-                return ['blocked' => true, 'retry' => max(1, $interval), 'why' => 'interval', 'tripped' => false, 'escalated' => false];
-            }
-            return ['blocked' => false, 'retry' => 0, 'why' => '', 'tripped' => false, 'escalated' => false];
-        } catch (Throwable $e) {
-            if ($db->inTransaction()) {
-                $db->exec('ROLLBACK');
-            }
-            throw $e;
-        }
+        });
     }
 
     /**
@@ -185,9 +202,9 @@ final class Friends
     public static function forceAccept(string $me, string $peer): void
     {
         [$a, $b] = $me < $peer ? [$me, $peer] : [$peer, $me];
-        Db::get()->prepare(
+        Db::retry(static fn() => Db::get()->prepare(
             'UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ? AND state = ?'
-        )->execute(['accepted', time(), $a, $b, 'pending']);
+        )->execute(['accepted', time(), $a, $b, 'pending']));
         FriendFeed::forgetPair($a, $b);
     }
 
@@ -195,19 +212,23 @@ final class Friends
     public static function accept(string $me, string $peer): bool
     {
         [$a, $b] = $me < $peer ? [$me, $peer] : [$peer, $me];
-        $st = Db::get()->prepare(
-            'UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ? AND state = ? AND requester = ?'
-        );
-        $st->execute(['accepted', time(), $a, $b, 'pending', $peer]);
+        $moved = (bool)Db::retry(static function () use ($a, $b, $peer): bool {
+            $st = Db::get()->prepare(
+                'UPDATE friends SET state = ?, updated = ? WHERE a = ? AND b = ? AND state = ? AND requester = ?'
+            );
+            $st->execute(['accepted', time(), $a, $b, 'pending', $peer]);
+            return $st->rowCount() > 0;
+        });
         FriendFeed::forgetPair($a, $b);
-        return $st->rowCount() > 0;
+        return $moved;
     }
 
     /** Removes the relation entirely (declines a request or unfriends). */
     public static function remove(string $me, string $peer): void
     {
         [$a, $b] = $me < $peer ? [$me, $peer] : [$peer, $me];
-        Db::get()->prepare('DELETE FROM friends WHERE a = ? AND b = ?')->execute([$a, $b]);
+        Db::retry(static fn() => Db::get()->prepare('DELETE FROM friends WHERE a = ? AND b = ?')
+            ->execute([$a, $b]));
         FriendFeed::forgetPair($a, $b);
     }
 
