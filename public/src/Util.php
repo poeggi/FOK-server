@@ -341,6 +341,7 @@ final class Util
     private static array $deferred = [];
     private static ?string $caller = null;
     private static int $depth = 0;
+    private static ?string $action = null;
 
     /**
      * Runs $fn AFTER the response has been handed to the client. The
@@ -370,6 +371,20 @@ final class Util
     public static function cancelDeferred(): void
     {
         self::$deferred = [];
+    }
+
+    /**
+     * Names what the request was asked for, beside the script: the action of
+     * an endpoint that switches on one (event, tournament, items, friend,
+     * match) or the type of a signal. 'event.php' alone cannot tell a pass
+     * read from a join on a worst-case row. Only a plain word is taken, so
+     * the list can never carry what a client typed.
+     */
+    public static function noteAction(mixed $action): void
+    {
+        if (is_string($action) && preg_match('/^[a-z][a-z-]{0,15}$/', $action) === 1) {
+            self::$action = $action;
+        }
     }
 
     /**
@@ -596,6 +611,9 @@ final class Util
             's' => self::script(),
             'ip' => self::clientIp(),
         ];
+        if (self::$action !== null) {
+            $who['a'] = self::$action;
+        }
         if (self::$caller !== null) {
             $who['id'] = self::$caller;
             if (self::$depth > 0) {

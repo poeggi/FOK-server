@@ -46,6 +46,7 @@ Util::noteCaller($id);
 if (!is_string($type) || !in_array($type, Signals::TYPES, true)) {
     Util::fail('invalid type');
 }
+Util::noteAction($type);
 if (!is_string($payload) || strlen($payload) > FOK_SIGNAL_MAX_PAYLOAD) {
     Util::fail('invalid payload');
 }

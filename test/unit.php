@@ -2980,6 +2980,16 @@ ok(Counters::worstList('t_us')[9]['v'] === 3000,
 Counters::clearHistory();
 ok(Counters::worstList('t_us') === [], 'clearing the statistics clears it as well');
 
+// Util::who names the request for both worst-case lists: the script, and
+// the action where the endpoint switches on one (Util::noteAction), so a
+// row can tell a pass read from a join. Only a plain word is taken - the
+// list must never carry what a client typed.
+Util::noteAction('pass');
+ok((Util::who()['a'] ?? null) === 'pass', 'a noted action rides the worst-case row');
+Util::noteAction('<b>x</b>');
+Util::noteAction(['pass']);
+ok((Util::who()['a'] ?? null) === 'pass', 'anything but a plain word is ignored');
+
 // ---- Friend presence deltas (API 4.6) --------------------------------
 // The entries are shared memory, so a test that needs a friend who last beat
 // three minutes ago writes one directly rather than waiting for a window.

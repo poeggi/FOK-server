@@ -393,6 +393,15 @@ function partyCell(v, name) {
     return v ? hexCell(v, 'muted') : el('td', 'muted', '-');
 }
 
+// The script a worst-case row names, and beside it the action it was asked
+// for where the endpoint switches on one (Util::noteAction): 'event.php'
+// alone cannot say whether a pass read or a join stood in the queue.
+function scriptCell(r) {
+    const td = el('td', '', r.s || '-');
+    if (r.a) td.append(' ', el('span', 'muted', r.a));
+    return td;
+}
+
 // IPv6 is too wide for a table column: show the first and last group with
 // an ellipsis and the full address on hover. IPv4 is short, shown whole.
 function ipCell(ip) {
@@ -1088,7 +1097,7 @@ function worstQueue(rows) {
         // (see Util::claimWorker). "new" on every row means the pool keeps
         // going cold, not that it is short of workers.
         tr.append(r.w ? el('td', '', 'new') : el('td', 'muted', 'reused'));
-        tr.append(el('td', '', r.s || '-'));
+        tr.append(scriptCell(r));
         // Only the endpoints that take an id in the query string can name a
         // player here; a POST is identified by its address (Util::queueWho).
         tr.append(r.id ? idCell(r.id, r.name) : el('td', 'muted', '-'));
@@ -1135,7 +1144,7 @@ function worstDb(rows, skipped) {
             tr.append(r.lk ? el('td', 'num', ms) : el('td', 'muted num', '-'));
             tr.append(r.lk ? el('td', 'muted num', '-') : el('td', 'num', ms));
             tr.append(el('td', '', r.q || '-'));
-            tr.append(el('td', '', r.s || '-'));
+            tr.append(scriptCell(r));
             tr.append(r.id ? idCell(r.id, r.name) : el('td', 'muted', '-'));
             t.append(tr);
         }

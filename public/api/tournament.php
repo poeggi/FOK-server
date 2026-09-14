@@ -63,6 +63,7 @@ if (!in_array($action, ['create', 'join', 'leave', 'start', 'continue', 'state',
         'result', 'standdown', 'orphan'], true)) {
     Util::fail('invalid action');
 }
+Util::noteAction($action);
 Util::bump('tournament');
 Presence::touch($id, Util::clientIp());
 

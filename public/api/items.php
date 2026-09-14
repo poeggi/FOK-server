@@ -46,6 +46,7 @@ $action = $body['action'] ?? null;
 if (!in_array($action, ['list', 'mint', 'seed', 'claim'], true)) {
     Util::fail('invalid action');
 }
+Util::noteAction($action);
 Util::bump('items');
 
 /**

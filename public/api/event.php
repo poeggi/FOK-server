@@ -61,6 +61,7 @@ if (!in_array($action, ['join', 'state', 'members', 'pass', 'leave', 'monitor',
         'roster', 'access', 'run', 'pause', 'end'], true)) {
     Util::fail('invalid action');
 }
+Util::noteAction($action);
 Util::bump('event');
 Presence::touch($id, Util::clientIp());
 

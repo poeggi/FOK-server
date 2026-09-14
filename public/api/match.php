@@ -34,6 +34,7 @@ if (!Util::isValidId($id)) {
 }
 Util::noteCaller($id);
 $action = $body['action'] ?? '';
+Util::noteAction($action);
 
 Presence::touch($id, Util::clientIp());
 
