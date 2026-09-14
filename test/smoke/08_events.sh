@@ -470,10 +470,20 @@ expect "the reserved event is deleted again" '"ok":true' "$R"
 # has not started. A PASS does not: it is minted from the clock by a member,
 # and an upcoming event mints none. The achievement waits for the start as
 # well - joining something that has not happened earns nothing yet.
-R=$(evadmin event_create "name=srv-CI-soon" "organizer=$ID1" "closed=0" \
+# Under an eid the operator chose. The ids here are FIXED, never generated:
+# a run that died leaves them behind on a persistent database, so the
+# section clears them before it starts.
+evadmin event_delete "eid=SRV7" > /dev/null
+evadmin event_delete "eid=SRV8" > /dev/null
+R=$(evadmin event_create "name=srv-CI-soon" "organizer=$ID1" "closed=0" "eid=SRV7" \
     "mode=active" "ach_name=EARLY BIRD" "ach_desc=Joined srv-CI-soon")
 EID5=$(evfield "$R" eid)
 expect "an operator opens an event that will be scanned early" '"ok":true' "$R"
+expect "under the eid it chose" '"eid":"SRV7"' "$R"
+R=$(evadmin event_create "name=srv-CI-twice" "eid=SRV7")
+expect "which no second event can take" '"error":"eid taken"' "$R"
+R=$(evadmin event_create "name=srv-CI-lower" "eid=srv7")
+expect "and an eid outside the poster alphabet is refused" '"error":"invalid eid"' "$R"
 R=$(curl -s -b "$COOKIES" "$BASE/admin/event.php?eid=$EID5")
 KEY5=$(echo "$R" | grep -oE "class=\"code pixel\">[0-9A-Z]{11}<" | grep -oE "[0-9A-Z]{11}" | head -1 || true)
 expect "whose poster carries a key" "$KEY5" "$R"
@@ -500,11 +510,33 @@ expect "while a pass is still refused before the start" '"error":"not started"' 
 R=$(evact "$ID2" pass "$EID5")
 expect "and an upcoming event mints none either" '"error":"not started"' "$R"
 
+# While it is upcoming nothing outside the server carries the eid, so the
+# operator may still change it: every row moves, the old eid names nothing,
+# and a client learns the new one from its events list.
+R=$(evadmin event_rename "eid=$EID5" "to=SRV8")
+expect "the operator renames an upcoming event" '"eid":"SRV8"' "$R"
+R=$(evact "$ID2" state "$EID5")
+expect "the old eid names nothing" '"error":"no such event"' "$R"
+R=$(evact "$ID2" state "SRV8")
+expect "and the early member is in the event under its new one" '"you":{"state":"member"' "$R"
+R=$(curl -s "$BASE/api/poll.php?id=$ID2&ev=1")
+expect "which its events list now says" '"eid":"SRV8"' "$R"
+refute "in place of the old" "\"eid\":\"$EID5\"" "$R"
+R=$(evadmin event_rename "eid=SRV8" "to=$EID1")
+expect "an eid another event holds is refused" '"error":"eid taken"' "$R"
+R=$(evadmin event_rename "eid=SRV8" "to=SRV8")
+expect "and so is the eid it already has" '"error":"same eid"' "$R"
+R=$(evadmin event_rename "eid=$EID5" "to=SRV9")
+expect "the old eid is gone from the dashboard too" '"error":"unknown event"' "$R"
+EID5=SRV8
+
 R=$(evadmin event_edit "eid=$EID5" "starts=$((NOW5 - 60))")
 expect "the event's start moment passes" '"ok":true' "$R"
 R=$(evact "$ID2" state "$EID5")
 expect "and the early member is simply in it" '"you":{"state":"member"' "$R"
 expect "with the achievement arriving on the first read after that" '"ach":' "$R"
+R=$(evadmin event_rename "eid=$EID5" "to=SRV9")
+expect "once started, the eid is in its players' hands and stays" '"error":"started"' "$R"
 # A scheduled end that has passed ends the event on its own; the restart
 # clears it, or the next read would end the event again.
 R=$(evadmin event_edit "eid=$EID5" "ends=$((NOW5 - 30))")

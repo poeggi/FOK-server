@@ -2016,8 +2016,11 @@ function utcValue(field) {
 }
 
 // Create and edit are ONE form: the fields are identical, and the only
-// difference is whether an eid goes with them.
-function eventForm(existing) {
+// difference is whether an eid goes with them. onSaved(eid) is told which
+// eid the event answers to afterwards - the id is the one field an edit
+// can move.
+const EID_RE = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
+function eventForm(existing, onSaved) {
     const d = existing || {};
     const { overlay, head, title, close, body } = makeModal(
         existing ? 'Edit event' : 'New event', true);
@@ -2041,6 +2044,17 @@ function eventForm(existing) {
         i.maxLength = max;
         return i;
     };
+    // The id is the operator's to name, but only until the event starts:
+    // from then on it is in the players' hands - the pass URL, the
+    // achievement id, the tournament's tag - and the server refuses.
+    const eidField = text(d.eid, 4);
+    eidField.oninput = () => { eidField.value = eidField.value.toUpperCase(); };
+    const fixed = existing && d.state !== 'upcoming';
+    eidField.disabled = !!fixed;
+    field('eid', 'Id', eidField, fixed
+        ? 'Fixed once the event has started: its passes, achievement and tournaments carry it.'
+        : 'Four characters, no 0, O, 1, I or L. ' + (existing
+            ? 'Can be changed until the event starts.' : 'Empty: assigned.'));
     field('name', 'Name', text(d.name, 40));
     field('descr', 'Description', text(d.descr, 500));
     const door = el('select');
@@ -2095,14 +2109,38 @@ function eventForm(existing) {
             err.hidden = false;
             return;
         }
+        const id = fields.eid.disabled ? '' : fields.eid.value.trim();
+        if (id && !EID_RE.test(id)) {
+            err.textContent = 'An id is four characters, without 0, O, 1, I or L.';
+            err.hidden = false;
+            return;
+        }
+        // The answer is READ: a refused save must not close the form and
+        // say nothing. The id moves FIRST and on its own, so a taken one
+        // refuses before anything else has changed.
+        const said = (r) => {
+            if (!r || r.ok !== true) {
+                throw new Error(({ 'eid taken': 'that id belongs to another event',
+                    'started': 'the event has started, its id is fixed' })[r && r.error]
+                    || (r && r.error) || 'refused');
+            }
+            return r;
+        };
         if (existing) payload.eid = existing.eid;
+        else if (id) payload.eid = id;
         save.disabled = true;
         try {
-            const r = await api(existing ? 'event_edit' : 'event_create',
-                { method: 'POST', body: form(payload) });
+            if (existing && id && id !== existing.eid) {
+                said(await api('event_rename',
+                    { method: 'POST', body: form({ eid: existing.eid, to: id }) }));
+                existing.eid = payload.eid = id;
+            }
+            const r = said(await api(existing ? 'event_edit' : 'event_create',
+                { method: 'POST', body: form(payload) }));
             closeModal(overlay);
             refreshModule('events');
             if (!existing && r.eid) showEvent(r.eid);
+            if (existing && onSaved) onSaved(existing.eid);
         } catch (e) {
             err.textContent = 'Error: ' + e.message;
             err.hidden = false;
@@ -2163,7 +2201,13 @@ function renderEventBody(body, overlay, eid, d) {
     print.onclick = () => window.open('event.php?eid=' + eid, '_blank', 'noopener');
     bar.append(print);
     const edit = el('button', 'small', 'Edit');
-    edit.onclick = () => eventForm(d);
+    // A saved edit shows in this popup at once; one that moved the id
+    // reopens it under the new one, since the old one answers nothing.
+    edit.onclick = () => eventForm(d, (now) => {
+        if (now === eid) return showEventReload(body, overlay, eid);
+        closeModal(overlay);
+        return showEvent(now);
+    });
     bar.append(edit);
     if (!d.scheduled) {
         if (d.state !== 'active' && d.state !== 'ended') {

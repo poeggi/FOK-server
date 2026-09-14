@@ -464,9 +464,16 @@ admin/api.php, all POST where they write, all in AUDIT:
                            asked, joined, via, online, last_seen),
                            archive, the live tournament (tid) if any
     event_create           name, descr?, organizer?, closed?, starts?,
-                           ends?, ach_name?, ach_desc?, ach_icon?
+                           ends?, ach_name?, ach_desc?, ach_icon?,
+                           eid? (the operator's own; 409 'eid taken')
     event_edit             same fields; the key is never edited (new
                            event = new key)
+    event_rename           eid, to: the eid moves with every row that
+                           names it, in one transaction. Upcoming only
+                           (409 'started'): after the start the eid is
+                           in the players' hands - the pass URL, the
+                           achievement id, the tournament tag. 409
+                           'eid taken', 409 'tournament running'.
     event_run / event_pause / event_end    (scheduled event: end only,
                            the other two 409 'scheduled')
     event_reopen           ended only (409 'not ended'); active again,

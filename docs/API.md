@@ -2704,6 +2704,13 @@ they were told to come back and remember to scan again.
             valid for 20 s and no row is stored for it.
     ach id  `ev_<eid>` - the achievement joining grants.
 
+An operator can name the eid when opening an event and change it while
+the event is `upcoming`. The roster and the archive move with it and
+nothing is pushed: a client holding the old eid is answered 404 on its
+next read and finds the new one in `events`. After the start the eid
+never changes - passes, the achievement id and the tournament tag
+carry it.
+
 `key` and `pass` are both called `code` on the wire and the server tells
 them apart by LENGTH (16 or 6). A client never has to know which it
 scanned.

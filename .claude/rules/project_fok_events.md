@@ -13,6 +13,18 @@ code without reading either.
     key   11 chars   printed on the poster, long-lived, NAMES ITS OWN EVENT
     pass   6 chars   derived from the clock, valid 20 s, no row stored
 
+The eid is the OPERATOR'S TO NAME (1.15.13): on `event_create`, or by
+`event_rename` while the event is UPCOMING. `Events::rename` moves the
+events, event_members and event_results rows in one transaction with the
+free check under the same lock, and drops the card, count, monitor and
+every member's `em:` cache. The admin action holds the gate, not the
+class: after the start the eid is in the players' hands - the pass URL,
+the achievement `ev_<eid>` (a rename would grant it twice), the live
+tournament's tag - so it answers 409 `started`. Nothing is pushed: a
+client keeps no copy, its next `events` read carries the new eid, and
+the old one answers 404 like any eid it has no row under. Admin-only;
+the game API did not move.
+
 Every QR an event shows has to be read by the GAME'S OWN SCANNER, which falls
 back to a decoder built for a fixed version 3 at level L wherever the browser
 offers no BarcodeDetector: 53 text bytes, no more. `GAME_URL#event=` is 42 of

@@ -39,6 +39,13 @@ final class Events
 
     public const EID_LEN = 4;
 
+    /** Four characters of the alphabet, the shape every eid has. */
+    public static function isEid(mixed $v): bool
+    {
+        return is_string($v)
+            && preg_match('/^[' . self::ALPHABET . ']{' . self::EID_LEN . '}$/', $v) === 1;
+    }
+
     /**
      * The printed key: a standalone token that names its own event, so the
      * poster URL is `#event=<key>` with no eid beside it. Eleven characters
@@ -599,16 +606,18 @@ final class Events
 
     /**
      * Opens an event. The operator's call; the eid is retried until it is
-     * free, which at 31^4 it is on the first try.
+     * free, which at 31^4 it is on the first try. An eid the operator
+     * chose is the one candidate, and a taken one is a refusal.
      * @return array the new card
      */
     public static function create(array $f): array
     {
         $db = Db::get();
         $now = time();
+        $custom = self::isEid($f['eid'] ?? null) ? (string)$f['eid'] : null;
         $eid = '';
-        for ($try = 0; $try < 20; $try++) {
-            $cand = self::randomCode(self::EID_LEN);
+        for ($try = 0; $try < ($custom === null ? 20 : 1); $try++) {
+            $cand = $custom ?? self::randomCode(self::EID_LEN);
             $st = $db->prepare('SELECT 1 FROM events WHERE eid = ?');
             $st->execute([$cand]);
             $taken = (bool)$st->fetchColumn();
@@ -619,7 +628,7 @@ final class Events
             }
         }
         if ($eid === '') {
-            throw new RuntimeException('no free event id');
+            throw new RuntimeException($custom === null ? 'no free event id' : 'eid taken');
         }
         // The key IS the lookup now, so it has to be unique. At 2^54 a
         // collision is not going to happen; being sure costs one SELECT.
@@ -746,6 +755,60 @@ final class Events
                 . ' WHERE eid = ?')->execute($args);
         });
         self::forgetCard($eid);
+    }
+
+    /**
+     * Gives an event a new eid. Every row that names it moves in ONE
+     * transaction, and the check that the new one is free runs under the
+     * same lock, so two operators cannot both take it; false says it was
+     * taken. WHETHER the event may move is the caller's question - once
+     * it has started the eid is in its players' hands - this only makes
+     * sure nothing is left pointing at the old one: the rows, and the
+     * caches of the event and of everybody in it.
+     */
+    public static function rename(string $eid, string $to): bool
+    {
+        $ids = [];
+        $moved = (bool)Db::retry(static function () use ($eid, $to, &$ids): bool {
+            $db = Db::get();
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                $st = $db->prepare('SELECT 1 FROM events WHERE eid = ?');
+                $st->execute([$to]);
+                $taken = (bool)$st->fetchColumn();
+                $st->closeCursor();
+                if ($taken) {
+                    $db->exec('ROLLBACK');
+                    return false;
+                }
+                $st = $db->prepare('SELECT id FROM event_members WHERE eid = ?');
+                $st->execute([$eid]);
+                $ids = array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN));
+                $st->closeCursor();
+                foreach (['events', 'event_members', 'event_results'] as $table) {
+                    $db->prepare("UPDATE $table SET eid = ? WHERE eid = ?")
+                        ->execute([$to, $eid]);
+                }
+                $db->exec('COMMIT');
+                return true;
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
+            }
+        });
+        if (!$moved) {
+            return false;
+        }
+        self::forgetCard($eid);
+        self::forgetCard($to);
+        self::forgetCounts($eid);
+        self::forgetMonitor($eid);
+        foreach ($ids as $id) {
+            self::forgetMine($id);
+        }
+        return true;
     }
 
     /**

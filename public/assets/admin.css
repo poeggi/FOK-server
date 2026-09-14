@@ -136,6 +136,10 @@ input, button {
     padding: 8px 10px;
 }
 
+/* A field that cannot be edited right now reads as such, at the same
+   strength a disabled icon button has. */
+input:disabled { opacity: 0.4; }
+
 button { cursor: pointer; }
 button:hover { border-color: var(--accent); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

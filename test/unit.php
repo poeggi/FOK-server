@@ -48,6 +48,7 @@ require_once __DIR__ . '/../public/src/Stats.php';
 require_once __DIR__ . '/../public/src/EventView.php';
 require_once __DIR__ . '/../public/src/Qr.php';
 require_once __DIR__ . '/../public/src/Events.php';
+require_once __DIR__ . '/../public/src/EventAdmin.php';
 require_once __DIR__ . '/../public/src/AdminData.php';
 require_once __DIR__ . '/../public/src/Housekeeping.php';
 
@@ -3516,6 +3517,34 @@ ok(count(Events::listFor('44447e57', 5000)) === 1, 'the player is in an event');
 Events::forgetPlayer('44447e57');
 ok(count(Events::listFor('44447e57', 5000)) === 0, 'expiry takes the roster row');
 ok(count(Events::archiveOf($evOpen['eid'])) === 1, 'and leaves the record of the evening standing');
+
+// The eid is the operator's to name: on creation, or by a rename that
+// moves every row naming the event in one transaction. Whether the event
+// MAY move (only while upcoming) is the admin action's gate, not this one's.
+ok(Events::isEid('UNT7') && !Events::isEid('unt7') && !Events::isEid('UNT0')
+    && !Events::isEid('UNT77') && !Events::isEid(null),
+    'an eid is exactly four characters of the poster alphabet');
+$evWas = $evOpen['eid'];
+ok(Events::rename($evWas, 'UNT7'), 'an operator renames an event');
+ok(Events::card($evWas) === null, 'and the old eid names nothing');
+$evOpen = Events::card('UNT7') ?? [];
+ok(($evOpen['name'] ?? '') === 'srv-CI-open', 'while the new one is the same event');
+ok(Events::isMember('UNT7', '11117e57'), 'with its organizer still seated');
+ok(Events::rowOf($evWas, '11117e57') === null, 'and no longer under the old eid');
+ok(count(Events::archiveOf('UNT7')) === 1, 'the archive moved with it');
+ok(count(Events::archiveOf($evWas)) === 0, 'and left nothing behind');
+ok(!Events::rename('UNT7', $evClosed['eid']), 'an eid another event holds is refused');
+ok(Events::card('UNT7') !== null, 'and the refusal moves nothing');
+$evNamed = Events::create(['name' => 'srv-CI-named', 'eid' => 'UNT8']);
+ok($evNamed['eid'] === 'UNT8', 'an event can be opened under a chosen eid');
+$evDup = null;
+try {
+    Events::create(['name' => 'srv-CI-dup', 'eid' => 'UNT8']);
+} catch (RuntimeException $e) {
+    $evDup = $e->getMessage();
+}
+ok($evDup === 'eid taken', 'and a second event cannot take it');
+EventAdmin::delete('UNT8');
 
 /**
  * Reads a QR matrix back the way a scanner does: unmask, follow the same

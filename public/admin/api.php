@@ -72,7 +72,7 @@ function requireTid(string $src = 'GET'): string
 function requireEid(string $src = 'GET'): string
 {
     $eid = (string)($src === 'POST' ? ($_POST['eid'] ?? '') : ($_GET['eid'] ?? ''));
-    if (preg_match('/^[' . Events::ALPHABET . ']{4}$/', $eid) !== 1) {
+    if (!Events::isEid($eid)) {
         Util::fail('invalid eid');
     }
     return $eid;
@@ -195,6 +195,7 @@ const AUDIT = [
     'tourney_abort' => 'ended the tournament',
     'event_create' => 'opened the event',
     'event_edit' => 'edited the event',
+    'event_rename' => 'renamed the event',
     'event_run' => 'ran the event',
     'event_pause' => 'paused the event',
     'event_end' => 'ended the event',
@@ -215,7 +216,10 @@ if (isset(AUDIT[$action])) {
     $target = (string)($_POST['eid'] ?? $_POST['id'] ?? $_POST['tid'] ?? $_POST['pins']
         ?? $_GET['id'] ?? '');
     $target = substr((string)preg_replace('/[^0-9a-zA-Z,_.-]/', '', $target), 0, 64);
-    $what = AUDIT[$action] . ($target === '' ? '' : ' ' . $target);
+    // A rename names where the target went as well.
+    $to = substr((string)preg_replace('/[^0-9a-zA-Z]/', '', (string)($_POST['to'] ?? '')), 0, 8);
+    $what = AUDIT[$action] . ($target === '' ? '' : ' ' . $target)
+        . ($to === '' ? '' : ' to ' . $to);
     // Written when the response is on its way out, not here: an action that
     // gets rejected (a GET where POST is required, an invalid id) changed
     // nothing, and a trail claiming otherwise is worse than no trail.
@@ -486,8 +490,46 @@ switch ($action) {
 
     case 'event_create':
         requirePost();
-        $card = Events::create(adminEventFields());
+        $fields = adminEventFields();
+        // The operator may name the eid; empty means assigned.
+        if (trim((string)($_POST['eid'] ?? '')) !== '') {
+            $fields['eid'] = requireEid('POST');
+            if (Events::card($fields['eid']) !== null) {
+                Util::fail('eid taken', 409);
+            }
+        }
+        $card = Events::create($fields);
         Util::jsonOut(['ok' => true, 'eid' => $card['eid']]);
+
+    case 'event_rename':
+        // Only while the event is UPCOMING: after the start the eid is in
+        // its players' hands - the pass URL, the achievement id, the
+        // tournament's tag - and moving it under them would leave every
+        // member's client on a room that answers 404 and every achievement
+        // granted twice. The key never moves at all (see event_edit).
+        requirePost();
+        $eid = requireEid('POST');
+        $to = (string)($_POST['to'] ?? '');
+        if (!Events::isEid($to)) {
+            Util::fail('invalid eid');
+        }
+        $card = Events::card($eid);
+        if ($card === null) {
+            Util::fail('unknown event', 404);
+        }
+        if ($to === $eid) {
+            Util::fail('same eid');
+        }
+        if (Events::stateOf($card) !== 'upcoming') {
+            Util::fail('started', 409);
+        }
+        if (TourneyStore::usable() && TourneyStore::liveForEvent($eid) !== null) {
+            Util::fail('tournament running', 409);
+        }
+        if (!Events::rename($eid, $to)) {
+            Util::fail('eid taken', 409);
+        }
+        Util::jsonOut(['ok' => true, 'eid' => $to]);
 
     case 'event_edit':
         // The key is never edited: a new key is a new event, because the old
