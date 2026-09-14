@@ -81,7 +81,7 @@ if ($action === 'join') {
         Util::fail('invalid code');
     }
     $A = Events::ALPHABET;
-    if (preg_match('/^[' . $A . ']{4}\\.[' . $A . ']{6}$/', $code) === 1) {
+    if (preg_match('/^[' . Events::EID_ALPHABET . ']{4}\\.[' . $A . ']{6}$/', $code) === 1) {
         $eid = substr($code, 0, 4);
         $code = substr($code, 5);
         $card = Events::card($eid);
@@ -95,7 +95,7 @@ if ($action === 'join') {
     }
 } else {
     $eid = $body['eid'] ?? null;
-    if (!is_string($eid) || preg_match('/^[' . Events::ALPHABET . ']{4}$/', $eid) !== 1) {
+    if (!Events::isEid($eid)) {
         Util::fail('invalid eid');
     }
     $card = Events::card($eid);

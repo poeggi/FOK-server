@@ -39,11 +39,19 @@ final class Events
 
     public const EID_LEN = 4;
 
-    /** Four characters of the alphabet, the shape every eid has. */
+    /**
+     * What an eid may be made of: the poster alphabet plus 0 and 1, so an
+     * operator can name an event after a year or a number. An ASSIGNED
+     * eid stays within ALPHABET - it is never typed, but it is read out,
+     * and a random one gains nothing from a confusable digit.
+     */
+    public const EID_ALPHABET = '01' . self::ALPHABET;
+
+    /** Four characters of the eid alphabet, the shape every eid has. */
     public static function isEid(mixed $v): bool
     {
         return is_string($v)
-            && preg_match('/^[' . self::ALPHABET . ']{' . self::EID_LEN . '}$/', $v) === 1;
+            && preg_match('/^[' . self::EID_ALPHABET . ']{' . self::EID_LEN . '}$/', $v) === 1;
     }
 
     /**

@@ -14,7 +14,15 @@ code without reading either.
     pass   6 chars   derived from the clock, valid 20 s, no row stored
 
 The eid is the OPERATOR'S TO NAME (1.15.13): on `event_create`, or by
-`event_rename` while the event is UPCOMING. `Events::rename` moves the
+`event_rename` while the event is UPCOMING. A NAMED eid may carry 0 and
+1 (`Events::EID_ALPHABET`, 4.16 / 1.16.0) - the poster alphabet drops
+them because a key is typed back, and an eid never is; I, L and O stay
+out. An ASSIGNED eid stays within ALPHABET, so an event nobody renamed
+reads on a client built before 4.16. THAT WAS A CONTRACT MOVE: the
+client checks the eid's shape in three regexes (the pass URL parse in
+assets.js, the `ev_<eid>` achievement id in events.js and storage.js),
+which must accept [0-9A-Z]{4}. `Events::isEid` is the ONE shape check
+on the server; nothing else spells the class out. `Events::rename` moves the
 events, event_members and event_results rows in one transaction with the
 free check under the same lock, and drops the card, count, monitor and
 every member's `em:` cache. The admin action holds the gate, not the
@@ -22,8 +30,8 @@ class: after the start the eid is in the players' hands - the pass URL,
 the achievement `ev_<eid>` (a rename would grant it twice), the live
 tournament's tag - so it answers 409 `started`. Nothing is pushed: a
 client keeps no copy, its next `events` read carries the new eid, and
-the old one answers 404 like any eid it has no row under. Admin-only;
-the game API did not move.
+the old one answers 404 like any eid it has no row under. The actions
+are admin-only; the alphabet is the contract's.
 
 Every QR an event shows has to be read by the GAME'S OWN SCANNER, which falls
 back to a decoder built for a fixed version 3 at level L wherever the browser

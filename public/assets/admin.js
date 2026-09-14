@@ -2019,7 +2019,7 @@ function utcValue(field) {
 // difference is whether an eid goes with them. onSaved(eid) is told which
 // eid the event answers to afterwards - the id is the one field an edit
 // can move.
-const EID_RE = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
+const EID_RE = /^[0-9ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
 function eventForm(existing, onSaved) {
     const d = existing || {};
     const { overlay, head, title, close, body } = makeModal(
@@ -2053,7 +2053,7 @@ function eventForm(existing, onSaved) {
     eidField.disabled = !!fixed;
     field('eid', 'Id', eidField, fixed
         ? 'Fixed once the event has started: its passes, achievement and tournaments carry it.'
-        : 'Four characters, no 0, O, 1, I or L. ' + (existing
+        : 'Four characters, no I, L or O. ' + (existing
             ? 'Can be changed until the event starts.' : 'Empty: assigned.'));
     field('name', 'Name', text(d.name, 40));
     field('descr', 'Description', text(d.descr, 500));
@@ -2111,7 +2111,7 @@ function eventForm(existing, onSaved) {
         }
         const id = fields.eid.disabled ? '' : fields.eid.value.trim();
         if (id && !EID_RE.test(id)) {
-            err.textContent = 'An id is four characters, without 0, O, 1, I or L.';
+            err.textContent = 'An id is four characters, without I, L or O.';
             err.hidden = false;
             return;
         }

@@ -27,7 +27,7 @@ Auth::startSession();
 Auth::requireLogin();
 
 $eid = (string)($_GET['eid'] ?? '');
-if (preg_match('/^[' . Events::ALPHABET . ']{4}$/', $eid) !== 1) {
+if (!Events::isEid($eid)) {
     http_response_code(400);
     exit('invalid eid');
 }

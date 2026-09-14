@@ -148,8 +148,7 @@ switch ($action) {
         // An event tournament is an ordinary one with an eid on it; the
         // organizer check and the event's own state are Tournament's.
         $eid = $body['eid'] ?? null;
-        if ($eid !== null && (!is_string($eid)
-            || preg_match('/^[' . Events::ALPHABET . ']{4}$/', $eid) !== 1)) {
+        if ($eid !== null && !Events::isEid($eid)) {
             Util::fail('invalid eid');
         }
         tourney_out(Tournament::create($id, ($body['stakes'] ?? false) === true,

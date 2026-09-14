@@ -474,7 +474,7 @@ expect "the reserved event is deleted again" '"ok":true' "$R"
 # a run that died leaves them behind on a persistent database, so the
 # section clears them before it starts.
 evadmin event_delete "eid=SRV7" > /dev/null
-evadmin event_delete "eid=SRV8" > /dev/null
+evadmin event_delete "eid=SRV0" > /dev/null
 R=$(evadmin event_create "name=srv-CI-soon" "organizer=$ID1" "closed=0" "eid=SRV7" \
     "mode=active" "ach_name=EARLY BIRD" "ach_desc=Joined srv-CI-soon")
 EID5=$(evfield "$R" eid)
@@ -484,6 +484,8 @@ R=$(evadmin event_create "name=srv-CI-twice" "eid=SRV7")
 expect "which no second event can take" '"error":"eid taken"' "$R"
 R=$(evadmin event_create "name=srv-CI-lower" "eid=srv7")
 expect "and an eid outside the poster alphabet is refused" '"error":"invalid eid"' "$R"
+R=$(evadmin event_create "name=srv-CI-letter" "eid=SRVO")
+expect "as is one carrying a letter O" '"error":"invalid eid"' "$R"
 R=$(curl -s -b "$COOKIES" "$BASE/admin/event.php?eid=$EID5")
 KEY5=$(echo "$R" | grep -oE "class=\"code pixel\">[0-9A-Z]{11}<" | grep -oE "[0-9A-Z]{11}" | head -1 || true)
 expect "whose poster carries a key" "$KEY5" "$R"
@@ -513,22 +515,22 @@ expect "and an upcoming event mints none either" '"error":"not started"' "$R"
 # While it is upcoming nothing outside the server carries the eid, so the
 # operator may still change it: every row moves, the old eid names nothing,
 # and a client learns the new one from its events list.
-R=$(evadmin event_rename "eid=$EID5" "to=SRV8")
-expect "the operator renames an upcoming event" '"eid":"SRV8"' "$R"
+R=$(evadmin event_rename "eid=$EID5" "to=SRV0")
+expect "the operator renames an upcoming event, to an eid with a zero in it" '"eid":"SRV0"' "$R"
 R=$(evact "$ID2" state "$EID5")
 expect "the old eid names nothing" '"error":"no such event"' "$R"
-R=$(evact "$ID2" state "SRV8")
+R=$(evact "$ID2" state "SRV0")
 expect "and the early member is in the event under its new one" '"you":{"state":"member"' "$R"
 R=$(curl -s "$BASE/api/poll.php?id=$ID2&ev=1")
-expect "which its events list now says" '"eid":"SRV8"' "$R"
+expect "which its events list now says" '"eid":"SRV0"' "$R"
 refute "in place of the old" "\"eid\":\"$EID5\"" "$R"
-R=$(evadmin event_rename "eid=SRV8" "to=$EID1")
+R=$(evadmin event_rename "eid=SRV0" "to=$EID1")
 expect "an eid another event holds is refused" '"error":"eid taken"' "$R"
-R=$(evadmin event_rename "eid=SRV8" "to=SRV8")
+R=$(evadmin event_rename "eid=SRV0" "to=SRV0")
 expect "and so is the eid it already has" '"error":"same eid"' "$R"
 R=$(evadmin event_rename "eid=$EID5" "to=SRV9")
 expect "the old eid is gone from the dashboard too" '"error":"unknown event"' "$R"
-EID5=SRV8
+EID5=SRV0
 
 R=$(evadmin event_edit "eid=$EID5" "starts=$((NOW5 - 60))")
 expect "the event's start moment passes" '"ok":true' "$R"

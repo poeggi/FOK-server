@@ -3521,9 +3521,10 @@ ok(count(Events::archiveOf($evOpen['eid'])) === 1, 'and leaves the record of the
 // The eid is the operator's to name: on creation, or by a rename that
 // moves every row naming the event in one transaction. Whether the event
 // MAY move (only while upcoming) is the admin action's gate, not this one's.
-ok(Events::isEid('UNT7') && !Events::isEid('unt7') && !Events::isEid('UNT0')
+ok(Events::isEid('UNT7') && Events::isEid('2026') && Events::isEid('1000')
+    && !Events::isEid('unt7') && !Events::isEid('UNTO') && !Events::isEid('UNTI')
     && !Events::isEid('UNT77') && !Events::isEid(null),
-    'an eid is exactly four characters of the poster alphabet');
+    'an eid is exactly four characters: digits, and the poster alphabet without I, L, O');
 $evWas = $evOpen['eid'];
 ok(Events::rename($evWas, 'UNT7'), 'an operator renames an event');
 ok(Events::card($evWas) === null, 'and the old eid names nothing');

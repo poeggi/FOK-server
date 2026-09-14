@@ -31,8 +31,10 @@ manages it.
 
 ## Identifiers
 
-    eid    4 chars from Tournament::CODE_ALPHABET (31^4 = 923k events).
-           Public. Grants nothing on its own.
+    eid    4 chars from Tournament::CODE_ALPHABET (31^4 = 923k events)
+           when assigned; an operator-named one may carry 0 and 1 as
+           well (Events::EID_ALPHABET, 4.16). Public. Grants nothing
+           on its own.
     key    11 chars, same alphabet (~55 bits, and a wrong-code throttle
            on top). It NAMES ITS OWN EVENT - no eid beside it - because
            11 characters is the whole budget beside the URL in a version

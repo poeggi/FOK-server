@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.15", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.16", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -57,8 +57,9 @@ and whose tournaments nobody outside it can see - added in 4.11, its
 printed key shortened to fit the code the game itself can scan in 4.12 and
 that key made to join an event that has not started yet in 4.13, the
 event's monitor named on the roles sheet and sent the tournament's
-signals in 4.14, the walkover clock on that sheet in 4.15) is
-available, and
+signals in 4.14, the walkover clock on that sheet in 4.15, an event id
+an operator named, which may carry a 0 or a 1, in 4.16) is available,
+and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
 
@@ -558,7 +559,7 @@ Response:
 
     {
       "ok": true,
-      "api": "4.15",               contract version, see Versioning
+      "api": "4.16",               contract version, see Versioning
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a free
@@ -972,7 +973,7 @@ not its hello is on time - and needs no hello to stay online at all.
 Every answer WITH A BODY carries `api` and `debug` (4.9), beside the
 `signals` array:
 
-      "api": "4.15",             the contract version, re-read here for
+      "api": "4.16",             the contract version, re-read here for
                                 the same reason hello carries it: it
                                 un-latches a client after a rollback
       "debug": false,           the server's debug instruction for this
@@ -2689,11 +2690,14 @@ they were told to come back and remember to scan again.
 
 ### Identifiers
 
-    eid     4 chars, alphabet 23456789ABCDEFGHJKMNPQRSTUVWXYZ. The
-            event's public name on the wire. It grants NOTHING on its
-            own: every action but `join` answers 404 for a caller with
-            no row, so an eid alone cannot even tell you an event
-            exists.
+    eid     4 chars: the digits 0-9 and the letters of the poster
+            alphabet below (no I, L, O). An eid the server assigns
+            stays within that alphabet; one an operator NAMED may
+            carry a 0 or a 1 (4.16), so a client accepts [0-9A-Z]{4}
+            wherever it checks the shape of one. The event's public
+            name on the wire. It grants NOTHING on its own: every
+            action but `join` answers 404 for a caller with no row,
+            so an eid alone cannot even tell you an event exists.
     key     11 chars, same alphabet. The long-lived code, printed on
             the event's poster and nowhere else. It NAMES ITS OWN
             EVENT - there is no eid beside it - because 11 characters
