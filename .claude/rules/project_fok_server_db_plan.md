@@ -40,8 +40,9 @@ contract did not change.
 
 ## Decided NOT to do - do not add these back
 
-Indexes on scores/friends/matches (the tables are far too small to
-matter); a `Holds::inUse` cache (an APCUIterator over a handful of keys
+Indexes on friends/matches (the tables are far too small to matter;
+scores got idx_scores_player_created in 1.15.10 because nothing prunes it
+and the submit rate check walked it on every submit); a `Holds::inUse` cache (an APCUIterator over a handful of keys
 is microseconds); Ledger append/checkpoint rework; friend_req /
 admin_fails / mint quota to APCu; debug reports to files; removing
 `flushDue`; pruning unseen alerts; duels or starts to APCu - item-claim

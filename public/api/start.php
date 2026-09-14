@@ -106,7 +106,9 @@ $start = Starts::request($id, $peer, $epoch, $reason);
 // is not a duel, and announcing one would offer friends a feed of a match
 // nobody is playing. Both peers announce their own side, so a friend of
 // either sees it from here rather than up to a beat later.
-Presence::touchDuel($id, $peer, $duelPrivate);
+// The peer whose request minted the start wrote the duel's row inside that
+// transaction; for it only the presence half is left (see Presence::touchDuel).
+Presence::touchDuel($id, $peer, $duelPrivate, $start['minted']);
 ConnTrack::playing($id, $peer);
 
 $now = Util::nowMs();

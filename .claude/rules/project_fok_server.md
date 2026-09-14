@@ -286,9 +286,11 @@ peers call it where play begins), not the heartbeat.
   mint, the settled peer reads its own off the match by the row's mid.
 - Starts::forget reads before it deletes: a DELETE that matches nothing
   still takes the writer, and most duel setups have no leftover row.
-- start.php pays one duels upsert on a latency-sensitive endpoint; the
-  local smoke proves nothing about it - watch for INSERT INTO duels in
-  the admin worst-access list.
+- The duel row is written INSIDE the start transaction for the peer
+  that mints (Presence::duelRow, 1.15.10) and by its own upsert for the
+  peer answered off the row; start.php's `minted` flag tells them apart.
+  The local smoke proves nothing about contention there - watch for
+  INSERT INTO duels in the admin worst-access list.
 
 ## Tournament mode (since API 4.1)
 

@@ -519,6 +519,21 @@ final class Presence
     }
 
     /**
+     * The duel row's upsert, the one statement of it, under whatever lock or
+     * retry the caller brings: the heartbeat runs it on its own (touchDuel),
+     * and the start that opens the duel runs it inside the transaction that
+     * mints the match (see Starts::request). Keyed on the ordered pair.
+     */
+    public static function duelRow(PDO $db, string $id, string $peer, int $now): void
+    {
+        [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
+        $db->prepare(
+            'INSERT INTO duels (a, b, started, last_seen) VALUES (?, ?, ?, ?)
+             ON CONFLICT (a, b) DO UPDATE SET last_seen = excluded.last_seen'
+        )->execute([$a, $b, $now, $now]);
+    }
+
+    /**
      * The duel heartbeat, on the duels table. Not shared memory: a claim's
      * integrity window reads duels.last_seen (see Items::matchDeadline), so
      * this is the one row write a beat inside a 1vs1 keeps.
@@ -527,19 +542,18 @@ final class Presence
      * real and counts everywhere, but no friend is offered a spectate link
      * for it (see spectateEndsAt).
      */
-    public static function touchDuel(string $id, string $peer, bool $private = false): void
+    public static function touchDuel(string $id, string $peer, bool $private = false,
+                                     bool $rowWritten = false): void
     {
-        [$a, $b] = $id < $peer ? [$id, $peer] : [$peer, $id];
         $now = time();
         // Both peers of every duel write this on every heartbeat, so it is
         // the most contended write there is. Re-running it is exact:
-        // last_seen is set, not accumulated, and nothing is read back.
-        Db::retry(static function () use ($a, $b, $now): void {
-            Db::get()->prepare(
-                'INSERT INTO duels (a, b, started, last_seen) VALUES (?, ?, ?, ?)
-                 ON CONFLICT (a, b) DO UPDATE SET last_seen = excluded.last_seen'
-            )->execute([$a, $b, $now, $now]);
-        });
+        // last_seen is set, not accumulated, and nothing is read back. The
+        // peer whose start.php minted the start has it written already,
+        // inside the transaction that issued the start (see Starts::request).
+        if (!$rowWritten) {
+            Db::retry(static fn() => self::duelRow(Db::get(), $id, $peer, $now));
+        }
         // The duel rides the entry as well, because a friend delta may not
         // read the duels table (see FriendFeed). Per player, not per pair:
         // the row belongs to the pair, and each peer's friends have to hear

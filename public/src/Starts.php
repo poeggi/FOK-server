@@ -7,6 +7,7 @@ require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Util.php';
 require_once __DIR__ . '/Items.php';
 require_once __DIR__ . '/Stats.php';
+require_once __DIR__ . '/Presence.php';
 
 /**
  * Server-issued starts. The server owns the PTS clock, so it owns every
@@ -165,7 +166,12 @@ final class Starts
      * peer answered off the stored row reads its own off the match, by the
      * mid that row already names - neither reads the start row twice.
      *
-     * @return array{start_pts:int, mid:string, secret:string}
+     * `minted` says the caller is the peer whose request issued the start.
+     * That peer's duel row was written inside the same transaction, so
+     * start.php skips the row half of the announcement for it (see
+     * Presence::touchDuel).
+     *
+     * @return array{start_pts:int, mid:string, secret:string, minted:bool}
      */
     public static function request(string $id, string $peer, int $epoch, string $reason): array
     {
@@ -187,7 +193,8 @@ final class Starts
         // and none of it writes anything.
         $settled = self::settled(self::read($db, $a, $b, Util::nowMs()), $epoch, $reason);
         if ($settled !== null) {
-            return $settled + ['secret' => Items::matchSecret($db, $settled['mid'], $id === $a)];
+            return $settled + ['secret' => Items::matchSecret($db, $settled['mid'], $id === $a),
+                'minted' => false];
         }
 
         $issued = Db::retry(static function () use ($db, $a, $b, $epoch, $reason, $lead): array {
@@ -220,6 +227,13 @@ final class Starts
                          created = excluded.created, epoch = excluded.epoch,
                          reason = excluded.reason, mid = excluded.mid'
                 )->execute([$a, $b, $startPts, $now, $epoch, $reason, $match['mid']]);
+                // The duel's row is announced by this same transaction: the
+                // peer that mints was going to write it the moment this lock
+                // let go (see Presence::touchDuel), and inside, it costs no
+                // second take. Committed with the start or not at all, which
+                // is the "after the start is issued, never before" that
+                // start.php asks for; the presence half stays start.php's.
+                Presence::duelRow($db, $a, $b, intdiv($now, 1000));
                 // One duel, counted INSIDE the transaction that mints its
                 // match rather than by taking the writer a second time the
                 // moment this one lets go. Reached exactly once per duel,
@@ -243,9 +257,11 @@ final class Starts
         });
         if (isset($issued['sec_a'])) {
             return ['start_pts' => $issued['start_pts'], 'mid' => $issued['mid'],
-                'secret' => $id === $a ? (string)$issued['sec_a'] : (string)$issued['sec_b']];
+                'secret' => $id === $a ? (string)$issued['sec_a'] : (string)$issued['sec_b'],
+                'minted' => true];
         }
         // Settled under the lock by the peer's mint: its secret is on the match.
-        return $issued + ['secret' => Items::matchSecret($db, $issued['mid'], $id === $a)];
+        return $issued + ['secret' => Items::matchSecret($db, $issued['mid'], $id === $a),
+            'minted' => false];
     }
 }

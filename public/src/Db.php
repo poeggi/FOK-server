@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 47;
+    private const SCHEMA_VERSION = 48;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -871,6 +871,14 @@ final class Db
             // own still walks the primary key.
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_counters_minute
                             ON counters (bucket) WHERE length(bucket) = 12');
+        }
+        if ($v < 48) {
+            // A score submit first asks how many rows this player wrote in
+            // the last window (see api/scores.php), and scores is the one
+            // table nothing prunes: without an index that count walks all
+            // of it, on every submit, for as long as the server lives.
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_scores_player_created
+                            ON scores (player_id, created)');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

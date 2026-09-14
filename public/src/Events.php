@@ -870,33 +870,49 @@ final class Events
         $now = time();
         $changed = (bool)Db::retry(static function () use ($eid, $id, $set, $via, $now): bool {
             $db = Db::get();
-            if ($set === 'none') {
-                $st = $db->prepare('DELETE FROM event_members WHERE eid = ? AND id = ?');
-                $st->execute([$eid, $id]);
-                return $st->rowCount() > 0;
+            // One transaction: the read decides and the write follows it
+            // under the same lock, so the organizer's roster verb and the
+            // operator's dashboard editing one row in the same instant
+            // cannot both find no row and collide on the key.
+            $db->exec('BEGIN IMMEDIATE');
+            try {
+                if ($set === 'none') {
+                    $st = $db->prepare('DELETE FROM event_members WHERE eid = ? AND id = ?');
+                    $st->execute([$eid, $id]);
+                    $changed = $st->rowCount() > 0;
+                } else {
+                    $st = $db->prepare('SELECT state FROM event_members WHERE eid = ? AND id = ?');
+                    $st->execute([$eid, $id]);
+                    $was = $st->fetchColumn();
+                    $st->closeCursor();
+                    if ($was === false) {
+                        // Only an operator reaches this: the organizer
+                        // approves and never adds, so a peer with no row is
+                        // refused before here.
+                        $db->prepare('INSERT INTO event_members (eid, id, state, asked, joined, via)
+                                      VALUES (?,?,?,?,?,?)')
+                           ->execute([$eid, $id, $set, $now, $set === 'member' ? $now : null, $via]);
+                        $changed = true;
+                    } elseif ((string)$was === $set) {
+                        $changed = false;
+                    } else {
+                        // joined is stamped when the row BECOMES a member and
+                        // never moved after: it is when this person got in.
+                        $db->prepare('UPDATE event_members SET state = ?,
+                                      joined = CASE WHEN ? = ? THEN COALESCE(joined, ?) ELSE joined END
+                                      WHERE eid = ? AND id = ?')
+                           ->execute([$set, $set, 'member', $now, $eid, $id]);
+                        $changed = true;
+                    }
+                }
+                $db->exec('COMMIT');
+                return $changed;
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->exec('ROLLBACK');
+                }
+                throw $e;
             }
-            $st = $db->prepare('SELECT state FROM event_members WHERE eid = ? AND id = ?');
-            $st->execute([$eid, $id]);
-            $was = $st->fetchColumn();
-            $st->closeCursor();
-            if ($was === false) {
-                // Only an operator reaches this: the organizer approves and
-                // never adds, so a peer with no row is refused before here.
-                $db->prepare('INSERT INTO event_members (eid, id, state, asked, joined, via)
-                              VALUES (?,?,?,?,?,?)')
-                   ->execute([$eid, $id, $set, $now, $set === 'member' ? $now : null, $via]);
-                return true;
-            }
-            if ((string)$was === $set) {
-                return false;
-            }
-            // joined is stamped when the row BECOMES a member and never
-            // moved after: it is when this person got in.
-            $db->prepare('UPDATE event_members SET state = ?,
-                          joined = CASE WHEN ? = ? THEN COALESCE(joined, ?) ELSE joined END
-                          WHERE eid = ? AND id = ?')
-               ->execute([$set, $set, 'member', $now, $eid, $id]);
-            return true;
         });
         if ($changed) {
             self::forgetMine($id);

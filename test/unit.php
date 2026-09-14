@@ -210,6 +210,13 @@ ok(Scores::top()[1]['completed'] === false, 'a same-level run that did not finis
 $long = Scores::submit('aaaaaaaa', str_repeat('X', 40), 1, 1, 1, 0, '{}', null, null, false, 'pc');
 ok(mb_strlen(Scores::top()[4]['name']) === FOK_MAX_NAME_LEN, 'name capped at max length');
 ok(Scores::top()[4]['platform'] === 'pc', 'a reported platform round-trips');
+// The submit's rate check counts a player's recent rows; scores is never
+// pruned, so that count runs on its own index rather than the whole table.
+$plan = Db::get()->prepare('EXPLAIN QUERY PLAN SELECT COUNT(*) FROM scores WHERE player_id = ? AND created > ?');
+$plan->execute(['aaaaaaaa', 0]);
+$detail = implode(' ', array_column($plan->fetchAll(), 'detail'));
+ok(str_contains($detail, 'idx_scores_player_created'),
+    'the submit rate check runs on its index (schema 48)');
 
 // Presence: targeted online + latency info
 $info = Presence::infoOf(['aaaaaaaa', 'cccccccc']);
@@ -513,9 +520,24 @@ mmWipe();
 // depends on when either of them asks. The lead is one flat figure: a
 // reported latency, however wild, does not move it.
 Db::get()->prepare('UPDATE players SET latency = 9000 WHERE id = ?')->execute(['aaaaaaaa']);
+// The duel's row is written by the start transaction itself on the minting
+// side, so that peer's announcement costs no second writer take; the row
+// is aged first so the assertion sees this write and not an earlier beat.
+Db::get()->prepare('UPDATE duels SET last_seen = 1 WHERE a = ? AND b = ?')
+    ->execute(['aaaaaaaa', 'bbbbbbbb']);
 $t0 = Util::nowMs();
 $r1 = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'first');
+$duelSeen = (function (): int {
+    $st = Db::get()->prepare('SELECT last_seen FROM duels WHERE a = ? AND b = ?');
+    $st->execute(['aaaaaaaa', 'bbbbbbbb']);
+    $n = (int)$st->fetchColumn();
+    $st->closeCursor();
+    return $n;
+})();
+ok($r1['minted'] === true && $duelSeen >= time() - 1,
+    'the start that mints writes the duel row inside its own transaction');
 $r2 = Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'first');
+ok($r2['minted'] === false, 'the peer answered off the row is told it did not mint');
 $s1 = $r1['start_pts'];
 $s2 = $r2['start_pts'];
 ok($s1 === $s2, 'both peers receive the identical start pts');
