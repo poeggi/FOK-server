@@ -163,5 +163,5 @@ to SQLite when APCu is down. Unlike Signals or ConnTrack this is not moved
 state, so it must never grow a no-fallback path.
 
 The wrong-code throttle exists so an attempt is ON RECORD, not because the
-codes could be guessed - 79 bits and a 20 s pass make brute force
-irrelevant. If it ever stops writing its line, it is doing nothing.
+codes could be guessed - a 54-bit key (31^11) and a 30-bit pass valid
+20 s make brute force irrelevant. If it ever stops writing its line, it is doing nothing.

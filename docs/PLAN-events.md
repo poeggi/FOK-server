@@ -207,9 +207,9 @@ from that list.
 - Wrong key or pass: 404 'no such event' - the same answer as an eid
   that does not exist, so nothing enumerates. Failures are throttled
   per id (APCu counter, `event_join_fails_per_min`, default 10; over
-  it 429 with retry_after and an Alerts::note 'event'). 79 bits and a
-  6-char pass valid 20 s make brute force irrelevant; the throttle is
-  for the log.
+  it 429 with retry_after and an Alerts::note 'event'). A 54-bit key
+  and a 6-char pass valid 20 s make brute force irrelevant; the
+  throttle is for the log.
 - banned: 403 'banned', the row stays. Removed or declined: the row is
   gone, the person may scan again (and lands pending again on a closed
   event - the organizer bans a pest instead).
