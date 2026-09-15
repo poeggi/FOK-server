@@ -10,10 +10,8 @@ expect "debug rejects a non-JSON bundle" '"error":"dataset must be a non-empty J
 R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/debug/submit.php")
 expect "debug submit via GET rejected" '405' "$R"
 
-R=$(curl -s "$BASE/api/time.php")
-expect "time sync endpoint" '"t":' "$R"
-NOW_MS=$(echo "$R" | grep -oE '"t":[0-9]+' | cut -d: -f2)
-if [ "${#NOW_MS}" -eq 13 ]; then echo "ok   time is in milliseconds"; else echo "FAIL time not ms: $NOW_MS"; fail=1; fi
+NOW_MS=$(srv_ms)
+if [ "${#NOW_MS}" -eq 13 ]; then echo "ok   server clock reads in milliseconds"; else echo "FAIL server clock not ms: $NOW_MS"; fail=1; fi
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"synced\",\"pts\":$NOW_MS}" "$BASE/api/signal.php")
@@ -23,7 +21,7 @@ curl -s "$BASE/api/poll.php?id=$ID2" > /dev/null
 # A pts that reads ahead: silent inside half the margin, a warning past
 # that but still answered, refused past the whole of it. The last one is
 # what puts the 'bogus' row in the alerts list the admin part asserts.
-SRV_MS=$(curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2)
+SRV_MS=$(srv_ms)
 NEAR_MS=$((SRV_MS + 50))
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"synced\",\"pts\":$NEAR_MS}" "$BASE/api/signal.php")
@@ -34,7 +32,7 @@ expect "a pts inside half the margin is accepted" '"ok":true' "$R"
 # widen it for this one request and put the default back after.
 if [ "$ADMIN" -eq 1 ]; then
     setting pts_ahead_max_ms 4000
-    WARN_MS=$(( $(curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2) + 3000 ))
+    WARN_MS=$(( $(srv_ms) + 3000 ))
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"early\",\"pts\":$WARN_MS}" "$BASE/api/signal.php")
     expect "a pts past half the margin is accepted too" '"ok":true' "$R"

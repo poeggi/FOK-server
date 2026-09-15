@@ -17,17 +17,17 @@ expect "api contract version" '"api":' "$R"
 expect "environment reported" "\"env\":\"$EXPECT_ENV\"" "$R"
 
 # The exact path a browser at the game origin takes: CORS must be open. One
-# fetch with -i carries the ACAO header AND the body (same response). time.php
-# is the subject because it is a GET that goes through Util::cors and records
+# fetch with -i carries the ACAO header AND the body (same response). A GET
+# on hello.php is the subject: Util::cors runs, then 405 - it records
 # nothing, so asking it repeatedly cannot move a count this suite asserts.
-R=$(curl -s -i -H 'Origin: https://poeggi.github.io' "$BASE/api/time.php")
+R=$(curl -s -i -H 'Origin: https://poeggi.github.io' "$BASE/api/hello.php")
 expect "game origin allowed by CORS" 'poeggi.github.io' "$R"
 # Resource Timing blanks the connection breakdown of a cross-origin response -
 # protocol, connect and TLS marks, transfer sizes - unless the server allows
 # it, and a client reads those to tell a cold connection from a warm one. The
 # allowlist governs it too, because the breakdown includes the response size.
 expect "timing allowed for the game origin"     'timing-allow-origin: https://poeggi.github.io' "$(echo "$R" | tr 'A-Z' 'a-z')"
-R=$(curl -s -i -H 'Origin: https://not.allowed.example' "$BASE/api/time.php" | tr 'A-Z' 'a-z')
+R=$(curl -s -i -H 'Origin: https://not.allowed.example' "$BASE/api/hello.php" | tr 'A-Z' 'a-z')
 if echo "$R" | grep -q 'timing-allow-origin'; then
     echo "FAIL an unlisted origin is told the timing"; fail=1
 else

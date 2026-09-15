@@ -56,7 +56,7 @@ lftp -c 'set -a' | grep -E '^set (ftp:(use-|ssl-)|xfer:)' | sed 's/^/  /'
 # One real file, uploaded SERIALLY, so what is being measured is the per-file
 # conversation and not how well 24 of them overlap. The bare login is measured
 # in the same session shape and subtracted.
-F=public/api/time.php
+F=public/api/match.php
 REP=8
 
 log "V. what one upload costs, and what each setting is worth"

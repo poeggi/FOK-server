@@ -153,9 +153,9 @@ works when it is not.
 - Clients must gate ALL calls on the user's offline setting
   (`!cfg.offline` in FOK-snake): when offline is ON, never contact the
   server.
-- Timestamps: ALL timing/sync values are unix MILLISECONDS - `pts`,
-  time.php's `t`, and hello's `now` (the same PTS clock everywhere). The
-  one exception is t.txt's `X-Fok-T` header, which is MICROSECONDS.
+- Timestamps: ALL timing/sync values are unix MILLISECONDS - `pts` and
+  hello's `now` (the same PTS clock everywhere). The one exception is
+  t.txt's `X-Fok-T` header, which is MICROSECONDS.
   Only `created` fields on stored records (scores, relayed signals)
   are unix SECONDS: they are calendar bookkeeping, never used for
   timing - format dates from them, do not mix them with PTS.
@@ -171,7 +171,7 @@ server does zero per-client computation, which is what makes this
 scale. A timestamp on this clock is called the PTS (presentation
 timestamp).
 
-### GET /api/t.txt - clock source (REQUIRED, preferred)
+### GET /api/t.txt - clock source (REQUIRED)
 
     GET /api/t.txt  ->  200, body "ok"
     Response header:  X-Fok-T: t=1784281823033613
@@ -200,9 +200,8 @@ static file sits in. The file protects the STAMP; it does not protect the
 round trip taken around it. That is why WHERE a client measures matters -
 see "Anchor the clock when the wire is quiet" below.
 
-`GET /api/time.php -> {"ok":true, "t": <ms>}` remains as the FALLBACK,
-in milliseconds, for clients that cannot read the header (and for a
-`now` re-check). Prefer t.txt; fall back if the header is absent.
+It is the ONLY clock source. A response without the header is no
+sample.
 
 ### The sync procedure
 

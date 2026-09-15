@@ -101,9 +101,10 @@ jobs:
           echo "$got" | grep -q '"env":"live"'
           # version.txt is static and answers every origin with '*', so the
           # allowlist is proved where it actually lives - on an endpoint that
-          # runs the code holding the list. time.php is a GET that records
-          # nothing, so asking live for it moves no counter.
+          # runs the code holding the list. A GET on hello.php runs
+          # Util::cors and then answers 405: no counter, no row, no
+          # database, so asking live for it moves nothing.
           cors=$(curl -s -i -H 'Origin: https://poeggi.github.io' \
-            https://fok-server.poggensee.it/api/time.php | grep -i '^access-control-allow-origin')
+            https://fok-server.poggensee.it/api/hello.php | grep -i '^access-control-allow-origin')
           echo "$cors" | grep -q 'poeggi.github.io'
           echo "Live is up on v$want, reachable from the game origin" >> "$GITHUB_STEP_SUMMARY"

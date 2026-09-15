@@ -158,7 +158,6 @@ major. Every minor since is additive; docs/API.md carries them one by one.
                       queues for a PHP worker
         t.txt         clock source: Apache stamps the receive time into a
                       header, so sync never queues for a PHP worker
-        time.php      millisecond clock sync, fallback for t.txt
         hello.php     heartbeat: presence, counters, signals, friend
                       presence deltas, debug flag (server instruction +
                       client report), local tournament lobbies,
@@ -463,8 +462,6 @@ host-level. If this outgrows shared hosting, fix workers first.
          (static, written by the deploy - it starts no PHP)
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
-    GET  /api/time.php
-      -> {"ok":true,"t":<server ms>}   fallback clock source
     POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
                           "duel_private":bool?, "duel_end":"deadbeef"?,
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,

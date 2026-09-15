@@ -32,7 +32,9 @@ cd "$(dirname "$0")/.."
 : "${SMOKE_BASE:?set SMOKE_BASE to the deployed instance to probe}"
 N="${HTTP_PROBE_N:-40}"
 BASE="${SMOKE_BASE%/}"
-EP="/api/time.php"
+# A GET on a POST-only endpoint: PHP starts, Util::cors runs, 405 comes
+# back - the cheapest request that still runs server code.
+EP="/api/hello.php"
 
 now_ms() { date +%s%3N; }
 report() { printf '  %-42s %6d ms  %4d ms each\n' "$1" "$2" "$((${2} / N))"; }

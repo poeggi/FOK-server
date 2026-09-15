@@ -384,9 +384,16 @@ is a MAJOR contract change and the admin 'relaying' gauge decides it.
 ~36 of 59 settings are contract numbers read at one site: admin clutter
 only, and constants would churn config export/import for nothing.
 
+REMOVED in 1.16.1: time.php, the t.txt fallback. No client reads it
+since FOK-snake 4.4.90 (a response without the header is no sample).
+The deploy never deletes: a removed endpoint is deleted from staging
+and live by hand, over FTPS, and verified with a 404.
+
 Used and fine: q_ms, pace.hold, nets, after_ms, the delta's latency,
-backup.php, debug/submit.php, time.php (t.txt fallback, and the smoke's
-up-probe and origin-allowlist assertions).
+backup.php, debug/submit.php. The smoke's up-probe and its
+origin-allowlist assertions use a GET on hello.php: Util::cors runs,
+then 405 - no counter (only a 400 notes an invalid request), no row,
+no database.
 
 ## Open - parked until n:db_skip > 0 on the admin worst-access list
 

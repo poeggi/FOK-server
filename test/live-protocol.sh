@@ -79,9 +79,13 @@ expect "version endpoint answers" '"ok":true' "$V"
 expect "api contract is major 4" '"api":"4.' "$V"
 
 # Skew the client clock to the server so a start pts lands just in the past,
-# never the future the sync gate rejects.
-srv_ms=$(curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2)
-skew=$(( srv_ms - $(date +%s%3N) ))
+# never the future the sync gate rejects. The clock is t.txt's X-Fok-T
+# stamp (microseconds), the one clock source there is; on a real host a
+# missing header is a failure, not a case.
+hdr=$(curl -s -o /dev/null -D - "$BASE/api/t.txt" | tr 'A-Z' 'a-z')
+expect "clock source stamps the arrival time" 'x-fok-t: t=' "$hdr"
+srv_us=$(echo "$hdr" | grep -oE 'x-fok-t: t=[0-9]+' | grep -oE '[0-9]+$')
+skew=$(( ${srv_us:-0} / 1000 - $(date +%s%3N) ))
 now_ms() { echo $(( $(date +%s%3N) + skew )); }
 start_req() { # id peer epoch reason pts
     curl -s -X POST -H 'Content-Type: application/json' \

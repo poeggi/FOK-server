@@ -74,11 +74,13 @@ else
     # Then WAIT FOR THE PORT TO ANSWER rather than sleeping a guessed second:
     # on a loaded CI runner php -S can still be binding when the first request
     # goes out, and from there every later assertion fails on a connection
-    # that was never made. time.php is the probe because it records nothing
-    # (no counters, no player rows) and opens no database, so however many
-    # probes a slow boot takes, the counts the suite asserts are the same. A
-    # static file would answer before PHP was ready to, which is the one thing
-    # this loop must not accept.
+    # that was never made. A GET on hello.php is the probe: Util::cors runs
+    # and 405 comes back, which records nothing (only a 400 notes an invalid
+    # request; no counters, no player rows) and opens no database, so however
+    # many probes a slow boot takes, the counts the suite asserts are the
+    # same. The 405 is what proves PHP answered: a static file would answer
+    # before PHP was ready to, which is the one thing this loop must not
+    # accept.
     #
     # api/version.txt is written by the deploy, so a local tree has none:
     # write the one a live deploy would (the target a local run stands in for
@@ -91,7 +93,7 @@ else
         php -S "127.0.0.1:$PORT" -t public > "$DATA/server.log" 2>&1 &
         SERVER_PID=$!
         for _ in $(seq 100); do
-            if curl -sf -o /dev/null "$BASE/api/time.php"; then
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/hello.php")" = 405 ]; then
                 up=1
                 break
             fi
@@ -211,15 +213,25 @@ fi
 # A part has to be able to run without the parts before it (the remote run
 # groups them), so anything two parts share is defined here, once.
 
+# The server's clock in ms, read the way a client reads it: the X-Fok-T
+# stamp on t.txt (microseconds, the moment the web server received the
+# request). php -S serves no .htaccess and stamps nothing; there the server
+# IS this machine, and its clock is the same clock.
+srv_ms() {
+    local us
+    us=$(curl -s -o /dev/null -D - "$BASE/api/t.txt" | tr 'A-Z' 'a-z' \
+        | grep -oE 'x-fok-t: t=[0-9]+' | grep -oE '[0-9]+$')
+    if [ -n "$us" ]; then echo $(( us / 1000 )); else date +%s%3N; fi
+}
+
 # A start carries a sync proof (pts) in server-clock ms. Rather than read
-# /api/time.php for every one, learn the client<->server skew ONCE and then
+# the clock for every one, learn the client<->server skew ONCE and then
 # compute pts locally - the server tolerates minutes of drift, so second
 # resolution is ample. (The pts logic itself is exercised in unit.php.)
-# Millisecond-resolution local clock; the round-trip latency biases SKEW
-# slightly negative, so a computed pts lands just in the PAST - never the
-# future the sync gate rejects.
-_srv_ms=$(curl -s "$BASE/api/time.php" | grep -oE '"t":[0-9]+' | cut -d: -f2)
-SKEW=$(( _srv_ms - $(date +%s%3N) ))
+# Millisecond-resolution local clock; the stamp is taken on arrival, so
+# the round trip biases SKEW negative and a computed pts lands just in the
+# PAST - never the future the sync gate rejects.
+SKEW=$(( $(srv_ms) - $(date +%s%3N) ))
 now_ms() { echo $(( $(date +%s%3N) + SKEW )); }
 start_req_private() { # id peer epoch reason pts
     curl -s -X POST -H 'Content-Type: application/json' \
