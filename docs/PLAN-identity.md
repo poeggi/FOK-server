@@ -160,7 +160,9 @@ launch.
   in the tree. A field that was optional becoming required is the
   MAJOR the contract defines.
 
-The server ships first (it accepts both), the client right after.
+The server ships first (it accepts both), the client right after:
+FOK-snake 4.5 (from 4.4.x) rides API 4.20, and FOK-snake 5.0 rides
+API 5.0 - the client's major moves with the contract's.
 
 ## Contract changes (docs/API.md)
 
@@ -216,7 +218,7 @@ The server ships first (it accepts both), the client right after.
    credentials, never in the repo), adopting what hello mints on the
    first run.
 
-8. Client (FOK-snake), one release, after the server is live:
+8. Client (FOK-snake) 4.5, one release, after the server is live:
    - send `tok` (getCloudToken) on every request that names the id:
      every POST body in net-api.js, `&tok=` on the poll GET, the relay
      GET and POST (net-relay.js, DEPRECATED(relay) marker as usual);
@@ -245,7 +247,9 @@ The server ships first (it accepts both), the client right after.
    starts refusing: `ident_fails_per_min` (Settings::DEFS, default 10,
    with a label) turns the 4.20 count into the 429; unit and smoke
    assert that a right token passes from a pair over the cap and a
-   wrong one is 429 with retry_after.
+   wrong one is 429 with retry_after. The client follows as
+   FOK-snake 5.0: `tok` is no longer optional in what it sends, and
+   a 429 `too many attempts` on the wire backs off by retry_after.
 
 ## Residual, named
 
