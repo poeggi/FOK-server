@@ -29,6 +29,13 @@ below, the code is right and this list says how:
   fourth parallel group against staging.
 - hello validates EVERY input before the gate: a 400 after a bind would
   leave an id bound to a token the client was never answered.
+- 4.21 / 1.18.0 (2026-09-16, asked for by the client side): the token
+  leaves the request line. poll.php, the relay's held read and the vault
+  restore were GETs with `tok` in the query, which the web server's
+  access log records on every hit - the plan's "in no server log" was
+  wrong about that log. Each answers a POST with the same members as a
+  JSON body; the GETs are TEMPORARY(ident) and go with 5.0. So the
+  cleanup release is 5.0 / 1.19.0, not 1.18.0.
 
 THE CUTOFF IS 2026-10-01. Everything marked TEMPORARY(ident) exists to
 carry clients over and is deleted after that date (step 9).
@@ -181,9 +188,10 @@ launch.
   PREPARATION for 5.0 and the number says so. Additive on the wire:
   `tok` optional everywhere, one new answer (401 bad token) that only
   a bound id can meet.
-- Step 9 (on or after 2026-10-01): 1.18.0, FOK_API_VERSION 5.0. `tok`
-  required, the pair throttle refuses, and NO migration path is left
-  in the tree. A field that was optional becoming required is the
+- Step 9 (on or after 2026-10-01): 1.19.0 (1.18.0 went to 4.21, see the
+  status list), FOK_API_VERSION 5.0. `tok` required, the pair throttle
+  refuses, the three GET forms gone, and NO migration path is left in
+  the tree. A field that was optional becoming required is the
   MAJOR the contract defines.
 
 The server ships first (it accepts both), the client right after:
@@ -287,8 +295,10 @@ API 5.0 - the client's major moves with the contract's.
   the person; it does nothing against a cheating owner (minting stays
   client-trusted, see the item registry).
 - Bearer over TLS: a token in a log or a captured body is the id. It is
-  in no server log (the worst-access rows name the action, not the
-  body); the client keeps it out of the payload it backs up.
+  in no line this server writes (the worst-access rows name the action,
+  not the body), and since 4.21 in no request line either - a GET query
+  is what the host's access log records, which 4.20 had overlooked; the
+  client keeps it out of the payload it backs up.
 - An id walk: wrong tokens for many ids from one IP cost one ident
   SELECT per id with no live entry, and the pair throttle never meets
   the same pair twice. Bounded by the worker pool, like every request;

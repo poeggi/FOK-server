@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.17.1';
+const FOK_SERVER_VERSION = '1.18.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -126,7 +126,14 @@ const FOK_SERVER_VERSION = '1.17.1';
 // `bad token`, only a bound id can meet. Every path that carries a client
 // from before the token is tagged TEMPORARY(ident) and closes on
 // Ident::LEGACY_UNTIL, whatever release is running then.
-const FOK_API_VERSION = '4.20';
+// v4.21: the token leaves the request line. poll.php, the relay's held
+// read and the vault restore were GETs with `tok` in the query, and a
+// query is the request line the web server's access log records on every
+// hit - the poll alone is one line per 5 s per client. Each of the three
+// now answers a POST whose JSON body carries exactly the members its
+// query took; the GET stays until 5.0 and is tagged TEMPORARY(ident) with
+// the rest. Additive: a second method on three endpoints, nothing else.
+const FOK_API_VERSION = '4.21';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');

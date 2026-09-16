@@ -93,10 +93,10 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
 expect "relay accepts message" '"ok":true' "$R"
 curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\",\"payload\":\"IN:14:left\"}" "$BASE/api/relay.php" > /dev/null
-R=$(curl -s "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1&wait=2")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\",\"wait\":2}" "$BASE/api/relay.php")
 expect "relay delivers in order" '"payload":"IN:12:up"' "$R"
 expect "relay delivers second message" '"payload":"IN:14:left"' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1")
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
 expect "relay drained to 204" '204' "$R"
 BIGPAY=$(printf 'x%.0s' $(seq 1 2049))
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
@@ -106,16 +106,16 @@ expect "oversized relay payload rejected" '"error":"invalid payload"' "$R"
 # Directional isolation: a message A->B must never come back to A.
 curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\",\"payload\":\"IN:20:up\"}" "$BASE/api/relay.php" > /dev/null
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID1$(qt "$ID1")&peer=$ID2")
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\"}" "$BASE/api/relay.php")
 expect "relay does not echo to sender" '204' "$R"
-curl -s "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php" > /dev/null
 
 # Long-poll times out to 204 and actually holds the request. Local only:
 # the hold loop is the same code everywhere, and the host's tolerance for a
 # held request is proven by the 9 s poll cap test.
 if [ "$REMOTE" -eq 0 ]; then
     T0=$(date +%s)
-    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1&wait=2")
+    R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\",\"wait\":2}" "$BASE/api/relay.php")
     T1=$(date +%s)
     expect "relay long-poll times out to 204" '204' "$R"
     if [ $((T1 - T0)) -ge 1 ]; then echo "ok   relay long-poll held the request"; else echo "FAIL relay long-poll returned too fast"; fail=1; fi
@@ -137,7 +137,7 @@ expect "invite to a malformed id rejected" '"error":"invalid id' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"invite\"}" "$BASE/api/signal.php")
 expect "invite without a payload accepted" '"ok":true' "$R"
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":123}" "$BASE/api/signal.php")
@@ -146,7 +146,7 @@ expect "invite with a non-string payload rejected" '"error":"invalid payload"' "
 MAXPAY=$(head -c 16384 /dev/zero | tr '\0' 'x')
 R=$(sig "$ID1" "$ID2" invite "$MAXPAY")
 expect "invite at the 16 KB payload cap accepted" '"ok":true' "$R"
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 R=$(sig "$ID1" "$ID2" invite "${MAXPAY}x")
 expect "invite one byte over the cap rejected" '"error":"invalid payload"' "$R"
 
@@ -158,7 +158,7 @@ expect "future-dated invite rejected as bogus" '"error":"bogus pts' "$R"
 # Two invites before any answer: both arrive, oldest first.
 sig "$ID1" "$ID2" invite 'first' > /dev/null
 sig "$ID1" "$ID2" invite 'second' > /dev/null
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 ordered "repeated invites both delivered, in order" 'first' 'second' "$R"
 
 # --- Aborts
@@ -166,24 +166,24 @@ ordered "repeated invites both delivered, in order" 'first' 'second' "$R"
 sig "$ID1" "$ID2" invite 'gone?' > /dev/null
 R=$(sig "$ID1" "$ID2" bye '')
 expect "inviter can abort with bye" '"ok":true' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 ordered "peer sees the invite and the abort" '"type":"invite"' '"type":"bye"' "$R"
 
 # The peer declines: the inviter must learn it, and re-inviting must work.
 sig "$ID1" "$ID2" invite 'again' > /dev/null
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 sig "$ID2" "$ID1" decline '' > /dev/null
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php")
 expect "decline reaches the inviter" '"type":"decline"' "$R"
 R=$(sig "$ID1" "$ID2" invite 'once more')
 expect "inviting again after a decline works" '"ok":true' "$R"
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
 # An accept for an invite that was never sent is free-form signaling: it
 # is delivered, and the client correlates it (docs/API.md).
 R=$(sig "$ID2" "$ID1" accept 'unsolicited')
 expect "unsolicited accept still delivered" '"ok":true' "$R"
-curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php" > /dev/null
 
 # --- Relay variations
 R=$(rly "$ID1" "$ID1" 'x')
@@ -196,13 +196,13 @@ expect "non-string relay payload rejected" '"error":"invalid payload"' "$R"
 MAXR=$(head -c 2048 /dev/zero | tr '\0' 'y')
 R=$(rly "$ID1" "$ID2" "$MAXR")
 expect "relay at the payload cap accepted" '"ok":true' "$R"
-curl -s "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php" > /dev/null
 
 # A slow receiver must lose nothing and see the backlog in order.
 rly "$ID1" "$ID2" 'IN:1' > /dev/null
 rly "$ID1" "$ID2" 'IN:2' > /dev/null
 rly "$ID1" "$ID2" 'IN:3' > /dev/null
-R=$(curl -s "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
 ordered "slow receiver gets the whole backlog, oldest first" 'IN:1' 'IN:3' "$R"
 expect "backlog keeps the middle message" 'IN:2' "$R"
 expect "relayed messages carry an age (ms on the server)" '"age":' "$R"
@@ -214,59 +214,59 @@ rly "$ID1" "$ID2" 'IN:pull' > /dev/null
 R=$(rlypull "$ID2" "$ID1" 'ack')
 expect "a POST with pull piggybacks the poster's inbound" 'IN:pull' "$R"
 expect "a piggybacked message carries an age" '"age":' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1")
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
 expect "a pulled message is not then delivered again by the GET" '204' "$R"
 # A POST without pull must NOT drain the poster's inbound (old-client safety).
 rly "$ID1" "$ID2" 'IN:keep' > /dev/null
 R=$(rly "$ID2" "$ID1" 'ack2')
 expect "a POST without pull returns no messages" '"ok":true}' "$R"
-R=$(curl -s "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
 expect "and the inbound is still there for the GET" 'IN:keep' "$R"
 # Clean up ID1's inbound (the acks ID2 sent) so later tests start clean.
-curl -s "$BASE/api/relay.php?id=$ID1$(qt "$ID1")&peer=$ID2" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\"}" "$BASE/api/relay.php" > /dev/null
 
 # Aborting a relayed duel: its undelivered backlog dies with it (a stale input
 # must never reach the next duel), AND the peer's held GET is told the pair is
 # gone (v3.3) instead of being left to time out - the relay's answer to a P2P
 # DataChannel close. 'accept' first: the bye needs a tracked connection to mark.
 sig "$ID1" "$ID2" accept '' > /dev/null
-R=$(curl -s -w '\n%{http_code}' "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1")
+R=$(curl -s -w '\n%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
 expect "a live pairing is not reported gone" '204' "$R"
 rly "$ID1" "$ID2" 'IN:stale' > /dev/null
 sig "$ID1" "$ID2" bye '' > /dev/null
-R=$(curl -s "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
 expect "after a bye the relay GET reports the peer gone" '"gone":true' "$R"
 # The stale input did not leak: a gone reply carries no messages, and the
 # backlog was dropped with the pair (forgetPair).
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
 # --- ... and now a normal connection again, start to finish.
 R=$(sig "$ID1" "$ID2" invite 'lets play')
 expect "normal invite after all the aborts" '"ok":true' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 expect "normal invite delivered" '"type":"invite"' "$R"
 R=$(sig "$ID2" "$ID1" accept 'sure')
 expect "normal accept sent" '"ok":true' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php")
 expect "normal accept delivered" '"type":"accept"' "$R"
 sig "$ID1" "$ID2" offer 'sdp-offer' > /dev/null
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 expect "normal offer delivered" '"type":"offer"' "$R"
 sig "$ID2" "$ID1" answer 'sdp-answer' > /dev/null
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php")
 expect "normal answer delivered" '"type":"answer"' "$R"
 sig "$ID1" "$ID2" ice 'cand-1' > /dev/null
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 expect "normal ice delivered" '"type":"ice"' "$R"
 R=$(start_req "$ID1" "$ID2" 0 first "$(now_ms)")
 expect "normal start issued" '"start_pts":' "$R"
 R=$(rly "$ID1" "$ID2" 'IN:42:up')
 expect "normal relay accepted" '"ok":true' "$R"
-R=$(curl -s "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
 expect "normal relay delivered" 'IN:42:up' "$R"
 R=$(sig "$ID1" "$ID2" bye '')
 expect "normal duel ends with bye" '"ok":true' "$R"
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
 # --- A rematch after a PEER-TO-PEER bye. Once the DataChannel is open the
 # bye travels over it and never reaches the server (docs/API.md, the 1vs1
@@ -275,12 +275,12 @@ curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
 # reset in signal.php this 409s for a full five minutes.
 start_req "$ID1" "$ID2" 0 first "$(now_ms)" > /dev/null
 sig "$ID1" "$ID2" invite 'rematch please' > /dev/null
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 R=$(start_req "$ID1" "$ID2" 0 first "$(now_ms)")
 expect "a rematch after a peer-to-peer bye still gets a start" '"start_pts":' "$R"
 # Quick match has no invite at all: the offer is what opens that pairing.
 sig "$ID1" "$ID2" offer 'sdp-rematch' > /dev/null
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 R=$(start_req "$ID1" "$ID2" 0 first "$(now_ms)")
 expect "an offer opens a fresh epoch line too (quick match)" '"start_pts":' "$R"
 # A RELAY rematch reuses the hub with NO new offer, so nothing clears the
@@ -297,7 +297,7 @@ fi
 R=$(start_req "$ID2" "$ID1" 0 rematch "$(now_ms)")
 expect "and the peer joins the reset line" '"start_pts":' "$R"
 sig "$ID1" "$ID2" bye '' > /dev/null
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
 expect "friendship removed" '"ok":true' "$R"
@@ -313,15 +313,15 @@ curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$I
 
 # 4.9: the poll arms it too, so the QR screen needs no hello beside the poll
 # it is already holding.
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&aa=1" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"aa\":1}" "$BASE/api/poll.php" > /dev/null
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"request\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
 expect "the poll arms auto-accept as a hello does" '"state":"accepted"' "$R"
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php" > /dev/null
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"auto_accept\":false}" "$BASE/api/hello.php" > /dev/null
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&aa=nonsense")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"aa\":\"nonsense\"}" "$BASE/api/poll.php")
 expect "a bogus arm flag is refused" '"error":"invalid aa"' "$R"
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
-curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php" > /dev/null
 
 # --- API 4.4 on the start answer: q_ms is this request's own queue wait.
 R=$(start_req "$ID1" "$ID2" 900 first "$(now_ms)")

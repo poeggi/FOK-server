@@ -157,12 +157,12 @@ expect "and no board is up any more" '"break":null' "$R"
 # walked over the wire in test/live-protocol.sh.
 R=$(result "$ID2" "$T1" final win 6 4)
 expect "a lone win on the final is held, waiting for the other side" '"state":"held"' "$R"
-curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php" > /dev/null
 R=$(act "$ID1" state "$T1")
 expect "a participant's poll inside the grace changes nothing" '"state":"held"' "$R"
 if [ "$ADMIN" -eq 1 ]; then
     setting tournament_result_ms 0
-    R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")")
+    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php")
     expect "past the grace, a plain poll from a participant settles it" 'event\":\"result' "$R"
     expect "and carries what the settle produced, the podium included" 'podium' "$R"
     setting tournament_result_ms 15000
@@ -343,16 +343,16 @@ if [ "$ADMIN" -eq 1 ]; then
     expect "and the host starts it" '"ok":true' "$R"
     R=$(act "$ID1" state "$T7")
     expect "a node is dealt and in flight" '"cursor":"' "$R"
-    R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
     expect "a poll inside the deadline changes nothing" '"ok":true' "$R"
     R=$(act "$ID1" state "$T7")
     expect "and the node is still open" '"state":"running"' "$R"
     setting tournament_deadlock_ms 0
-    R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
     expect "past it, a participant's own poll re-deals the node" 'event\":\"roles' "$R"
     R=$(act "$ID1" state "$T7")
     expect "which is a second attempt, not a result" '"state":"running"' "$R"
-    R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
     expect "and the attempt after that voids it" 'event\":\"result' "$R"
     R=$(act "$ID1" state "$T7")
     expect "with no winner named, both players having turned up" '"winner":null' "$R"

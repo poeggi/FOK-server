@@ -39,7 +39,11 @@ require_once __DIR__ . '/../src/RelayStore.php';
  *                                the hub cannot run at all (see RelayStore);
  *                                answered to GET and POST alike
  *
- * GET ?id=<me>&peer=<sender>[&wait=<seconds>]
+ * POST {"id":<me>,"tok":..,"peer":<sender>,"wait"?:<seconds>} - no payload -
+ * is the held READ (4.21); GET ?id=<me>&tok=&peer=<sender>[&wait=<seconds>]
+ * is the same read in the form from before it. TEMPORARY(ident): a token
+ * on the request line lands in the web server's access log, so the GET
+ * goes with 5.0.
  *   -> 200 {"ok":true,"messages":[{"seq":n,"payload":"...","created":s,"age":ms}]}
  *      oldest first, drained on delivery (exactly-once). "age" is ms on the
  *      server before this delivery (mailbox delay vs FPM-queue delay).
@@ -76,15 +80,12 @@ Util::cors();
 RelayStore::requireApcu();
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
 
-if ($method === 'GET') {
-    $id = $_GET['id'] ?? null;
-    $peer = $_GET['peer'] ?? null;
-    if (!Util::isValidId($id) || !Util::isValidId($peer) || $id === $peer) {
-        Util::fail('invalid id/peer');
-    }
-    Util::noteCaller($id);
-    Ident::require($id, Ident::read($_GET)[1], Util::clientIp());
-    $wait = min((int)($_GET['wait'] ?? 0), FOK_POLL_WAIT_MAX);
+/**
+ * The held read: what a relayed peer watches mid-game. Answered to the POST
+ * without a payload and, until 5.0, to the GET.
+ */
+function relay_hold(string $id, string $peer, int $wait): never
+{
     // Two relayed players hold two workers for as long as their duel runs,
     // which is why relay_max_duels exists - but that cap only knows about
     // relays, and the pool also has signal polls and everything else on it.
@@ -135,6 +136,17 @@ if ($method === 'GET') {
     }
 }
 
+if ($method === 'GET') {
+    $id = $_GET['id'] ?? null;
+    $peer = $_GET['peer'] ?? null;
+    if (!Util::isValidId($id) || !Util::isValidId($peer) || $id === $peer) {
+        Util::fail('invalid id/peer');
+    }
+    Util::noteCaller($id);
+    Ident::require($id, Ident::read($_GET)[1], Util::clientIp());
+    relay_hold($id, $peer, min((int)($_GET['wait'] ?? 0), FOK_POLL_WAIT_MAX));
+}
+
 if ($method !== 'POST') {
     Util::fail('GET or POST only', 405);
 }
@@ -147,12 +159,22 @@ if (!Util::isValidId($id) || !Util::isValidId($peer) || $id === $peer) {
 }
 Util::noteCaller($id);
 Ident::require($id, Ident::read($body)[1], Util::clientIp());
+// No payload is the held read (4.21), the GET above as a body.
+if (!array_key_exists('payload', $body)) {
+    $wait = $body['wait'] ?? 0;
+    if (is_string($wait) && ctype_digit($wait)) {
+        $wait = (int)$wait;
+    } elseif (!is_int($wait) || $wait < 0) {
+        Util::fail('invalid wait');
+    }
+    relay_hold($id, $peer, min($wait, FOK_POLL_WAIT_MAX));
+}
 // A client sustaining too high a send rate is turned away for a while
 // (see RelayRate) - a cheap indexed read, before any of the work below.
 if (RelayRate::blocked($id)) {
     Util::fail('relay rate limit: slow down', 429);
 }
-$payload = $body['payload'] ?? null;
+$payload = $body['payload'];
 if (!is_string($payload) || $payload === '' || strlen($payload) > Settings::int('relay_max_payload')) {
     Util::fail('invalid payload');
 }

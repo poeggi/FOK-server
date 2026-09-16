@@ -55,6 +55,27 @@ R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$IA&tok=$WRONG
 expect "a poll with a wrong token is 401" '401' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$IA$(qt "$IA")")
 expect "a poll with the token holds as usual" '204' "$R"
+# The token off the request line (4.21): the same poll as a POST body, the
+# same members, the same answers. The GET above is the form from before it.
+pollb() { # pollb <json-body> : prints the HTTP status
+    curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'         -d "$1" "$BASE/api/poll.php"
+}
+R=$(pollb "{\"id\":\"$IA\"$(jt "$IA")}")
+expect "the poll as a POST body holds as usual" '204' "$R"
+R=$(pollb "{\"id\":\"$IA\",\"tok\":\"$WRONG\"}")
+expect "and refuses a wrong token in the body" '401' "$R"
+R=$(pollb "{\"id\":\"$IA\"}")
+expect "and one without" '401' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\"$(jt "$IA"),\"fl\":true,\"aa\":1,\"wait\":5}" "$BASE/api/poll.php")
+expect "a body carries the flags as booleans or numbers" '"friends":[' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\"$(jt "$IA"),\"wait\":\"x\"}" "$BASE/api/poll.php")
+expect "and a wait that is not a number is refused" '"error":"invalid wait"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\"$(jt "$IA"),\"fs\":-1}" "$BASE/api/poll.php")
+expect "as is a negative cursor" '"error":"invalid fs"' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\"$(jt "$IA"),\"peer\":\"$IB\"}" "$BASE/api/relay.php")
+expect "the relay's held read as a POST without a payload" '204' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"peer\":\"$IB\"}" "$BASE/api/relay.php")
+expect "refuses a wrong token like the send" '401' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"to\":\"$IB\",\"type\":\"ice\",\"payload\":\"x\"}" "$BASE/api/signal.php")
 expect "a signal with a wrong token is refused" '"error":"bad token"' "$R"

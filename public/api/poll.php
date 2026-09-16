@@ -14,12 +14,15 @@ require_once __DIR__ . '/../src/Pace.php';
 
 /**
  * Fast, cheap signal poll for the matchmaking/signaling window.
- * GET /api/poll.php?id=<8-hex>&tok=<32-hex>[&wait=<seconds>][&fs=<cursor ms>]
- *                          [&aa=1][&fl=1][&tl=1][&ev=1][&de=<8-hex>]
- *                          [&db=0|1]
+ * POST {"id": "8-hex", "tok": "32-hex", "wait"?: seconds, "fs"?: cursor ms,
+ *       "aa"?, "fl"?, "tl"?, "ev"?, "db"?: 0|1|true|false, "de"?: "8-hex"}
  *   -> 204 No Content        nothing pending (empty body; the hold reads
  *                            shared memory only)
  *   -> 200 {"ok":true,"signals":[...]}   pending messages, drained on read
+ * GET /api/poll.php?id=&tok=&wait=&fs=&aa=1&fl=1&tl=1&ev=1&de=&db= is the
+ * same request with the same members as query parameters. TEMPORARY(ident):
+ * it is the form from before 4.21, and a token on the request line lands in
+ * the web server's access log, so it goes with 5.0.
  *
  * With fs the answer also carries the friend presence delta, the presence
  * counters and the pace (4.6), and a friend TRANSITION ends the hold the
@@ -58,29 +61,38 @@ require_once __DIR__ . '/../src/Pace.php';
  * sees the slow hello heartbeat (with duel_with) every ~60 s.
  */
 Util::cors();
-if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'GET') {
-    Util::fail('GET only', 405);
+$method = $_SERVER['REQUEST_METHOD'] ?? '';
+if ($method === 'POST') {
+    $q = Util::jsonBody();
+} elseif ($method === 'GET') {
+    $q = $_GET;   // TEMPORARY(ident): the pre-4.21 form
+} else {
+    Util::fail('GET or POST only', 405);
 }
 
-$id = $_GET['id'] ?? null;
+$id = $q['id'] ?? null;
 if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
 Util::noteCaller($id);
-Ident::require($id, Ident::read($_GET)[1], Util::clientIp());
+Ident::require($id, Ident::read($q)[1], Util::clientIp());
 // The hello answers a holding screen can ask for here instead (4.9).
 // Absent is null and changes nothing - a poll that did not mention a thing
 // is not asserting anything about it - and anything but a flag is a typo
-// worth saying so about, the way fs is.
-$flag = static function (string $k): ?bool {
-    $v = $_GET[$k] ?? null;
+// worth saying so about, the way fs is. A flag is 0 or 1: the strings a
+// query carries, the numbers or booleans a body does.
+$flag = static function (string $k) use ($q): ?bool {
+    $v = $q[$k] ?? null;
     if ($v === null) {
         return null;
     }
-    if ($v !== '0' && $v !== '1') {
-        Util::fail("invalid $k");
+    if ($v === '1' || $v === 1 || $v === true) {
+        return true;
     }
-    return $v === '1';
+    if ($v === '0' || $v === 0 || $v === false) {
+        return false;
+    }
+    Util::fail("invalid $k");
 };
 $armAccept = $flag('aa') === true;
 $wantRoster = $flag('fl') === true;
@@ -100,7 +112,7 @@ $debug = Presence::touch($id, Util::clientIp(), null, null, $armAccept ? true : 
 // DataChannel is open a bye goes peer-to-peer and the server never sees
 // it, so the end has to be STATED - and the screen a client returns to
 // afterwards is one holding this poll.
-$duelEnd = $_GET['de'] ?? null;
+$duelEnd = $q['de'] ?? null;
 if ($duelEnd !== null) {
     if (!Util::isValidId($duelEnd)) {
         Util::fail('invalid de');
@@ -124,14 +136,22 @@ $instruct = $debugActive !== null && $debug !== $debugActive
 // mailbox this request is about to drain. Once per request, never inside
 // the loop below - the hold touches nothing but the mailbox.
 Tournament::pulse($id);
-$fs = $_GET['fs'] ?? null;
+// The cursor and the wait: a number in a body, its digits in a query.
+$fs = $q['fs'] ?? null;
 if ($fs !== null) {
-    if (!is_string($fs) || preg_match('/^[0-9]{1,15}$/', $fs) !== 1) {
+    if (is_string($fs) && preg_match('/^[0-9]{1,15}$/', $fs) === 1) {
+        $fs = (int)$fs;
+    } elseif (!is_int($fs) || $fs < 0) {
         Util::fail('invalid fs');
     }
-    $fs = (int)$fs;
 }
-$wait = min((int)($_GET['wait'] ?? 0), FOK_POLL_WAIT_MAX);
+$wait = $q['wait'] ?? 0;
+if (is_string($wait) && ctype_digit($wait)) {
+    $wait = (int)$wait;
+} elseif (!is_int($wait) || $wait < 0) {
+    Util::fail('invalid wait');
+}
+$wait = min($wait, FOK_POLL_WAIT_MAX);
 // Waiting costs an FPM worker for its whole duration, and the pool has a
 // budget for that (see Holds). Over the budget it is the WAIT that is given
 // up, not the request: the mailbox is still read and anything pending is

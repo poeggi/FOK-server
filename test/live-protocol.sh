@@ -57,7 +57,6 @@ if [ -f "$TOKFILE" ]; then
     while read -r b i t; do [ "$b" = "$BASE" ] && TOK[$i]=$t; done < "$TOKFILE"
 fi
 jt() { if [ -n "${TOK[$1]:-}" ]; then printf ',"tok":"%s"' "${TOK[$1]}"; else printf ',"tok":null'; fi; }
-qt() { if [ -n "${TOK[$1]:-}" ]; then printf '&tok=%s' "${TOK[$1]}"; fi; }
 adopt() { # adopt <id> <hello answer> : the one rule - store whatever a hello answers
     local t
     t=$(echo "$2" | grep -oE '"tok":"[a-f0-9]{32}"' | cut -d'"' -f4 || true)
@@ -83,12 +82,17 @@ sig() { # sig <from> <to> <type> <payload>
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$1\"$(jt "$1"),\"to\":\"$2\",\"type\":\"$3\",\"payload\":\"$4\"}" "$BASE/api/signal.php" > /dev/null
 }
-poll() { curl -s "$BASE/api/poll.php?id=$1$(qt "$1")"; }     # drain <id>'s signals
+poll() { # drain <id>'s signals: the POST form (4.21), the token in the body
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$1\"$(jt "$1")}" "$BASE/api/poll.php"
+}
 rly() { # rly <from> <peer> <payload>
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php" > /dev/null
 }
-rlyget() { curl -s "$BASE/api/relay.php?id=$1&peer=$2&wait=${3:-0}$(qt "$1")"; }
+rlyget() { # the relay's held read: a POST without a payload (4.21)
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"wait\":${3:-0}}" "$BASE/api/relay.php"
+}
 
 # Fixed throwaway ids (8-hex, the server's id format) so repeat runs reuse the
 # same four rows instead of littering the live player list with a fresh set

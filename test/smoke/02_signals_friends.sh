@@ -16,7 +16,7 @@ if [ "${#NOW_MS}" -eq 13 ]; then echo "ok   server clock reads in milliseconds";
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"synced\",\"pts\":$NOW_MS}" "$BASE/api/signal.php")
 expect "signal with valid pts" '"ok":true' "$R"
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
 # A pts that reads ahead: silent inside half the margin, a warning past
 # that but still answered, refused past the whole of it. The last one is
@@ -43,7 +43,7 @@ FUTURE_MS=$((SRV_MS + 60000))
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"cheat\",\"pts\":$FUTURE_MS}" "$BASE/api/signal.php")
 expect "a pts past the whole margin is refused" 'bogus pts' "$R"
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"name\":\"CHEAT\",\"score\":9,\"level\":1,\"diff\":1,\"pts\":$FUTURE_MS}" "$BASE/api/scores.php")
@@ -61,14 +61,14 @@ expect "invite blocked without friendship" '403' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"request\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
 expect "friend request recorded" '"state":"pending"' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 expect "peer notified of friend request" '"type":"friend"' "$R"
 expect "notification names the requester" "\"from\":\"$ID1\"" "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"action\":\"list\"}" "$BASE/api/friend.php")
 expect "peer sees incoming request" '"outgoing":false' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"action\":\"accept\",\"peer\":\"$ID1\"}" "$BASE/api/friend.php")
 expect "friend request accepted" '"state":"accepted"' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php")
 expect "requester notified of acceptance" 'accepted' "$R"
 expect "acceptance is a friend signal" '"type":"friend"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
@@ -93,7 +93,7 @@ expect "invite drained after delivery" '"signals":[]' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"to\":\"$ID1\",\"type\":\"accept\",\"payload\":\"{\\\"profile\\\":{\\\"name\\\":\\\"SMOKE TWO\\\"}}\"}" "$BASE/api/signal.php")
 expect "accept reply sent" '"ok":true' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php")
 expect "accept reply reaches the inviter" '"type":"accept"' "$R"
 expect "accept carries the peer profile" 'SMOKE TWO' "$R"
 # The accept just confirmed a P2P pairing, so both sides also get a
@@ -101,17 +101,17 @@ expect "accept carries the peer profile" 'SMOKE TWO' "$R"
 expect "accept hands the inviter a peer-net hint" '"type":"peer-net"' "$R"
 expect "the peer-net carries an address family" 'family' "$R"
 expect "the peer-net carries the recipient own address" 'self_ip' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 expect "the accepter also gets a peer-net hint" '"type":"peer-net"' "$R"
 
 # Decline is delivered too.
 curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"{}\"}" "$BASE/api/signal.php" > /dev/null
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"to\":\"$ID1\",\"type\":\"decline\",\"payload\":\"\"}" "$BASE/api/signal.php")
 expect "decline sent" '"ok":true' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php")
 expect "decline reaches the inviter" '"type":"decline"' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
@@ -121,13 +121,13 @@ expect "signal rejects bad type" '"error":"invalid type"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"to\":\"$ID1\",\"type\":\"accept-relay\",\"payload\":\"{}\"}" "$BASE/api/signal.php")
 expect "relay-first accept allowed" '"ok":true' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php")
 expect "relay-first accept delivered" '"type":"accept-relay"' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"invite-relay\",\"payload\":\"{}\"}" "$BASE/api/signal.php")
 expect "no-p2p invite allowed" '"ok":true' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 expect "no-p2p invite delivered" '"type":"invite-relay"' "$R"
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
@@ -139,7 +139,7 @@ LONG=$(printf 'x%.0s' $(seq 1 4096))
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"offer\",\"payload\":\"$LONG\"}" "$BASE/api/signal.php")
 expect "offer allows large payload" '"ok":true' "$R"
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
 # 'ices' (4.4): a side's whole ICE trickle in ONE request. The cost on this
 # host is per request, not per byte, so this is the type that pays. The
@@ -148,7 +148,7 @@ curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
 CANDS='[{\"candidate\":\"cand-a\"},{\"candidate\":\"cand-b\"}]'
 R=$(sig "$ID1" "$ID2" ices "$CANDS")
 expect "batched ice candidates accepted" '"ok":true' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 expect "batched ice candidates delivered" '"type":"ices"' "$R"
 expect "the whole batch arrives, not just the last of it" 'cand-b' "$R"
 R=$(sig "$ID1" "$ID2" ices 'cand-a')
@@ -157,26 +157,26 @@ R=$(sig "$ID1" "$ID2" ices '[]')
 expect "ices rejects an empty batch" '"error":"invalid payload"' "$R"
 R=$(sig "$ID1" "$ID2" ices "[$(printf '1,%.0s' $(seq 1 23))1]")
 expect "a full batch at the cap is accepted" '"ok":true' "$R"
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 R=$(sig "$ID1" "$ID2" ices "[$(printf '1,%.0s' $(seq 1 24))1]")
 expect "one candidate over the cap is refused" '"error":"invalid payload"' "$R"
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 expect "poll empty is 204" '204' "$R"
 
 curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"cand\"}" "$BASE/api/signal.php" > /dev/null
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 expect "poll delivers signal" '"type":"ice"' "$R"
 
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
 expect "poll drained back to 204" '204' "$R"
 
 curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"ice\",\"payload\":\"c2\"}" "$BASE/api/signal.php" > /dev/null
 T0=$(date +%s)
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&wait=5")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"wait\":5}" "$BASE/api/poll.php")
 T1=$(date +%s)
 expect "long poll returns pending signal" '"type":"ice"' "$R"
 if [ $((T1 - T0)) -le 1 ]; then echo "ok   long poll answers immediately"; else echo "FAIL long poll took $((T1 - T0))s with pending signal"; fail=1; fi
@@ -186,7 +186,7 @@ if [ $((T1 - T0)) -le 1 ]; then echo "ok   long poll answers immediately"; else 
 # for the whole cap - is the 9 s cap test, which stays on every run.
 if [ "$REMOTE" -eq 0 ]; then
     T0=$(date +%s)
-    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&wait=2")
+    R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"wait\":2}" "$BASE/api/poll.php")
     T1=$(date +%s)
     expect "long poll times out to 204" '204' "$R"
     if [ $((T1 - T0)) -ge 1 ]; then echo "ok   long poll held the request"; else echo "FAIL long poll returned too fast ($((T1 - T0))s)"; fail=1; fi
@@ -229,8 +229,8 @@ expect "a malformed duel_end is refused" '"error":"invalid duel_end"' "$R"
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"duel_with\":\"$ID2\"}" "$BASE/api/hello.php" > /dev/null
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"duel_with\":\"$ID1\"}" "$BASE/api/hello.php")
 expect "a duel announced again, for the poll to end" "$(strict '"playing":2')" "$R"
-curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&de=$ID2" > /dev/null
-curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&de=$ID1" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"de\":\"$ID2\"}" "$BASE/api/poll.php" > /dev/null
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"de\":\"$ID1\"}" "$BASE/api/poll.php" > /dev/null
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/hello.php")
 expect "the poll ends a duel as a hello does" "$(strict '"playing":0')" "$R"
 
@@ -269,46 +269,46 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt
 expect "a negative cursor is refused" '"error":"invalid friends_since"' "$R"
 
 # ...and on the poll, where the screens already are.
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&fs=0")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"fs\":0}" "$BASE/api/poll.php")
 expect "the poll serves the delta too" '"friends_delta":{' "$R"
 expect "with the presence counters" "$(strict '"online":2')" "$R"
 expect "and the hold decision" '"pace":{' "$R"
 PAT=$(echo "$R" | grep -oE '"friends_at":[0-9]+' | cut -d: -f2)
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&fs=$PAT")
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"fs\":$PAT}" "$BASE/api/poll.php")
 expect "a poll with nothing pending still answers 204" '204' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&fs=nonsense")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"fs\":\"nonsense\"}" "$BASE/api/poll.php")
 expect "a bogus cursor is refused" '"error":"invalid fs"' "$R"
 
 # 4.9: the last three answers a screen holding this poll needed a hello for.
 # fl and tl answer AT ONCE: the body proves the answer, the clock proves the
 # poll did not wait out the hold it asked for.
 T0=$(date +%s)
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&fl=1&wait=5")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"fl\":1,\"wait\":5}" "$BASE/api/poll.php")
 expect "the poll serves the whole roster" '"friends":[' "$R"
 expect "the counters ride the roster" '"online":' "$R"
 expect "so does the hold decision" '"pace":{' "$R"
 expect "and it answers instead of holding for the wait" 'fast' "$([ $(( $(date +%s) - T0 )) -lt 3 ] && echo fast || echo slow)"
 T0=$(date +%s)
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&tl=1&wait=5")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"tl\":1,\"wait\":5}" "$BASE/api/poll.php")
 expect "the poll serves the tournament announce" '"tourneys":' "$R"
 expect "and answers at once for that too" 'fast' "$([ $(( $(date +%s) - T0 )) -lt 3 ] && echo fast || echo slow)"
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&fl=nonsense")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"fl\":\"nonsense\"}" "$BASE/api/poll.php")
 expect "a bogus flag is refused" '"error":"invalid fl"' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&fl=1")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"fl\":1}" "$BASE/api/poll.php")
 expect "every body carries the contract version" '"api":"' "$R"
 expect "and the server's debug instruction" '"debug":' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&de=nonsense")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"de\":\"nonsense\"}" "$BASE/api/poll.php")
 expect "a bogus duel end is refused" '"error":"invalid de"' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&db=nonsense")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"db\":\"nonsense\"}" "$BASE/api/poll.php")
 expect "a bogus debug report is refused" '"error":"invalid db"' "$R"
 if [ "$REMOTE" -eq 0 ]; then
-    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&wait=1")
+    R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"wait\":1}" "$BASE/api/poll.php")
     expect "a poll asking for none of them still answers 204" '204' "$R"
 fi
 # The contract promises any hold up to 9 s (the default ask is 5): a longer
 # ask is served as the cap, measured in whole seconds with room on each side.
 T0=$(date +%s)
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&wait=20")
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"wait\":20}" "$BASE/api/poll.php")
 expect "a hold past the cap still answers 204" '204' "$R"
 expect "and is held for the cap, not the ask" 'capped' "$(D=$(( $(date +%s) - T0 )); [ $D -ge 8 ] && [ $D -le 12 ] && echo capped || echo "held ${D}s")"
 

@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.20", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.21", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -59,8 +59,9 @@ that key made to join an event that has not started yet in 4.13, the
 event's monitor named on the roles sheet and sent the tournament's
 signals in 4.14, the walkover clock on that sheet in 4.15, an event id
 an operator named, which may carry a 0 or a 1, in 4.16, or the identity
-token in 4.20 - the preparation for 5.0, where it is required) is
-available, and
+token in 4.20 - the preparation for 5.0, where it is required - and the
+POST forms of the poll, the relay's held read and the vault restore in
+4.21, which take the token off the request line) is available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
 
@@ -175,9 +176,13 @@ player. The token is what proves it.
            is stored. It never changes for an id; only an operator's reset
            makes the next hello mint again.
 
-Where it goes: as the `tok` member of every POST body beside `id`, and as
-`&tok=` on the GETs that name an id (poll.php, backup.php, and the
-deprecated relay.php). A client
+Where it goes: as the `tok` member of every POST body beside `id`. Since
+4.21 every request that names an id has a POST form - poll.php, the
+relay's held read and the vault restore were GETs, and each now takes the
+same members as a JSON body - so the token never travels on a request
+line, which the web server's access log records on every hit. The GET
+forms with `&tok=` still answer (TEMPORARY(ident), below) and are for a
+client built before 4.21 only. A client
 that has none yet sends `"tok": null` on hello - the member's presence is
 what says the client speaks 4.20 - and the answer to that hello carries
 `tok`. THE ONE RULE FOR A CLIENT: whenever a hello answer carries `tok`,
@@ -220,10 +225,12 @@ client has not yet presented it on a hello - so a client from before the
 token keeps working until it updates. Such a hello binds nothing. A first
 backup.php POST from such a client still mints (the vault's own mint from
 before 4.20, answered as `tok` and as `token`), and backup.php reads
-`token` as an alias of `tok`. From that date on, 5.0: `tok` is required on
-every request, a hello without it is 401, the vault mints nothing, and a
-wrong token from a pair over the cap answers 429 `too many attempts` with
-`retry_after` instead of 401.
+`token` as an alias of `tok`. The GET forms of poll.php, the relay's held
+read and the vault restore are TEMPORARY(ident) too: a token in a query
+is on the request line. From that date on, 5.0: `tok` is required on
+every request, a hello without it is 401, the vault mints nothing, the
+three GETs are gone, and a wrong token from a pair over the cap answers
+429 `too many attempts` with `retry_after` instead of 401.
 
 ## Time synchronization and PTS
 
@@ -1020,13 +1027,26 @@ only carries the bit.
 
 ## GET /api/poll.php - fast signal poll
 
-    GET /api/poll.php?id=c0ffee42&tok=<32-hex>[&wait=5][&fs=<cursor>]
-                     [&aa=1][&fl=1][&tl=1][&de=<8-hex>][&db=0|1]
+    POST /api/poll.php {"id": "c0ffee42", "tok": "<32-hex>", "wait"?: 5,
+                        "fs"?: <cursor>, "aa"?: 1, "fl"?: 1, "tl"?: 1,
+                        "ev"?: 1, "de"?: "<8-hex>", "db"?: 0|1}
 
-`tok` is the identity token (4.20): a bound id without it, or with a wrong
-one, is answered 401 before anything is read. The check runs once at the
-top of the request, off the presence entry while the player is here (one
-row read on arrival, beside the session write), never inside the hold.
+    GET  /api/poll.php?id=c0ffee42&tok=<32-hex>[&wait=5][&fs=<cursor>]
+                      [&aa=1][&fl=1][&tl=1][&ev=1][&de=<8-hex>][&db=0|1]
+
+The POST (4.21) and the GET are ONE request: the same members, the same
+semantics, the same answers. In a body a flag is `1`/`0`, `true`/`false`
+or the same as a string, and `wait` and `fs` are numbers (their digits as
+a string are accepted too); in a query everything is a string, as it
+always was. Send the POST: the GET puts the token on the request line,
+which the web server's access log records, and it is TEMPORARY(ident) -
+the form from before 4.21, gone with 5.0. A POST costs one preflight per
+Max-Age, answered by Apache without a worker, and the poll's URL is then
+one fixed URL rather than its query variants. `tok` is the identity token
+(4.20): a bound id without it, or with a wrong one, is answered 401
+before anything is read. The check runs once at the top of the request,
+off the presence entry while the player is here (one row read on arrival,
+beside the session write), never inside the hold.
 
     -> 204 No Content                          nothing pending
     -> 200 {"ok":true,"signals":[...]}         pending messages, drained
@@ -1633,7 +1653,11 @@ indicator so latency self-explains.
                                     too): there is no relay play on this
                                     deployment, do not retry
 
-    GET /api/relay.php?id=me&peer=opponent&wait=9
+    POST /api/relay.php {"id":"me","tok":"<32-hex>","peer":"opponent","wait":9}
+    GET  /api/relay.php?id=me&tok=<32-hex>&peer=opponent&wait=9
+      (the held READ, 4.21: a POST with NO payload member is this read, the
+       GET is the same read in the form from before 4.21 - TEMPORARY(ident),
+       the token is on the request line there, gone with 5.0)
       -> {"ok":true,"messages":[{"seq":n,"payload":"...","created":s,"age":ms}]}
          oldest first, delivered exactly once
       -> {"ok":true,"gone":true}   the pairing was torn down (a bye/decline
@@ -1726,10 +1750,13 @@ now.
     POST /api/backup.php {"id": "c0ffee42", "tok": "<hex>", "payload": "<string>"}
       -> 200 {"ok": true, "updated": <unix seconds>}
       -> 401 {"error": "bad token"}       the id is bound to another token
-    GET  /api/backup.php?id=c0ffee42&tok=<hex>
+    POST /api/backup.php {"id": "c0ffee42", "tok": "<hex>", "restore": true}
       -> 200 {"ok": true, "payload": "<string>", "updated": <unix seconds>}
       -> 404 {"error": "no backup"}       nothing stored for this id
       -> 401 {"error": "bad token"}       missing or wrong token
+    GET  /api/backup.php?id=c0ffee42&tok=<hex>
+      -> the same restore in the form from before 4.21. TEMPORARY(ident):
+         the token is on the request line there; gone with 5.0
 
 The token is the identity token (4.20; see Identity token): the one hello
 minted for the id, the same one every other request carries. A backup is

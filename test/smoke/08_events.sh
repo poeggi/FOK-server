@@ -148,11 +148,11 @@ expect "saying where the caller stands in each" '"you":{"state":"member"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"events\":\"yes\"}" "$BASE/api/hello.php")
 expect "a bogus events flag is refused" '"error":"invalid events"' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&ev=1")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"ev\":1}" "$BASE/api/poll.php")
 expect "the poll answers them too" "\"eid\":\"$EID1\"" "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&ev=1&wait=2")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"ev\":1,\"wait\":2}" "$BASE/api/poll.php")
 expect "and answers at once rather than holding for a signal" "\"eid\":\"$EID1\"" "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&ev=2")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"ev\":2}" "$BASE/api/poll.php")
 expect "a bogus ev flag is refused" '"error":"invalid ev"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"event\",\"payload\":\"x\"}" "$BASE/api/signal.php")
@@ -524,7 +524,7 @@ R=$(evact "$ID2" state "$EID5")
 expect "the old eid names nothing" '"error":"no such event"' "$R"
 R=$(evact "$ID2" state "SRV0")
 expect "and the early member is in the event under its new one" '"you":{"state":"member"' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&ev=1")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"ev\":1}" "$BASE/api/poll.php")
 expect "which its events list now says" '"eid":"SRV0"' "$R"
 refute "in place of the old" "\"eid\":\"$EID5\"" "$R"
 R=$(evadmin event_rename "eid=SRV0" "to=$EID1")

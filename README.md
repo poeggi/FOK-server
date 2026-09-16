@@ -463,7 +463,7 @@ host-level. If this outgrows shared hosting, fix workers first.
 ## API sketch
 
     GET  /api/version.txt
-      -> {"ok":true,"server":"<x.y.z>","api":"4.20","env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":"4.21","env":"live"}
          (static, written by the deploy - it starts no PHP)
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
@@ -473,7 +473,7 @@ host-level. If this outgrows shared hosting, fix workers first.
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,
                           "friends_since":ms?, "tourneys":bool?,
                           "events":bool?, "nets":[ip,...]?}
-      -> {"ok":true,"api":"4.20","tok":"<32-hex>"?,"now":ms,"debug":bool,
+      -> {"ok":true,"api":"4.21","tok":"<32-hex>"?,"now":ms,"debug":bool,
           "online":n,"playing":n,"registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_delta":{...}?, "tourneys":[...]?, "events":[...]?}
@@ -488,9 +488,11 @@ host-level. If this outgrows shared hosting, fix workers first.
       -> {"ok":true,"state":...} | {"ok":true,"friends":[...]}
          (request/accept notify the peer via a reserved 'friend' signal)
     POST /api/relay.php  {"id","peer","payload","pts"?} -> {"ok":true}
-    GET  /api/relay.php?id=&peer=&wait=8
+    POST /api/relay.php  {"id","tok","peer","wait"}   the held read (no payload)
       -> {"ok":true,"messages":[...]} | 204   (P2P fallback relay)
-    GET  /api/poll.php?id=cafe0001&tok=<32-hex>&wait=8
+    POST /api/poll.php   {"id":"cafe0001","tok":"<32-hex>","wait":8,...}
+                         (the GET with the same members as a query stays
+                          until 5.0: it puts the token on the request line)
       -> 204 (nothing pending) | {"ok":true,"signals":[...]}
          (wait=N long-polls: answers ~20 ms after a signal arrives)
     POST /api/match.php  {"id":"cafe0001","action":"seek|cancel"}

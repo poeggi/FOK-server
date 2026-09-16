@@ -7,9 +7,13 @@ require_once __DIR__ . '/../src/Vault.php';
 
 /**
  * Client config backup / restore (contract + payload manifest in docs/API.md).
- *   POST {id, tok, payload}  -> {ok, updated} | 401 bad token
- *   GET  ?id=&tok=           -> {ok, payload, updated} | 404 no backup |
- *                               401 bad token
+ *   POST {id, tok, payload}        -> {ok, updated} | 401 bad token
+ *   POST {id, tok, restore: true}  -> {ok, payload, updated} | 404 no backup |
+ *                                     401 bad token   (4.21)
+ *   GET  ?id=&tok=                 -> the same restore, in the form from
+ *                                     before 4.21. TEMPORARY(ident): a token
+ *                                     on the request line lands in the web
+ *                                     server's access log; goes with 5.0
  * Payload is OPAQUE (never parsed), capped at FOK_STATS_MAX. The identity
  * token is what binds a backup to its owner (see Ident): the same one every
  * other request carries, minted by hello. Here alone the gate's leniency
@@ -40,6 +44,12 @@ if ($method === 'GET') {
     Util::noteCaller($id);
     [, $tok] = $tokOf($_GET);
     Ident::require($id, $tok, Util::clientIp());
+    backup_restore($id, $tok);
+}
+
+/** The restore, answered to the POST with `restore` and, until 5.0, the GET. */
+function backup_restore(string $id, ?string $tok): never
+{
     $res = Vault::restore($id);
     if ($res === null) {
         Util::fail('no backup', 404);
@@ -62,6 +72,12 @@ if (!Util::isValidId($id)) {
 Util::noteCaller($id);
 [, $tok] = $tokOf($body);
 Ident::require($id, $tok, Util::clientIp());
+if (array_key_exists('restore', $body)) {
+    if ($body['restore'] !== true) {
+        Util::fail('invalid restore');
+    }
+    backup_restore($id, $tok);
+}
 $payload = $body['payload'] ?? null;
 if (!is_string($payload) || $payload === '') {
     Util::fail('invalid payload');

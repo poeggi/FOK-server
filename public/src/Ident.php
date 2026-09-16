@@ -357,7 +357,11 @@ final class Ident
         return $tok;
     }
 
-    /** A copied row, presented by its owner's updated client: bound for good. */
+    /**
+     * A copied row, presented by its owner's updated client: bound for
+     * good. One log line per id, ever - the migration converging, readable
+     * beside the late binds.
+     */
     private static function confirm(string $id, string $ip): void
     {
         Db::retry(static fn() => Db::get()
@@ -366,6 +370,12 @@ final class Ident
         $hash = self::$memo[$id]['hash'];
         self::$memo[$id] = ['hash' => $hash, 'confirmed' => true];
         Presence::setTok($id, $hash, true);
+        $st = Db::get()->prepare('SELECT name FROM players WHERE id = ?');
+        $st->execute([$id]);
+        $row = $st->fetch();
+        $st->closeCursor();
+        $name = $row === false || $row['name'] === null ? '' : ' ' . $row['name'];
+        Alerts::note('ident', "id $id$name confirmed its vault token from $ip");
     }
 
     private static function noteFail(string $id, string $ip): void

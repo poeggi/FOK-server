@@ -71,7 +71,7 @@ expect "hello registers" "$(strict '"registered":1')" "$R"
 expect "hello online" "$(strict '"online":1')" "$R"
 expect "the first hello binds the id and answers its token" '"tok":"' "$R"
 # A poll is a beat too (4.5): a client that only ever polls is online.
-curl -s -o /dev/null "$BASE/api/poll.php?id=$ID2$(qt "$ID2")"
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/hello.php")
 expect "a poll counts as a beat" "$(strict '"online":2')" "$R"
 expect "hello carries api version" '"api":' "$R"
@@ -157,7 +157,7 @@ expect "score submissions throttled" '429' "$R"
 # finds its backup below. TEMPORARY(ident): ID4 is a client from before the
 # token - no tok member - whose first backup still mints, and it stores the
 # answer as its token like the vault's old client did.
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"restore\":true}" "$BASE/api/backup.php")
 expect "restore with no backup is 404" '404' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"payload\":\"config-blob-1\"}" "$BASE/api/backup.php")
@@ -168,7 +168,7 @@ R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID2")
 expect "restore without the token is 401" '401' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID2&tok=00000000000000000000000000000000")
 expect "restore with a wrong token is 401" '401' "$R"
-R=$(curl -s "$BASE/api/backup.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"restore\":true}" "$BASE/api/backup.php")
 expect "restore with the token returns the config" 'config-blob-1' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\",\"payload\":\"take-over\"}" "$BASE/api/backup.php")
@@ -178,7 +178,7 @@ R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application
 expect "and so is one from a device without it" '401' "$R"
 curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"payload\":\"config-blob-2\"}" "$BASE/api/backup.php" > /dev/null
-R=$(curl -s "$BASE/api/backup.php?id=$ID2$(qt "$ID2")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"restore\":true}" "$BASE/api/backup.php")
 expect "a tokened overwrite replaces the config" 'config-blob-2' "$R"
 R=$(curl -s "$BASE/api/backup.php?id=$ID2&token=${TOK[$ID2]}")
 expect "the vault's old member name still reads" 'config-blob-2' "$R"
@@ -187,7 +187,7 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
 expect "a first backup from a client before the token still mints" '"token":"' "$R"
 expect "and answers it under the new name too" '"tok":"' "$R"
 TOK[$ID4]=$(echo "$R" | grep -oE '"token":"[a-f0-9]{32}"' | cut -d'"' -f4 || true)
-R=$(curl -s "$BASE/api/backup.php?id=$ID4$(qt "$ID4")")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID4\"$(jt "$ID4"),\"restore\":true}" "$BASE/api/backup.php")
 expect "which reads the backup back" 'legacy-blob' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID4\"}" "$BASE/api/hello.php")
 expect "and that client still hellos without one" '"ok":true' "$R"

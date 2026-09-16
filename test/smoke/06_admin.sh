@@ -325,17 +325,17 @@ else
     # 4.9: the instruction reaches a client that only polls. A poll naming a
     # state the server disagrees with is answered instead of held, and the
     # client's own next report is what settles it again.
-    R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&db=1&wait=3")
+    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"db\":1,\"wait\":3}" "$BASE/api/poll.php")
     expect "a poll reporting a stale debug state is answered at once" '"debug":false' "$R"
     if [ "$REMOTE" -eq 0 ]; then
-        R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&db=1&wait=1")
+        R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"db\":1,\"wait\":1}" "$BASE/api/poll.php")
         expect "but a standing disagreement is not answered twice" '204' "$R"
     fi
-    curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&db=0" > /dev/null
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"db\":0}" "$BASE/api/poll.php" > /dev/null
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=users")
     expect "and the poll carries the client's report back" '"debug":false,"debug_active":false' "$R"
     if [ "$REMOTE" -eq 0 ]; then
-        R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID1$(qt "$ID1")&db=0&wait=1")
+        R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"db\":0,\"wait\":1}" "$BASE/api/poll.php")
         expect "an agreeing report holds as any other poll does" '204' "$R"
     fi
 
@@ -506,7 +506,7 @@ else
     R=$(sigcode "$ID1" "$ID2" ice 'm3')
     expect "a full mailbox fails loudly with 429" '429' "$R"
     setting mailbox_cap 64
-    curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
     setting relay_pending_cap 2
     rly "$ID1" "$ID2" 'p1' > /dev/null
@@ -514,7 +514,7 @@ else
     R=$(rlycode "$ID1" "$ID2" 'p3')
     expect "a full relay backlog fails loudly with 429" '429' "$R"
     setting relay_pending_cap 128
-    curl -s "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1" > /dev/null
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php" > /dev/null
 
     # TODO(smoke/relay-flood): re-enable. This checks the per-client relay
     # RATE cap (429) but never sets relay_max_duels, so it inherits whatever
@@ -565,9 +565,9 @@ else
     R=$(rly "$ID1" "$ID2" 'stranger cannot end this')
     expect "a stranger's bye cannot kill a live relayed duel" '"ok":true' "$R"
     setting relay_max_duels 3
-    curl -s "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1" > /dev/null
-    curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")" > /dev/null
-    curl -s "$BASE/api/poll.php?id=$ID4$(qt "$ID4")" > /dev/null
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php" > /dev/null
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php" > /dev/null
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID4\"$(jt "$ID4")}" "$BASE/api/poll.php" > /dev/null
 
     # Hub delivery end to end. The relay runs in APCu shared memory and
     # nothing else - the database transport is gone - so a host that cannot
@@ -579,23 +579,23 @@ else
     R=$(rly "$ID1" "$ID2" 'TRANSPORT:1')
     expect "the hub accepts a message" '"ok":true' "$R"
     rly "$ID1" "$ID2" 'TRANSPORT:2' > /dev/null
-    R=$(curl -s "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1&wait=2")
+    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\",\"wait\":2}" "$BASE/api/relay.php")
     expect "the hub delivers" 'TRANSPORT:1' "$R"
     expect "the hub delivers the second message" 'TRANSPORT:2' "$R"
     ordered "the hub preserves order" 'TRANSPORT:1' 'TRANSPORT:2' "$R"
-    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1")
+    R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
     expect "the hub delivers exactly once" '204' "$R"
     R=$(rly "$ID2" "$ID1" 'TRANSPORT:back')
     expect "the hub carries the other direction too" '"ok":true' "$R"
-    R=$(curl -s "$BASE/api/relay.php?id=$ID1$(qt "$ID1")&peer=$ID2&wait=2")
+    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\",\"wait\":2}" "$BASE/api/relay.php")
     expect "the reverse direction is separate" 'TRANSPORT:back' "$R"
     rly "$ID1" "$ID2" 'TRANSPORT:orphan' > /dev/null
     sig "$ID1" "$ID2" bye '' > /dev/null
     # bye tears the pair down: the held GET reports gone (v3.3, from ConnTrack)
     # and the orphan backlog dies with it (a gone reply carries no messages).
-    R=$(curl -s "$BASE/api/relay.php?id=$ID2$(qt "$ID2")&peer=$ID1")
+    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
     expect "bye tears down the pair" '"gone":true' "$R"
-    curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")" > /dev/null
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
     # An invite nobody picks up must not evaporate behind its ok:true:
     # the sender is told. (The sweep runs on the next mailbox read, so
@@ -609,13 +609,13 @@ else
         -d "{\"id\":\"$ID3\"$(jt "$ID3"),\"action\":\"request\",\"peer\":\"$ID4\"}" "$BASE/api/friend.php" > /dev/null
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID4\"$(jt "$ID4"),\"action\":\"accept\",\"peer\":\"$ID3\"}" "$BASE/api/friend.php" > /dev/null
-    curl -s "$BASE/api/poll.php?id=$ID3$(qt "$ID3")" > /dev/null
-    curl -s "$BASE/api/poll.php?id=$ID4$(qt "$ID4")" > /dev/null
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID3\"$(jt "$ID3")}" "$BASE/api/poll.php" > /dev/null
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID4\"$(jt "$ID4")}" "$BASE/api/poll.php" > /dev/null
     setting signal_ttl 1
     R=$(sig "$ID3" "$ID4" invite 'anyone?')
     expect "invite to the fresh friend accepted" '"ok":true' "$R"
     sleep 3
-    R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$ID4$(qt "$ID4")")
+    R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID4\"$(jt "$ID4")}" "$BASE/api/poll.php")
     expect "an expired invite is not delivered" '204' "$R"
     R=$(hello "$ID3")
     expect "the inviter is told the invite went undelivered" '"type":"undelivered"' "$R"

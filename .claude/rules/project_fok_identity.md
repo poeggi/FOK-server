@@ -1,6 +1,7 @@
 # Identity token: three states, one gate, and what closes on the date
 
-Shipped in 1.17.0 (API 4.20, schema 49). docs/PLAN-identity.md is the
+Shipped in 1.17.0 (API 4.20, schema 49); the POST forms in 1.18.0 (API
+4.21). docs/PLAN-identity.md is the
 design and its status list; docs/API.md "Identity token" is the contract.
 This is what bites somebody who changes the code without reading either.
 
@@ -46,14 +47,25 @@ whatever T1 lets through elsewhere. Vault.php stores and hands back; it
 judges nothing. vault.token_hash is dead (written as '' since 1.17.0),
 left in place until the host's SQLite is known to drop columns.
 
+## The token is never on a request line (4.21)
+
+A GET query is the request line, and the host's Apache access log
+records it on every hit - so `tok` in a query was the token of every
+player in a log this server does not write. Since 4.21 poll.php, the
+relay's held read (a POST with NO payload member) and the vault restore
+(`restore: true`) answer POST bodies with the same members; every harness
+here speaks POST. The GET forms still answer for clients built before
+4.21 and are TEMPORARY(ident).
+
 ## TEMPORARY(ident)
 
 Grep-able. T1 (Ident::verify / register), T2 (backup.php's mint and the
 `token` alias), T3 (the smoke's legacy assertions), T4 (the contract
-paragraph). All gated at runtime on Ident::LEGACY_UNTIL, which
-Ident::setLegacyUntil moves for the unit tests; test/checks.sh fails from
-2026-10-01 while any tagged line survives outside the plan and itself.
-Step 9 deletes them, bumps to 5.0 / 1.18.0, and turns the count into 429.
+paragraph), and the three GET forms above. All gated at runtime on
+Ident::LEGACY_UNTIL, which Ident::setLegacyUntil moves for the unit
+tests; test/checks.sh fails from 2026-10-01 while any tagged line
+survives outside the plan and itself. Step 9 deletes them, bumps to
+5.0 / 1.19.0, and turns the count into 429.
 
 ## The harnesses are 4.20 clients
 

@@ -1174,6 +1174,7 @@ Ident::setLegacyUntil(null);
 $r = Ident::register('1d000002', true, $tokV, $IP);
 ok($r['ok'] === true && $r['tok'] === null, 'the owner presenting the vault token on a hello passes');
 ok($identRow('1d000002')['bound_ip'] === $IP, 'and confirms the row');
+ok(str_contains($logTail(), "FOK ident: id 1d000002 confirmed its vault token from $IP"), 'the confirm is on record');
 Ident::flush();
 ok(Ident::verify('1d000002', null, $IP) === false, 'from then on a request without the token is refused');
 ok(Ident::verify('1d000002', $tokV, $IP) === true, 'and the vault token is the identity token');
