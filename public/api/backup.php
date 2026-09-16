@@ -2,36 +2,50 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
+require_once __DIR__ . '/../src/Ident.php';
 require_once __DIR__ . '/../src/Vault.php';
 
 /**
  * Client config backup / restore (contract + payload manifest in docs/API.md).
- *   POST {id, payload, token?} -> {ok, token, updated} | 403 bad token
- *        First backup omits the token; the server mints and returns it, and
- *        every later backup must send it (it comes back unchanged).
- *   GET  ?id=&token=           -> {ok, payload, updated} | 404 no backup |
- *        403 bad token
- * Payload is OPAQUE (never parsed), capped at FOK_STATS_MAX; the token binds
- * a backup to its owner (see Vault).
+ *   POST {id, tok, payload}  -> {ok, updated} | 401 bad token
+ *   GET  ?id=&tok=           -> {ok, payload, updated} | 404 no backup |
+ *                               401 bad token
+ * Payload is OPAQUE (never parsed), capped at FOK_STATS_MAX. The identity
+ * token is what binds a backup to its owner (see Ident): the same one every
+ * other request carries, minted by hello. Here alone the gate's leniency
+ * for an id nothing proves yet does not reach the data - a bound id's
+ * backup is read and replaced by its token and nothing else.
+ *
+ * TEMPORARY(ident), until the cutoff: `token` is read as an alias of `tok`,
+ * and a first backup of an unbound id that carries neither still mints -
+ * the vault's own mint from before the identity, now through the one
+ * binding path - answering the token as `tok` and as `token`.
  */
 Util::cors();
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
+
+// TEMPORARY(ident): the vault's old name for the member.
+$tokOf = static function (array $src): array {
+    if (!array_key_exists('tok', $src) && array_key_exists('token', $src)) {
+        $src['tok'] = $src['token'];
+    }
+    return Ident::read($src);
+};
 
 if ($method === 'GET') {
     $id = $_GET['id'] ?? '';
     if (!Util::isValidId($id)) {
         Util::fail('invalid id');
     }
-    $token = $_GET['token'] ?? '';
-    if ($token === '') {
-        Util::fail('token required');
-    }
-    $res = Vault::restore($id, $token);
+    Util::noteCaller($id);
+    [, $tok] = $tokOf($_GET);
+    Ident::require($id, $tok, Util::clientIp());
+    $res = Vault::restore($id);
     if ($res === null) {
         Util::fail('no backup', 404);
     }
-    if ($res === false) {
-        Util::fail('bad token', 403);
+    if (!Ident::proves($id, $tok)) {
+        Util::fail('bad token', 401);
     }
     Util::jsonOut(['ok' => true, 'payload' => $res['payload'], 'updated' => $res['updated']]);
 }
@@ -46,6 +60,8 @@ if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
 Util::noteCaller($id);
+[, $tok] = $tokOf($body);
+Ident::require($id, $tok, Util::clientIp());
 $payload = $body['payload'] ?? null;
 if (!is_string($payload) || $payload === '') {
     Util::fail('invalid payload');
@@ -53,12 +69,21 @@ if (!is_string($payload) || $payload === '') {
 if (strlen($payload) > FOK_STATS_MAX) {
     Util::fail('payload too large', 413);
 }
-$token = $body['token'] ?? null;
-if ($token !== null && !is_string($token)) {
-    Util::fail('invalid token');
+$out = ['ok' => true];
+if (!Ident::proves($id, $tok)) {
+    // TEMPORARY(ident): a client from before the token - one that sends
+    // no `tok` member, whatever it sent as `token` - backing up an id
+    // nothing binds. Its own first backup, or its next one after the
+    // operator's reset, which is the re-enrolment the old vault offered.
+    // A client that speaks 4.20 never mints here: it stores only what a
+    // hello answers, so its next hello is what binds the id. Nothing
+    // minted means the id is bound to a token this caller does not hold.
+    $minted = array_key_exists('tok', $body) ? null : Ident::mintLegacy($id, Util::clientIp());
+    if ($minted === null) {
+        Util::fail('bad token', 401);
+    }
+    $out['tok'] = $minted;
+    $out['token'] = $minted;
 }
-$res = Vault::backup($id, $payload, $token);
-if ($res === null) {
-    Util::fail('bad token', 403);
-}
-Util::jsonOut(['ok' => true, 'token' => $res['token'], 'updated' => $res['updated']]);
+$out['updated'] = Vault::backup($id, $payload);
+Util::jsonOut($out);

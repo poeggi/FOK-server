@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.16", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.20", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -58,8 +58,9 @@ printed key shortened to fit the code the game itself can scan in 4.12 and
 that key made to join an event that has not started yet in 4.13, the
 event's monitor named on the roles sheet and sent the tournament's
 signals in 4.14, the walkover clock on that sheet in 4.15, an event id
-an operator named, which may carry a 0 or a 1, in 4.16) is available,
-and
+an operator named, which may carry a 0 or a 1, in 4.16, or the identity
+token in 4.20 - the preparation for 5.0, where it is required) is
+available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
 
@@ -93,7 +94,8 @@ works when it is not.
   (`Content-Type: application/json`), responses are JSON objects.
 - Every response contains `"ok": true` or `"ok": false`. On failure the
   object is `{"ok": false, "error": "<short reason>"}` with an HTTP status
-  of 400 (bad input), 403 (not friends, see signal.php), 404 (unknown),
+  of 400 (bad input), 401 (the id is not proven, see Identity token; 4.20),
+  403 (not friends, see signal.php), 404 (unknown),
   405 (wrong method), 413 (request
   body over ~272 KB, only a score submission ever comes close), 429 (rate
   cap, see below), 503 (relay busy) or 500 (server fault). Clients must
@@ -105,8 +107,9 @@ works when it is not.
   either; on 429, stop and retry later instead of hammering.
 - Player identity is the FOK-snake player ID: a 32-bit value encoded as
   exactly 8 lowercase hex chars, e.g. `"c0ffee42"` (regex
-  `^[0-9a-f]{8}$`). It is a PUBLIC identity, not a secret. A per-session
-  secret token is planned but not part of this version.
+  `^[0-9a-f]{8}$`). It is a PUBLIC identity, not a secret: the friend
+  code, the name on every roster. What proves that the caller OWNS the id
+  it names is the identity token, `tok` (4.20, next section).
 - CORS: browsers may call the API from `https://poeggi.github.io` and, for
   local client development, `http://localhost:8000` /
   `http://127.0.0.1:8000`. Those two are the ONLY `http://` origins in the
@@ -159,6 +162,67 @@ works when it is not.
   Only `created` fields on stored records (scores, relayed signals)
   are unix SECONDS: they are calendar bookkeeping, never used for
   timing - format dates from them, do not mix them with PTS.
+
+## Identity token (4.20)
+
+An id is public, so on its own it proves nothing: before 4.20 every
+request was believed, and anyone who had seen an id could act as that
+player. The token is what proves it.
+
+    tok    32 lowercase hex chars (16 random bytes), minted by the server
+           on the first hello of an unbound id and answered ONCE. Sent by
+           the client on every request that names its id. Only its SHA-256
+           is stored. It never changes for an id; only an operator's reset
+           makes the next hello mint again.
+
+Where it goes: as the `tok` member of every POST body beside `id`, and as
+`&tok=` on the two GETs that name an id (poll.php, backup.php). A client
+that has none yet sends `"tok": null` on hello - the member's presence is
+what says the client speaks 4.20 - and the answer to that hello carries
+`tok`. THE ONE RULE FOR A CLIENT: whenever a hello answer carries `tok`,
+store it. That covers the first bind, a re-bind after the operator's
+reset, and a return after the server forgot the id. A hello that carries a
+token the server does not know for an UNBOUND id is answered a token of
+the server's own, which replaces the client's copy.
+
+What the server checks:
+
+    unbound id, hello carrying tok (null or not) -> mint, bind, answer tok
+    bound id, any request, the right tok         -> ok
+    bound id, any request, a wrong or no tok     -> 401 {"ok":false,"error":"bad token"}
+    unknown id                                   -> as unbound (hello registers)
+
+Nothing else runs for a refused request: no beat, no row, nothing
+drained. On 401 a client must stop and say so - the id is bound to
+another device, or its copy is stale (a restored file that predates the
+binding) - and never retry in a loop; what re-opens the wire is a hello
+that is answered, after the player restored the right file, reset the id,
+or an operator reset the binding. Wrong tokens are counted per (id,
+address) pair and put on the server log; the right token is never refused
+from any address.
+
+The same token is what the config vault reads (Stats backup / restore),
+so a client keeps one secret beside its id: FOK-snake holds it in a cookie
+and in localStorage, carries it in the file backup as `tok`, and never
+puts it in the payload it backs up. It travels over TLS only, like
+everything here: a token in a captured body is the id.
+
+Disclosure, stated: a `"tok": null` hello on a bound id answers 401, so
+"this id exists and is bound" is learnable. Ids are public; the binding
+state is the one new fact, and it is the fact the owner wants an impostor
+to meet.
+
+TEMPORARY(ident), until 2026-10-01 00:00 UTC: a request that carries NO
+`tok` member passes on an id nothing proves yet - one never bound, or one
+whose token the server copied off the config vault and whose owner's
+client has not yet presented it on a hello - so a client from before the
+token keeps working until it updates. Such a hello binds nothing. A first
+backup.php POST from such a client still mints (the vault's own mint from
+before 4.20, answered as `tok` and as `token`), and backup.php reads
+`token` as an alias of `tok`. From that date on, 5.0: `tok` is required on
+every request, a hello without it is 401, the vault mints nothing, and a
+wrong token from a pair over the cap answers 429 `too many attempts` with
+`retry_after` instead of 401.
 
 ## Time synchronization and PTS
 
@@ -492,6 +556,9 @@ Request:
 
     {
       "id": "c0ffee42",           required, player ID
+      "tok": "<32-hex>" | null,   4.20: the proof of the id (see Identity
+                                  token). null on an id that has none yet:
+                                  the answer then carries the token, once
       "name": "KAI",              optional, display name (max 15 chars);
                                   recorded server-side and shown to
                                   accepted friends
@@ -558,7 +625,9 @@ Response:
 
     {
       "ok": true,
-      "api": "4.16",               contract version, see Versioning
+      "api": "4.20",              contract version, see Versioning
+      "tok": "<32-hex>",          4.20: ONLY on the hello that bound the id
+                                  - store it (see Identity token)
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
       "q_ms": 0,                  4.4: ms THIS request waited for a free
@@ -950,8 +1019,12 @@ only carries the bit.
 
 ## GET /api/poll.php - fast signal poll
 
-    GET /api/poll.php?id=c0ffee42[&wait=5][&fs=<cursor>]
+    GET /api/poll.php?id=c0ffee42&tok=<32-hex>[&wait=5][&fs=<cursor>]
                      [&aa=1][&fl=1][&tl=1][&de=<8-hex>][&db=0|1]
+
+`tok` is the identity token (4.20): a bound id without it, or with a wrong
+one, is answered 401 before anything is read. The check runs once at the
+top of the request, off shared memory, never inside the hold.
 
     -> 204 No Content                          nothing pending
     -> 200 {"ok":true,"signals":[...]}         pending messages, drained
@@ -1359,8 +1432,8 @@ flight and for the fallback path when a server does not answer the flag.
     absent AND a request to an unknown id records a normal "pending" row as
     before; a client that reads "exists" MUST treat its ABSENCE as unknown
     and fall back to the "state" it got. Because an id is a public
-    identity, this is a deliberate existence oracle, acceptable only while
-    ids are not secret (see the session-token caveat below).
+    identity, this is a deliberate existence oracle: ids are not secret,
+    and the identity token (4.20) proves the CALLER, not the peer.
 
     POST {"id":..., "action":"accept", "peer":...}
       -> {"ok":true,"state":"accepted"}     404 without a pending request
@@ -1417,9 +1490,10 @@ while the ban lasts answers 429 `friend requests banned`. Match on the
 status, not the text. Normal use never gets close.
 
 Poll list (or rely on hello) while the friends screen is open to notice
-incoming requests. Caveat until the session-token work lands: ids are
-public identities, so friendship gating is privacy hygiene, not
-authentication.
+incoming requests. Since 4.20 the caller's id is proven by its identity
+token, so a friendship is a statement of the two players it names; before
+that ids were public identities and nothing more, and friendship gating
+was privacy hygiene, not authentication.
 
 ## POST /api/match.php - quick match (pair with anyone waiting)
 
@@ -1644,31 +1718,31 @@ transport errors end the match the same way "connection lost" does.
 ## Stats backup / restore
 
 A client can back its OWN config up to the server and restore it on another
-device from its id and a secret token alone. Live; clients may use it now.
+device from its id and its identity token alone. Live; clients may use it
+now.
 
-    POST /api/backup.php {"id": "c0ffee42", "payload": "<string>", "token"?: "<hex>"}
-      -> 200 {"ok": true, "token": "<hex>", "updated": <unix seconds>}
-    GET  /api/backup.php?id=c0ffee42&token=<hex>
+    POST /api/backup.php {"id": "c0ffee42", "tok": "<hex>", "payload": "<string>"}
+      -> 200 {"ok": true, "updated": <unix seconds>}
+      -> 401 {"error": "bad token"}       the id is bound to another token
+    GET  /api/backup.php?id=c0ffee42&tok=<hex>
       -> 200 {"ok": true, "payload": "<string>", "updated": <unix seconds>}
       -> 404 {"error": "no backup"}       nothing stored for this id
-      -> 403 {"error": "bad token"}       missing or wrong token
+      -> 401 {"error": "bad token"}       missing or wrong token
 
-The token (the secret that binds a backup to its owner):
-
-- The FIRST backup of an id omits `token`; the server MINTS a 128-bit token
-  and returns it. The client MUST store it alongside its id (e.g. in its
-  cookie / local storage) - it is shown only when created.
-- Every LATER backup must send that `token` (it comes back unchanged), and
-  every restore must send it. It NEVER changes for a given id.
-- Without the token, no one who merely knows the id (ids are exchanged
-  during a duel) can read or overwrite the backup.
-- Keep the token OUT of the payload. A backup that carries its own token is
-  self-authenticating, so anyone who obtains the file (a shared copy, the
-  operator export below) would gain full read/overwrite. FOK-snake holds the
-  token in a cookie beside the id, never in the blob.
-- A client that loses its token cannot read or overwrite its backup on its
-  own; an operator can reset it (see Manual recovery) so the client
-  re-enrolls with a fresh one on its next backup.
+The token is the identity token (4.20; see Identity token): the one hello
+minted for the id, the same one every other request carries. A backup is
+read and replaced by that token and nothing else - here the gate makes no
+exception for an id nothing proves yet, because the data behind it is the
+player's whole config. Before 4.20 the vault minted a token of its own on
+the first backup; it was the same 128-bit secret, and a token the vault
+minted IS the identity token now (the server copied every enrolled one
+into the binding when 4.20 was installed). Keep the token OUT of the
+payload: a backup that carries its own proof is self-authenticating, so
+anyone who obtains the file (a shared copy, the operator export below)
+would gain full read/overwrite. FOK-snake holds it beside the id, never in
+the blob. A client that loses its token cannot read or overwrite its
+backup on its own; an operator can reset the binding (see Manual
+recovery) so the client's next hello mints afresh.
 
 The payload is OPAQUE to the server - stored and returned verbatim, never
 parsed - capped at 64 KB (FOK_STATS_MAX; 413 above it). One backup per id; a
@@ -1704,9 +1778,9 @@ change on their own.)
 Manual recovery (operator, NOT a client call): for a client that lost its
 token, the admin dashboard can (a) DOWNLOAD its backup WITHOUT the token -
 the same `snake-fok-backup.json` the game imports through its normal file
-restore - and (b) RESET the token, so the client re-enrolls on its next
-backup (a fresh token is minted; the data is kept). These paths live only
-behind /admin.
+restore - and (b) RESET the identity token, so the client's next hello
+mints a fresh one (the backup, the items and the scores are kept). These
+paths live only behind /admin.
 
 ## Item registry
 

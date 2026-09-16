@@ -389,6 +389,10 @@ since FOK-snake 4.4.90 (a response without the header is no sample).
 The deploy never deletes: a removed endpoint is deleted from staging
 and live by hand, over FTPS, and verified with a 404.
 
+DEAD since 1.17.0: vault.token_hash - the identity token (ident table,
+project_fok_identity.md) is what the vault reads; the column is written
+as '' and dropped once the host's SQLite is confirmed >= 3.35.
+
 Used and fine: q_ms, pace.hold, nets, after_ms, the delta's latency,
 backup.php, debug/submit.php. The smoke's up-probe and its
 origin-allowlist assertions use a GET on hello.php: Util::cors runs,

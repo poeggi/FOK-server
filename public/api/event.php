@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
+require_once __DIR__ . '/../src/Ident.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Events.php';
 require_once __DIR__ . '/../src/EventView.php';
@@ -56,6 +57,7 @@ if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
 Util::noteCaller($id);
+Ident::require($id, Ident::read($body)[1], Util::clientIp());
 $action = $body['action'] ?? null;
 if (!in_array($action, ['join', 'state', 'members', 'pass', 'leave', 'monitor',
         'roster', 'access', 'run', 'pause', 'end'], true)) {

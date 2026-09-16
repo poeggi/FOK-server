@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
+require_once __DIR__ . '/../src/Ident.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/Items.php';
@@ -42,6 +43,7 @@ if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
 Util::noteCaller($id);
+Ident::require($id, Ident::read($body)[1], Util::clientIp());
 $action = $body['action'] ?? null;
 if (!in_array($action, ['list', 'mint', 'seed', 'claim'], true)) {
     Util::fail('invalid action');
@@ -153,15 +155,15 @@ Util::fail($res['error'], $res['code']);
  * for legacy seeding. The vault payload is the client's whole config as an
  * opaque JSON blob; we look only for a top-level "items" array of ids or an
  * "owned" object whose truthy keys are ids (the shapes documented for 4.0).
- * Anything else - no enrolled vault, unparseable, neither shape - returns
- * null, and seeding falls back to the client's submitted list.
+ * Anything else - no vault, unparseable, neither shape - returns null,
+ * and seeding falls back to the client's submitted list.
  *
  * @return ?list<string>
  */
 function items_vault_ids(string $id): ?array
 {
-    $row = Vault::peek($id);
-    if ($row === null || !$row['enrolled']) {
+    $row = Vault::restore($id);
+    if ($row === null) {
         return null;
     }
     $cfg = json_decode($row['payload'], true);

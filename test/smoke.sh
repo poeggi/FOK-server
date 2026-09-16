@@ -27,11 +27,14 @@ group() { # group <name> <id1> <id2> <id3> <id4> <part>...
         done
         echo "$fail" > "$DATA/fail.$name"
         # What the tail reads back from this group: the debug pin 02 minted,
-        # the two frozen instances 05 left and whose they are. Only what is
-        # set, so sourcing every group's file clobbers nothing.
+        # the two frozen instances 05 left and whose they are, and the
+        # identity tokens the group's ids were bound with (06 speaks for
+        # the core cast). Only what is set, so sourcing every group's file
+        # clobbers nothing.
         {
             [ -n "${DPIN:-}" ] && echo "DPIN=$DPIN"
             [ -n "${U4:-}" ] && echo "U4=$U4 U5=${U5:-} ITEM_A=$ID1 ITEM_B=$ID2"
+            for id in "${!TOK[@]}"; do echo "TOK[$id]=${TOK[$id]}"; done
             true
         } > "$DATA/env.$name"
     ) > "$DATA/out.$name" 2>&1 &
@@ -41,7 +44,7 @@ group() { # group <name> <id1> <id2> <id3> <id4> <part>...
 if [ "$REMOTE" -eq 1 ] && [ -z "${SMOKE_SEQUENTIAL:-}" ]; then
     # Against a remote host the suite is ~700 sequential round trips of
     # ~130 ms each, so its length is distance, not work. The parts fall into
-    # three groups that share nothing - not an id, not a settings key they
+    # four groups that share nothing - not an id, not a settings key they
     # change - and those run at once through the keep-alive tunnel, which is
     # threaded and pools its upstream connections. Local mode stays
     # sequential: php -S serves one request at a time on the box that runs
@@ -59,10 +62,11 @@ if [ "$REMOTE" -eq 1 ] && [ -z "${SMOKE_SEQUENTIAL:-}" ]; then
     group core    "$ID1" "$ID2" "$ID3" "$ID4" 01_core 02_signals_friends 03_start_duel 04_matchmaking; P_CORE=$GPID
     group items   "$B1"  "$B2"  "$B3"  "$B4"  05_items;                                                P_ITEMS=$GPID
     group tourney "$C1"  "$C2"  "$C3"  "$C4"  07_tournament 08_events;                                P_TOURNEY=$GPID
-    echo "     (three groups in flight: core, items, tourney)"
+    group ident   "$ID1" "$ID2" "$ID3" "$ID4" 10_ident;                P_IDENT=$GPID   # draws its own ids
+    echo "     (four groups in flight: core, items, tourney, ident)"
     # Explicit pids: a bare `wait` would also wait on the tunnel.
-    wait "$P_CORE" "$P_ITEMS" "$P_TOURNEY" || true
-    for g in core items tourney; do
+    wait "$P_CORE" "$P_ITEMS" "$P_TOURNEY" "$P_IDENT" || true
+    for g in core items tourney ident; do
         cat "$DATA/out.$g"
         # shellcheck disable=SC1090
         [ -s "$DATA/env.$g" ] && source "$DATA/env.$g"
@@ -75,6 +79,7 @@ if [ "$REMOTE" -eq 1 ] && [ -z "${SMOKE_SEQUENTIAL:-}" ]; then
     source test/smoke/06_admin.sh               # admin dashboard, relay caps and hub, config, remote cleanup
 else
     source test/smoke/01_core.sh                # landing, version, CORS, hello, scores, backup
+    source test/smoke/10_ident.sh               # the identity token: the bind, the one refusal, the legacy paths
     source test/smoke/02_signals_friends.sh     # signals, friends, poll, debug reports, time
     source test/smoke/03_start_duel.sh          # start/epoch, directional isolation, relay duel flow, rematch
     source test/smoke/04_matchmaking.sh         # friend-spam ban, quick match

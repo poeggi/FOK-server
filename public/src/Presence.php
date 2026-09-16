@@ -9,6 +9,7 @@ require_once __DIR__ . '/Signals.php';
 require_once __DIR__ . '/ConnTrack.php';
 require_once __DIR__ . '/Caps.php';
 require_once __DIR__ . '/FriendFeed.php';
+require_once __DIR__ . '/Ident.php';
 
 /**
  * Who is here. Presence is volatile - it is worth nothing FOK_ONLINE_WINDOW
@@ -103,7 +104,10 @@ final class Presence
                 'duel' => 0,
                 'dpeer' => null,
                 'dpriv' => false,
-            ];
+                // The identity binding rides the entry from the session
+                // open, so the gate in front of every request reads no
+                // row while the player is here (see Ident).
+            ] + Ident::entryFields($id);
             $moved = true;
             // Nobody may watch their own first hello report zero online, so
             // an arrival drops the counters cache. The beats that are
@@ -243,14 +247,15 @@ final class Presence
     /**
      * One player's entry, or null when there is none. Shape:
      * {seen, start, ip, lat, name, accept, dbg, wish, chg, duel, dpeer,
-     * dpriv, nets:{family:{net, seen, src}}}
+     * dpriv, tok, tokc, nets:{family:{net, seen, src}}}
      * - seen is the last beat, start the session's first; accept is the
      * moment the auto-accept flag lapses (0 = off); dbg is the client's own
      * report and wish the operator's; chg is the last transition a friend's
      * cursor is compared against; duel/dpeer/dpriv are the spectate offer
-     * (see touchDuel); nets is one network per address family with the
-     * moment it was seen and whether it was observed ('o') or claimed
-     * ('c').
+     * (see touchDuel); tok is the identity token's hash (null while the id
+     * is unbound) and tokc whether the binding is confirmed (see Ident);
+     * nets is one network per address family with the moment it was seen
+     * and whether it was observed ('o') or claimed ('c').
      */
     public static function entryOf(string $id): ?array
     {
@@ -503,6 +508,22 @@ final class Presence
         $e = self::entryOf($id);
         if ($e !== null) {
             $e['wish'] = $on;
+            self::store($id, $e);
+        }
+    }
+
+    /**
+     * The identity binding as the entry carries it (see Ident): written
+     * when an id is bound, confirmed or reset, and when an entry from
+     * before the binding is first asked. A player who is not here has no
+     * entry to update, and reads the row on arrival.
+     */
+    public static function setTok(string $id, ?string $hash, bool $confirmed): void
+    {
+        $e = self::entryOf($id);
+        if ($e !== null) {
+            $e['tok'] = $hash;
+            $e['tokc'] = $confirmed;
             self::store($id, $e);
         }
     }
@@ -873,9 +894,10 @@ final class Presence
      * itself.
      *
      * What it deliberately leaves is property and history - items, the
-     * config vault, the career stats, the scores. An id belongs to the
+     * config vault, the identity binding, the scores. An id belongs to the
      * client and comes back with it (touch() re-registers an unknown id in
-     * silence), so a player returning after the TTL finds them again. A
+     * silence), so a player returning after the TTL finds them again, and
+     * the token it still holds is still the one that proves it. A
      * caller that means to confiscate as well says so where it can be read
      * as a decision (see delete_player in admin/api.php).
      *

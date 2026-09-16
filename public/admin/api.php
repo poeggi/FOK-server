@@ -12,6 +12,7 @@ require_once __DIR__ . '/../src/Caps.php';
 require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Vault.php';
+require_once __DIR__ . '/../src/Ident.php';
 require_once __DIR__ . '/../src/Debug.php';
 require_once __DIR__ . '/../src/AdminData.php';
 require_once __DIR__ . '/../src/EventAdmin.php';
@@ -179,7 +180,7 @@ function download(string $filename, string $body, string $type = 'application/js
 const AUDIT = [
     'set_debug' => 'set the client debug flag',
     'delete_player' => 'deleted player',
-    'vault_reset' => 'reset the config-vault token of',
+    'token_reset' => 'reset the identity token of',
     'debug_delete' => 'deleted debug datasets',
     'delete_score' => 'deleted score',
     'alerts_seen' => 'marked the alerts seen',
@@ -339,10 +340,16 @@ switch ($action) {
     case 'users':
         $db = Db::get();
         $total = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
-        $st = $db->query('SELECT id, name, ip, first_seen, last_seen, hello_count, latency, debug, debug_active FROM players ORDER BY last_seen DESC LIMIT 200');
+        // bound_at rides each row (see Ident): null while the id is unbound,
+        // and bound_ip '' marks a token copied off the vault that the
+        // owner's updated client has not presented yet.
+        $st = $db->query('SELECT p.id, p.name, p.ip, p.first_seen, p.last_seen, p.hello_count, p.latency,
+                p.debug, p.debug_active, i.bound_at, i.bound_ip
+            FROM players p LEFT JOIN ident i ON i.id = p.id ORDER BY p.last_seen DESC LIMIT 200');
         $users = Presence::overlay(array_map(static function (array $u) {
             $u['debug'] = (int)$u['debug'] === 1;
             $u['debug_active'] = (int)$u['debug_active'] === 1;
+            $u['bound_at'] = $u['bound_at'] === null ? null : (int)$u['bound_at'];
             return $u;
         }, $st->fetchAll()));
         Util::jsonOut(['ok' => true, 'total' => $total, 'online_window' => FOK_ONLINE_WINDOW + FOK_BEAT_JITTER,
@@ -367,6 +374,11 @@ switch ($action) {
             try {
                 Presence::forget($id);
                 $db->prepare('DELETE FROM items WHERE owner = ?')->execute([$id]);
+                // And the identity binding, for the same reason the items
+                // go: the sweep leaves it for the owner to come back to, an
+                // operator removing a client takes it. The next hello that
+                // asks binds the id afresh, to whoever sends it.
+                $db->prepare('DELETE FROM ident WHERE id = ?')->execute([$id]);
                 $db->exec('COMMIT');
             } catch (Throwable $e) {
                 if ($db->inTransaction()) {
@@ -382,17 +394,19 @@ switch ($action) {
         // Manual recovery: download a client's config backup WITHOUT its
         // token, as the same snake-fok-backup.json the game imports.
         $id = requireId();
-        $vault = Vault::peek($id);
+        $vault = Vault::restore($id);
         if ($vault === null) {
             Util::fail('no backup', 404);
         }
         download('snake-fok-backup-' . $id . '.json', $vault['payload']);
 
-    case 'vault_reset':
-        // Clear a client's backup token so it can re-enroll (its next backup
-        // mints a fresh one); keeps the payload.
+    case 'token_reset':
+        // Drop a client's identity binding so its next hello mints afresh:
+        // the way a hijacked or lost id is handed back (see Ident::reset).
+        // Everything the id owns - the backup, the items, the scores - is
+        // kept; only the proof is renewed.
         requirePost();
-        Util::jsonOut(['ok' => true, 'reset' => Vault::resetToken(requireId('POST'))]);
+        Util::jsonOut(['ok' => true, 'reset' => Ident::reset(requireId('POST'))]);
 
     // ---- debug datasets ----
     case 'debug_list':

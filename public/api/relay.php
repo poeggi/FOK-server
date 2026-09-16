@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
+require_once __DIR__ . '/../src/Ident.php';
 require_once __DIR__ . '/../src/Alerts.php';
 require_once __DIR__ . '/../src/Holds.php';
 require_once __DIR__ . '/../src/Settings.php';
@@ -82,6 +83,7 @@ if ($method === 'GET') {
         Util::fail('invalid id/peer');
     }
     Util::noteCaller($id);
+    Ident::require($id, Ident::read($_GET)[1], Util::clientIp());
     $wait = min((int)($_GET['wait'] ?? 0), FOK_POLL_WAIT_MAX);
     // Two relayed players hold two workers for as long as their duel runs,
     // which is why relay_max_duels exists - but that cap only knows about
@@ -144,6 +146,7 @@ if (!Util::isValidId($id) || !Util::isValidId($peer) || $id === $peer) {
     Util::fail('invalid id/peer');
 }
 Util::noteCaller($id);
+Ident::require($id, Ident::read($body)[1], Util::clientIp());
 // A client sustaining too high a send rate is turned away for a while
 // (see RelayRate) - a cheap indexed read, before any of the work below.
 if (RelayRate::blocked($id)) {

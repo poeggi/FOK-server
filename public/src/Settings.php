@@ -236,6 +236,12 @@ final class Settings
         'event_join_fails_per_min' => [10, 'Wrong event codes per player per minute before 429',
             'Wrong event codes one player may try in a minute; from then on the answer is 429 and the log gets a '
             . 'line. It puts the attempt on record; the codes cannot be guessed.'],
+        'ident_fails_per_min' => [10, 'Wrong identity tokens per id and address per minute before the log line',
+            'Wrong tokens one address may present for one id in a minute before the log gets a line: a stolen '
+            . 'id being tried, or a second device on a stale backup. Counted per (id, address) PAIR, so a '
+            . 'stranger cannot lock an owner out and one phone on a venue\'s WiFi cannot lock out the room. '
+            . 'The right token is never refused. A 128-bit token cannot be guessed; this puts the attempt on '
+            . 'record.'],
         'admin_refresh_secs' => [30, 'Admin dashboard refresh interval (seconds, 0 = off)',
             'The dashboard\'s global refresh interval, the field in the header. 0 = off.'],
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)',

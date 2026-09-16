@@ -141,26 +141,52 @@ strict() { if [ "$REMOTE" -eq 0 ]; then echo "$1"; else echo "${1%%:*}:"; fi; }
 # JSON verbatim, so keep them free of quotes and backslashes.
 sig() { # sig <from> <to> <type> <payload>
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"to\":\"$2\",\"type\":\"$3\",\"payload\":\"$4\"}" "$BASE/api/signal.php"
+        -d "{\"id\":\"$1\"$(jt "$1"),\"to\":\"$2\",\"type\":\"$3\",\"payload\":\"$4\"}" "$BASE/api/signal.php"
 }
 sigcode() { # like sig, but prints the HTTP status instead of the body
     curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"to\":\"$2\",\"type\":\"$3\",\"payload\":\"$4\"}" "$BASE/api/signal.php"
+        -d "{\"id\":\"$1\"$(jt "$1"),\"to\":\"$2\",\"type\":\"$3\",\"payload\":\"$4\"}" "$BASE/api/signal.php"
 }
 rly() { # rly <from> <peer> <payload>
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php"
+        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php"
 }
 rlycode() { # like rly, but prints the HTTP status instead of the body
     curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php"
+        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php"
 }
 rlypull() { # rlypull <from> <peer> <payload> : POST with pull, print body
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"payload\":\"$3\",\"pull\":true}" "$BASE/api/relay.php"
+        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"payload\":\"$3\",\"pull\":true}" "$BASE/api/relay.php"
 }
 hello() { # hello <id>
-    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$1\"}" "$BASE/api/hello.php"
+    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$1\"$(jt "$1")}" "$BASE/api/hello.php"
+}
+# The identity token of every id this suite bound (API 4.20): the suite is
+# a client, and a client carries its token on every request that names its
+# id - as a JSON member after the id in a body (jt), as a query parameter
+# after id= on a GET (qt). An id that was never bound carries nothing and
+# passes as a client from before the token, until the cutoff.
+declare -A TOK=()
+jt() { if [ -n "${TOK[$1]:-}" ]; then printf ',"tok":"%s"' "${TOK[$1]}"; fi; }
+qt() { if [ -n "${TOK[$1]:-}" ]; then printf '&tok=%s' "${TOK[$1]}"; fi; }
+# Binds an id: the hello that carries tok as null, whose answer mints the
+# token. Sets R to the answer and TOK[id] to the token - not a $(...), or
+# the array assignment would die with the subshell. Extra JSON members
+# ride the same hello, so a part's first hello can still assert on them.
+bind() { # bind <id> [,"member":value...]
+    R=$(curl -s -X POST -H 'Content-Type: application/json'         -d "{\"id\":\"$1\",\"tok\":null${2:-}}" "$BASE/api/hello.php")
+    TOK[$1]=$(echo "$R" | grep -oE '"tok":"[a-f0-9]{32}"' | cut -d'"' -f4 || true)
+    if [ -z "${TOK[$1]}" ]; then echo "FAIL bind $1: no tok in: $R"; fail=1; fi
+}
+# A part that is the head of a group binds the ids it will speak for, so
+# every request after it carries a token wherever the group runs. An id
+# bound by an earlier part already has one and is left alone.
+bound() { # bound <id>...
+    local id
+    for id in "$@"; do
+        [ -n "${TOK[$id]:-}" ] || bind "$id"
+    done
 }
 setting() { # setting <key> <value>
     curl -s -b "$COOKIES" -X POST -d "$1=$2" "$BASE/admin/api.php?action=settings_save" > /dev/null
@@ -235,12 +261,12 @@ SKEW=$(( $(srv_ms) - $(date +%s%3N) ))
 now_ms() { echo $(( $(date +%s%3N) + SKEW )); }
 start_req_private() { # id peer epoch reason pts
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5,\"duel_private\":true}" \
+        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5,\"duel_private\":true}" \
         "$BASE/api/start.php"
 }
 start_req() { # id peer epoch reason pts
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5}" \
+        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5}" \
         "$BASE/api/start.php"
 }
 
@@ -255,12 +281,12 @@ tcode() { # like tourney, but prints the HTTP status instead
 # failing an assertion - so the extractor swallows it (see 05_items.sh).
 tfield() { echo "$1" | grep -oE "\"$2\":\"[0-9A-Za-z]+\"" | head -1 | cut -d'"' -f4 || true; }
 act() { # act <id> <action> <tid>
-    tourney "{\"id\":\"$1\",\"action\":\"$2\",\"tid\":\"$3\"}"
+    tourney "{\"id\":\"$1\"$(jt "$1"),\"action\":\"$2\",\"tid\":\"$3\"}"
 }
 result() { # result <id> <tid> <nid> <outcome> <mine> <theirs>
-    tourney "{\"id\":\"$1\",\"action\":\"result\",\"tid\":\"$2\",\"nid\":\"$3\",\"outcome\":\"$4\",\"score\":[$5,$6]}"
+    tourney "{\"id\":\"$1\"$(jt "$1"),\"action\":\"result\",\"tid\":\"$2\",\"nid\":\"$3\",\"outcome\":\"$4\",\"score\":[$5,$6]}"
 }
 hellot() { # hello asking for the lobbies announced on the caller's address
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"tourneys\":true}" "$BASE/api/hello.php"
+        -d "{\"id\":\"$1\"$(jt "$1"),\"tourneys\":true}" "$BASE/api/hello.php"
 }

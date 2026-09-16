@@ -16,6 +16,9 @@
 # knockout fold) is unit-tested in test/unit.php against Bracket directly.
 # What only real HTTP can show is what this file checks: the wire.
 
+# The head of a group on a remote run: bind the ids (API 4.20, see lib.sh).
+bound "$ID1" "$ID2"
+
 # The tournament helpers (tourney, tcode, tfield, act, result, hellot) live
 # in lib.sh: 08_events.sh and 09_sweep.sh use them too.
 # A well-formed tid that names nothing.
@@ -25,19 +28,19 @@ R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/tournament.php")
 expect "tournaments are POST only" '405' "$R"
 R=$(tourney "{\"id\":\"nothex\",\"action\":\"state\"}")
 expect "a malformed id is rejected" '"error":"invalid id"' "$R"
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"nope\"}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"nope\"}")
 expect "an unknown action is rejected" '"error":"invalid action"' "$R"
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"state\",\"tid\":\"nothex\"}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"state\",\"tid\":\"nothex\"}")
 expect "a malformed tid is rejected" '"error":"invalid tid"' "$R"
 R=$(act "$ID1" state "$NOTID")
 expect "a tid that names nothing is a 404" '"error":"no such tournament"' "$R"
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"join\",\"code\":\"ZZZZZZ\"}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"join\",\"code\":\"ZZZZZZ\"}")
 expect "so is a join code nobody minted" '"error":"no such tournament"' "$R"
 
 # --- The lobby. The code is the capability: it is read off the host's screen
 # and typed back in, so it is the way in from anywhere the announcement does
 # not reach.
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\"}")
 expect "a host opens a lobby" '"ok":true' "$R"
 T1=$(tfield "$R" tid)
 CODE=$(tfield "$R" code)
@@ -47,12 +50,12 @@ else
     echo "FAIL create returned no usable tid/code: $R"
     fail=1
 fi
-R=$(tcode "{\"id\":\"$ID1\",\"action\":\"create\"}")
+R=$(tcode "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\"}")
 expect "a host may hold one tournament at a time" '409' "$R"
 
 R=$(act "$ID1" start "$T1")
 expect "a lobby of one cannot start" '"error":"need 2"' "$R"
-R=$(tourney "{\"id\":\"$ID2\",\"action\":\"join\",\"code\":\"$CODE\"}")
+R=$(tourney "{\"id\":\"$ID2\"$(jt "$ID2"),\"action\":\"join\",\"code\":\"$CODE\"}")
 expect "the second player joins by code" "\"host\":\"$ID1\"" "$R"
 expect "and the lobby names both players" "\"id\":\"$ID2\"" "$R"
 R=$(act "$ID2" join "$T1")
@@ -94,11 +97,11 @@ expect "every participant is told the match is up" '"type":"tourney"' "$R"
 expect "by a roles event" 'roles' "$R"
 expect "which carries the same walkover clock" 'walkover_at\":1' "$R"
 
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"result\",\"tid\":\"$T1\",\"nid\":\"r1.oops\",\"outcome\":\"win\",\"score\":[1,0]}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"result\",\"tid\":\"$T1\",\"nid\":\"r1.oops\",\"outcome\":\"win\",\"score\":[1,0]}")
 expect "a malformed node id is rejected" '"error":"invalid nid"' "$R"
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"result\",\"tid\":\"$T1\",\"nid\":\"r1.1\",\"outcome\":\"victory\",\"score\":[1,0]}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"result\",\"tid\":\"$T1\",\"nid\":\"r1.1\",\"outcome\":\"victory\",\"score\":[1,0]}")
 expect "an outcome that is not win/loss/draw is rejected" '"error":"invalid outcome"' "$R"
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"result\",\"tid\":\"$T1\",\"nid\":\"r1.1\",\"outcome\":\"win\",\"score\":[1]}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"result\",\"tid\":\"$T1\",\"nid\":\"r1.1\",\"outcome\":\"win\",\"score\":[1]}")
 expect "so is a score that is not a pair" '"error":"invalid score"' "$R"
 R=$(result "$ID1" "$T1" r1.2 win 1 0)
 expect "and a node the server never dealt" '"error":"no such node"' "$R"
@@ -154,12 +157,12 @@ expect "and no board is up any more" '"break":null' "$R"
 # walked over the wire in test/live-protocol.sh.
 R=$(result "$ID2" "$T1" final win 6 4)
 expect "a lone win on the final is held, waiting for the other side" '"state":"held"' "$R"
-curl -s "$BASE/api/poll.php?id=$ID1" > /dev/null
+curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")" > /dev/null
 R=$(act "$ID1" state "$T1")
 expect "a participant's poll inside the grace changes nothing" '"state":"held"' "$R"
 if [ "$ADMIN" -eq 1 ]; then
     setting tournament_result_ms 0
-    R=$(curl -s "$BASE/api/poll.php?id=$ID1")
+    R=$(curl -s "$BASE/api/poll.php?id=$ID1$(qt "$ID1")")
     expect "past the grace, a plain poll from a participant settles it" 'event\":\"result' "$R"
     expect "and carries what the settle produced, the podium included" 'podium' "$R"
     setting tournament_result_ms 15000
@@ -189,16 +192,16 @@ expect "the winner is told it is over" 'podium' "$R"
 # lives at least 60 s, see TourneyStore::CD_TTL_MIN), so this asserts the
 # rule and not how fast the last minute went.
 if [ "$ADMIN" -eq 1 ]; then setting tournament_create_cooldown 600; fi
-R=$(tcode "{\"id\":\"$ID1\",\"action\":\"create\"}")
+R=$(tcode "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\"}")
 expect "a host may not open lobbies back to back" '429' "$R"
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\"}")
 expect "and is told how long to wait" '"retry_after":' "$R"
 if [ "$ADMIN" -eq 1 ]; then setting tournament_create_cooldown 10; fi
 
 # --- The lobby the host walks away from. The host owns the LOBBY and only the
 # lobby: leaving one that never started ends it, where leaving a running
 # tournament is a forfeit and the bracket carries on without them.
-R=$(tourney "{\"id\":\"$ID2\",\"action\":\"create\",\"stakes\":true}")
+R=$(tourney "{\"id\":\"$ID2\"$(jt "$ID2"),\"action\":\"create\",\"stakes\":true}")
 expect "a second host opens a lobby for stakes" '"stakes":true' "$R"
 T2=$(tfield "$R" tid)
 R=$(act "$ID1" join "$T2")
@@ -220,10 +223,10 @@ expect "an abandoned lobby is no longer announced" '"tourneys":[]' "$R"
 # an exact registered count, and tournament.php registers whoever calls it.
 if [ "$ADMIN" -eq 1 ]; then
     setting tournament_create_cooldown 0
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\"}")
     expect "the host opens one more lobby" '"tid":' "$R"
     T3=$(tfield "$R" tid)
-    R=$(tcode "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    R=$(tcode "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\"}")
     expect "and a plain second create is refused" '409' "$R"
     # The cooldown is charged before anything is ended, so a replace inside
     # it is answered 429 with the tournament it would have replaced still
@@ -231,12 +234,12 @@ if [ "$ADMIN" -eq 1 ]; then
     # written whatever the cooldown is set to (see markCreate), so raising
     # it here has that create's own moment to measure from.
     setting tournament_create_cooldown 10
-    R=$(tcode "{\"id\":\"$ID1\",\"action\":\"create\",\"replace\":true}")
+    R=$(tcode "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\",\"replace\":true}")
     expect "a replace inside the create cooldown is refused too" '429' "$R"
     R=$(act "$ID1" state "$T3")
     expect "and the one it would have replaced is untouched" '"state":"open"' "$R"
     setting tournament_create_cooldown 0
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"replace\":true}")
+    R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\",\"replace\":true}")
     expect "replace opens a new lobby over the one held" '"tid":' "$R"
     T4=$(tfield "$R" tid)
     if [ "$T4" = "$T3" ]; then echo "FAIL replace returned the same tid"; fail=1; fi
@@ -283,7 +286,7 @@ fi
 # the ladder still climbs one per round from there, and a level the game does
 # not have is clamped rather than refused.
 if [ "$ADMIN" -eq 1 ]; then
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"lvl\":4}")
+    R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\",\"lvl\":4}")
     expect "a create names the level its first round is played at" '"lvl":4' "$R"
     TL=$(tfield "$R" tid)
     R=$(act "$ID2" join "$TL")
@@ -294,7 +297,7 @@ if [ "$ADMIN" -eq 1 ]; then
     expect "and the first match is dealt at the chosen level" '"lvl":4' "$R"
     R=$(act "$ID1" leave "$TL")
     setting tournament_max_level 6
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"lvl\":99}")
+    R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\",\"lvl\":99}")
     expect "a level past the last one the game has is clamped" '"lvl":6' "$R"
     TL2=$(tfield "$R" tid)
     R=$(act "$ID1" leave "$TL2")
@@ -305,7 +308,7 @@ fi
 # carries it: onto the lobby, which is where a player decides whether to join
 # one, and onto every roles sheet the tournament deals.
 if [ "$ADMIN" -eq 1 ]; then
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"speed\":true}")
+    R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\",\"speed\":true}")
     expect "a create can declare every round a speed round" '"speed":true' "$R"
     TS=$(tfield "$R" tid)
     R=$(act "$ID2" join "$TS")
@@ -315,7 +318,7 @@ if [ "$ADMIN" -eq 1 ]; then
     R=$(act "$ID1" state "$TS")
     expect "and every match it deals is one" '"speed":true,"stakes":false' "$R"
     R=$(act "$ID1" leave "$TS")
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\"}")
     expect "a create that says nothing plays the ordinary mix" '"speed":false' "$R"
     TS2=$(tfield "$R" tid)
     R=$(act "$ID1" leave "$TS2")
@@ -330,26 +333,26 @@ fi
 # other deadline here is, and the pair never calls start.php - which is
 # exactly the condition being tested.
 if [ "$ADMIN" -eq 1 ]; then
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\"}")
     T7=$(tfield "$R" tid)
     C7=$(tfield "$R" code)
     expect "a lobby for two players who will never connect" '"tid":' "$R"
-    R=$(tourney "{\"id\":\"$ID2\",\"action\":\"join\",\"code\":\"$C7\"}")
+    R=$(tourney "{\"id\":\"$ID2\"$(jt "$ID2"),\"action\":\"join\",\"code\":\"$C7\"}")
     expect "the second player joins it" '"event":"lobby"' "$R"
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"start\",\"tid\":\"$T7\"}")
+    R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"start\",\"tid\":\"$T7\"}")
     expect "and the host starts it" '"ok":true' "$R"
     R=$(act "$ID1" state "$T7")
     expect "a node is dealt and in flight" '"cursor":"' "$R"
-    R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+    R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
     expect "a poll inside the deadline changes nothing" '"ok":true' "$R"
     R=$(act "$ID1" state "$T7")
     expect "and the node is still open" '"state":"running"' "$R"
     setting tournament_deadlock_ms 0
-    R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+    R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
     expect "past it, a participant's own poll re-deals the node" 'event\":\"roles' "$R"
     R=$(act "$ID1" state "$T7")
     expect "which is a second attempt, not a result" '"state":"running"' "$R"
-    R=$(curl -s "$BASE/api/poll.php?id=$ID2")
+    R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")")
     expect "and the attempt after that voids it" 'event\":\"result' "$R"
     R=$(act "$ID1" state "$T7")
     expect "with no winner named, both players having turned up" '"winner":null' "$R"
@@ -357,7 +360,7 @@ if [ "$ADMIN" -eq 1 ]; then
     expect "and saying WHICH void it is, both players having been there" '"why":"unplayed"' "$R"
     expect "and reading as drawn, which is what a node with no winner is here" '"draw":true' "$R"
     setting tournament_deadlock_ms 150000
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"leave\",\"tid\":\"$T7\"}")
+    R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"leave\",\"tid\":\"$T7\"}")
     expect "the host clears it away" '"ok":true' "$R"
     setting tournament_create_cooldown 10
 fi

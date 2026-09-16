@@ -27,31 +27,34 @@ evadmin() { # evadmin <action> <post-data...>
     for kv in "$@"; do args+=(--data-urlencode "$kv"); done
     curl -s -b "$COOKIES" -X POST "${args[@]}" "$BASE/admin/api.php?action=$a"
 }
+# The third player is this file's alone, and bound here (API 4.20); the
+# others are the group's, bound by its head where this is not the head.
+bound "$ID1" "$ID2" "$ID3"
 # A no-match grep exits 1 under set -e, so the extractors swallow it.
 evfield() { echo "$1" | grep -oE "\"$2\":\"[0-9A-Za-z]+\"" | head -1 | cut -d'"' -f4 || true; }
 # A scan posts what it scanned and nothing else - a printed key names its
 # own event, a pass carries the eid in front of its own dot.
 evjoin() { # evjoin <id> <code>
-    ev "{\"id\":\"$1\",\"action\":\"join\",\"code\":\"$2\"}"
+    ev "{\"id\":\"$1\"$(jt "$1"),\"action\":\"join\",\"code\":\"$2\"}"
 }
 evpass() { # evpass <id> <eid> <pass>
     evjoin "$1" "$2.$3"
 }
 evact() { # evact <id> <action> <eid>
-    ev "{\"id\":\"$1\",\"action\":\"$2\",\"eid\":\"$3\"}"
+    ev "{\"id\":\"$1\"$(jt "$1"),\"action\":\"$2\",\"eid\":\"$3\"}"
 }
 
 R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/event.php")
 expect "events are POST only" '405' "$R"
 R=$(ev "{\"id\":\"nothex\",\"action\":\"state\",\"eid\":\"AAAA\"}")
 expect "a malformed id is rejected" '"error":"invalid id"' "$R"
-R=$(ev "{\"id\":\"$ID1\",\"action\":\"nonsense\",\"eid\":\"AAAA\"}")
+R=$(ev "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"nonsense\",\"eid\":\"AAAA\"}")
 expect "an unknown action is rejected" '"error":"invalid action"' "$R"
-R=$(ev "{\"id\":\"$ID1\",\"action\":\"state\",\"eid\":\"aa\"}")
+R=$(ev "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"state\",\"eid\":\"aa\"}")
 expect "a malformed eid is rejected" '"error":"invalid eid"' "$R"
 # An eid grants NOTHING on its own: one that exists and one that does not are
 # the same answer to somebody with no row, so nothing here enumerates.
-R=$(ev "{\"id\":\"$ID1\",\"action\":\"state\",\"eid\":\"ZZZZ\"}")
+R=$(ev "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"state\",\"eid\":\"ZZZZ\"}")
 expect "an eid nobody minted is not an event" '"error":"no such event"' "$R"
 
 # ---- the operator opens one, with the door open ----
@@ -139,28 +142,28 @@ refute "and no online state at all - presence stays friendship-gated" '"online"'
 # ---- the events flag on hello and poll ----
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID2\",\"events\":true}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"events\":true}" "$BASE/api/hello.php")
 expect "hello answers the caller's own events" "\"eid\":\"$EID1\"" "$R"
 expect "saying where the caller stands in each" '"you":{"state":"member"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID2\",\"events\":\"yes\"}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"events\":\"yes\"}" "$BASE/api/hello.php")
 expect "a bogus events flag is refused" '"error":"invalid events"' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2&ev=1")
+R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&ev=1")
 expect "the poll answers them too" "\"eid\":\"$EID1\"" "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2&ev=1&wait=2")
+R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&ev=1&wait=2")
 expect "and answers at once rather than holding for a signal" "\"eid\":\"$EID1\"" "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2&ev=2")
+R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&ev=2")
 expect "a bogus ev flag is refused" '"error":"invalid ev"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"event\",\"payload\":\"x\"}" "$BASE/api/signal.php")
+    -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"event\",\"payload\":\"x\"}" "$BASE/api/signal.php")
 expect "a client cannot forge an event signal" '"error":"invalid type"' "$R"
 
 # ---- an event tournament is an ordinary tournament nobody outside can see ----
 
 setting tournament_create_cooldown 0
-R=$(tourney "{\"id\":\"$ID2\",\"action\":\"create\",\"eid\":\"$EID1\"}")
+R=$(tourney "{\"id\":\"$ID2\"$(jt "$ID2"),\"action\":\"create\",\"eid\":\"$EID1\"}")
 expect "only the organizer may open one on an event" '"error":"not the organizer"' "$R"
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"eid\":\"$EID1\"}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\",\"eid\":\"$EID1\"}")
 ETID=$(evfield "$R" tid)
 ECODE=$(evfield "$R" code)
 expect "the organizer opens one" '"tid":' "$R"
@@ -169,37 +172,37 @@ R=$(evact "$ID2" state "$EID1")
 expect "which the event names as its live tournament" "\"tid\":\"$ETID\"" "$R"
 refute "carrying the real player cap, which is a setting and not a field" '"max":0' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID2\"}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/hello.php")
 expect "and every member is told a lobby opened" '"event\":\"tourney' "$R"
 expect "the signal naming the tournament" "\\\"tid\\\":\\\"$ETID\\\"" "$R"
 expect "and carrying its join code" "\\\"code\\\":\\\"$ECODE\\\"" "$R"
-R=$(tourney "{\"id\":\"$ID2\",\"action\":\"join\",\"tid\":\"$ETID\"}")
+R=$(tourney "{\"id\":\"$ID2\"$(jt "$ID2"),\"action\":\"join\",\"tid\":\"$ETID\"}")
 expect "a member joins it" '"event":"lobby"' "$R"
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"leave\",\"tid\":\"$ETID\"}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"leave\",\"tid\":\"$ETID\"}")
 expect "the host closes it again" '"ok":true' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID2\"}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/hello.php")
 expect "and the same member is told it is over" '"over\":true' "$R"
 R=$(evact "$ID2" state "$EID1")
 refute "the event naming no live tournament any more" '"tourney":{' "$R"
 
 R=$(evadmin event_create "name=srv-CI-secret" "organizer=$ID1" "closed=0" "mode=active")
 EID2=$(evfield "$R" eid)
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"eid\":\"$EID2\"}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\",\"eid\":\"$EID2\"}")
 STID=$(evfield "$R" tid)
 SCODE=$(evfield "$R" code)
 expect "a second event opens a lobby of its own" '"tid":' "$R"
-R=$(tourney "{\"id\":\"$ID2\",\"action\":\"join\",\"tid\":\"$STID\"}")
+R=$(tourney "{\"id\":\"$ID2\"$(jt "$ID2"),\"action\":\"join\",\"tid\":\"$STID\"}")
 expect "somebody outside the event cannot join it by tid" '"error":"not in the event"' "$R"
-R=$(tourney "{\"id\":\"$ID2\",\"action\":\"join\",\"code\":\"$SCODE\"}")
+R=$(tourney "{\"id\":\"$ID2\"$(jt "$ID2"),\"action\":\"join\",\"code\":\"$SCODE\"}")
 expect "nor by its code, which is the whole secrecy" '"error":"not in the event"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID2\",\"tourneys\":true}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"tourneys\":true}" "$BASE/api/hello.php")
 refute "and the announce does not mention it to them" "$STID" "$(echo "$R" | grep -o '"tourneys":.*' || true)"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\",\"tourneys\":true}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"tourneys\":true}" "$BASE/api/hello.php")
 expect "while a member is shown it whatever network they are on" "\"tid\":\"$STID\"" "$R"
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"leave\",\"tid\":\"$STID\"}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"leave\",\"tid\":\"$STID\"}")
 expect "that lobby closes too" '"ok":true' "$R"
 R=$(evadmin event_delete "eid=$EID2")
 expect "and the second event is deleted again" '"ok":true' "$R"
@@ -244,31 +247,31 @@ expect "nor mint a pass" '"error":"not a member"' "$R"
 R=$(evjoin "$ID2" "$KEY3")
 expect "scanning again answers pending again" '"you":{"state":"pending"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\"}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/hello.php")
 expect "the organizer's mailbox holds the request" '"type":"event"' "$R"
 expect "which names the event" "$EID3" "$R"
 expect "and who asked" "\\\"from\\\":\\\"$ID2\\\"" "$R"
-R=$(ev "{\"id\":\"$ID3\",\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID2\",\"set\":\"member\"}")
+R=$(ev "{\"id\":\"$ID3\"$(jt "$ID3"),\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID2\",\"set\":\"member\"}")
 expect "a non-organizer cannot work the door" '"error":"not the organizer"' "$R"
-R=$(ev "{\"id\":\"$ID1\",\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID3\",\"set\":\"member\"}")
+R=$(ev "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID3\",\"set\":\"member\"}")
 expect "and the organizer approves, never adds" '"error":"no such event"' "$R"
-R=$(ev "{\"id\":\"$ID1\",\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID2\",\"set\":\"member\"}")
+R=$(ev "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID2\",\"set\":\"member\"}")
 expect "the organizer approves the request" '"ok":true' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID2\"}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/hello.php")
 expect "and the requester is told" '"event\":\"accepted' "$R"
 R=$(evact "$ID2" state "$EID3")
 expect "who now reads the event in full" '"members":' "$R"
 
-R=$(ev "{\"id\":\"$ID1\",\"action\":\"access\",\"eid\":\"$EID3\",\"closed\":false}")
+R=$(ev "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"access\",\"eid\":\"$EID3\",\"closed\":false}")
 expect "the organizer opens the door" '"closed":false' "$R"
 R=$(evjoin "$ID3" "$KEY3")
 expect "and the next scan goes straight in" '"you":{"state":"member"' "$R"
-R=$(ev "{\"id\":\"$ID1\",\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID3\",\"set\":\"banned\"}")
+R=$(ev "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID3\",\"set\":\"banned\"}")
 expect "a pest is banned" '"ok":true' "$R"
 R=$(evjoin "$ID3" "$KEY3")
 expect "and every later scan is refused" '"error":"banned"' "$R"
-R=$(ev "{\"id\":\"$ID1\",\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID3\",\"set\":\"none\"}")
+R=$(ev "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"roster\",\"eid\":\"$EID3\",\"peer\":\"$ID3\",\"set\":\"none\"}")
 expect "lifting the ban drops the row" '"ok":true' "$R"
 R=$(evjoin "$ID3" "$KEY3")
 expect "so they may scan again" '"you":{"state":"member"' "$R"
@@ -311,7 +314,7 @@ expect "and it can be ended again" '"state":"ended"' "$R"
 R=$(evact "$ID2" state "$EID1")
 expect "state says whether the event offers a monitor" '"monitor_allowed":true' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID2\",\"events\":true}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"events\":true}" "$BASE/api/hello.php")
 expect "and so does every row of the events list" '"monitor_allowed":' "$R"
 R=$(evact "$ID3" monitor "$EID1")
 expect "so the slot was still free for somebody else to take" '"reserved":false' "$R"
@@ -347,7 +350,7 @@ expect "the reserved screen joins a CLOSED event without waiting" '"you":{"state
 refute "and is granted no achievement for it" '"ach"' "$R"
 R=$(evjoin "$ID2" "$KEY4")
 expect "while an ordinary scan at that door still waits" '"you":{"state":"pending"' "$R"
-R=$(ev "{\"id\":\"$ID1\",\"action\":\"roster\",\"eid\":\"$EID4\",\"peer\":\"$ID2\",\"set\":\"member\"}")
+R=$(ev "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"roster\",\"eid\":\"$EID4\",\"peer\":\"$ID2\",\"set\":\"member\"}")
 expect "the organizer lets that one in" '"ok":true' "$R"
 R=$(evact "$ID2" members "$EID4")
 expect "and the roster names them" "\"id\":\"$ID2\"" "$R"
@@ -395,7 +398,7 @@ R=$(evact "$TV" monitor "$EID6")
 expect "until the reserved screen asks, which always succeeds" '"you":{"state":"monitor"' "$R"
 R=$(evact "$ID1" monitor "$EID6")
 expect "and the stand-in is refused at its next renewal" '"error":"monitor taken"' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"}" "$BASE/api/hello.php")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/hello.php")
 expect "having been told the screen took over" '"event\":\"monitor\"' "$R"
 R=$(evact "$TV" monitor "$EID6")
 expect "the screen renews like any holder" '"reserved":true' "$R"
@@ -407,17 +410,17 @@ expect "the screen is forgotten with the run" '"ok":true' "$R"
 # A screen never takes a seat, so a tournament being watched still seats
 # its full eight. It falls out of the row state: a monitor is not a
 # member, and only members get into an event's tournament.
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\",\"eid\":\"$EID4\"}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\",\"eid\":\"$EID4\"}")
 MTID=$(evfield "$R" tid)
 MCODE=$(evfield "$R" code)
 expect "the organizer opens a tournament the screen will watch" '"tid":' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID3\",\"tourneys\":true}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID3\"$(jt "$ID3"),\"tourneys\":true}" "$BASE/api/hello.php")
 expect "the screen is served the lobby in the ordinary announce" "\"tid\":\"$MTID\"" "$R"
 expect "and is signalled it, being in the event audience" '"event\":\"tourney' "$R"
-R=$(tourney "{\"id\":\"$ID3\",\"action\":\"join\",\"tid\":\"$MTID\"}")
+R=$(tourney "{\"id\":\"$ID3\"$(jt "$ID3"),\"action\":\"join\",\"tid\":\"$MTID\"}")
 expect "the screen cannot join it and so can never hold a seat" '"error":"not in the event"' "$R"
-R=$(tourney "{\"id\":\"$ID3\",\"action\":\"join\",\"code\":\"$MCODE\"}")
+R=$(tourney "{\"id\":\"$ID3\"$(jt "$ID3"),\"action\":\"join\",\"code\":\"$MCODE\"}")
 expect "nor by its code" '"error":"not in the event"' "$R"
 R=$(evact "$ID3" monitor "$EID4")
 expect "while it watches the same tournament as the screen" "\"tid\":\"$MTID\"" "$R"
@@ -427,12 +430,12 @@ expect "while it watches the same tournament as the screen" "\"tid\":\"$MTID\"" 
 # included - and the screen receives the tournament's signals like a seat
 # would, while sitting in none of the sheet's lists. A member joins, the
 # host starts, and the sheet is dealt.
-R=$(tourney "{\"id\":\"$ID2\",\"action\":\"join\",\"tid\":\"$MTID\"}")
+R=$(tourney "{\"id\":\"$ID2\"$(jt "$ID2"),\"action\":\"join\",\"tid\":\"$MTID\"}")
 expect "a member joins the tournament the screen watches" '"event":"lobby"' "$R"
-curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID3\"}" "$BASE/api/hello.php" > /dev/null
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"start\",\"tid\":\"$MTID\"}")
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID3\"$(jt "$ID3")}" "$BASE/api/hello.php" > /dev/null
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"start\",\"tid\":\"$MTID\"}")
 expect "and the host starts it" '"ok":true' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID3\"}" "$BASE/api/hello.php")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID3\"$(jt "$ID3")}" "$BASE/api/hello.php")
 expect "the screen is dealt the roles sheet with the players" 'event\":\"roles' "$R"
 expect "which names the screen as the monitor" "\\\"monitor\\\":\\\"$ID3\\\"" "$R"
 expect "with no seat of its own" 'you\":\"idle' "$R"
@@ -445,10 +448,10 @@ expect "walkover clock included, so the screen counts down too" '"walkover_at":1
 R=$(act "$ID1" state "$MTID")
 expect "and so does a player's own read" "\"monitor\":\"$ID3\"" "$R"
 refute "the screen is never among the players" "\"players\":[\"$ID3" "$R"
-R=$(tourney "{\"id\":\"$ID1\",\"action\":\"leave\",\"tid\":\"$MTID\"}")
+R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"leave\",\"tid\":\"$MTID\"}")
 expect "the host closes it again" '"ok":true' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID3\"}" "$BASE/api/hello.php")
+    -d "{\"id\":\"$ID3\"$(jt "$ID3")}" "$BASE/api/hello.php")
 expect "and is told when it is over" '"over\":true' "$R"
 expect "by the tournament's own signal as well as the event's" 'host ended it' "$R"
 
@@ -521,7 +524,7 @@ R=$(evact "$ID2" state "$EID5")
 expect "the old eid names nothing" '"error":"no such event"' "$R"
 R=$(evact "$ID2" state "SRV0")
 expect "and the early member is in the event under its new one" '"you":{"state":"member"' "$R"
-R=$(curl -s "$BASE/api/poll.php?id=$ID2&ev=1")
+R=$(curl -s "$BASE/api/poll.php?id=$ID2$(qt "$ID2")&ev=1")
 expect "which its events list now says" '"eid":"SRV0"' "$R"
 refute "in place of the old" "\"eid\":\"$EID5\"" "$R"
 R=$(evadmin event_rename "eid=SRV0" "to=$EID1")
@@ -563,6 +566,7 @@ setting tournament_create_cooldown 10
 # it asserts an exact registered count. So it takes its own guest away.
 R=$(curl -s -b "$COOKIES" -X POST -d "id=$ID3" "$BASE/admin/api.php?action=delete_player")
 expect "the third player this file needed is removed again" '"ok":true' "$R"
+unset "TOK[$ID3]"   # the binding went with the player
 
 
 R=$(evadmin event_delete "eid=$EID3")

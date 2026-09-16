@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 48;
+    private const SCHEMA_VERSION = 49;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -106,7 +106,7 @@ final class Db
     private const COUNTED = ['players', 'scores', 'duels',
         'counters', 'alerts', 'settings', 'admin_fails', 'friends',
         'starts', 'items', 'matches', 'ledger', 'item_disputes',
-        'events', 'event_members', 'event_results'];
+        'events', 'event_members', 'event_results', 'ident'];
 
     /**
      * How many rows each table above holds, in ONE statement rather than a
@@ -889,6 +889,22 @@ final class Db
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_scores_player_created
                             ON scores (player_id, created)');
         }
+        if ($v < 49) {
+            // The identity binding (see Ident): the SHA-256 of the token
+            // that proves an id, the moment it was bound and from where.
+            // Its own table because the token is PROPERTY, not presence:
+            // Presence::forget drops the players row and keeps what the
+            // player owns, and the binding belongs with those. bound_ip is
+            // '' for a row copied from the vault (below) until the owner's
+            // client presents the token on a hello (Ident::confirm).
+            $pdo->exec("CREATE TABLE IF NOT EXISTS ident (
+                id TEXT PRIMARY KEY,
+                tok_hash TEXT NOT NULL,
+                bound_at INTEGER NOT NULL,
+                bound_ip TEXT NOT NULL DEFAULT ''
+            )");
+            self::adoptVault($pdo);
+        }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that
         // must not touch the single SQLite writer while they idle.
@@ -899,6 +915,23 @@ final class Db
             // would require Db back into Db while it is still opening.
             error_log("FOK schema: migrated $v -> " . self::SCHEMA_VERSION);
         }
+    }
+
+    /**
+     * Schema 49: every enrolled vault token becomes an identity binding.
+     * The vault minted the same 128-bit token the identity reuses, and the
+     * client already holds it - so a player who ever backed up is bound
+     * before the release answers its first request, with no window in
+     * which a stranger could bind the id first. Idempotent: a row already
+     * bound is left alone, whatever the vault says.
+     * @return int rows copied
+     */
+    public static function adoptVault(PDO $pdo): int
+    {
+        return $pdo->exec(
+            "INSERT OR IGNORE INTO ident (id, tok_hash, bound_at, bound_ip)
+             SELECT id, token_hash, updated, '' FROM vault WHERE token_hash != ''"
+        );
     }
 
     // A database commissioned from scratch starts with the same default

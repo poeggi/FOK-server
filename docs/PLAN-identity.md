@@ -1,8 +1,34 @@
 # Identity - proof of ownership for a player id
 
-Status: PLAN ONLY (2026-09-15). Nothing here is implemented. Steps 1-7
-are this repo. Step 8 collects every client-side topic for FOK-snake.
-Step 9 is the cleanup release after the cutoff.
+Status: steps 1-7 SHIPPED in 1.17.0 (API 4.20, schema 49, 2026-09-16).
+Step 8 collects every client-side topic for FOK-snake. Step 9 is the
+cleanup release after the cutoff. Where the code differs from the text
+below, the code is right and this list says how:
+
+- The class is `Ident` (src/Ident.php), not `Auth`: Auth is the admin
+  login. `Ident::require` / `Ident::hello` answer 401; `Ident::verify` /
+  `Ident::register` are the decisions behind them, which the unit tests
+  call.
+- A row schema 49 copied off the vault is UNCONFIRMED (bound_ip ''), and
+  T1 covers it: the owner's client from before the token sends the vault
+  token on backup.php and on nothing else, so a bound-and-enforced copy
+  would have locked every player with a cloud backup out of hello until
+  their client updated. The first hello presenting the token CONFIRMS
+  the row (bound_ip set), and from then on a request without it is 401.
+  The admin shows the difference (Bound column, a tilde; the client
+  popup).
+- T2 mints UNCONFIRMED, like a copy, and only for a request with no `tok`
+  member at all (whatever it sent as `token`): a client that speaks 4.20
+  stores only what a hello answers, so its next hello is what binds.
+- `ident_fails_per_min` (default 10) exists since 4.20 as the threshold
+  of the log line; 5.0 turns it into the 429.
+- The live harness keeps its tokens in `~/.fok-server-livetest.tok`, one
+  line per (base, id), not JSON: bash reads it without a parser.
+- The smoke carries `tok` on every request of every part (lib.sh jt / qt,
+  `bind`, `bound`); test/smoke/10_ident.sh is the new part and runs as a
+  fourth parallel group against staging.
+- hello validates EVERY input before the gate: a 400 after a bind would
+  leave an id bound to a token the client was never answered.
 
 THE CUTOFF IS 2026-10-01. Everything marked TEMPORARY(ident) exists to
 carry clients over and is deleted after that date (step 9).

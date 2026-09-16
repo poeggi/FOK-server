@@ -190,7 +190,8 @@ major. Every minor since is additive; docs/API.md carries them one by one.
         relay.php     in-duel message relay (P2P fallback), long-polled
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
-        backup.php    GET/POST client config backup and restore, token-secured
+        backup.php    GET/POST client config backup and restore, under the
+                      identity token
         .user.ini     PHP limits for the API only (see Capacity below)
       debug/          client debug-report drop -> 4-digit PIN (1 day, 8 MB)
       admin/          session-protected admin UI + JSON API
@@ -444,9 +445,13 @@ host-level. If this outgrows shared hosting, fix workers first.
   import, database restore) raise an alert on top.
 - Deploy credentials live in ~/.fok-server-deploy.json locally, outside the
   repo.
-- Player IDs are public identities (as designed in FOK-snake); a secret
-  session token for submission authenticity is future work, as is the
-  replay-based score validation.
+- Player IDs are public identities (as designed in FOK-snake). Since API
+  4.20 the identity token proves that the caller owns the id it names:
+  16 random bytes hello mints for an unbound id, presented on every
+  request from then on, only their hash stored (src/Ident.php). Until
+  2026-10-01 a client from before the token still passes on an id nothing
+  proves yet (TEMPORARY(ident)); 5.0 requires it everywhere. Replay-based
+  score validation is still future work.
 - Item ownership is server-authoritative, but MINTING is not: a client
   asserts its own box opens and purchases and is only rate-limited, so the
   registry makes items conserved and auditable rather than unforgeable
@@ -458,20 +463,24 @@ host-level. If this outgrows shared hosting, fix workers first.
 ## API sketch
 
     GET  /api/version.txt
-      -> {"ok":true,"server":"<x.y.z>","api":"4.12","env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":"4.20","env":"live"}
          (static, written by the deploy - it starts no PHP)
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
-    POST /api/hello.php  {"id":"cafe0001", "name":"KAI"?, "duel_with":"deadbeef"?,
+    POST /api/hello.php  {"id":"cafe0001", "tok":"<32-hex>"|null, "name":"KAI"?,
+                          "duel_with":"deadbeef"?,
                           "duel_private":bool?, "duel_end":"deadbeef"?,
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,
                           "friends_since":ms?, "tourneys":bool?,
                           "events":bool?, "nets":[ip,...]?}
-      -> {"ok":true,"api":"4.12","now":ms,"debug":bool,"online":n,"playing":n,
-          "registered":n,
+      -> {"ok":true,"api":"4.20","tok":"<32-hex>"?,"now":ms,"debug":bool,
+          "online":n,"playing":n,"registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_delta":{...}?, "tourneys":[...]?, "events":[...]?}
-         (the delta only ever names accepted friends; tourneys lists the open
+         (tok proves the id and rides every request below as well - the
+          member on a body, &tok= on a GET; the answer carries it once, on
+          the hello that bound the id. The delta only ever names accepted
+          friends; tourneys lists the open
           lobbies hosted on one of the caller's own networks. duel_with sets
           the duel and duel_end clears it - see docs/API.md, Announcing a
           duel - and a duel_private one is counted but never attributed)
@@ -481,7 +490,7 @@ host-level. If this outgrows shared hosting, fix workers first.
     POST /api/relay.php  {"id","peer","payload","pts"?} -> {"ok":true}
     GET  /api/relay.php?id=&peer=&wait=8
       -> {"ok":true,"messages":[...]} | 204   (P2P fallback relay)
-    GET  /api/poll.php?id=cafe0001&wait=8
+    GET  /api/poll.php?id=cafe0001&tok=<32-hex>&wait=8
       -> 204 (nothing pending) | {"ok":true,"signals":[...]}
          (wait=N long-polls: answers ~20 ms after a signal arrives)
     POST /api/match.php  {"id":"cafe0001","action":"seek|cancel"}

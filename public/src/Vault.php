@@ -5,117 +5,40 @@ require_once __DIR__ . '/Db.php';
 
 /**
  * Per-player config backup: an OPAQUE blob (the client's whole config; see
- * docs/API.md), one row per id. Bound to its owner by a SECRET TOKEN: the
- * first backup mints a 128-bit token (only its SHA-256 hash is stored) and
- * every later backup and restore must present it - so knowing an id (they
- * are shared during a duel) is not enough to read or overwrite a backup.
- * Lose the token, lose access. Constant-time compare.
+ * docs/API.md), one row per id. Who may read or replace it is the identity
+ * token's question, answered in front of every call here (see Ident and
+ * api/backup.php): the vault stores and hands back, and never judges.
+ *
+ * The token_hash column is the vault's own token from before the identity
+ * existed, copied into the ident table by schema 49 and dead since; it is
+ * left in place, written by nothing, until the host's SQLite is known to
+ * drop columns.
  */
 final class Vault
 {
-    /**
-     * Stores (or replaces) a player's backup. The first backup for an id (or
-     * a pre-token row) mints a new token; a later one must present the
-     * matching token, which is returned unchanged.
-     * @return array{token:string,updated:int}|null null = missing/wrong token.
-     */
-    public static function backup(string $id, string $payload, ?string $token): ?array
+    /** Stores (or replaces) a player's backup; the write is one upsert. */
+    public static function backup(string $id, string $payload): int
     {
-        $row = self::fetch($id);
-        if ($row === null || $row['token_hash'] === '') {
-            $token = bin2hex(random_bytes(16));
-            $hash = hash('sha256', $token);
-            $expect = '';
-        } elseif ($token !== null && hash_equals($row['token_hash'], hash('sha256', $token))) {
-            $hash = $row['token_hash'];
-            $expect = $hash;
-        } else {
-            return null;
-        }
         $now = time();
-        // The write arbitrates, not the read above it: the row is read
-        // unlocked, so a first backup from another device - or an operator's
-        // resetToken and the re-enrolment behind it - can land in between.
-        // The upsert therefore states which token hash it believed it was
-        // replacing, and an unenrolled slot ('') stays claimable. Matching no
-        // row means somebody else's token owns the backup now, and this
-        // caller is refused exactly as if it had presented a wrong one -
-        // never silently overwriting a backup it cannot prove it owns.
-        $won = Db::retry(static function () use ($id, $payload, $hash, $now, $expect): bool {
-            $st = Db::get()->prepare(
-                "INSERT INTO vault (id, payload, token_hash, updated) VALUES (?, ?, ?, ?)
-                 ON CONFLICT (id) DO UPDATE SET payload = excluded.payload,
-                     token_hash = excluded.token_hash, updated = excluded.updated
-                 WHERE vault.token_hash = ? OR vault.token_hash = ''"
-            );
-            $st->execute([$id, $payload, $hash, $now, $expect]);
-            return $st->rowCount() > 0;
+        Db::retry(static function () use ($id, $payload, $now): void {
+            Db::get()->prepare(
+                'INSERT INTO vault (id, payload, token_hash, updated) VALUES (?, ?, \'\', ?)
+                 ON CONFLICT (id) DO UPDATE SET payload = excluded.payload, updated = excluded.updated'
+            )->execute([$id, $payload, $now]);
         });
-        return $won ? ['token' => $token, 'updated' => $now] : null;
+        return $now;
     }
 
     /**
-     * Restores a player's backup; the token must match the one minted on the
-     * first backup.
-     * @return array{payload:string,updated:int}|false|null
-     *   array = ok, false = wrong token, null = no backup for this id.
+     * A player's backup, or null when there is none.
+     * @return ?array{payload: string, updated: int}
      */
-    public static function restore(string $id, string $token): array|false|null
+    public static function restore(string $id): ?array
     {
-        $row = self::fetch($id);
-        if ($row === null) {
-            return null;
-        }
-        if (!hash_equals($row['token_hash'], hash('sha256', $token))) {
-            return false;
-        }
-        return ['payload' => $row['payload'], 'updated' => $row['updated']];
-    }
-
-    /**
-     * Admin-only read: the raw backup for an id WITHOUT the token, for a
-     * MANUAL recovery (an operator retrieving a config for a client that lost
-     * its token). Never exposed on the client API - only behind /admin.
-     * 'enrolled' is false once the token has been reset (see resetToken).
-     * @return array{payload:string,updated:int,enrolled:bool}|null
-     */
-    public static function peek(string $id): ?array
-    {
-        $row = self::fetch($id);
-        return $row === null ? null : [
-            'payload' => $row['payload'],
-            'updated' => $row['updated'],
-            'enrolled' => $row['token_hash'] !== '',
-        ];
-    }
-
-    /**
-     * Admin-only: clears a backup's token so the owner re-enrolls on its next
-     * backup (which mints a fresh one); the payload is kept. Recovery for a
-     * client that lost its token. Briefly claimable by anyone who knows the
-     * id, so it is a deliberate operator step.
-     * @return bool false if there is no backup for the id.
-     */
-    public static function resetToken(string $id): bool
-    {
-        return (bool)Db::retry(static function () use ($id): bool {
-            $st = Db::get()->prepare("UPDATE vault SET token_hash = '' WHERE id = ?");
-            $st->execute([$id]);
-            return $st->rowCount() > 0;
-        });
-    }
-
-    /** @return array{payload:string,token_hash:string,updated:int}|null */
-    private static function fetch(string $id): ?array
-    {
-        $st = Db::get()->prepare('SELECT payload, token_hash, updated FROM vault WHERE id = ?');
+        $st = Db::get()->prepare('SELECT payload, updated FROM vault WHERE id = ?');
         $st->execute([$id]);
         $row = $st->fetch();
         $st->closeCursor();
-        return $row === false ? null : [
-            'payload' => $row['payload'],
-            'token_hash' => (string)$row['token_hash'],
-            'updated' => (int)$row['updated'],
-        ];
+        return $row === false ? null : ['payload' => $row['payload'], 'updated' => (int)$row['updated']];
     }
 }

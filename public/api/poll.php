@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
+require_once __DIR__ . '/../src/Ident.php';
 require_once __DIR__ . '/../src/Holds.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
@@ -13,7 +14,7 @@ require_once __DIR__ . '/../src/Pace.php';
 
 /**
  * Fast, cheap signal poll for the matchmaking/signaling window.
- * GET /api/poll.php?id=<8-hex>[&wait=<seconds>][&fs=<cursor ms>]
+ * GET /api/poll.php?id=<8-hex>&tok=<32-hex>[&wait=<seconds>][&fs=<cursor ms>]
  *                          [&aa=1][&fl=1][&tl=1][&ev=1][&de=<8-hex>]
  *                          [&db=0|1]
  *   -> 204 No Content        nothing pending (empty body; the hold reads
@@ -66,6 +67,7 @@ if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
 Util::noteCaller($id);
+Ident::require($id, Ident::read($_GET)[1], Util::clientIp());
 // The hello answers a holding screen can ask for here instead (4.9).
 // Absent is null and changes nothing - a poll that did not mention a thing
 // is not asserting anything about it - and anything but a flag is a typo

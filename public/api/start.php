@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
+require_once __DIR__ . '/../src/Ident.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Settings.php';
 require_once __DIR__ . '/../src/Starts.php';
@@ -46,6 +47,7 @@ if (!Util::isValidId($id) || !Util::isValidId($peer) || $id === $peer) {
     Util::fail('invalid id/peer');
 }
 Util::noteCaller($id);
+Ident::require($id, Ident::read($body)[1], Util::clientIp());
 
 $epoch = $body['epoch'] ?? null;
 // A run halts a few hundred times at most; the ceiling only keeps a

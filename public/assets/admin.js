@@ -632,27 +632,45 @@ function renderClientBody(body, overlay, d, reload) {
     kv('Mailbox', c.mailbox + ' pending signal(s)');
     if (c.friend_ban_until > now) kv('Friend-banned', 'for ' + (c.friend_ban_until - now) + ' s');
 
+    // The binding that proves the id (see Ident): who may act as this
+    // player. Unbound means the next hello that asks binds it - to
+    // whoever sends it, which is why the reset is a deliberate step.
+    sec('Identity');
+    if (c.ident) {
+        kv('Token', c.ident.bound_ip === ''
+            ? 'held by the client since ' + fmtTime(c.ident.bound_at) + ', not yet confirmed on a hello'
+            : 'bound ' + fmtTime(c.ident.bound_at) + ' from ' + c.ident.bound_ip);
+        const r = el('tr');
+        const v = el('td', 'kv-v');
+        const rst = el('button', 'small', 'reset token');
+        rst.onclick = () => confirmModal('Reset identity token',
+            'This drops the token that proves ' + c.id + ' and hands the id to the next '
+            + 'hello that asks for one. Until then anyone who knows the id can claim it, '
+            + 'and the client holding the old token is refused until it restarts. '
+            + 'The backup, the items and the scores stay.',
+            'Reset it', async () => {
+                await api('token_reset', { method: 'POST', body: form({ id: c.id }) });
+                reload();
+            });
+        v.append(rst);
+        r.append(el('td', 'kv-k', 'Recovery'), v);
+        tbl.append(r);
+    } else {
+        kv('Token', 'unbound - the next hello that asks binds the id');
+    }
+
     sec('Config backup');
     if (c.backup) {
         kv('Stored', 'yes');
         kv('When', fmtTime(c.backup.updated) + ' (' + ago(c.backup.updated) + ')');
         kv('Size', fmtBytes(c.backup.bytes));
-        kv('Token', c.backup.enrolled ? 'set' : 'reset - client can re-enroll');
         const r = el('tr');
         const v = el('td', 'kv-v');
         // Manual recovery: download the config WITHOUT the token, as the
         // snake-fok-backup.json the game imports directly.
         const dl = el('button', 'small', 'download backup');
         dl.onclick = () => download('vault_export&id=' + c.id, 'snake-fok-backup-' + c.id + '.json');
-        // Clear the token so a client that lost it can re-enroll on its next
-        // backup (the data is kept).
-        const rst = el('button', 'small', 'reset token');
-        rst.onclick = async () => {
-            if (!confirm('Reset the backup token for ' + c.id + '?\nIts next backup mints a new token; until then anyone who knows the id could claim it.')) return;
-            await api('vault_reset', { method: 'POST', body: form({ id: c.id }) });
-            reload();
-        };
-        v.append(dl, rst);
+        v.append(dl);
         r.append(el('td', 'kv-k', 'Recovery'), v);
         tbl.append(r);
     } else {
@@ -2684,13 +2702,18 @@ function renderUsers(box, d) {
     const search = liveFilter('Filter by ID or name...', usersFilter, () => applyFilter());
     box.append(search);
     const table = el('table');
-    table.append(row(['ID', 'Name', 'First', 'Last', 'N', 'Lat', 'Debug', ''], 'th'));
+    table.append(row(['ID', 'Name', 'First', 'Last', 'Bound', 'N', 'Lat', 'Debug', ''], 'th'));
     for (const u of d.users) {
         const online = d.now - u.last_seen <= d.online_window;
         const r = el('tr');
         if (online) r.classList.add('online');
+        // When the id was bound to its token (see Ident); a tilde marks a
+        // token copied off the vault that no hello has presented yet.
+        const bound = el('td', '', u.bound_at === null ? '-'
+            : (u.bound_ip === '' ? '~' : '') + fmtTime(u.bound_at));
+        if (u.bound_at !== null && u.bound_ip === '') bound.title = 'held by the client, not yet confirmed on a hello';
         r.append(idCell(u.id), el('td', '', u.name === null ? '-' : u.name),
-            el('td', '', fmtTime(u.first_seen)), el('td', '', fmtTime(u.last_seen)),
+            el('td', '', fmtTime(u.first_seen)), el('td', '', fmtTime(u.last_seen)), bound,
             el('td', '', u.hello_count), el('td', '', u.latency === null ? '-' : u.latency + ' ms'));
 
         // Debug can be set on an OFFLINE client too: it is a wish
@@ -2792,7 +2815,8 @@ const MODULES = [
                     tip: 'Online clients by the address family their last request came in over.' },
                 { label: 'Playing 1vs1', value: d.counts.playing },
                 { label: 'Tournaments', value: d.tourneys },
-                { label: 'Users registered', value: d.counts.registered },
+                { label: 'Users registered | bound', value: d.counts.registered + ' | ' + d.bound,
+                    tip: 'Registered ids, and how many of them are bound to an identity token.' },
                 // A game reading, not a server one: it says how many duels
                 // failed to find a peer-to-peer path, which is about the
                 // players' networks. Its history is a sampled LEVEL, so the

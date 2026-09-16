@@ -10,7 +10,7 @@ else
     # Existence feedback: a request to an unregistered id is reported back and
     # recorded nowhere; a request to a registered id records a pending row.
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"deadface\"}" "$BASE/api/friend.php")
+        -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"request\",\"peer\":\"deadface\"}" "$BASE/api/friend.php")
     expect "request to an unknown id reports exists:false" '"exists":false' "$R"
     if echo "$R" | grep -q '"state"'; then
         echo "FAIL unknown-id request recorded a state: $R"; fail=1
@@ -19,7 +19,7 @@ else
     fi
     hello "aa000010" > /dev/null
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"aa000010\"}" "$BASE/api/friend.php")
+        -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"request\",\"peer\":\"aa000010\"}" "$BASE/api/friend.php")
     expect "request to a known id records it" '"state":"pending"' "$R"
     expect "a recorded request reports exists:true" '"exists":true' "$R"
 
@@ -29,21 +29,21 @@ else
     for p in aa000011 aa000012 aa000013 aa000014; do hello "$p" > /dev/null; done
     for p in aa000011 aa000012 aa000013 aa000014; do
         R=$(curl -s -X POST -H 'Content-Type: application/json' \
-            -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
+            -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
     done
     expect "friend-request spam banned" 'banned' "$R"
     setting friend_req_max 15
     R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$ID1\",\"action\":\"request\",\"peer\":\"aa000099\"}" "$BASE/api/friend.php")
+        -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"request\",\"peer\":\"aa000099\"}" "$BASE/api/friend.php")
     expect "banned client stays banned" '429' "$R"
-    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"list\"}" "$BASE/api/friend.php")
+    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"list\"}" "$BASE/api/friend.php")
     if echo "$R" | grep -q '"state":"pending"'; then
         echo "FAIL spammer pendings not purged: $R"; fail=1
     else
         echo "ok   spammer pending requests purged"
     fi
     R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$ID1\",\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"again?\"}" "$BASE/api/signal.php")
+        -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"invite\",\"payload\":\"again?\"}" "$BASE/api/signal.php")
     expect "invite blocked again after removal" '403' "$R"
 
     # Per-id request throttle (the anti-probe guard). Re-enable it at tight
@@ -122,12 +122,12 @@ else
     done
 fi
 
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"seek\"}" "$BASE/api/match.php")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"seek\"}" "$BASE/api/match.php")
 expect "first seeker waits" '"waiting":true' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"action\":\"seek\"}" "$BASE/api/match.php")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"action\":\"seek\"}" "$BASE/api/match.php")
 expect "second seeker matched" "\"matched\":\"$ID1\"" "$R"
 expect "second seeker answers" '"role":"answerer"' "$R"
 expect "match carries peer name" '"peer_name":"SMOKE ONE"' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\",\"action\":\"seek\"}" "$BASE/api/match.php")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"seek\"}" "$BASE/api/match.php")
 expect "first seeker offers" '"role":"offerer"' "$R"
 

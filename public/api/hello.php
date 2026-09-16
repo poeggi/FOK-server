@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
+require_once __DIR__ . '/../src/Ident.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Friends.php';
@@ -17,6 +18,9 @@ require_once __DIR__ . '/../src/Pace.php';
  * mailbox.
  * POST {
  *   "id": "8-hex",
+ *   "tok": "32-hex" | null,     4.20: the proof of the id (see Ident). null
+ *                               on an unbound id asks for one, and the
+ *                               answer carries it as "tok", once
  *   "name": "PLAYER",           optional, display name; recorded and shown
  *                               to accepted friends
  *   "duel_with": "8-hex",       optional, the peer while a 1vs1 runs. It
@@ -66,6 +70,7 @@ if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
 Util::noteCaller($id);
+[$tokSent, $tok] = Ident::read($body);
 
 $latency = $body['latency'] ?? null;
 if ($latency !== null && (!is_int($latency) || $latency < 0 || $latency > 60000)) {
@@ -111,6 +116,43 @@ if ($nets !== null) {
     }
 }
 
+$duelEnd = $body['duel_end'] ?? null;
+if ($duelEnd !== null && !Util::isValidId($duelEnd)) {
+    Util::fail('invalid duel_end');
+}
+$duelWith = $body['duel_with'] ?? null;
+$duelPrivate = $body['duel_private'] ?? false;
+if ($duelWith !== null) {
+    if (!Util::isValidId($duelWith) || $duelWith === $id) {
+        Util::fail('invalid duel_with');
+    }
+    if (!is_bool($duelPrivate)) {
+        Util::fail('invalid duel_private');
+    }
+}
+// EVERY input is validated before anything is written or drained: a
+// Util::fail() after the gate below would leave an id bound to a token
+// the client was never answered, and one after Signals::take() would drop
+// the caller's pending invites for good.
+$wantRoster = !empty($body['friends_list']);
+$since = $body['friends_since'] ?? null;
+if ($since !== null && (!is_int($since) || $since < 0)) {
+    Util::fail('invalid friends_since');
+}
+$tourneys = $body['tourneys'] ?? false;
+if (!is_bool($tourneys)) {
+    Util::fail('invalid tourneys');
+}
+$events = $body['events'] ?? false;
+if (!is_bool($events)) {
+    Util::fail('invalid events');
+}
+
+// The proof of the id, before anything runs for it - and the one place an
+// unbound id is bound (see Ident::hello). A caller that fails here leaves
+// no trace: no beat, no row, nothing drained.
+$minted = Ident::hello($id, $tokSent, $tok, Util::clientIp());
+
 $debug = Presence::touch($id, Util::clientIp(), $latency, $name, $autoAccept, $debugActive);
 Util::bump('hello');
 if ($nets !== null) {
@@ -124,42 +166,12 @@ if ($nets !== null) {
 // duel up, and the teardown. The END is applied FIRST, so one hello may
 // carry both and a rematch announced in a single request lands on the new
 // pairing rather than being cancelled by the old one's teardown.
-$duelEnd = $body['duel_end'] ?? null;
 if ($duelEnd !== null) {
-    if (!Util::isValidId($duelEnd)) {
-        Util::fail('invalid duel_end');
-    }
     Presence::endDuel($id, $duelEnd);
 }
-
-$duelWith = $body['duel_with'] ?? null;
 if ($duelWith !== null) {
-    if (!Util::isValidId($duelWith) || $duelWith === $id) {
-        Util::fail('invalid duel_with');
-    }
-    $duelPrivate = $body['duel_private'] ?? false;
-    if (!is_bool($duelPrivate)) {
-        Util::fail('invalid duel_private');
-    }
     Presence::touchDuel($id, $duelWith, $duelPrivate);
     ConnTrack::playing($id, $duelWith);
-}
-
-// EVERY input is validated before the mailbox is touched: Signals::take()
-// deletes what it returns, so a Util::fail() after it would drop the
-// caller's pending invites for good.
-$wantRoster = !empty($body['friends_list']);
-$since = $body['friends_since'] ?? null;
-if ($since !== null && (!is_int($since) || $since < 0)) {
-    Util::fail('invalid friends_since');
-}
-$tourneys = $body['tourneys'] ?? false;
-if (!is_bool($tourneys)) {
-    Util::fail('invalid tourneys');
-}
-$events = $body['events'] ?? false;
-if (!is_bool($events)) {
-    Util::fail('invalid events');
 }
 
 // A tournament participant's heartbeat carries that tournament's deadlines
@@ -195,6 +207,11 @@ $out = [
     'debug' => $debug,
     'signals' => $signals,
 ] + Presence::counts();
+// The token this hello minted, answered ONCE: the client stores whatever
+// a hello answers, and no later answer carries it again.
+if ($minted !== null) {
+    $out['tok'] = $minted;
+}
 
 if ($since !== null) {
     // 4.6: the same authorization, asked the other way round. The caller

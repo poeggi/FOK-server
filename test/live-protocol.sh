@@ -43,24 +43,52 @@ ordered() { # ordered <name> <first> <second> <actual>
     fi
 }
 
-hello() { # hello <id> <name>
-    curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"name\":\"$2\"}" "$BASE/api/hello.php"
+# --- Identity (API 4.20). This harness is a client, so every request that
+# names one of its ids carries that id's token. The cast is bound on the
+# first run against an environment - the hello that carries tok as null is
+# answered the token - and the tokens are kept OUTSIDE the repo, one line
+# per (base, id) in ~/.fok-server-livetest.tok beside the deploy
+# credentials, so every later run proves the same ids. A token the server
+# no longer knows (an operator's reset) is replaced by what the next hello
+# answers; an id somebody else bound is a 401 here, and a finding.
+TOKFILE="${FOK_LIVETEST_TOK:-$HOME/.fok-server-livetest.tok}"
+declare -A TOK=()
+if [ -f "$TOKFILE" ]; then
+    while read -r b i t; do [ "$b" = "$BASE" ] && TOK[$i]=$t; done < "$TOKFILE"
+fi
+jt() { if [ -n "${TOK[$1]:-}" ]; then printf ',"tok":"%s"' "${TOK[$1]}"; else printf ',"tok":null'; fi; }
+qt() { if [ -n "${TOK[$1]:-}" ]; then printf '&tok=%s' "${TOK[$1]}"; fi; }
+adopt() { # adopt <id> <hello answer> : the one rule - store whatever a hello answers
+    local t
+    t=$(echo "$2" | grep -oE '"tok":"[a-f0-9]{32}"' | cut -d'"' -f4 || true)
+    [ -n "$t" ] || return 0
+    TOK[$1]=$t
+    { [ -f "$TOKFILE" ] && grep -v "^$BASE $1 " "$TOKFILE"; echo "$BASE $1 $t"; } > "$TOKFILE.new"
+    mv "$TOKFILE.new" "$TOKFILE"
+    chmod 600 "$TOKFILE"
+    echo "   bound $1 on $BASE (token kept in $TOKFILE)"
+}
+# A hello sets R rather than printing: adopting the token has to happen in
+# THIS shell, and a $(...) would keep it to itself.
+hello() { # hello <id> <name> [-4|-6] [,"member":value...]
+    R=$(curl ${3:-} -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$1\"$(jt "$1"),\"name\":\"$2\"${4:-}}" "$BASE/api/hello.php")
+    adopt "$1" "$R"
 }
 seek() { # seek <id>
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"action\":\"seek\"}" "$BASE/api/match.php"
+        -d "{\"id\":\"$1\"$(jt "$1"),\"action\":\"seek\"}" "$BASE/api/match.php"
 }
 sig() { # sig <from> <to> <type> <payload>
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"to\":\"$2\",\"type\":\"$3\",\"payload\":\"$4\"}" "$BASE/api/signal.php" > /dev/null
+        -d "{\"id\":\"$1\"$(jt "$1"),\"to\":\"$2\",\"type\":\"$3\",\"payload\":\"$4\"}" "$BASE/api/signal.php" > /dev/null
 }
-poll() { curl -s "$BASE/api/poll.php?id=$1"; }               # drain <id>'s signals
+poll() { curl -s "$BASE/api/poll.php?id=$1$(qt "$1")"; }     # drain <id>'s signals
 rly() { # rly <from> <peer> <payload>
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php" > /dev/null
+        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php" > /dev/null
 }
-rlyget() { curl -s "$BASE/api/relay.php?id=$1&peer=$2&wait=${3:-0}"; }
+rlyget() { curl -s "$BASE/api/relay.php?id=$1&peer=$2&wait=${3:-0}$(qt "$1")"; }
 
 # Fixed throwaway ids (8-hex, the server's id format) so repeat runs reuse the
 # same four rows instead of littering the live player list with a fresh set
@@ -89,14 +117,14 @@ skew=$(( ${srv_us:-0} / 1000 - $(date +%s%3N) ))
 now_ms() { echo $(( $(date +%s%3N) + skew )); }
 start_req() { # id peer epoch reason pts
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5}" "$BASE/api/start.php"
+        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"epoch\":$3,\"reason\":\"$4\",\"pts\":$5}" "$BASE/api/start.php"
 }
 
 # --- Register both players (records the display name the peer will see).
 # Every name here is srv-CI-*: on a live instance the players list is read by
 # an operator, and a harness must never look like somebody's account.
-expect "hello A registers" '"ok":true' "$(hello "$A" srv-CI-1111)"
-expect "hello B registers" '"ok":true' "$(hello "$B" srv-CI-2222)"
+hello "$A" srv-CI-1111; expect "hello A registers" '"ok":true' "$R"
+hello "$B" srv-CI-2222; expect "hello B registers" '"ok":true' "$R"
 
 # --- Quick match: the matchmaking-prune path. Two LIVE seekers must still
 # pair, name carried, roles assigned.
@@ -126,7 +154,7 @@ sig "$A" "$B" ices '[{\"candidate\":\"batch-1\"},{\"candidate\":\"batch-2\"}]'
 BR=$(poll "$B")
 expect "a batched candidate list is delivered" '"type":"ices"' "$BR"
 ordered "and carries the whole batch" 'batch-1' 'batch-2' "$BR"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$A\",\"to\":\"$B\",\"type\":\"ices\",\"payload\":\"not-an-array\"}" "$BASE/api/signal.php")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$A\"$(jt "$A"),\"to\":\"$B\",\"type\":\"ices\",\"payload\":\"not-an-array\"}" "$BASE/api/signal.php")
 expect "a batch that is not an array is refused" '"error":"invalid payload"' "$R"
 
 # --- Start: the server hands both peers the identical shared start moment.
@@ -143,10 +171,10 @@ sig "$A" "$B" bye ''; poll "$B" > /dev/null
 # --- Invites are friend-gated: a stranger cannot be invited (quick match is
 # the sanctioned path to a stranger, and it carries no invite). Assert the
 # gate holds, then drive the relay pairing the quick-match way.
-expect "hello C registers" '"ok":true' "$(hello "$C" srv-CI-3333)"
-expect "hello D registers" '"ok":true' "$(hello "$D" srv-CI-4444)"
+hello "$C" srv-CI-3333; expect "hello C registers" '"ok":true' "$R"
+hello "$D" srv-CI-4444; expect "hello D registers" '"ok":true' "$R"
 INV=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$C\",\"to\":\"$D\",\"type\":\"invite\",\"payload\":\"x\"}" "$BASE/api/signal.php")
+    -d "{\"id\":\"$C\"$(jt "$C"),\"to\":\"$D\",\"type\":\"invite\",\"payload\":\"x\"}" "$BASE/api/signal.php")
 expect "inviting a stranger is refused" 'not friends' "$INV"
 
 # --- Relay mode declared DURING the connecting burst (the must-not-break).
@@ -188,13 +216,13 @@ tourney() { # tourney <json-body> : POST to api/tournament.php, print the body
 # abort the run (see test/smoke/07_tournament.sh).
 tfield() { echo "$1" | grep -oE "\"$2\":\"[0-9A-Za-z]+\"" | head -1 | cut -d'"' -f4 || true; }
 act() { # act <id> <action> <tid>
-    tourney "{\"id\":\"$1\",\"action\":\"$2\",\"tid\":\"$3\"}"
+    tourney "{\"id\":\"$1\"$(jt "$1"),\"action\":\"$2\",\"tid\":\"$3\"}"
 }
 result() { # result <id> <tid> <nid> <outcome> <mine> <theirs>
-    tourney "{\"id\":\"$1\",\"action\":\"result\",\"tid\":\"$2\",\"nid\":\"$3\",\"outcome\":\"$4\",\"score\":[$5,$6]}"
+    tourney "{\"id\":\"$1\"$(jt "$1"),\"action\":\"result\",\"tid\":\"$2\",\"nid\":\"$3\",\"outcome\":\"$4\",\"score\":[$5,$6]}"
 }
 
-TR=$(tourney "{\"id\":\"$A\",\"action\":\"create\"}")
+TR=$(tourney "{\"id\":\"$A\"$(jt "$A"),\"action\":\"create\"}")
 case "$TR" in
 *'"ok":true'*)
     T1=$(tfield "$TR" tid)
@@ -202,7 +230,7 @@ case "$TR" in
     # The cap is a Settings key, so this reads what the HOST is serving, not
     # what Config.php says: a stored row shadows a changed default silently.
     expect "a host opens a lobby at the deployed player cap" '"max":8' "$TR"
-    R=$(tourney "{\"id\":\"$B\",\"action\":\"join\",\"code\":\"$CODE\"}")
+    R=$(tourney "{\"id\":\"$B\"$(jt "$B"),\"action\":\"join\",\"code\":\"$CODE\"}")
     expect "the second player joins by code" "\"host\":\"$A\"" "$R"
     expect "the host starts it" '"ok":true' "$(act "$A" start "$T1")"
     R=$(act "$A" state "$T1")
@@ -264,27 +292,25 @@ MY6=$(curl -sL -m 10 https://www6.poggensee.it/ip)
 [[ "$MY6" =~ ^[0-9a-fA-F:]+$ ]] && V6=1 || MY6=''
 if [ "$V4" -eq 1 ] && [ "$V6" -eq 1 ]; then
     echo "   dual-stack runner: driving the announce over both families (host=$E seekers=$D,$G)"
-    hf() { # hf <-4|-6> <id> : hello asking for the announce
-        curl "$1" -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$2\",\"name\":\"srv-CI-dual\",\"tourneys\":true}" "$BASE/api/hello.php"
-    }
+    hf() { hello "$2" srv-CI-dual "$1" ',"tourneys":true'; }   # hf <-4|-6> <id> : hello asking for the announce, sets R
     tf() { curl "$1" -s -X POST -H 'Content-Type: application/json' -d "$2" "$BASE/api/tournament.php"; }
-    hf -6 "$E" > /dev/null
-    TR=$(tf -6 "{\"id\":\"$E\",\"action\":\"create\"}")
+    hf -6 "$E"
+    TR=$(tf -6 "{\"id\":\"$E\"$(jt "$E"),\"action\":\"create\"}")
     case "$TR" in
     *'"ok":true'*)
         T2=$(tfield "$TR" tid)
         # Same family, the case that always worked: both sides came in over v6.
-        expect "an ipv6 host is announced to an ipv6 seeker" "\"tid\":\"$T2\"" "$(hf -6 "$D")"
+        hf -6 "$D"; expect "an ipv6 host is announced to an ipv6 seeker" "\"tid\":\"$T2\"" "$R"
         # THE FIX, seeker side: the same seeker now asks over IPv4. Its own v6
         # network is still one of the networks it is on, so the room it shares
         # with the host is still found.
-        expect "and to that seeker when it asks over ipv4 instead" "\"tid\":\"$T2\"" "$(hf -4 "$D")"
+        hf -4 "$D"; expect "and to that seeker when it asks over ipv4 instead" "\"tid\":\"$T2\"" "$R"
         # THE FIX, host side: the host is seen over IPv4 too, which is what a
         # browser does on its own sooner or later. A seeker that only ever
         # speaks v4 can now be told about a lobby opened over v6.
-        hf -4 "$E" > /dev/null
-        expect "a dual-stack host reaches a v4-only seeker" "\"tid\":\"$T2\"" "$(hf -4 "$G")"
-        tf -6 "{\"id\":\"$E\",\"action\":\"leave\",\"tid\":\"$T2\"}" > /dev/null
+        hf -4 "$E"
+        hf -4 "$G"; expect "a dual-stack host reaches a v4-only seeker" "\"tid\":\"$T2\"" "$R"
+        tf -6 "{\"id\":\"$E\"$(jt "$E"),\"action\":\"leave\",\"tid\":\"$T2\"}" > /dev/null
         # THE CLAIM PATH (api 4.2), which only a real dual-stack machine can
         # exercise: $F is never touched over IPv4 here, so the server cannot
         # have OBSERVED its v4 network - the only way a v4 seeker learns
@@ -292,13 +318,13 @@ if [ "$V4" -eq 1 ] && [ "$V6" -eq 1 ]; then
         # what a browser will do: it cannot choose a family for a request,
         # but it can find its own public addresses through STUN.
         if [ -n "$MY4" ]; then
-            curl -6 -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$F\",\"name\":\"srv-CI-claim\",\"nets\":[\"$MY4\"]}" "$BASE/api/hello.php" > /dev/null
-            TR=$(tf -6 "{\"id\":\"$F\",\"action\":\"create\"}")
+            hello "$F" srv-CI-claim -6 ',"nets":["'"$MY4"'"]'
+            TR=$(tf -6 "{\"id\":\"$F\"$(jt "$F"),\"action\":\"create\"}")
             case "$TR" in
             *'"ok":true'*)
                 T3=$(tfield "$TR" tid)
-                expect "a v6-only host is reachable on the v4 network it reported" "\"tid\":\"$T3\"" "$(hf -4 "$H")"
-                tf -6 "{\"id\":\"$F\",\"action\":\"leave\",\"tid\":\"$T3\"}" > /dev/null
+                hf -4 "$H"; expect "a v6-only host is reachable on the v4 network it reported" "\"tid\":\"$T3\"" "$R"
+                tf -6 "{\"id\":\"$F\"$(jt "$F"),\"action\":\"leave\",\"tid\":\"$T3\"}" > /dev/null
                 ;;
             *'create cooldown'* | *'already hosting'*)
                 echo "skip the claimed-network announce: $F is too soon after its last one ($TR)"

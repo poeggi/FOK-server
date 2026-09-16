@@ -80,7 +80,14 @@ The measurements and decisions behind the rules below are in
   changes append an "if ($v < N)" step to Db::migrate that is safe on
   live data; never edit an existing step.
 - Player IDs are 8 lowercase hex chars, validated with Util::isValidId.
-  Public identities, not secrets.
+  Public identities, not secrets. What proves the caller owns one is the
+  identity token (src/Ident.php, API 4.20): every player-facing endpoint
+  calls Ident::require right after the id is validated, hello calls
+  Ident::hello AFTER every input is validated (it binds). Nothing runs
+  for a refused request. The token is in no log line and no admin
+  payload; only its hash is stored. Every pre-token path is tagged
+  TEMPORARY(ident) and closes on Ident::LEGACY_UNTIL (2026-10-01);
+  .claude/rules/project_fok_identity.md has the states.
 - Score entries keep field parity with the FOK-snake local top-10 entry:
   name (max 15), score, level, diff, color, shopItems, date (DD.MM.YY).
   Submissions store seed + inputs verbatim; validated stays 0 until

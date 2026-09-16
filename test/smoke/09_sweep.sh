@@ -15,7 +15,7 @@
 # reading the dashboard must never be what ends a tournament.
 if [ "$ADMIN" -eq 1 ]; then
     setting tournament_create_cooldown 0
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\"}")
     T5=$(tfield "$R" tid)
     expect "one more lobby, to be swept" '"tid":' "$R"
     setting tournament_sweep_secs 0
@@ -50,7 +50,7 @@ if [ "$ADMIN" -eq 1 ]; then
     R=$(hellot "$ID2")
     expect "a client request takes the sweep gate" '"ok":true' "$R"
     setting tournament_create_cooldown 0
-    R=$(tourney "{\"id\":\"$ID1\",\"action\":\"create\"}")
+    R=$(tourney "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"create\"}")
     T6=$(tfield "$R" tid)
     expect "a lobby opened behind the held gate" '"tid":' "$R"
     setting tournament_idle_ttl 0

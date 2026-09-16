@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.16.1';
+const FOK_SERVER_VERSION = '1.17.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -116,7 +116,17 @@ const FOK_SERVER_VERSION = '1.16.1';
 // already requires an absent one to be treated as the client's own default -
 // which for the beat IS the contract's constant, and for a jitter budget is
 // no jitter. A client that read them keeps working exactly as before.
-const FOK_API_VERSION = '4.16';
+// v4.20: the identity token (see Ident, docs/API.md "Identity token"). An
+// id is public and until now every request was believed; `tok`, the
+// 128-bit secret the config vault already minted, now proves it on every
+// request that names the id, and hello mints it for an id that has none.
+// The minor JUMPS from 4.16 to 4.20 on purpose: this is the PREPARATION for
+// 5.0, where the token is required, and the number says so. Additive on
+// the wire - `tok` is optional everywhere, and the one new answer, 401
+// `bad token`, only a bound id can meet. Every path that carries a client
+// from before the token is tagged TEMPORARY(ident) and closes on
+// Ident::LEGACY_UNTIL, whatever release is running then.
+const FOK_API_VERSION = '4.20';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');

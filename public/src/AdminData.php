@@ -10,6 +10,7 @@ require_once __DIR__ . '/Matchmaking.php';
 require_once __DIR__ . '/Relay.php';
 require_once __DIR__ . '/Load.php';
 require_once __DIR__ . '/Vault.php';
+require_once __DIR__ . '/Ident.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Ledger.php';
 require_once __DIR__ . '/Items.php';
@@ -40,6 +41,9 @@ final class AdminData
         return [
             'counts' => Presence::counts(),
             'families' => Presence::families(),
+            // Ids with an identity binding, beside the registered count: the
+            // figure to watch the migration converge on (see Ident).
+            'bound' => $counts['ident'],
             'relaying' => Relay::activePairs(),
             'friendships' => $friends['accepted'],
             'friendships_pending' => $friends['pending'],
@@ -623,7 +627,8 @@ final class AdminData
         $fr->closeCursor();
         $scores = self::one($db, 'SELECT COUNT(*) c, MAX(score) best FROM scores WHERE player_id = ?', $id);
         $mailbox = Signals::pending($id);
-        $backup = Vault::peek($id);
+        $backup = Vault::restore($id);
+        $ident = Ident::infoOf($id);
         return [
             'now' => $now,
             // The window as it is checked, grace second included, so the
@@ -653,8 +658,11 @@ final class AdminData
                     'best' => $scores['best'] === null ? null : (int)$scores['best']],
                 'mailbox' => $mailbox,
                 'backup' => $backup === null ? null
-                    : ['updated' => $backup['updated'], 'bytes' => strlen($backup['payload']),
-                        'enrolled' => $backup['enrolled']],
+                    : ['updated' => $backup['updated'], 'bytes' => strlen($backup['payload'])],
+                // The identity binding (see Ident): when, and from where -
+                // '' for a token copied off the config vault that the
+                // owner's updated client has not presented yet.
+                'ident' => $ident,
             ],
         ];
     }

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
+require_once __DIR__ . '/../src/Ident.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Friends.php';
@@ -43,6 +44,7 @@ if (!Util::isValidId($id) || !Util::isValidId($to) || $id === $to) {
     Util::fail('invalid id/to');
 }
 Util::noteCaller($id);
+Ident::require($id, Ident::read($body)[1], Util::clientIp());
 if (!is_string($type) || !in_array($type, Signals::TYPES, true)) {
     Util::fail('invalid type');
 }

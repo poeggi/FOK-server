@@ -38,6 +38,7 @@ require_once __DIR__ . '/../public/src/RelayStore.php';
 require_once __DIR__ . '/../public/src/Relay.php';
 require_once __DIR__ . '/../public/src/Load.php';
 require_once __DIR__ . '/../public/src/Vault.php';
+require_once __DIR__ . '/../public/src/Ident.php';
 require_once __DIR__ . '/../public/src/Debug.php';
 require_once __DIR__ . '/../public/src/Ledger.php';
 require_once __DIR__ . '/../public/src/Items.php';
@@ -1076,35 +1077,140 @@ Load::flush();
 ok($loadVal('db_w') === 1, 'the wrapper counts one write, no reads and no fold');
 $dropGauges();
 
-// Vault: token-secured per-player config backup, one row per id.
-ok(Vault::restore('aaaaaaaa', 'x') === null, 'restore of a fresh id is null (no backup)');
-$v1 = Vault::backup('aaaaaaaa', '{"v":1,"settings":{}}', null);
-ok(is_array($v1) && $v1['updated'] > 0, 'first backup succeeds and reports a timestamp');
-ok(isset($v1['token']) && strlen($v1['token']) === 32, 'first backup mints a 128-bit token');
-$tok = $v1['token'];
-$r = Vault::restore('aaaaaaaa', $tok);
-ok($r !== null && $r !== false && $r['payload'] === '{"v":1,"settings":{}}', 'restore with the token returns the payload');
-ok(Vault::restore('aaaaaaaa', 'wrongtoken') === false, 'restore with a wrong token is refused');
-ok(Vault::backup('aaaaaaaa', 'take-over', 'wrongtoken') === null, 'overwrite with a wrong token is refused');
-ok(Vault::backup('aaaaaaaa', 'take-over', null) === null, 'overwrite without a token is refused');
-$v2 = Vault::backup('aaaaaaaa', 'updated-blob', $tok);
-ok(is_array($v2) && $v2['token'] === $tok, 'a later backup keeps the same token');
-ok(Vault::restore('aaaaaaaa', $tok)['payload'] === 'updated-blob', 'the later backup replaced the payload');
-ok(Vault::restore('bbbbbbbb', $tok) === null, 'another id keeps its own empty slot');
-$v3 = Vault::backup('bbbbbbbb', 'other', null);
-ok($v3['token'] !== $tok, 'a different id gets a different token');
-ok(Vault::peek('aaaaaaaa')['payload'] === 'updated-blob', 'peek reads a backup without the token (admin recovery)');
-ok(Vault::peek('aaaaaaaa')['enrolled'] === true, 'a backup is enrolled while it has a token');
-ok(Vault::peek('cccccccc') === null, 'peek is null for an id with no backup');
-// resetToken lets a client that lost its token re-enroll on its next backup.
-ok(Vault::resetToken('aaaaaaaa') === true, 'reset clears the token');
-ok(Vault::peek('aaaaaaaa')['enrolled'] === false, 'after a reset the backup is no longer enrolled');
-ok(Vault::restore('aaaaaaaa', $tok) === false, 'the old token no longer restores after a reset');
-$v4 = Vault::backup('aaaaaaaa', 'reenrolled', null);
-ok(is_array($v4) && $v4['token'] !== $tok, 'the next backup mints a fresh token');
-ok(Vault::peek('aaaaaaaa')['payload'] === 'reenrolled', 'the payload survives the reset and re-enroll');
-ok(Vault::resetToken('cccccccc') === false, 'reset is a no-op for an id with no backup');
+// Vault: the opaque config backup, one row per id. Who may read or replace
+// it is Ident's question (below); the vault stores and hands back.
+ok(Vault::restore('aaaaaaaa') === null, 'restore of a fresh id is null (no backup)');
+ok(Vault::backup('aaaaaaaa', '{"v":1,"settings":{}}') > 0, 'a backup reports its timestamp');
+ok(Vault::restore('aaaaaaaa')['payload'] === '{"v":1,"settings":{}}', 'restore returns the payload');
+Vault::backup('aaaaaaaa', 'updated-blob');
+ok(Vault::restore('aaaaaaaa')['payload'] === 'updated-blob', 'a later backup replaces the payload');
+ok(Vault::restore('bbbbbbbb') === null, 'another id keeps its own empty slot');
 Db::get()->exec('DELETE FROM vault');
+
+// ---- Identity (API 4.20): the id is public, the token proves it -------
+$IP = '203.0.113.5';
+$identRow = static fn(string $id): ?array => Ident::infoOf($id);
+$logTail = static fn(): string => (string)@file_get_contents($tmp . '/php-error.log');
+ok(gmdate('Y-m-d H:i', Ident::LEGACY_UNTIL) === '2026-10-01 00:00', 'the cutoff is 2026-10-01 00:00 UTC');
+// TEMPORARY(ident): a client from before the token, on an id nothing binds.
+Ident::flush();
+ok(Ident::verify('1d000001', null, $IP) === true, 'an unbound id passes a request without a token until the cutoff');
+ok(Ident::verify('1d000001', str_repeat('0', 32), $IP) === true, 'and one with a token nothing can check it against');
+$r = Ident::register('1d000001', false, null, $IP);
+ok($r['ok'] === true && $r['tok'] === null, 'a hello without the member passes an unbound id');
+ok($identRow('1d000001') === null, 'and binds nothing: a legacy client would never store the answer');
+Ident::setLegacyUntil(time() - 1);
+ok(Ident::verify('1d000001', null, $IP) === false, 'after the cutoff an unbound id proves nothing');
+ok(Ident::register('1d000001', false, null, $IP)['ok'] === false, 'and a hello without the member is refused');
+Ident::setLegacyUntil(null);
+
+// The bind: the first hello carrying the member, null or not, mints.
+$r = Ident::register('1d000001', true, null, $IP);
+ok($r['ok'] === true && is_string($r['tok']) && preg_match('/^[0-9a-f]{32}$/', $r['tok']) === 1,
+    'the first hello carrying tok binds the id and answers a 32-hex token');
+$tokA = $r['tok'];
+$row = $identRow('1d000001');
+ok($row !== null && $row['bound_ip'] === $IP && $row['bound_at'] > 0, 'the row records when and from where');
+ok(Ident::verify('1d000001', $tokA, $IP) === true, 'the token proves the id');
+ok(Ident::verify('1d000001', null, $IP) === false, 'a bound id refuses a request without a token');
+ok(Ident::verify('1d000001', str_repeat('0', 32), $IP) === false, 'and one with a wrong token');
+$r = Ident::register('1d000001', true, $tokA, $IP);
+ok($r['ok'] === true && $r['tok'] === null, 'a hello with the right token passes and mints nothing more');
+ok(Ident::register('1d000001', true, null, '198.51.100.9')['ok'] === false, 'a second device asking to bind the same id is refused');
+ok(Ident::register('1d000001', false, null, $IP)['ok'] === false, 'and so is a legacy hello once the id is bound');
+ok(Ident::proves('1d000001', $tokA) && !Ident::proves('1d000001', null), 'proves() is the strict question, whatever the date');
+
+// The entry carries the hash, so the check reads no row while the player is
+// here: drop the row and the entry still answers.
+Presence::touch('1d000001', $IP);
+$e = Presence::entryOf('1d000001');
+ok($e['tok'] === Ident::hashOf($tokA) && $e['tokc'] === true, 'the presence entry carries the hash and the confirmed mark');
+Db::get()->exec("DELETE FROM ident WHERE id = '1d000001'");
+Ident::flush();
+ok(Ident::verify('1d000001', $tokA, $IP) === true, 'the check is answered off the entry, not the row');
+Db::get()->prepare('INSERT INTO ident (id, tok_hash, bound_at, bound_ip) VALUES (?, ?, ?, ?)')
+    ->execute(['1d000001', Ident::hashOf($tokA), time(), $IP]);
+// An entry from before the binding existed is asked once and then told.
+unset($e['tok'], $e['tokc']);
+apcu_store(FOK_APCU_NS . 'p:1d000001', $e, 86400);
+Ident::flush();
+ok(Ident::verify('1d000001', $tokA, $IP) === true, 'an entry from before the binding is answered off the row');
+ok(Presence::entryOf('1d000001')['tok'] === Ident::hashOf($tokA), 'and given the answer for the next request');
+ok(Presence::entryOf('1d000001')['tokc'] === true, 'confirmed mark included');
+
+// Reset: the row goes, a live entry follows at once, the next hello mints.
+ok(Ident::reset('1d000001') === true, 'reset drops the binding');
+ok(Ident::reset('1d000001') === false, 'a second reset finds nothing');
+ok(Presence::entryOf('1d000001')['tok'] === null, 'the live entry learns of the reset at once');
+ok(Ident::verify('1d000001', $tokA, $IP) === true, 'the old token passes as unbound until the cutoff');
+$r = Ident::register('1d000001', true, $tokA, $IP);
+ok($r['ok'] === true && is_string($r['tok']) && $r['tok'] !== $tokA, 'the next hello mints afresh, whatever token it carried');
+$tokA2 = $r['tok'];
+ok(Ident::verify('1d000001', $tokA, $IP) === false, 'and the old token is refused from then on');
+ok(Ident::verify('1d000001', $tokA2, $IP) === true, 'while the new one proves the id');
+Presence::forget('1d000001');
+ok($identRow('1d000001') !== null, 'forget keeps the binding: the id comes back with its client');
+
+// The vault copy (schema 49): an enrolled vault token is the identity
+// token before the release answers a request; the owner's legacy client
+// keeps working, and its first hello presenting the token confirms the row.
+$tokV = bin2hex(random_bytes(16));
+Db::get()->prepare("INSERT INTO vault (id, payload, token_hash, updated) VALUES ('1d000002', 'blob', ?, 1700000000)")
+    ->execute([hash('sha256', $tokV)]);
+Db::get()->exec("INSERT INTO vault (id, payload, token_hash, updated) VALUES ('1d000003', 'blob', '', 1700000000)");
+ok(Db::adoptVault(Db::get()) === 1, 'the copy takes every enrolled vault token');
+ok(Db::adoptVault(Db::get()) === 0, 'and is idempotent');
+$row = $identRow('1d000002');
+ok($row !== null && $row['bound_at'] === 1700000000 && $row['bound_ip'] === '', 'a copied row is bound at the vault time, from nowhere');
+ok($identRow('1d000003') === null, 'a reset vault token is not copied');
+Ident::flush();
+ok(Ident::verify('1d000002', null, $IP) === true, 'a copied id passes a legacy request until the cutoff');
+ok(Ident::register('1d000002', false, null, $IP)['ok'] === true, 'and a legacy hello');
+ok(Ident::verify('1d000002', str_repeat('1', 32), $IP) === false, 'but refuses a wrong token whatever the date');
+ok(Ident::register('1d000002', true, null, $IP)['ok'] === false, 'and a client that speaks 4.20 without the token');
+Ident::setLegacyUntil(time() - 1);
+ok(Ident::verify('1d000002', null, $IP) === false, 'after the cutoff a copied id proves nothing without its token');
+Ident::setLegacyUntil(null);
+$r = Ident::register('1d000002', true, $tokV, $IP);
+ok($r['ok'] === true && $r['tok'] === null, 'the owner presenting the vault token on a hello passes');
+ok($identRow('1d000002')['bound_ip'] === $IP, 'and confirms the row');
+Ident::flush();
+ok(Ident::verify('1d000002', null, $IP) === false, 'from then on a request without the token is refused');
+ok(Ident::verify('1d000002', $tokV, $IP) === true, 'and the vault token is the identity token');
+
+// TEMPORARY(ident): the vault's own mint, unconfirmed like a copy.
+ok(Ident::mintLegacy('1d000002', $IP) === null, 'the legacy mint mints nothing for a bound id');
+$tokL = Ident::mintLegacy('1d000004', $IP);
+ok(is_string($tokL) && $identRow('1d000004')['bound_ip'] === '', 'a legacy first backup mints an unconfirmed binding');
+ok(Ident::register('1d000004', false, null, $IP)['ok'] === true, 'so the legacy client still hellos');
+ok(Ident::verify('1d000004', $tokL, $IP) === true, 'and the token it stored proves the id');
+Ident::setLegacyUntil(time() - 1);
+ok(Ident::mintLegacy('1d000005', $IP) === null, 'after the cutoff the vault mints nothing');
+Ident::setLegacyUntil(null);
+
+// The two log lines. A late bind: a hello binding an id somebody
+// registered long ago.
+Presence::touch('1d000006', $IP);
+Db::get()->exec("UPDATE players SET first_seen = first_seen - 3 * 86400 WHERE id = '1d000006'");
+Ident::register('1d000006', true, null, $IP);
+ok(str_contains($logTail(), "FOK ident: id 1d000006 bound 3 days after first sight from $IP"), 'a late bind is on record');
+// Wrong tokens, counted per (id, address) pair, one line as the pair crosses
+// the cap - and another address is another pair.
+Settings::set('ident_fails_per_min', 3);
+apcu_delete(new APCUIterator('/^' . preg_quote(FOK_APCU_NS . 'if:', '/') . '/'));
+for ($i = 0; $i < 3; $i++) {
+    Ident::verify('1d000006', str_repeat('f', 32), '198.51.100.7');
+}
+Ident::verify('1d000006', str_repeat('f', 32), '198.51.100.8');
+$lines = substr_count($logTail(), 'FOK warning ident: wrong token for 1d000006');
+ok($lines === 1, 'the pair crossing the cap writes one line, another address is another pair');
+ok(str_contains($logTail(), 'wrong token for 1d000006 from 198.51.100.7: 3 in a minute'), 'the line names the pair and the count');
+Settings::set('ident_fails_per_min', 10);
+Db::get()->exec('DELETE FROM ident');
+Db::get()->exec('DELETE FROM vault');
+Db::get()->exec("DELETE FROM players WHERE id LIKE '1d0000%'");
+apcu_delete(new APCUIterator('/^' . preg_quote(FOK_APCU_NS . 'p:1d0000', '/') . '/'));
+Ident::flush();
 
 // Debug: a bundle gets a 4-digit PIN, retrievable, purged after the TTL.
 $dbgCount = static function (string $pin): int {
@@ -2867,13 +2973,13 @@ Presence::touch('hk110001', '9.9.9.11');
 Presence::touch('hk220002', '9.9.9.12');
 Friends::request('hk110001', 'hk220002');
 Friends::accept('hk220002', 'hk110001');
-Vault::backup('hk110001', '{"cfg":1}', null);
+Vault::backup('hk110001', '{"cfg":1}');
 Items::mint('hk110001', 'crown', 'box');
 Presence::forget('hk110001');
 ok(Presence::infoOf(['hk110001']) === [], 'forget removes the player row');
 ok(!Friends::isFriend('hk110001', 'hk220002'), 'and the friendships with it');
 ok(Presence::entryOf('hk110001') === null, 'and the presence entry, networks included');
-ok(Vault::peek('hk110001') !== null, 'but the config backup outlives the player row');
+ok(Vault::restore('hk110001') !== null, 'but the config backup outlives the player row');
 ok(count(Items::owned('hk110001')) === 1, 'and the wardrobe: an id comes back with its client');
 
 Presence::touchDuel('hk220002', 'hk330003');
