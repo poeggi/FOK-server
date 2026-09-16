@@ -18,8 +18,9 @@ require_once __DIR__ . '/Presence.php';
  * request that names the id from then on. Only its SHA-256 is stored
  * (the ident table). The presence entry carries that hash from the
  * session open, so the steady-state check is the shared-memory fetch the
- * beat does anyway and poll.php still reads no row; a cold entry reads
- * the row once, beside the session write it costs already.
+ * beat does anyway and poll.php reads no row while the player is here; a
+ * cold entry reads the row once, beside the session write it costs
+ * already.
  *
  * The states an id can be in:
  *   unbound     no row. hello binds it - trust on first use: the first

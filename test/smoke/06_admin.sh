@@ -343,6 +343,7 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=client&id=$ID1")
     expect "client details returned" '"client":' "$R"
     expect "client details name the client" "$(strict "\"id\":\"$ID1\"")" "$R"
+    expect "client details list the wardrobe by item id" '"items":[' "$R"
     expect "client details include presence" '"last_seen":' "$R"
     expect "client details include the 1vs1 state" '"duel":' "$R"
     expect "client details include the mailbox" '"mailbox":' "$R"
@@ -477,6 +478,7 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=housekeeping")
     expect "housekeeping reports the size of the database file" '"db_size":' "$R"
     expect "it reports the duel rows a sweep would reap" '"name":"duels","rows":' "$R"
+    expect "and the identity bindings a player comes back to" '"name":"ident","rows":' "$R"
     # The card exists to prove there are none of these, and a deployment with
     # real players has a row count nothing can predict - so the assertion is
     # that the orphan line reads zero, not what stands beside it. Anything

@@ -45,10 +45,14 @@ curl -s -o /dev/null -c "$COOKIES" -X POST \
     --data-urlencode "pass=$FOK_ADMIN_PASS" \
     "$BASE/admin/index.php"
 
-items_of() { # items_of <id> : one line per instance, "item_id uid"
-    curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\",\"action\":\"list\"}" "$BASE/api/items.php" \
-    | grep -oE '"item_id":"[^"]*"' | cut -d'"' -f4
+# Read through the admin API, never the client one: since 4.20 the client
+# list answers only the holder of the id's token, and a 401 read as "holds
+# nothing" would prove a sweep that never happened. An unknown id (already
+# deleted) answers 404, which is an empty wardrobe here.
+items_of() { # items_of <id> : one line per instance, its item_id
+    curl -s -b "$COOKIES" "$BASE/admin/api.php?action=client&id=$1" \
+    | grep -oE '"items":\[[^]]*\]' | sed -E 's/^"items":\[//; s/\]$//' \
+    | tr ',' '\n' | tr -d '"' | grep . || true
 }
 
 echo "sweeping $BASE"

@@ -629,6 +629,7 @@ function renderClientBody(body, overlay, d, reload) {
     if (c.relay_rate && c.relay_rate.blocked_until > now) kv('Rate-limited', 'for ' + (c.relay_rate.blocked_until - now) + ' s');
     kv('Friends', c.friends.accepted + ' (' + c.friends.pending + ' pending)');
     kv('Scores', c.scores.count + (c.scores.best !== null ? ', best ' + c.scores.best : ''));
+    kv('Items', c.items.length ? c.items.length + ' (' + c.items.join(', ') + ')' : 'none');
     kv('Mailbox', c.mailbox + ' pending signal(s)');
     if (c.friend_ban_until > now) kv('Friend-banned', 'for ' + (c.friend_ban_until - now) + ' s');
 

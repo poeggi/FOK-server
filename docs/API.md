@@ -176,7 +176,8 @@ player. The token is what proves it.
            makes the next hello mint again.
 
 Where it goes: as the `tok` member of every POST body beside `id`, and as
-`&tok=` on the two GETs that name an id (poll.php, backup.php). A client
+`&tok=` on the GETs that name an id (poll.php, backup.php, and the
+deprecated relay.php). A client
 that has none yet sends `"tok": null` on hello - the member's presence is
 what says the client speaks 4.20 - and the answer to that hello carries
 `tok`. THE ONE RULE FOR A CLIENT: whenever a hello answer carries `tok`,
@@ -1024,7 +1025,8 @@ only carries the bit.
 
 `tok` is the identity token (4.20): a bound id without it, or with a wrong
 one, is answered 401 before anything is read. The check runs once at the
-top of the request, off shared memory, never inside the hold.
+top of the request, off the presence entry while the player is here (one
+row read on arrival, beside the session write), never inside the hold.
 
     -> 204 No Content                          nothing pending
     -> 200 {"ok":true,"signals":[...]}         pending messages, drained

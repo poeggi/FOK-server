@@ -142,6 +142,7 @@ final class Housekeeping
                         OR b NOT IN (SELECT id FROM players)'),
                 self::line($db, 'items', 'kept', $orphan('items', 'owner')),
                 self::line($db, 'vault', 'kept', $orphan('vault', 'id')),
+                self::line($db, 'ident', 'kept', $orphan('ident', 'id')),
             ],
         ];
     }

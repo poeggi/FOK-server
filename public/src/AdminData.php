@@ -629,6 +629,9 @@ final class AdminData
         $mailbox = Signals::pending($id);
         $backup = Vault::restore($id);
         $ident = Ident::infoOf($id);
+        // What the player owns, by item id: the operator's read of the
+        // wardrobe, which the client API only answers to the token holder.
+        $items = array_map(static fn(array $i): string => (string)$i['item_id'], Items::owned($id));
         return [
             'now' => $now,
             // The window as it is checked, grace second included, so the
@@ -656,6 +659,7 @@ final class AdminData
                 'friends' => $friends,
                 'scores' => ['count' => (int)$scores['c'],
                     'best' => $scores['best'] === null ? null : (int)$scores['best']],
+                'items' => $items,
                 'mailbox' => $mailbox,
                 'backup' => $backup === null ? null
                     : ['updated' => $backup['updated'], 'bytes' => strlen($backup['payload'])],
