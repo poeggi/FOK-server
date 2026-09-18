@@ -5,6 +5,7 @@ require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Starts.php';
 require_once __DIR__ . '/Items.php';
+require_once __DIR__ . '/Turn.php';
 
 /**
  * What the database keeps that nothing can read any more.
@@ -96,6 +97,8 @@ final class Housekeeping
         // every duel waits on (see Starts::request).
         $out['starts'] = Starts::prune($db, $nowMs);
         $out['matches'] = Items::pruneMatches($db, $nowMs);
+        // A TURN mint past the window counts against nothing (see Turn).
+        $out['turn_mints'] = Turn::prune($db, $now);
         return array_filter($out, static fn(int $n): bool => $n > 0);
     }
 
@@ -137,6 +140,8 @@ final class Housekeeping
                 // the sweep cannot describe different rows.
                 self::counted($db, 'starts', 'reaped', Starts::pruneable($db, $now * 1000)),
                 self::counted($db, 'matches', 'reaped', Items::pruneableMatches($db, $now * 1000)),
+                self::line($db, 'turn_mints', 'reaped',
+                    'SELECT COUNT(*) FROM turn_mints WHERE at <= ?', [$now - Turn::WINDOW]),
                 self::line($db, 'friends', 'orphan',
                     'SELECT COUNT(*) FROM friends WHERE a NOT IN (SELECT id FROM players)
                         OR b NOT IN (SELECT id FROM players)'),

@@ -21,6 +21,7 @@ require_once __DIR__ . '/../src/Ledger.php';
 require_once __DIR__ . '/../src/Items.php';
 require_once __DIR__ . '/../src/Tournament.php';
 require_once __DIR__ . '/../src/Housekeeping.php';
+require_once __DIR__ . '/../src/Turn.php';
 
 Auth::requireLogin();
 // The session is read once, for that check, and never written here: hold its
@@ -204,6 +205,7 @@ const AUDIT = [
     'event_roster' => 'changed the event roster of',
     'event_organizer' => 'named the organizer of',
     'event_delete' => 'deleted the event',
+    'turn_revoke' => 'revoked every TURN credential out',
 ];
 // The two that replace live state wholesale. A line in the log is not enough
 // for these: an operator must find them on the dashboard without going
@@ -749,6 +751,21 @@ switch ($action) {
     // ---- host capabilities ----
     case 'caps':
         Util::jsonOut(['ok' => true] + poll('caps'));
+
+    // ---- TURN (see Turn) ----
+    case 'turn':
+        $d = Turn::detail();
+        $ids = array_merge(array_column($d['live'], 'id'), array_column($d['top'], 'id'));
+        Util::jsonOut(['ok' => true, 'names' => AdminData::namesFor($ids)] + $d);
+
+    // Every credential out, revoked now: what turn_enabled 0 does within
+    // a minute, at the operator's moment instead.
+    case 'turn_revoke':
+        requirePost();
+        $n = Turn::enforce();
+        $d = Turn::detail();
+        $ids = array_merge(array_column($d['live'], 'id'), array_column($d['top'], 'id'));
+        Util::jsonOut(['ok' => true, 'revoked' => $n, 'names' => AdminData::namesFor($ids)] + $d);
 
     case 'caps_refresh':
         requirePost();   // re-assessment is a write

@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.21", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.22", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -61,7 +61,8 @@ signals in 4.14, the walkover clock on that sheet in 4.15, an event id
 an operator named, which may carry a 0 or a 1, in 4.16, or the identity
 token in 4.20 - the preparation for 5.0, where it is required - and the
 POST forms of the poll, the relay's held read and the vault restore in
-4.21, which take the token off the request line) is available, and
+4.21, which take the token off the request line, or TURN credentials for
+a duel no direct path can carry in 4.22) is available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
 
@@ -99,7 +100,8 @@ works when it is not.
   403 (not friends, see signal.php), 404 (unknown),
   405 (wrong method), 413 (request
   body over ~272 KB, only a score submission ever comes close), 429 (rate
-  cap, see below), 503 (relay busy) or 500 (server fault). Clients must
+  cap, see below), 503 (relay busy; no TURN on offer) or 500 (server
+  fault). Clients must
   treat any non-`ok` answer as a soft failure: log it, back off, never
   crash gameplay.
 - Abuse caps returning 429 (defaults, admin-configurable): a recipient's
@@ -1552,7 +1554,9 @@ friend list; the hello `friends` field tells A whether B is online):
        decline, ending the flow).
     3. A (on accept) generates the 32-bit duel seed, creates an
        RTCPeerConnection with a DataChannel (unreliable, unordered:
-       maxRetransmits 0, ordered false), and sends signal offer with
+       maxRetransmits 0, ordered false) - with the TURN credentials
+       from turn.php in its iceServers when it holds any (4.22, see
+       TURN credentials) - and sends signal offer with
        payload = JSON {"sdp": <description>, "seed": n, "profile": ...}.
        The offerer ALWAYS generates the seed; both clients start the
        deterministic duel sim from it (startDuel(seed)).
@@ -1588,6 +1592,56 @@ friend list; the hello `friends` field tells A whether B is online):
        and opens a new epoch line at 0 (the invite/offer is what resets
        it server-side, precisely because a DataChannel bye never
        reaches the server).
+
+## POST /api/turn.php - TURN credentials (4.22)
+
+A duel is peer to peer, and a peer behind a NAT that STUN cannot open
+has no path to the other. TURN is the standard way through: a relay the
+ICE agent adds to its candidates by itself and uses only when no direct
+pair works, with the same DataChannel and the same netcode - one
+forwarding hop instead of the deprecated HTTP relay's polled round
+trips. This server runs no relay. It hands out short-lived credentials
+for Cloudflare's, and the credential is the one thing on that path the
+server can meter and withdraw.
+
+    POST /api/turn.php {"id":"cafe0001", "tok":"<32-hex>"}
+      -> {"ok":true,
+          "ice":[{"urls":["stun:stun.cloudflare.com:3478"]},
+                 {"urls":["turn:turn.cloudflare.com:3478?transport=udp", ...],
+                  "username":"...", "credential":"..."}],
+          "ttl":1800}
+
+`ice` is an RTCPeerConnection `iceServers` list, exactly as the relay
+issued it: pass it through `new RTCPeerConnection({iceServers: ice})`.
+`ttl` is how many seconds the credentials are still valid. It is never
+less than half of `turn_ttl_secs` (default 1800): an id that asks again
+while its credentials have that much life left is answered the same
+ones, an ask after that mints fresh ones. Ask when a connection is about
+to be built - a credential outliving its match is normal, and a second
+ask inside its life costs nothing. The credentials are minted for the
+asking id and tagged with it, so relayed traffic is attributable per
+player.
+
+Refused: **503** `{"ok":false,"error":"turn_unavailable"}`. The server
+offers no TURN right now, and one answer covers every reason on
+purpose - no relay configured, switched off by the operator, the cap
+below reached, or the relay's API not answering - because the client's
+reaction is the same for all of them: build the connection with STUN
+alone, as before 4.22. A client must expect it at any time (what was
+offered a minute ago may have been withdrawn since) and must never fail
+a match on it.
+
+What the server does with the budget, so a client knows what it is
+holding: it counts the credentials it hands out. Past `turn_max_per_30d`
+of them (default 1000) in a rolling 30 days it hands out none until the
+window frees; past `turn_warn_pct` (50) of that the operator is alerted.
+A credential already out stays valid for its ttl. The one thing that
+withdraws credentials early is the operator switching TURN off: every
+credential out is then revoked within a minute, the relay drops an
+allocation at its next refresh, and a relayed match running at that
+moment ends the way it ends on any lost path. None of this is pushed;
+the only signals a client gets are the 503 and its own DataChannel
+closing.
 
 ## Relay fallback - when P2P cannot connect
 

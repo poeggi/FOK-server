@@ -35,7 +35,8 @@ below, the code is right and this list says how:
   access log records on every hit - the plan's "in no server log" was
   wrong about that log. Each answers a POST with the same members as a
   JSON body; the GETs are TEMPORARY(ident) and go with 5.0. So the
-  cleanup release is 5.0 / 1.19.0, not 1.18.0.
+  cleanup release is 5.0 / 1.20.0, not 1.18.0 (1.19.0 went to 4.22, the
+  TURN credentials).
 
 THE CUTOFF IS 2026-10-01. Everything marked TEMPORARY(ident) exists to
 carry clients over and is deleted after that date (step 9).
@@ -188,7 +189,7 @@ launch.
   PREPARATION for 5.0 and the number says so. Additive on the wire:
   `tok` optional everywhere, one new answer (401 bad token) that only
   a bound id can meet.
-- Step 9 (on or after 2026-10-01): 1.19.0 (1.18.0 went to 4.21, see the
+- Step 9 (on or after 2026-10-01): 1.20.0 (1.18.0 went to 4.21, 1.19.0 to 4.22, see the
   status list), FOK_API_VERSION 5.0. `tok` required, the pair throttle
   refuses, the three GET forms gone, and NO migration path is left in
   the tree. A field that was optional becoming required is the
@@ -274,7 +275,7 @@ API 5.0 - the client's major moves with the contract's.
      file backup; a fresh device has neither until a file is restored.
 
 9. Cleanup release, on or after 2026-10-01: delete every
-   TEMPORARY(ident) line (T1-T4), FOK_API_VERSION 5.0, 1.18.0, the
+   TEMPORARY(ident) line (T1-T4), FOK_API_VERSION 5.0, 1.20.0, the
    contract says `tok` is required, the smoke asserts a token-less
    hello is 401. `Auth::LEGACY_UNTIL` goes with T1. The checks.sh grep
    stays as the guard that nothing tagged survives. The pair throttle

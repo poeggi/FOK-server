@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.18.0';
+const FOK_SERVER_VERSION = '1.19.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -133,7 +133,15 @@ const FOK_SERVER_VERSION = '1.18.0';
 // now answers a POST whose JSON body carries exactly the members its
 // query took; the GET stays until 5.0 and is tagged TEMPORARY(ident) with
 // the rest. Additive: a second method on three endpoints, nothing else.
-const FOK_API_VERSION = '4.21';
+// v4.22: TURN credentials (see Turn, docs/API.md "TURN credentials"). A
+// duel no direct path can carry has had the deprecated HTTP relay and
+// nothing else; POST /api/turn.php now mints short-lived credentials for
+// Cloudflare's TURN relay, which the ICE agent uses on the SAME
+// DataChannel. The server caps what it hands out - so many credentials in
+// a rolling 30 days, a setting - and refuses past it (see Turn), so a
+// client must take the 503 as an ordinary answer. Additive: one new
+// endpoint, nothing else moves.
+const FOK_API_VERSION = '4.22';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
@@ -166,6 +174,10 @@ define('FOK_DATA_DIR', getenv('FOK_DATA_DIR') ?: (FOK_ENV === 'staging'
 define('FOK_DB_FILE', FOK_DATA_DIR . '/fok.db');
 define('FOK_ADMIN_HASH_FILE', FOK_DATA_DIR . '/admin.hash');
 define('FOK_BACKUP_DIR', FOK_DATA_DIR . '/backups');
+// The Cloudflare TURN key (see Turn): key_id and key_token, uploaded by
+// hand (tools/put-turn.ps1), never deployed, never in the repo. Absent =
+// no TURN offered.
+define('FOK_TURN_FILE', FOK_DATA_DIR . '/turn.json');
 // The admin session store. PHP's garbage collection sweeps whatever
 // directory a script's save_path names, with THAT script's lifetime; in
 // the host's shared default directory every other script on the account

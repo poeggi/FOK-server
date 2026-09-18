@@ -653,6 +653,14 @@ final class Util
         // Tournament::sweep). Its own gate, and it is taken HERE so that the
         // ordinary request does not even include the tournament code.
         self::sweepTourneys();
+        // The TURN switch, on its own gate too (see Turn::tick): a relay
+        // the operator switched off must hold no credentials. Not on an
+        // admin request, like the sweep: the dashboard reading the figure
+        // must not be what revokes a credential.
+        if (!self::isAdminScript()) {
+            require_once __DIR__ . '/Turn.php';
+            Turn::tick();
+        }
         // The hourly work is NOT on that sample. The count it reads is per
         // MINUTE, so a server that never sees 25 requests inside one minute
         // never reaches it - and then the expiry, the sweeps, the gauge

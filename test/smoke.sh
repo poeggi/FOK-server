@@ -59,7 +59,7 @@ if [ "$REMOTE" -eq 1 ] && [ -z "${SMOKE_SEQUENTIAL:-}" ]; then
     rid() { od -An -N4 -tx1 /dev/urandom | tr -d ' \n'; }
     B1=$(rid); B2=$(rid); B3=$(rid); B4=$(rid)
     C1=$(rid); C2=$(rid); C3=$(rid); C4=$(rid)
-    group core    "$ID1" "$ID2" "$ID3" "$ID4" 01_core 02_signals_friends 03_start_duel 04_matchmaking; P_CORE=$GPID
+    group core    "$ID1" "$ID2" "$ID3" "$ID4" 01_core 02_signals_friends 03_start_duel 04_matchmaking 11_turn; P_CORE=$GPID
     group items   "$B1"  "$B2"  "$B3"  "$B4"  05_items;                                                P_ITEMS=$GPID
     group tourney "$C1"  "$C2"  "$C3"  "$C4"  07_tournament 08_events;                                P_TOURNEY=$GPID
     group ident   "$ID1" "$ID2" "$ID3" "$ID4" 10_ident;                P_IDENT=$GPID   # draws its own ids
@@ -83,6 +83,7 @@ else
     source test/smoke/02_signals_friends.sh     # signals, friends, poll, debug reports, time
     source test/smoke/03_start_duel.sh          # start/epoch, directional isolation, relay duel flow, rematch
     source test/smoke/04_matchmaking.sh         # friend-spam ban, quick match
+    source test/smoke/11_turn.sh                # TURN credentials: the wire, and the budget against a fake relay
     source test/smoke/05_items.sh               # item registry: seed, mint, the claim ladder, freezes
     source test/smoke/07_tournament.sh          # tournaments: lobby, schedule, roles, the result ladder
     source test/smoke/08_events.sh              # events: the door, the two codes, the monitor, event tournaments

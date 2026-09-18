@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FOK-server TURN probe</title>
+<style>body{font:14px monospace;background:#111;color:#ddd;padding:16px} pre{white-space:pre-wrap}</style>
+</head>
+<body>
+<h1>TURN probe</h1>
+<pre id="log"></pre>
+<script>
+// A minimal connect test through the TURN relay, without the game client:
+// bind a throwaway id, ask turn.php for a credential, open two
+// RTCPeerConnections in this page and push a ping through the relay -
+// first with iceTransportPolicy 'relay' (only a relayed pair can carry it,
+// so success proves the credential allocates and forwards), then with
+// 'all' (which pair ICE picks when a direct one exists beside the relay).
+// The credential never leaves the page. window.__probe carries the result
+// for the driver (test/turn-probe.mjs); ?base= points at another server.
+const q = new URLSearchParams(location.search);
+const base = (q.get('base') || '').replace(/\/$/, '');
+const ID = q.get('id') || '77777e57';
+let TOK = q.get('tok') || null;
+const out = [];
+const log = (s) => { out.push(s); document.getElementById('log').textContent = out.join('\n'); };
+const post = async (path, body) => {
+    const r = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+};
+const until = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(what + ' timed out after ' + ms + ' ms')), ms))]);
+
+async function pair(ice, policy) {
+    const cfg = { iceServers: ice, iceTransportPolicy: policy };
+    const a = new RTCPeerConnection(cfg);
+    const b = new RTCPeerConnection(cfg);
+    const cands = { a: 0, b: 0, relay: 0 };
+    a.onicecandidate = (e) => { if (e.candidate) { cands.a++; if (e.candidate.type === 'relay') cands.relay++; b.addIceCandidate(e.candidate); } };
+    b.onicecandidate = (e) => { if (e.candidate) { cands.b++; if (e.candidate.type === 'relay') cands.relay++; a.addIceCandidate(e.candidate); } };
+    const dc = a.createDataChannel('probe', { ordered: false, maxRetransmits: 0 });
+    b.ondatachannel = (e) => { e.channel.onmessage = (m) => e.channel.send('pong:' + m.data); };
+    const t0 = performance.now();
+    const opened = new Promise((res) => { dc.onopen = res; });
+    await a.setLocalDescription(await a.createOffer());
+    await b.setRemoteDescription(a.localDescription);
+    await b.setLocalDescription(await b.createAnswer());
+    await a.setRemoteDescription(b.localDescription);
+    await until(opened, 20000, policy + ': DataChannel open');
+    const openMs = Math.round(performance.now() - t0);
+    const t1 = performance.now();
+    const ponged = new Promise((res) => { dc.onmessage = (m) => res(m.data); });
+    dc.send('ping');
+    const echo = await until(ponged, 5000, policy + ': pong');
+    const rttMs = Math.round((performance.now() - t1) * 10) / 10;
+    // The pair that carries it: the nominated candidate pair and its two
+    // candidates' types (host / srflx / relay) and the relay's address.
+    const stats = await a.getStats();
+    let sel = null;
+    const byId = {};
+    stats.forEach((s) => { byId[s.id] = s; });
+    stats.forEach((s) => {
+        if (s.type === 'transport' && s.selectedCandidatePairId) sel = byId[s.selectedCandidatePairId];
+    });
+    if (!sel) stats.forEach((s) => { if (s.type === 'candidate-pair' && (s.selected || s.nominated) && s.state === 'succeeded') sel = s; });
+    const loc = sel ? byId[sel.localCandidateId] : null;
+    const rem = sel ? byId[sel.remoteCandidateId] : null;
+    a.close();
+    b.close();
+    return {
+        policy, openMs, rttMs, echo,
+        candidates: cands,
+        local: loc ? { type: loc.candidateType, addr: (loc.address || loc.ip) + ':' + loc.port, proto: loc.protocol, relayProto: loc.relayProtocol || null } : null,
+        remote: rem ? { type: rem.candidateType, addr: (rem.address || rem.ip) + ':' + rem.port, proto: rem.protocol } : null,
+    };
+}
+
+(async () => {
+    const result = { ok: false };
+    try {
+        if (!TOK) {
+            const h = await post('/api/hello.php', { id: ID, tok: null, name: 'srv-CI-turn' });
+            if (h.status !== 200 || !h.body.tok) throw new Error('hello ' + h.status + ' ' + JSON.stringify(h.body));
+            TOK = h.body.tok;
+            log('bound ' + ID);
+        }
+        const t = await post('/api/turn.php', { id: ID, tok: TOK });
+        result.turn = { status: t.status, error: t.body.error || null, ttl: t.body.ttl || null,
+            urls: t.status === 200 ? t.body.ice.flatMap((s) => s.urls) : [] };
+        log('turn.php ' + t.status + (t.body.error ? ' ' + t.body.error : ' ttl ' + t.body.ttl));
+        if (t.status !== 200) throw new Error('no credential: ' + (t.body.error || t.status));
+        result.relay = await pair(t.body.ice, 'relay');
+        log('relay-only: open ' + result.relay.openMs + ' ms, rtt ' + result.relay.rttMs + ' ms, '
+            + JSON.stringify(result.relay.local) + ' -> ' + JSON.stringify(result.relay.remote));
+        result.all = await pair(t.body.ice, 'all');
+        log('all: open ' + result.all.openMs + ' ms, rtt ' + result.all.rttMs + ' ms, '
+            + JSON.stringify(result.all.local) + ' -> ' + JSON.stringify(result.all.remote));
+        result.ok = result.relay.echo === 'pong:ping' && result.relay.local && result.relay.local.type === 'relay';
+    } catch (e) {
+        result.error = String(e && e.message || e);
+        log('ERROR ' + result.error);
+    }
+    window.__probe = result;
+})();
+</script>
+</body>
+</html>

@@ -242,6 +242,26 @@ final class Settings
             . 'stranger cannot lock an owner out and one phone on a venue\'s WiFi cannot lock out the room. '
             . 'The right token is never refused. A 128-bit token cannot be guessed; this puts the attempt on '
             . 'record.'],
+        // TURN credentials (see Turn). The cap is the whole budget: the
+        // relay bills bytes past a monthly free tier, and what this server
+        // can count is the credentials it hands out - so it stops handing
+        // them out past a number in a rolling 30 days. Every one of these
+        // is read at the ask, so a change from the config card takes at
+        // the next one.
+        'turn_enabled' => [1, 'Offer TURN credentials (0 = off, every credential out is revoked)',
+            'Whether turn.php mints TURN credentials at all. 0 refuses every ask and, within a minute, revokes '
+            . 'every credential still out; a duel then has STUN only. Needs the key file in the data dir.'],
+        'turn_ttl_secs' => [1800, 'TURN credential lifetime (seconds)',
+            'How long a minted credential is valid. An id asking again while its credential has at least half '
+            . 'of this left gets the same one back, which counts once. A relayed match longer than this loses '
+            . 'its relay unless the client refreshes. The relay caps it at 48 hours.'],
+        'turn_max_per_30d' => [1000, 'Stop TURN: credentials handed out in the last 30 days above',
+            'Credentials minted in a rolling 30 days. At this many nothing more is minted until the window '
+            . 'frees or the number is raised; the stop alert is raised once, when it is reached. A credential '
+            . 'already out stays valid for its lifetime.'],
+        'turn_warn_pct' => [50, 'Alert: TURN credentials in the last 30 days above N% of the cap',
+            'Raise the turn alert when the credentials minted in the last 30 days reach this share of '
+            . 'turn_max_per_30d. Once per crossing.'],
         'admin_refresh_secs' => [30, 'Admin dashboard refresh interval (seconds, 0 = off)',
             'The dashboard\'s global refresh interval, the field in the header. 0 = off.'],
         'admin_conns_refresh_secs' => [1, 'Connections card refresh interval (seconds, 0 = off)',

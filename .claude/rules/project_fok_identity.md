@@ -65,7 +65,7 @@ paragraph), and the three GET forms above. All gated at runtime on
 Ident::LEGACY_UNTIL, which Ident::setLegacyUntil moves for the unit
 tests; test/checks.sh fails from 2026-10-01 while any tagged line
 survives outside the plan and itself. Step 9 deletes them, bumps to
-5.0 / 1.19.0, and turns the count into 429.
+5.0 / 1.20.0, and turns the count into 429.
 
 ## The harnesses are 4.20 clients
 

@@ -17,6 +17,7 @@ require_once __DIR__ . '/Items.php';
 require_once __DIR__ . '/Signals.php';
 require_once __DIR__ . '/Counters.php';
 require_once __DIR__ . '/TourneyStore.php';
+require_once __DIR__ . '/Turn.php';
 
 /**
  * Read-only aggregation for the admin dashboard's two heaviest views - the
@@ -45,6 +46,9 @@ final class AdminData
             // figure to watch the migration converge on (see Ident).
             'bound' => $counts['ident'],
             'relaying' => Relay::activePairs(),
+            // The TURN bubble: ids holding a credential, credentials
+            // minted since ever, and whether anything is offered (see Turn).
+            'turn' => Turn::gauge(),
             'friendships' => $friends['accepted'],
             'friendships_pending' => $friends['pending'],
             'scores_total' => $counts['scores'],

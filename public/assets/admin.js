@@ -2590,6 +2590,117 @@ function renderTourneyBody(body, overlay, tid, d) {
     body.append(btn);
 }
 
+// Why no TURN credential is offered (src/Turn.php), as the operator reads
+// it, and the badge colour each state borrows: offered reads as playing,
+// stopped by the cap as a refusal, switched off or no key as over.
+const TURN_WHY = { '': 'offered', unconfigured: 'no key file', off: 'switched off',
+                   cap: 'the cap is reached' };
+const TURN_BADGE = { '': 'playing', unconfigured: 'ended', off: 'ended', cap: 'declined' };
+
+// The TURN popup: the cap and where the count stands, who holds a
+// credential, who took the most, and the revoke-all. Runs on the stats
+// card's interval, like the gauge popups.
+async function showTurn() {
+    const { overlay, head, title, body, close } = makeModal('TURN');
+    const refresh = refreshBtn();
+    body._sid = 'turn';
+    const load = async () => {
+        try {
+            const d = await api('turn');
+            flash(refresh);
+            if (!overlay.isConnected) return;
+            renderTurnBody(body, overlay, d);
+            restoreScroll(body);
+        } catch (e) {
+            body.replaceChildren(el('p', 'error', 'Error: ' + e.message));
+        }
+    };
+    refresh.onclick = load;
+    head.append(title, refresh, close);
+    body.append(el('p', 'muted', 'Loading ...'));
+    document.body.append(overlay);
+    follows(overlay, 'stats', load);
+    await load();
+}
+
+function renderTurnBody(body, overlay, d) {
+    body.replaceChildren();
+    const nameOf = (id) => (d.names && d.names[id]) || '';
+    const tbl = el('table', 'kv');
+    const kv = (k, v) => {
+        const r = el('tr');
+        const td = el('td', 'kv-v');
+        if (v instanceof Node) td.append(v); else td.textContent = v;
+        r.append(el('td', 'kv-k', k), td);
+        tbl.append(r);
+    };
+    const pct = d.cap > 0 ? Math.round(d.recent * 100 / d.cap) : 0;
+    kv('Credentials', el('span', 'badge ' + TURN_BADGE[d.why], TURN_WHY[d.why] || d.why));
+    kv('Last 30 days', fmtNum(d.recent) + ' of ' + fmtNum(d.cap) + ' (' + pct + '% of turn_max_per_30d)');
+    kv('Alert at', fmtNum(d.warn) + ' (turn_warn_pct)');
+    kv('Handed out ever', fmtNum(d.sessions));
+    kv('Lifetime', fmtMs(d.ttl_secs * 1000) + ' (turn_ttl_secs)');
+    body.append(tbl);
+
+    body.append(el('h3', 'subhead', 'Holding a credential'));
+    if (!d.live.length) {
+        body.append(el('p', 'muted', 'Nobody right now.'));
+    } else {
+        const lt = el('table');
+        lt.append(row(['ID', 'Name', 'Minted', 'Expires in'], 'th'));
+        for (const c of d.live) {
+            const r = el('tr');
+            r.append(idCell(c.id), el('td', '', nameOf(c.id) || '-'),
+                el('td', 'muted', fmtTime(c.at)),
+                el('td', 'muted', c.exp > d.now ? fmtMs((c.exp - d.now) * 1000) : 'expired'));
+            lt.append(r);
+        }
+        body.append(lt);
+    }
+
+    if (d.top.length) {
+        body.append(el('h3', 'subhead', 'Most credentials, last 30 days'));
+        const tt = el('table');
+        tt.append(row(['ID', 'Name', 'Credentials', 'Last'], 'th'));
+        for (const t of d.top) {
+            const r = el('tr');
+            r.append(idCell(t.id), el('td', '', nameOf(t.id) || '-'),
+                el('td', '', String(t.n)), el('td', 'muted', fmtTime(t.last)));
+            tt.append(r);
+        }
+        body.append(tt);
+    }
+
+    if (!d.live.length || !d.configured) return;
+    // Arm-then-confirm in the card, never through confirm() - see the item
+    // popup for why a native dialog cannot be trusted here.
+    body.append(el('h3', 'subhead', 'Revoke'));
+    const note = el('p', 'modal-msg', 'Revokes every credential out at the relay. A relayed '
+        + 'match running on one ends within minutes. Nothing stops the next ask: switch '
+        + 'TURN off in the configuration for that.');
+    body.append(note);
+    const btn = el('button', 'small drop', 'revoke all');
+    let armed = false;
+    btn.onclick = async () => {
+        if (!armed) {
+            armed = true;
+            btn.textContent = 'confirm';
+            note.replaceChildren(el('span', '', 'Click again to revoke them.'));
+            return;
+        }
+        try {
+            const r = await api('turn_revoke', { method: 'POST' });
+            renderTurnBody(body, overlay, r);
+            refreshModule('stats');
+        } catch (e) {
+            armed = false;
+            btn.textContent = 'revoke all';
+            note.replaceChildren(el('span', 'error', 'Failed: ' + e.message));
+        }
+    };
+    body.append(btn);
+}
+
 // Status: what the registry HOLDS - the counters, the chain verify, and the
 // two exception lists (a frozen instance, a player whose claims keep being
 // disputed). The ledger itself is the other tab.
@@ -2827,6 +2938,14 @@ const MODULES = [
                     tip: 'Right now. Duels whose game messages pass through the '
                         + 'server instead of going peer to peer. Click for the last 24 h.',
                     open: () => showGaugeCharts(relaying, 'stats') },
+                // The relay's replacement, read the same way: who holds a
+                // TURN credential right now, and how many were ever handed
+                // out. The cap behind it is in the popup (see Turn).
+                { label: 'TURN users | sessions', value: d.turn.live + ' | ' + fmtNum(d.turn.sessions),
+                    tip: 'Players holding a TURN credential right now, and credentials handed out '
+                        + 'since ever. ' + (d.turn.offered ? 'Offered.' : 'Not offered: ' + TURN_WHY[d.turn.why] + '.')
+                        + ' Click for the cap.',
+                    open: showTurn },
                 { label: 'Friendships active | pending',
                     value: fmtNum(d.friendships) + ' | ' + fmtNum(d.friendships_pending), wide: true },
                 { label: 'Scores stored', value: d.scores_total },

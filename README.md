@@ -39,6 +39,17 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   never carries an RTCPeerConnection. WebRTC is abandoned, and plain
   opaque messages go over HTTP instead. Still live; being phased out in
   favour of a persistent async hub off this host.
+- TURN credentials (contract 4.22): the replacement for that relay. A
+  duel no direct path can carry goes through Cloudflare's TURN relay on
+  the SAME DataChannel; this server only mints the short-lived
+  credentials (turn.php), one set per player, tagged with the player's
+  id. The credential is the tap: the server counts what it hands out,
+  alerts the operator at half of a cap (turn_max_per_30d, default 1000
+  in a rolling 30 days) and past it mints nothing more until the window
+  frees. Switching TURN off revokes every credential still out. The key
+  that mints lives in a file in the data dir, never in the repo; the
+  admin Game Statistics card shows the players holding a credential and
+  the credentials handed out, with the cap in its popup.
 - Global highscores: top 100 list. Submissions carry the deterministic
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
   be sanity-checked by re-simulation to prevent spoofing (validated flag).
@@ -188,6 +199,8 @@ major. Every minor since is additive; docs/API.md carries them one by one.
         items.php     item registry: list/mint/seed/claim - server-owned
                       item ownership, transfers attested by both peers
         relay.php     in-duel message relay (P2P fallback), long-polled
+        turn.php      TURN credentials for a duel no direct path can
+                      carry: minted per player, capped per 30 days
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
         backup.php    GET/POST client config backup and restore, under the
@@ -208,18 +221,28 @@ major. Every minor since is additive; docs/API.md carries them one by one.
                       post-deploy wire check: two throwaway clients drive
                       the real handshake against a DEPLOYED server (live by
                       default, LIVE_BASE= for staging). Not part of CI.
+    test/turn-probe.mjs
+                      a connect test through the TURN relay without the
+                      game client: headless Edge, two peer connections
+                      forced onto the relay, a ping through it (local
+                      server with the key from ~, or --base <deployed>).
+                      Not part of CI.
     tools/deploy.sh   FTPS upload of public/ (used by the CI/CD pipeline)
     tools/deploy.ps1  manual FTPS upload (emergency fallback)
+    tools/put-turn.ps1
+                      uploads the Cloudflare TURN key file from
+                      ~/.fok-server-turn.json into the data dir over FTPS
+                      (-Staging for the staging data dir)
 
 CI (.github/workflows/ci.yml) runs test/checks.sh on every push and PR.
 Run the same checks before every commit via the hook (once per clone):
 
     git config core.hooksPath .githooks
 
-Runtime data (SQLite db, admin credential hash, backups) lives in
-fok-server-data/ inside the docroot, created by the server at first run
-together with the .htaccess that denies every request to it. It is never
-part of this repo and the deploy never touches it.
+Runtime data (SQLite db, admin credential hash, backups, the TURN key
+file) lives in fok-server-data/ inside the docroot, created by the server
+at first run together with the .htaccess that denies every request to it.
+It is never part of this repo and the deploy never touches it.
 
 ## Local development and tests
 
@@ -445,6 +468,16 @@ host-level. If this outgrows shared hosting, fix workers first.
   import, database restore) raise an alert on top.
 - Deploy credentials live in ~/.fok-server-deploy.json locally, outside the
   repo.
+- The Cloudflare TURN key lives in fok-server-data/turn.json on the server
+  (fok-server-data-staging/turn.json for staging), uploaded by hand from
+  ~/.fok-server-turn.json with tools/put-turn.ps1 - never in the repo, the
+  deploy never carries it. Two members: key_id and key_token, the TURN
+  app's Token ID and API token from the Cloudflare dashboard (Realtime >
+  TURN). Absent file = no TURN offered. The key is in no answer, no log
+  line and no admin payload; what a client gets is what Cloudflare minted
+  from it, tagged with the client's id and valid for turn_ttl_secs. An
+  optional rtc_base member points the API calls elsewhere; the smoke test
+  uses it against a fake.
 - Player IDs are public identities (as designed in FOK-snake). Since API
   4.20 the identity token proves that the caller owns the id it names:
   16 random bytes hello mints for an unbound id, presented on every
@@ -490,6 +523,10 @@ host-level. If this outgrows shared hosting, fix workers first.
     POST /api/relay.php  {"id","peer","payload","pts"?} -> {"ok":true}
     POST /api/relay.php  {"id","tok","peer","wait"}   the held read (no payload)
       -> {"ok":true,"messages":[...]} | 204   (P2P fallback relay)
+    POST /api/turn.php   {"id":"cafe0001","tok":"<32-hex>"}
+      -> {"ok":true,"ice":[{"urls":[...]},{"urls":[...],"username","credential"}],
+          "ttl":secs}
+       | 503 {"ok":false,"error":"turn_unavailable"}   (STUN only, then)
     POST /api/poll.php   {"id":"cafe0001","tok":"<32-hex>","wait":8,...}
                          (the GET with the same members as a query stays
                           until 5.0: it puts the token on the request line)

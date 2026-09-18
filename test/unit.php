@@ -52,6 +52,7 @@ require_once __DIR__ . '/../public/src/Events.php';
 require_once __DIR__ . '/../public/src/EventAdmin.php';
 require_once __DIR__ . '/../public/src/AdminData.php';
 require_once __DIR__ . '/../public/src/Housekeeping.php';
+require_once __DIR__ . '/../public/src/Turn.php';
 
 // Util installs a fault handler that answers 500 and exits 0 - right for a
 // request, fatal for a test run, where it would swallow a throwable (a
@@ -3944,6 +3945,166 @@ ok(isset($evSeen['members']), 'a monitor reads the event as a member does');
 ok(!isset($evSeen['ach']), 'but is granted no achievement: it was posted, not joined');
 ok(isset(EventView::forCaller($evMonC, '22227e57', 'member', 5000)['ach']),
     'while somebody who actually joined is');
+// ---- TURN credentials (API 4.22): the tap, and the cap behind it ------
+//
+// The relay is faked at the transport: what is asserted is what this
+// server sends it (the token on each call, the id and ttl on a mint, the
+// username on a revoke) and what it decides from the answers. Time is
+// passed in, so the half-life and the window are exact.
+require_once __DIR__ . '/../public/src/Turn.php';
+Turn::forget();
+$turnCalls = [];
+$turnMintFail = false;  // the mint answers 401
+$turnMintNo = 0;
+$turnHttp = static function (string $m, string $url, array $h, ?string $body)
+    use (&$turnCalls, &$turnMintFail, &$turnMintNo): array {
+    $turnCalls[] = [$m, $url, $body];
+    if (str_contains($url, '/generate-ice-servers')) {
+        ok($m === 'POST' && in_array('Authorization: Bearer ktok', $h, true), 'the mint carries the TURN key token');
+        if ($turnMintFail) {
+            return [401, json_encode(['success' => false, 'errors' => [['message' => 'bad key']]])];
+        }
+        $b = json_decode((string)$body, true);
+        $turnMintNo++;
+        return [201, json_encode(['iceServers' => [
+            ['urls' => ['stun:stun.cloudflare.com:3478', 'stun:stun.cloudflare.com:53']],
+            ['urls' => ['turn:turn.cloudflare.com:3478?transport=udp', 'turn:turn.cloudflare.com:53?transport=udp',
+                'turns:turn.cloudflare.com:5349?transport=tcp'],
+             'username' => 'u' . $turnMintNo . '-' . $b['customIdentifier'], 'credential' => 'secret' . $turnMintNo],
+        ]])];
+    }
+    if (str_contains($url, '/revoke')) {
+        ok($m === 'POST' && in_array('Authorization: Bearer ktok', $h, true), 'the revoke carries the TURN key token');
+        return [204, ''];
+    }
+    return [404, ''];
+};
+$turnAlert = static function (string $type): ?string {
+    foreach (Alerts::recent() as $a) {
+        if ($a['type'] === $type) {
+            return (string)$a['message'];
+        }
+    }
+    return null;
+};
+$turnUrls = static fn(array $r): array => array_merge(...array_column($r['ice'], 'urls'));
+Turn::setTransport($turnHttp);
+// Every alert type below is raised more than once inside one real minute,
+// and the assertions read the newest message of a type.
+Settings::set('alert_cooldown', 0);
+
+// No key file: nothing is offered and the relay is never asked.
+ok(Turn::mint('deadbeef') === null, 'without a key file no credentials are minted');
+ok($turnCalls === [], 'and the relay is never called');
+file_put_contents($tmp . '/turn.json', json_encode(['key_id' => 'kid', 'key_token' => 'ktok']));
+Turn::setTransport($turnHttp);   // re-reads the key file
+$t0 = 1800000000;
+
+// The mint: the relay's list handed on, named for the id.
+$r = Turn::mint('deadbeef', $t0);
+ok(is_array($r), 'with a key file the ask mints');
+ok(count($turnCalls) === 1
+    && $turnCalls[0][1] === 'https://rtc.live.cloudflare.com/v1/turn/keys/kid/credentials/generate-ice-servers',
+    'one call, to the relay under the key');
+ok($r['ttl'] === 1800, 'a fresh credential carries the whole ttl');
+ok($r['ice'][1]['username'] === 'u1-deadbeef' && $r['ice'][1]['credential'] === 'secret1',
+    'minted for the asking id, credentials handed on verbatim');
+ok(!in_array('turn:turn.cloudflare.com:53?transport=udp', $turnUrls($r), true)
+    && !in_array('stun:stun.cloudflare.com:53', $turnUrls($r), true)
+    && in_array('turn:turn.cloudflare.com:3478?transport=udp', $turnUrls($r), true)
+    && in_array('turns:turn.cloudflare.com:5349?transport=tcp', $turnUrls($r), true),
+    'the port-53 urls are dropped, the rest kept');
+ok(str_contains((string)$turnCalls[0][2], '"customIdentifier":"deadbeef"')
+    && str_contains((string)$turnCalls[0][2], '"ttl":1800'), 'the mint names the id and the ttl');
+
+// The same id inside half the life gets the same credential back.
+$r2 = Turn::mint('deadbeef', $t0 + 100);
+ok($r2['ice'][1]['username'] === 'u1-deadbeef' && $r2['ttl'] === 1700,
+    'an ask inside half the life is answered the same credential, with the life left');
+ok(count($turnCalls) === 1, 'and costs no mint');
+$r3 = Turn::mint('deadbeef', $t0 + 1000);
+ok($r3['ice'][1]['username'] === 'u2-deadbeef' && $r3['ttl'] === 1800, 'past half the life a fresh one is minted');
+$turnG = Turn::gauge($t0 + 1000);
+ok($turnG['live'] === 1 && $turnG['sessions'] === 2 && $turnG['recent'] === 2 && $turnG['cap'] === 1000
+    && $turnG['offered'] === true && $turnG['why'] === '',
+    'one id holds a credential, two were minted, both in the window, and credentials are offered');
+Turn::mint('cafe0001', $t0 + 1000);
+ok(Turn::gauge($t0 + 1000)['live'] === 2, 'a second id is a second holder');
+$turnD = Turn::detail($t0 + 1000);
+ok(count($turnD['live']) === 2 && $turnD['live'][0]['id'] !== '' && !isset($turnD['live'][0]['u']),
+    'the popup lists the holders by id and never a username');
+ok($turnD['top'][0]['id'] === 'deadbeef' && $turnD['top'][0]['n'] === 2 && $turnD['top'][1]['n'] === 1,
+    'and the heaviest ids of the window');
+
+// The cap: the lines are settings, crossed by a mint and alerted once.
+Settings::set('turn_max_per_30d', 7);
+ok(Turn::detail($t0 + 1000)['warn'] === 4, 'the warn line is the share of the cap, rounded up');
+ok($turnAlert('turn') === null, 'below the warn line no alert');
+ok(Turn::mint('f00df00d', $t0 + 1001) !== null, 'the fourth mint');
+ok(str_contains((string)$turnAlert('turn'), 'at 4 of 7 in the last 30 days (50% of the cap)'),
+    'crosses the warn line and says so');
+ok(Turn::mint('b0a710ad', $t0 + 1002) !== null && Turn::mint('deadbeef', $t0 + 2000) !== null,
+    'the fifth and sixth');
+ok($turnAlert('turn-stop') === null, 'still no stop alert');
+ok(Turn::mint('cafe0001', $t0 + 2000) !== null, 'the seventh mints');
+ok(str_contains((string)$turnAlert('turn-stop'), '7 credentials handed out in the last 30 days'),
+    'and reaching the cap raises the stop alert');
+ok(Turn::mint('f00df00d', $t0 + 2001) === null, 'the eighth is refused');
+$turnG = Turn::gauge($t0 + 2001);
+ok($turnG['offered'] === false && $turnG['why'] === 'cap' && $turnG['recent'] === 7 && $turnG['live'] === 4,
+    'nothing is offered, the reason is the cap, and what is out stays out');
+ok(Turn::mint('deadbeef', $t0 + 2002)['ice'][1]['username'] === 'u6-deadbeef',
+    'an id still holding a credential inside half its life is answered it even at the cap');
+Settings::set('turn_max_per_30d', 8);
+ok(Turn::mint('f00df00d', $t0 + 2003) !== null, 'a raised cap is obeyed at the next ask');
+ok(str_contains((string)$turnAlert('turn-stop'), '8 credentials'), 'and reaching the new cap alerts again');
+
+// The window rolls: a mint older than 30 days counts against nothing.
+ok(Turn::mint('b0a710ad', $t0 + 2004) === null, 'at the cap again');
+ok(Turn::gauge($t0 + 1001 + Turn::WINDOW)['recent'] === 4, '30 days on, the first four have fallen out of the count');
+ok(Turn::mint('b0a710ad', $t0 + 1001 + Turn::WINDOW) !== null, 'and a mint fits again');
+$turnDb = Db::get();
+ok(Turn::prune($turnDb, $t0 + 2005 + Turn::WINDOW) === 8 && Turn::gauge($t0 + 2005 + Turn::WINDOW)['recent'] === 1,
+    'the reaping drops what fell out of the window and the count agrees');
+ok(Turn::gauge($t0 + 2005 + Turn::WINDOW)['sessions'] === 9, 'the lifetime total is untouched by it');
+Settings::set('turn_max_per_30d', 1000);
+
+// Switched off: refused at once, revoked on enforcement.
+Settings::set('turn_enabled', 0);
+ok(Turn::mint('deadbeef', $t0 + 3000) === null, 'turn_enabled 0 refuses');
+$turnN = count($turnCalls);
+ok(Turn::enforce() === 4, 'enforcement revokes every credential out');
+$turnRevokes = array_values(array_filter(array_slice($turnCalls, $turnN),
+    static fn(array $c): bool => str_contains($c[1], '/revoke')));
+ok(count($turnRevokes) === 4 && in_array('https://rtc.live.cloudflare.com/v1/turn/keys/kid/credentials/u6-deadbeef/revoke',
+    array_column($turnRevokes, 1), true), 'by the username the relay knows, on the real relay host');
+$turnG = Turn::gauge($t0 + 3000);
+ok($turnG['live'] === 0 && $turnG['why'] === 'off', 'nobody holds one, and the reason is the switch');
+ok(Turn::enforce() === 0, 'a second enforcement finds nothing');
+Settings::set('turn_enabled', 1);
+ok(Turn::mint('deadbeef', $t0 + 3001) !== null, 'switched on again it mints');
+ok(Turn::enforce() === 1, 'and the revoke-all takes it (the operator button)');
+
+// A mint the relay refuses is a refusal here, and on record.
+$turnMintFail = true;
+ok(Turn::mint('f00df00d', $t0 + 4000) === null, 'a relay that refuses the mint means no credentials');
+ok(str_contains((string)$turnAlert('turn-error'), 'could not be minted: HTTP 401 bad key'),
+    'and the error alert says so');
+$turnMintFail = false;
+ok(Turn::gauge($t0 + 4000)['sessions'] === $turnMintNo, 'the lifetime total counts the mints that succeeded');
+
+// A key file still holding the placeholders offers nothing.
+file_put_contents($tmp . '/turn.json', json_encode(['key_id' => 'PASTE_ME', 'key_token' => 'ktok']));
+Turn::setTransport($turnHttp);
+ok(Turn::config() === null && Turn::mint('deadbeef', $t0 + 5000) === null
+    && Turn::gauge($t0 + 5000)['why'] === 'unconfigured',
+    'a key file still holding the placeholders offers nothing');
+
+unlink($tmp . '/turn.json');
+Turn::setTransport(null);
+Turn::forget();
+Settings::set('alert_cooldown', Settings::DEFS['alert_cooldown'][0]);
+
 // ------------------------------------------------------------------- qr
 //
 // THE COMPATIBILITY VECTOR. The client draws the live event pass with its own

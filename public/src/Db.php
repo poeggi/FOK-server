@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 49;
+    private const SCHEMA_VERSION = 50;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -106,7 +106,7 @@ final class Db
     private const COUNTED = ['players', 'scores', 'duels',
         'counters', 'alerts', 'settings', 'admin_fails', 'friends',
         'starts', 'items', 'matches', 'ledger', 'item_disputes',
-        'events', 'event_members', 'event_results', 'ident'];
+        'events', 'event_members', 'event_results', 'ident', 'turn_mints'];
 
     /**
      * How many rows each table above holds, in ONE statement rather than a
@@ -904,6 +904,18 @@ final class Db
                 bound_ip TEXT NOT NULL DEFAULT ''
             )");
             self::adoptVault($pdo);
+        }
+        if ($v < 50) {
+            // TURN (see Turn): one row per credential minted, the moment
+            // and the id. The cap counts them over a rolling window and
+            // the hourly reaping drops what fell out of it, so the table
+            // holds at most the cap's worth. Indexed on the moment: every
+            // ask counts the window.
+            $pdo->exec("CREATE TABLE IF NOT EXISTS turn_mints (
+                at INTEGER NOT NULL,
+                id TEXT NOT NULL
+            )");
+            $pdo->exec('CREATE INDEX IF NOT EXISTS idx_turn_mints_at ON turn_mints (at)');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that
