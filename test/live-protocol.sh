@@ -354,6 +354,31 @@ else
     echo "skip the dual-stack announce checks: this machine reaches $BASE over one family only (v4=$V4 v6=$V6)"
 fi
 
+# --- TURN (API 4.22). A credential from THIS server carries a DataChannel
+# through Cloudflare's relay: test/turn-probe.mjs drives headless Edge with
+# two peer connections forced onto the relay and reads the echo back. The
+# server offering no TURN (503: no key on the host) is the operator's
+# choice and is reported, not failed; a credential that does not carry is.
+# Needs node and Edge on this box; without them the step is skipped.
+echo
+if command -v node > /dev/null 2>&1; then
+    TP=$(node test/turn-probe.mjs --base "$BASE" 2>&1 || true)
+    case "$TP" in
+    *'TURN PROBE PASSED'*)
+        echo "ok   turn: $(grep -oE 'relay-only: open [0-9]+ ms, rtt [0-9.]+ ms' <<< "$TP")"
+        ;;
+    *'turn.php:   503'*)
+        echo "note turn: this server offers no TURN (503 turn_unavailable) - the key file is not on the host, or it is switched off"
+        ;;
+    *)
+        echo "FAIL turn: $(grep -E '^(error|turn.php|relay-only)' <<< "$TP" | tr '\n' ';')"
+        fail=1
+        ;;
+    esac
+else
+    echo "skip turn: no node on this box"
+fi
+
 echo
 if [ "$fail" -ne 0 ]; then
     echo "LIVE PROTOCOL SMOKE FAILED"

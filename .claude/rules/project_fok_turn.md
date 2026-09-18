@@ -32,7 +32,9 @@ the budget is what this server can count without them: credentials
 handed out. `turn_max_per_30d` (1000) over a rolling 30 days, `turn_warn_pct`
 (50) for the alert. Every mint is a row in `turn_mints` (at, id), the
 hourly reaping drops rows past the window, the lifetime total is
-`Stats` (`turn_mints`, the 0total bucket). What a credential then
+`Stats` (`turn_mints`, the 0total bucket). The bubble reads "TURN c |
+30d": holders now, and the window's count the cap judges (1.19.1); the
+lifetime total is popup-only. What a credential then
 relays is bounded by its ttl and the relay's own rate, NOT measured
 here: the cap is on hand-outs. If bytes are ever wanted, the GraphQL
 dataset is `callsTurnUsageAdaptiveGroups` (sum egressBytes, dimension

@@ -76,12 +76,12 @@ async function pair(ice, policy) {
 (async () => {
     const result = { ok: false };
     try {
-        if (!TOK) {
-            const h = await post('/api/hello.php', { id: ID, tok: null, name: 'srv-CI-turn' });
-            if (h.status !== 200 || !h.body.tok) throw new Error('hello ' + h.status + ' ' + JSON.stringify(h.body));
-            TOK = h.body.tok;
-            log('bound ' + ID);
-        }
+        // The one rule of the live harness: a hello carries the token held
+        // for the id (null binds), and whatever it answers is adopted. A 401
+        // means the id is bound to a token this box does not hold.
+        const h = await post('/api/hello.php', { id: ID, tok: TOK, name: 'srv-CI-turn' });
+        if (h.status !== 200) throw new Error('hello ' + h.status + ' ' + (h.body.error || '') + (h.status === 401 ? ' (the id is bound elsewhere, or its token was reset)' : ''));
+        if (h.body.tok) { TOK = h.body.tok; result.tok = TOK; log('bound ' + ID); }
         const t = await post('/api/turn.php', { id: ID, tok: TOK });
         result.turn = { status: t.status, error: t.body.error || null, ttl: t.body.ttl || null,
             urls: t.status === 200 ? t.body.ice.flatMap((s) => s.urls) : [] };

@@ -2709,6 +2709,8 @@ function renderItemStatus(box, d) {
 
     bubbles(box, [
         { label: 'Items', value: d.items_total },
+        { label: 'Transfers', value: d.transfers,
+            tip: 'Handovers the current population has been through: the sum of every instance\'s seq.' },
         { label: 'Frozen', value: d.items_frozen },
         { label: 'Open matches', value: d.matches_open },
         // Two cells wide: the only bubble here holding a pair of numbers.
@@ -2939,18 +2941,18 @@ const MODULES = [
                         + 'server instead of going peer to peer. Click for the last 24 h.',
                     open: () => showGaugeCharts(relaying, 'stats') },
                 // The relay's replacement, read the same way: who holds a
-                // TURN credential right now, and how many were ever handed
-                // out. The cap behind it is in the popup (see Turn).
-                { label: 'TURN users | sessions', value: d.turn.live + ' | ' + fmtNum(d.turn.sessions),
+                // TURN credential right now, and how many were handed out
+                // in the last 30 days - the figure the cap counts. The cap
+                // itself and the lifetime total are in the popup (see Turn).
+                { label: 'TURN c | 30d', value: d.turn.live + ' | ' + fmtNum(d.turn.recent),
                     tip: 'Players holding a TURN credential right now, and credentials handed out '
-                        + 'since ever. ' + (d.turn.offered ? 'Offered.' : 'Not offered: ' + TURN_WHY[d.turn.why] + '.')
+                        + 'in the last 30 days, of ' + fmtNum(d.turn.cap) + '. '
+                        + (d.turn.offered ? 'Offered.' : 'Not offered: ' + TURN_WHY[d.turn.why] + '.')
                         + ' Click for the cap.',
                     open: showTurn },
-                { label: 'Friendships active | pending',
-                    value: fmtNum(d.friendships) + ' | ' + fmtNum(d.friendships_pending), wide: true },
+                { label: 'Friends active | pending',
+                    value: fmtNum(d.friendships) + ' | ' + fmtNum(d.friendships_pending) },
                 { label: 'Scores stored', value: d.scores_total },
-                { label: 'Items owned', value: d.items_total },
-                { label: 'Item transfers', value: d.item_transfers },
             ]);
             box.append(el('p', 'muted', 'Server v' + d.server_version + '.'));
             // Server clock lives in the page footer, refreshed with the stats.

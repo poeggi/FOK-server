@@ -8,6 +8,8 @@
 // fetched and used inside the page and is never printed here.
 //
 //   node test/turn-probe.mjs            local server, the key from ~
+//                                       (FOK_CA_BUNDLE=<pem> when this
+//                                       box's PHP curl trusts nothing)
 //   node test/turn-probe.mjs --base https://fok-server.poggensee.it
 //                                       a deployed server (its own key);
 //                                       the page still comes from the
@@ -17,7 +19,7 @@
 // Needs php, node 22+ and Microsoft Edge on this box. Exit 0 when the
 // relayed echo came back, 1 otherwise.
 import { spawn } from 'node:child_process';
-import { mkdtempSync, copyFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, copyFileSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -32,11 +34,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const data = mkdtempSync(join(tmpdir(), 'fok-turn-probe-'));
 const keyFile = join(homedir(), '.fok-server-turn.json');
+// Against a deployed server the probe id is bound once and its token kept
+// where test/live-protocol.sh keeps its cast's: one "<base> <id> <tok>"
+// line per pair, outside the repo. Local runs bind on a throwaway
+// database and keep nothing.
+const ID = '77777e57';
+const tokFile = process.env.FOK_LIVETEST_TOK || join(homedir(), '.fok-server-livetest.tok');
+const tokLines = () => existsSync(tokFile) ? readFileSync(tokFile, 'utf8').split(/\r?\n/).filter((l) => l !== '') : [];
+const heldTok = remote ? (tokLines().find((l) => l.startsWith(remote + ' ' + ID + ' ')) || '').split(' ')[2] || '' : '';
+const adopt = (tok) => {
+    if (!remote || !tok || tok === heldTok) return;
+    const keep = tokLines().filter((l) => !l.startsWith(remote + ' ' + ID + ' '));
+    keep.push(remote + ' ' + ID + ' ' + tok);
+    writeFileSync(tokFile, keep.join('\n') + '\n');
+};
 if (!remote) {
     if (!existsSync(keyFile)) { console.error('missing ' + keyFile); process.exit(1); }
     copyFileSync(keyFile, join(data, 'turn.json'));
 }
-const php = spawn('php', ['-S', '127.0.0.1:' + port, '-t', 'public', 'test/turn-probe-router.php'],
+// A box whose PHP has no CA bundle (Windows) or sits behind a TLS-inspecting
+// proxy names one in FOK_CA_BUNDLE; the server's curl then trusts it.
+const cainfo = process.env.FOK_CA_BUNDLE ? ['-d', 'curl.cainfo=' + process.env.FOK_CA_BUNDLE] : [];
+const php = spawn('php', ['-S', '127.0.0.1:' + port, '-t', 'public', ...cainfo, 'test/turn-probe-router.php'],
     { env: { ...process.env, FOK_DATA_DIR: data }, stdio: 'ignore' });
 const edge = spawn(edgePath, ['--headless=new', '--remote-debugging-port=' + cdp,
     '--user-data-dir=' + join(data, 'edge'), '--no-first-run', '--disable-gpu', 'about:blank'], { stdio: 'ignore' });
@@ -66,7 +85,8 @@ try {
     const cmd = (method, params) => new Promise((res) => { const id = ++seq; pending.set(id, res); ws.send(JSON.stringify({ id, method, params: params || {} })); });
     const evalJs = async (expr) => (await cmd('Runtime.evaluate', { expression: expr, returnByValue: true })).result.result.value;
     await cmd('Page.enable');
-    await cmd('Page.navigate', { url: 'http://127.0.0.1:' + port + '/turn-probe' + (remote ? '?base=' + encodeURIComponent(remote) : '') });
+    const query = remote ? '?base=' + encodeURIComponent(remote) + '&id=' + ID + (heldTok ? '&tok=' + heldTok : '') : '?id=' + ID;
+    await cmd('Page.navigate', { url: 'http://127.0.0.1:' + port + '/turn-probe' + query });
     let result = null;
     for (let i = 0; i < 300 && !result; i++) {
         await sleep(200);
@@ -74,6 +94,7 @@ try {
     }
     ws.close();
     if (!result) throw new Error('the page never finished (60 s)');
+    adopt(result.tok);
     const show = (r) => r ? `open ${r.openMs} ms, rtt ${r.rttMs} ms, ${r.local.type} ${r.local.addr}`
         + `${r.local.relayProto ? ' via ' + r.local.relayProto : ''} -> ${r.remote.type} ${r.remote.addr}`
         + ` (candidates a ${r.candidates.a}, b ${r.candidates.b}, relay ${r.candidates.relay})` : '-';

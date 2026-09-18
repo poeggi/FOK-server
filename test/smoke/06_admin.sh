@@ -110,8 +110,6 @@ else
     # The items module ran before this one, so on a fresh local DB both tiles
     # have exact known values; against a persistent remote DB only the field
     # itself can be asserted.
-    expect "admin stats count the owned items" "$(strict '"items_total":7')" "$R"
-    expect "admin stats count the item transfers" "$(strict '"item_transfers":2')" "$R"
     expect "admin stats friendships" '"friendships":' "$R"
     expect "admin stats pending friendships" '"friendships_pending":' "$R"
     # The live gauges come in BOTH windows the tile offers, with the same
@@ -160,7 +158,8 @@ else
     # table is only ever COUNTed here: a per-duel attestation secret must
     # never reach the dashboard, let alone a browser.
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=items")
-    expect "registry card totals the instances" '"items_total":' "$R"
+    expect "registry card totals the instances" "$(strict '"items_total":7')" "$R"
+    expect "and the transfers they have been through" "$(strict '"transfers":2')" "$R"
     expect "registry card counts the frozen ones" '"items_frozen":' "$R"
     expect "registry card counts open matches" '"matches_open":' "$R"
     expect "registry card sizes the ledger against its cap" '"ledger_max":' "$R"

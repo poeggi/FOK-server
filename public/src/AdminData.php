@@ -52,12 +52,6 @@ final class AdminData
             'friendships' => $friends['accepted'],
             'friendships_pending' => $friends['pending'],
             'scores_total' => $counts['scores'],
-            'items_total' => $counts['items'],
-            // Every transfer bumps the instance seq, so summing seq counts the
-            // handovers the current population has been through. Read from
-            // items rather than the ledger because the ledger is checkpointed
-            // and trimmed, which would make a ledger count drop over time.
-            'item_transfers' => (int)$db->query('SELECT COALESCE(SUM(seq), 0) FROM items')->fetchColumn(),
             'db_rows' => array_sum($counts),
             'live' => self::live(),
             // Live tournaments are held in shared memory, not in a table.
@@ -476,14 +470,21 @@ final class AdminData
             $parties[] = $r['from'];
             $parties[] = $r['to'];
         }
-        // The population and the frozen part of it out of one walk: frozen
-        // is 0 or 1, so its sum is the count.
-        $tally = $db->query('SELECT COUNT(*) AS n, COALESCE(SUM(frozen), 0) AS f FROM items')->fetch();
+        // The population, the frozen part of it and the handovers it has
+        // been through, out of one walk: frozen is 0 or 1, so its sum is
+        // the count, and every transfer bumps the instance seq, so the sum
+        // of seq counts them. Read from items rather than the ledger because
+        // the ledger is checkpointed and trimmed, which would make a ledger
+        // count drop over time.
+        $tally = $db->query(
+            'SELECT COUNT(*) AS n, COALESCE(SUM(frozen), 0) AS f, COALESCE(SUM(seq), 0) AS t FROM items'
+        )->fetch();
         return [
             'now' => time(),
             'names' => (object)self::namesFor($parties),
             'items_total' => (int)$tally['n'],
             'items_frozen' => (int)$tally['f'],
+            'transfers' => (int)$tally['t'],
             'matches_open' => Items::openMatches($db),
             'ledger_rows' => Ledger::rows($db),
             'ledger_max' => Settings::int('ledger_max_rows'),

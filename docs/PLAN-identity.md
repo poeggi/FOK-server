@@ -276,6 +276,10 @@ API 5.0 - the client's major moves with the contract's.
 
 9. Cleanup release, on or after 2026-10-01: delete every
    TEMPORARY(ident) line (T1-T4), FOK_API_VERSION 5.0, 1.20.0, the
+   admin Game Statistics bubble "Users registered | bound" becomes
+   "User accounts" and shows the bound count alone (an id nothing
+   proves is no account once the token is required; asked for on
+   2026-09-18), the
    contract says `tok` is required, the smoke asserts a token-less
    hello is 401. `Auth::LEGACY_UNTIL` goes with T1. The checks.sh grep
    stays as the guard that nothing tagged survives. The pair throttle

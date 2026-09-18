@@ -49,7 +49,8 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   frees. Switching TURN off revokes every credential still out. The key
   that mints lives in a file in the data dir, never in the repo; the
   admin Game Statistics card shows the players holding a credential and
-  the credentials handed out, with the cap in its popup.
+  the credentials handed out in the last 30 days, with the cap and the
+  lifetime total in its popup.
 - Global highscores: top 100 list. Submissions carry the deterministic
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
   be sanity-checked by re-simulation to prevent spoofing (validated flag).
