@@ -762,10 +762,12 @@ switch ($action) {
     // a minute, at the operator's moment instead.
     case 'turn_revoke':
         requirePost();
-        $n = Turn::enforce();
+        $n = Turn::enforce(Turn::OPERATOR_BUDGET_SECS);
         $d = Turn::detail();
         $ids = array_merge(array_column($d['live'], 'id'), array_column($d['top'], 'id'));
-        Util::jsonOut(['ok' => true, 'revoked' => $n, 'names' => AdminData::namesFor($ids)] + $d);
+        // `left` is what the budget did not reach; the live list names them.
+        Util::jsonOut(['ok' => true, 'revoked' => $n, 'left' => count($d['live']),
+            'names' => AdminData::namesFor($ids)] + $d);
 
     case 'caps_refresh':
         requirePost();   // re-assessment is a write

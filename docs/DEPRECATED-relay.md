@@ -6,7 +6,8 @@ The in-duel message relay lets a duel fall back to forwarding its
 input-level messages through this server when the peer-to-peer WebRTC
 DataChannel cannot be established. It is a blocking one-worker-per-long-poll
 design on shared PHP-FPM hosting, so it can never scale past a fraction of
-the worker pool (relay_max_duels, default 4). The intended replacement is a
+the worker pool (relay_max_duels, default 0 since 1.19.2: the relay is
+off, every attempt is refused and alerted). The intended replacement is a
 persistent async hub (a single event loop / WebSocket process holding many
 connections at once) on a VPS or container, where a duel costs a socket
 instead of a blocked worker. Until that exists the relay stays in place as a

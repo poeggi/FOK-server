@@ -26,8 +26,22 @@ Cloudflare is capped at 600 ms (Turn::MINT_TIMEOUT_MS, 1.19.2): a
 healthy call is 120-350 ms with TLS from a workstation, less from the
 host, and the client builds its pc without the answer after a bounded
 wait (FOK-snake NET_TURN_WAIT_MS), so a slower mint is a 503 inside
-that window rather than a counted credential nobody uses. Revokes keep
-6 s. Measured 2026-09-18, five calls to rtc.live.cloudflare.com.
+that window rather than a counted credential nobody uses. A revoke
+has 2 s (REVOKE_TIMEOUT_MS). Measured 2026-09-18 against
+rtc.live.cloudflare.com from a workstation through a TLS proxy: a mint
+201 in 361-450 ms, a revoke of a live credential 204 in 424 ms, a
+revoke of one already revoked 404 (which revokeAll counts as gone), a
+mint after a revoke a fresh credential. Every mint writes its duration
+as a note line ("credentials minted for <id> in <ms> ms"), so the
+host's own figure is in the Logs tab; the cap is judged against that,
+not the workstation's.
+
+Enforcement walks the live credentials one call after another, so it
+has a BUDGET (Turn::enforce's seconds): 5 s from the deferred tail, 20 s
+from the operator's button, at least one call whatever the budget, and
+what it leaves is taken by the next enforcement. Without it a relay
+API outage with many credentials out would pin a worker for minutes,
+every minute.
 
 ## The cap is a COUNT, and that was a decision
 
@@ -38,9 +52,9 @@ the budget is what this server can count without them: credentials
 handed out. `turn_max_per_30d` (1000) over a rolling 30 days, `turn_warn_pct`
 (50) for the alert. Every mint is a row in `turn_mints` (at, id), the
 hourly reaping drops rows past the window, the lifetime total is
-`Stats` (`turn_mints`, the 0total bucket). The bubble reads "TURN c |
-30d": holders now, and the window's count the cap judges (1.19.1); the
-lifetime total is popup-only. What a credential then
+`Stats` (`turn_mints`, the 0total bucket). The bubble reads "TURN
+active | 30d": holders now, and the window's count the cap judges
+(1.19.1); the lifetime total is popup-only. What a credential then
 relays is bounded by its ttl and the relay's own rate, NOT measured
 here: the cap is on hand-outs. If bytes are ever wanted, the GraphQL
 dataset is `callsTurnUsageAdaptiveGroups` (sum egressBytes, dimension
@@ -48,10 +62,16 @@ customIdentifier = the player id, which every mint already carries).
 
 Nothing is latched. `Turn::refusal` is derived from the settings and the
 count at every ask; raising the cap or flipping `turn_enabled` is obeyed
-at the next ask. The alerts fire on the CROSSING - the mint that reaches
-the warn line or the cap - so a stream of asks past the cap raises
-nothing more (each is a log note). A cap lowered below the current
-count therefore refuses silently until the count falls under it.
+at the next ask. The alerts fire on the CROSSING, judged on the SPAN of
+a mint - the count read before its call to the relay, the count read
+after its row - so mints landing side by side that jump the count past
+a line still raise (1.19.3; an equality test missed the jump and the
+stop alert could stay silent for the month). A stream of asks past the
+cap raises nothing more (each is a log note). A cap lowered below the
+current count therefore refuses silently until the count falls under
+it. The cap is read before the call and the row written after it, so N
+asks in flight at cap - 1 can overshoot by N - 1: bounded by the worker
+pool, harmless against the tier, not worth a lock.
 
 ## Two windows on one credential
 
@@ -80,9 +100,10 @@ server at it (11_turn.sh). Remote, no fake can run and the key file is
 the operator's, so the part asserts only the wire shape there: a 200
 with `ice` OR the 503. The unit block replaces the transport
 (`Turn::setTransport`) and passes the clock in, so the half-life and the
-30-day window are exact. Both suites run with `alert_cooldown` 0 for
-the block, because every TURN alert type is raised more than once inside
-one real minute there.
+30-day window are exact; the transport can seed rows into turn_mints
+while a mint is out, which is how the concurrent jump is tested. The
+unit block runs with `alert_cooldown` 0, because every TURN alert type
+is raised more than once inside one real minute there.
 
 ## The client half (FOK-snake)
 

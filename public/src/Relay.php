@@ -5,6 +5,7 @@ require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Caps.php';
 require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Alerts.php';
+require_once __DIR__ . '/Util.php';
 require_once __DIR__ . '/ConnTrack.php';
 require_once __DIR__ . '/RelayStore.php';
 require_once __DIR__ . '/RelayRate.php';

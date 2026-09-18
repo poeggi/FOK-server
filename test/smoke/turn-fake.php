@@ -1,12 +1,12 @@
 <?php
 declare(strict_types=1);
 
-// A stand-in for Cloudflare's two TURN APIs, for the local smoke test:
-// php -S serves this file as its router, and turn.json's rtc_base and
-// api_base point the server at it. FAKE_DIR names a directory the smoke
-// controls: usage.json is what the usage read answers ({"egress","ingress",
-// "top":[[id,bytes],...]}, or {"fail":true} for a 500), mints.log and
-// revokes.log get one line per call, so the smoke can count them.
+// A stand-in for Cloudflare's TURN key API, for the local smoke test:
+// php -S serves this file as its router and turn.json's rtc_base points
+// the server at it. Two routes, the mint and the revoke, both under key
+// "kid" with token "ktok". FAKE_DIR names a directory the smoke controls:
+// mints.log gets "<n> <id> <ttl>" per mint and revokes.log the username
+// per revoke, so the smoke can count and match them.
 $dir = getenv('FAKE_DIR') ?: sys_get_temp_dir();
 $path = (string)parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -44,29 +44,6 @@ if ($method === 'POST' && preg_match('#^/v1/turn/keys/([^/]+)/credentials/([^/]+
     }
     file_put_contents($dir . '/revokes.log', $m[2] . "\n", FILE_APPEND);
     http_response_code(204);
-    exit;
-}
-if ($method === 'POST' && $path === '/client/v4/graphql') {
-    if ($auth !== 'Bearer atok') {
-        http_response_code(403);
-        echo json_encode(['errors' => [['message' => 'authentication error']]]);
-        exit;
-    }
-    $u = json_decode((string)@file_get_contents($dir . '/usage.json'), true) ?: [];
-    if (!empty($u['fail'])) {
-        http_response_code(500);
-        echo 'boom';
-        exit;
-    }
-    $top = [];
-    foreach ($u['top'] ?? [] as $t) {
-        $top[] = ['dimensions' => ['customIdentifier' => (string)$t[0]], 'sum' => ['egressBytes' => (int)$t[1]]];
-    }
-    header('Content-Type: application/json');
-    echo json_encode(['data' => ['viewer' => ['accounts' => [[
-        'total' => [['sum' => ['egressBytes' => (int)($u['egress'] ?? 0), 'ingressBytes' => (int)($u['ingress'] ?? 0)]]],
-        'top' => $top,
-    ]]]], 'errors' => null]);
     exit;
 }
 http_response_code(404);

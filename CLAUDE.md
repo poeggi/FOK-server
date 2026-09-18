@@ -18,7 +18,8 @@ The measurements and decisions behind the rules below are in
   machine only.
 - Every PHP file starts with declare(strict_types=1) (CI enforces).
 - LF line endings; PowerShell scripts are the only CRLF exception.
-- Runtime data (SQLite db, admin.hash, backups, admin sessions) lives in
+- Runtime data (SQLite db, admin.hash, backups, admin sessions, the
+  TURN key file turn.json) lives in
   fok-server-data/
   INSIDE the live docroot (staging: fok-server-data-staging/ beside it),
   shielded by the .htaccess Db::get writes there. Never under public/ in
@@ -28,7 +29,9 @@ The measurements and decisions behind the rules below are in
 
 - Shared hosting: Apache + PHP-FPM only. No daemons, no WebSockets, no
   cron. Real-time is client-polled HTTP or peer-to-peer WebRTC; the
-  server relays SDP/ICE signaling only (no TURN). The ONE exception is
+  server relays SDP/ICE signaling and mints credentials for
+  Cloudflare's TURN relay (src/Turn.php, .claude/rules/project_fok_turn.md);
+  it runs no relay of its own. The ONE exception is
   the relay fallback (api/relay.php): DEPRECATED, still live, do not
   extend it (docs/DEPRECATED-relay.md has the delete manifest).
 - No persistent state: the database IS the state, and "background" work

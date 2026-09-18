@@ -229,13 +229,13 @@ final class Settings
         // else's screen must still work while that screen has moved on. The
         // client reads both numbers off the `pass` answer and hard-codes
         // neither.
-        'event_pass_step_secs' => [10, 'How often the event pass QR rotates (seconds)',
+        'event_pass_step_secs' => [20, 'How often the event pass QR rotates (seconds)',
             'How often the event pass (the QR a member\'s screen shows) rotates. A pass is derived from the '
             . 'clock; no row is stored.'],
-        'event_pass_valid_secs' => [20, 'How long an event pass stays valid (seconds)',
+        'event_pass_valid_secs' => [30, 'How long an event pass stays valid (seconds)',
             'How long a pass stays accepted after its slot began; at least one step, so a code still on '
-            . 'somebody\'s screen keeps working across a rotation. The client reads both numbers off the pass '
-            . 'answer.'],
+            . 'somebody\'s screen keeps working across a rotation. The default is the step plus ten seconds '
+            . 'of grace. The client reads both numbers off the pass answer.'],
         'event_join_fails_per_min' => [10, 'Wrong event codes per player per minute before 429',
             'Wrong event codes one player may try in a minute; from then on the answer is 429 and the log gets a '
             . 'line. It puts the attempt on record; the codes cannot be guessed.'],

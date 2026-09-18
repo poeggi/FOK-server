@@ -41,6 +41,7 @@ final class Turn
     private const PREFIX = FOK_APCU_NS . 'turn:';
     private const CRED = self::PREFIX . 'c:';
     private const ENFORCE_KEY = self::PREFIX . 'enforce';
+    private const BADKEY_KEY = self::PREFIX . 'badkey';
     // How often the deferred tail checks that a switched-off relay holds
     // no credentials. A constant: it bounds how long a switch-off takes to
     // reach the credentials out, and a minute is what the help text says.
@@ -57,7 +58,18 @@ final class Turn
     // counted and used by nobody. A revoke runs in the deferred tail or
     // under the operator's hand, and can afford to wait.
     private const MINT_TIMEOUT_MS = 600;
+    // A revoke is 400-450 ms from a workstation (2026-09-18); it runs in
+    // the deferred tail or under the operator's hand, so it may wait a
+    // few times that, and then the relay is not answering.
+    private const REVOKE_TIMEOUT_MS = 2000;
     private const HTTP_TIMEOUT_MS = 6000;
+    // How long one enforcement may spend revoking, in seconds. The tail
+    // of a player's request holds a worker for it, so it is short; the
+    // operator's click has the admin request to itself. What the budget
+    // leaves out is taken by the next enforcement - a minute later, or
+    // the next click.
+    private const TICK_BUDGET_SECS = 5.0;
+    public const OPERATOR_BUDGET_SECS = 20.0;
     // The heaviest ids the popup lists.
     private const TOP = 20;
 
@@ -98,7 +110,11 @@ final class Turn
         foreach (['key_id', 'key_token'] as $k) {
             $v = is_array($j) ? ($j[$k] ?? '') : '';
             if (!is_string($v) || trim($v) === '' || str_starts_with($v, 'PASTE_')) {
-                Alerts::warn('turn', "turn.json has no usable $k; no TURN offered");
+                // Every ask reads the file, so the line is gated: once a
+                // minute across the pool says it as well as once a request.
+                if (!Caps::apcu() || apcu_add(self::BADKEY_KEY, 1, 60)) {
+                    Alerts::warn('turn', "turn.json has no usable $k; no TURN offered");
+                }
                 return null;
             }
             $cfg[$k] = trim($v);
@@ -146,15 +162,21 @@ final class Turn
             Alerts::note('turn', "credentials refused for $id: " . self::reason($why, $n));
             return null;
         }
+        $t = microtime(true);
         $r = self::call('POST',
             $cfg['rtc'] . '/v1/turn/keys/' . rawurlencode($cfg['key_id']) . '/credentials/generate-ice-servers',
             ['Authorization: Bearer ' . $cfg['key_token'], 'Content-Type: application/json'],
             json_encode(['ttl' => $ttl, 'customIdentifier' => $id]), self::MINT_TIMEOUT_MS);
+        $ms = (int)round((microtime(true) - $t) * 1000);
         $ice = $r[0] === 201 || $r[0] === 200 ? self::iceOf($r[1]) : null;
         if ($ice === null) {
-            Alerts::raise('turn-error', 'TURN credentials could not be minted: ' . self::said($r), 'error');
+            Alerts::raise('turn-error', 'TURN credentials could not be minted: ' . self::said($r)
+                . " (after $ms ms)", 'error');
             return null;
         }
+        // The duration is on record for every mint: the cap on the call
+        // is judged against what the host measures, and only the host can.
+        Alerts::note('turn', "credentials minted for $id in $ms ms");
         $entry = ['u' => $ice['username'], 'ice' => $ice['ice'], 'at' => $now, 'exp' => $now + $ttl];
         if (Caps::apcu()) {
             apcu_store(self::CRED . $id, $entry, $ttl);
@@ -164,18 +186,24 @@ final class Turn
             $db->prepare('INSERT INTO turn_mints (at, id) VALUES (?, ?)')->execute([$now, $id]);
             Stats::bumpIn($db, ['turn_mints' => 1]);
         });
-        // The lines are crossed by THIS mint or not at all, so each alert
-        // fires once per crossing and a stream of asks past the cap raises
-        // nothing more - the note above is their record.
-        $n++;
+        // The count is read again after the insert, and an alert fires for
+        // every mint whose span - the count before its call, the count
+        // after its row - crosses a line. Mints run side by side, so the
+        // count can jump past a line between two reads; a test for
+        // equality would miss it and the stop alert would never fire. A
+        // stream of asks past the cap raises nothing more (the note above
+        // is their record), and a repeat inside the cooldown is one row.
+        $before = $n;
+        $after = max($before + 1, self::recent($now));
         $cap = Settings::int('turn_max_per_30d');
         $warn = self::warnLine();
-        if ($n === $warn && $warn < $cap) {
-            Alerts::raise('turn', "TURN credentials at $n of $cap in the last 30 days ("
+        if ($before < $warn && $after >= $warn && $warn < $cap) {
+            Alerts::raise('turn', "TURN credentials at $after of $cap in the last 30 days ("
                 . Settings::int('turn_warn_pct') . '% of the cap)');
-        } elseif ($n === $cap) {
-            Alerts::raise('turn-stop', "TURN stopped: $cap credentials handed out in the last 30 days; "
-                . 'none until the window frees or turn_max_per_30d is raised');
+        }
+        if ($before < $cap && $after >= $cap) {
+            Alerts::raise('turn-stop', "TURN stopped: $after credentials handed out in the last 30 days, "
+                . "the cap is $cap; none until the window frees or turn_max_per_30d is raised");
         }
         return ['ice' => $ice['ice'], 'ttl' => $ttl];
     }
@@ -191,17 +219,19 @@ final class Turn
             return;
         }
         if (self::config() !== null && Settings::int('turn_enabled') !== 1) {
-            self::enforce();
+            self::enforce(self::TICK_BUDGET_SECS);
         }
     }
 
     /**
-     * Revokes every credential out. What the operator's switch means, and
-     * what the smoke calls directly. Returns how many went.
+     * Revokes every credential out, within a budget of seconds. What the
+     * operator's switch means, and what the revoke-all button calls.
+     * Returns how many went; what the budget left is still listed and
+     * goes with the next enforcement.
      */
-    public static function enforce(): int
+    public static function enforce(float $budgetSecs = self::OPERATOR_BUDGET_SECS): int
     {
-        return self::revokeAll(self::config());
+        return self::revokeAll(self::config(), $budgetSecs);
     }
 
     /**
@@ -224,7 +254,6 @@ final class Turn
         return match ($why) {
             'off' => 'switched off',
             'cap' => "$n of " . Settings::int('turn_max_per_30d') . ' in the last 30 days',
-            'unconfigured' => 'no key',
             default => $why,
         };
     }
@@ -336,16 +365,30 @@ final class Turn
      * gone; one it did not confirm stays listed, so the next enforcement
      * tries it again. Without a key nothing can be revoked and the list is
      * dropped: what is out expires on its own.
+     *
+     * The calls run one after another, each up to REVOKE_TIMEOUT_MS, so a
+     * relay that stopped answering with many credentials out would hold
+     * the caller for minutes: the budget ends the walk, and what is left
+     * waits for the next one. At least one call is made whatever the
+     * budget, or a call that could never make progress would never finish.
      */
-    private static function revokeAll(?array $cfg): int
+    private static function revokeAll(?array $cfg, float $budgetSecs): int
     {
+        $deadline = microtime(true) + $budgetSecs;
         $n = 0;
+        $tried = 0;
+        $left = 0;
         foreach (self::live() as $id => $e) {
             $ok = $cfg === null;
             if (!$ok) {
+                if ($tried > 0 && microtime(true) >= $deadline) {
+                    $left++;
+                    continue;
+                }
+                $tried++;
                 $r = self::call('POST', $cfg['rtc'] . '/v1/turn/keys/' . rawurlencode($cfg['key_id'])
                     . '/credentials/' . rawurlencode((string)$e['u']) . '/revoke',
-                    ['Authorization: Bearer ' . $cfg['key_token']], null);
+                    ['Authorization: Bearer ' . $cfg['key_token']], null, self::REVOKE_TIMEOUT_MS);
                 // Gone is gone: a credential the relay no longer knows is as
                 // revoked as one it just dropped.
                 $ok = $r[0] === 204 || $r[0] === 200 || $r[0] === 404;
@@ -360,6 +403,10 @@ final class Turn
         }
         if ($n > 0) {
             Alerts::note('turn', "$n credential(s) revoked");
+        }
+        if ($left > 0) {
+            Alerts::warn('turn', "$left credential(s) still out: the revoke budget of $budgetSecs s is spent, "
+                . 'the next enforcement takes them');
         }
         return $n;
     }
@@ -442,6 +489,9 @@ final class Turn
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_CONNECTTIMEOUT_MS => $timeoutMs,
                 CURLOPT_TIMEOUT_MS => $timeoutMs,
+                // A sub-second timeout needs this on a libcurl whose resolver
+                // times out by signal; harmless on every other build.
+                CURLOPT_NOSIGNAL => true,
             ]);
             $out = curl_exec($ch);
             $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

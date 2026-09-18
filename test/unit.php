@@ -3424,26 +3424,26 @@ ok(Events::passFor(str_repeat('ab', 32), 'BBBB', 100) !== $p1, 'and so does anot
 ok(Events::passFor(str_repeat('cd', 32), 'AAAA', 100) !== $p1, 'the secret is what makes it unguessable');
 
 // The validity window, at its edges. A code minted for slot S is accepted
-// while now is inside [S*step, S*step + valid) - two slots by default, so
-// what is on somebody else's screen still works while that screen has
-// moved on.
+// while now is inside [S*step, S*step + valid): the 20 s it is on screen
+// and 10 s of grace after it, so what is on somebody else's screen still
+// works while that screen has moved on.
 $evP = $evCard();
-$slot10 = Events::passFor($evP['secret'], 'AAAA', 10);   // shown from 100 s
-ok(Events::verifyPass($evP, $slot10, 100), 'a pass verifies the second it is minted');
-ok(Events::verifyPass($evP, $slot10, 109), 'and at the end of its own slot');
-ok(Events::verifyPass($evP, $slot10, 110), 'and through the slot after it');
-ok(Events::verifyPass($evP, $slot10, 119), 'right up to the last second of the overlap');
-ok(!Events::verifyPass($evP, $slot10, 120), 'and is refused once the window has passed');
-ok(!Events::verifyPass($evP, $slot10, 99), 'a pass is not valid before its own slot');
-ok(!Events::verifyPass($evP, 'ZZZZZZ', 100), 'a code nobody minted never verifies');
-ok(!Events::verifyPass($evP, '', 100), 'nor does an empty one');
+$slot10 = Events::passFor($evP['secret'], 'AAAA', 10);   // shown from 200 s
+ok(Events::verifyPass($evP, $slot10, 200), 'a pass verifies the second it is minted');
+ok(Events::verifyPass($evP, $slot10, 219), 'and at the end of its own slot');
+ok(Events::verifyPass($evP, $slot10, 220), 'and into the slot after it');
+ok(Events::verifyPass($evP, $slot10, 229), 'right up to the last second of the grace');
+ok(!Events::verifyPass($evP, $slot10, 230), 'and is refused once the window has passed');
+ok(!Events::verifyPass($evP, $slot10, 199), 'a pass is not valid before its own slot');
+ok(!Events::verifyPass($evP, 'ZZZZZZ', 200), 'a code nobody minted never verifies');
+ok(!Events::verifyPass($evP, '', 200), 'nor does an empty one');
 
-$evSlots = Events::mintPasses($evP, 6, 105);
-ok(count($evSlots) === 6, 'a pass request hands out six slots, a minute of QR');
-ok($evSlots[0]['at'] === 100000, 'the first is the slot now is inside, in server ms');
-ok($evSlots[1]['at'] === 110000, 'and they step by the rotation interval');
+$evSlots = Events::mintPasses($evP, 6, 205);
+ok(count($evSlots) === 6, 'a pass request hands out six slots, two minutes of QR');
+ok($evSlots[0]['at'] === 200000, 'the first is the slot now is inside, in server ms');
+ok($evSlots[1]['at'] === 220000, 'and they step by the rotation interval');
 ok($evSlots[0]['code'] === $slot10, 'the current slot mints the code that is valid now');
-ok(Events::verifyPass($evP, $evSlots[5]['code'], 155),
+ok(Events::verifyPass($evP, $evSlots[5]['code'], 305),
     'and the last one still verifies when its own moment comes');
 
 // The rows. A scan is the only way to get one, and it is idempotent: a
@@ -3956,13 +3956,21 @@ Turn::forget();
 $turnCalls = [];
 $turnMintFail = false;  // the mint answers 401
 $turnMintNo = 0;
+$turnSeed = [];         // [at, n]: rows other mints land while this call is out
 $turnHttp = static function (string $m, string $url, array $h, ?string $body)
-    use (&$turnCalls, &$turnMintFail, &$turnMintNo): array {
+    use (&$turnCalls, &$turnMintFail, &$turnMintNo, &$turnSeed): array {
     $turnCalls[] = [$m, $url, $body];
     if (str_contains($url, '/generate-ice-servers')) {
         ok($m === 'POST' && in_array('Authorization: Bearer ktok', $h, true), 'the mint carries the TURN key token');
         if ($turnMintFail) {
             return [401, json_encode(['success' => false, 'errors' => [['message' => 'bad key']]])];
+        }
+        if ($turnSeed !== []) {
+            $st = Db::get()->prepare('INSERT INTO turn_mints (at, id) VALUES (?, ?)');
+            for ($i = 0; $i < $turnSeed[1]; $i++) {
+                $st->execute([$turnSeed[0], sprintf('c0ffee%02d', $i)]);
+            }
+            $turnSeed = [];
         }
         $b = json_decode((string)$body, true);
         $turnMintNo++;
@@ -4067,13 +4075,30 @@ $turnDb = Db::get();
 ok(Turn::prune($turnDb, $t0 + 2005 + Turn::WINDOW) === 8 && Turn::gauge($t0 + 2005 + Turn::WINDOW)['recent'] === 1,
     'the reaping drops what fell out of the window and the count agrees');
 ok(Turn::gauge($t0 + 2005 + Turn::WINDOW)['sessions'] === 9, 'the lifetime total is untouched by it');
+
+// Mints run side by side, so the count a mint read before its call can
+// be several below the count after its row: the alert is on the span,
+// not on equality with the line, or a jump past the line raises nothing.
+Settings::set('turn_max_per_30d', 10);
+$turnT = $t0 + 2010 + Turn::WINDOW;
+$turnSeed = [$turnT, 5];
+ok(Turn::mint('cafe0001', $turnT) !== null, 'a mint that five others overtook');
+ok(str_contains((string)$turnAlert('turn'), 'at 7 of 10 in the last 30 days'),
+    'raises the warn alert for the jump from 1 to 7 across the line of 5');
+$turnSeed = [$turnT, 5];
+ok(Turn::mint('f00df00d', $turnT + 1) !== null, 'and the next, overtaken again');
+ok(str_contains((string)$turnAlert('turn-stop'), '13 credentials handed out in the last 30 days, the cap is 10'),
+    'raises the stop alert for the jump from 7 past the cap');
+ok(Turn::gauge($turnT + 1)['why'] === 'cap', 'and the cap holds from there');
 Settings::set('turn_max_per_30d', 1000);
 
 // Switched off: refused at once, revoked on enforcement.
 Settings::set('turn_enabled', 0);
 ok(Turn::mint('deadbeef', $t0 + 3000) === null, 'turn_enabled 0 refuses');
 $turnN = count($turnCalls);
-ok(Turn::enforce() === 4, 'enforcement revokes every credential out');
+ok(Turn::enforce(0.0) === 1, 'a spent budget still revokes one credential per enforcement');
+ok(Turn::gauge($t0 + 3000)['live'] === 3, 'and leaves the rest listed');
+ok(Turn::enforce() === 3, 'which the next enforcement takes');
 $turnRevokes = array_values(array_filter(array_slice($turnCalls, $turnN),
     static fn(array $c): bool => str_contains($c[1], '/revoke')));
 ok(count($turnRevokes) === 4 && in_array('https://rtc.live.cloudflare.com/v1/turn/keys/kid/credentials/u6-deadbeef/revoke',

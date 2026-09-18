@@ -11,7 +11,7 @@ code without reading either.
 
     eid    4 chars   public, grants NOTHING on its own
     key   11 chars   printed on the poster, long-lived, NAMES ITS OWN EVENT
-    pass   6 chars   derived from the clock, valid 20 s, no row stored
+    pass   6 chars   derived from the clock, valid 30 s, no row stored
 
 The eid is the OPERATOR'S TO NAME (1.15.13): on `event_create`, or by
 `event_rename` while the event is UPCOMING. A NAMED eid may carry 0 and
@@ -74,7 +74,7 @@ on the state rather than on a moment, because it rides every member answer
 and therefore arrives by itself.
 
 The pass half of that gate is NEARLY UNREACHABLE and must stay. A pass is
-valid for 20 s and an upcoming event mints none, so reaching the 409 takes
+valid for 30 s and an upcoming event mints none, so reaching the 409 takes
 a pass minted while the event was active and the event then scheduled into
 the future within its slot - which is precisely what the smoke engineers to
 test it. A wrong or expired pass answers 404 long before this line. It is a
@@ -164,4 +164,11 @@ state, so it must never grow a no-fallback path.
 
 The wrong-code throttle exists so an attempt is ON RECORD, not because the
 codes could be guessed - a 54-bit key (31^11) and a 30-bit pass valid
-20 s make brute force irrelevant. If it ever stops writing its line, it is doing nothing.
+30 s make brute force irrelevant. If it ever stops writing its line, it is doing nothing.
+
+The pass timing is two DEFS defaults that ride the `pass` answer as
+`step` and `valid` (1.19.3: 20 s on screen, 30 s accepted - the step
+plus 10 s of grace; 10 / 20 before). A client hard-codes neither, so
+moving them is a default change and a contract sentence, never a
+contract number. `valid` need not be a multiple of `step`:
+Events::verifyPass accepts slot S on [S*step, S*step + valid).

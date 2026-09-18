@@ -545,7 +545,9 @@ join an event that has not started; 4.14 (1.13.0) named the monitor on the
 roles sheet and put it in the tournament's audience. The steps are kept
 below as the record of what was built and in what order. STEP 8, the
 client half, SHIPPED as FOK-snake 4.4.24 through 4.4.36 on 2026-09-10 and
-2026-09-11; nothing in it is outstanding.
+2026-09-11; nothing in it is outstanding. The pass timing below (10 s
+slots, valid 20 s) moved to 20 s slots valid 30 s in 1.19.3 - defaults
+only, the wire carries both numbers.
 
 1. CONTRACT FIRST. docs/API.md: a new "Events" section (identifiers, the
    URL shape and its 53-byte budget, the door and the two waits, join/

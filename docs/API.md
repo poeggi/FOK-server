@@ -2871,7 +2871,7 @@ they were told to come back and remember to scan again.
             no JSON answer this API can produce, for anybody, ever.
     pass    6 chars, same alphabet. The live code a member shows on
             screen. It is derived from the server's clock, so it is
-            valid for 20 s and no row is stored for it.
+            valid for 30 s and no row is stored for it.
     ach id  `ev_<eid>` - the achievement joining grants.
 
 An operator can name the eid when opening an event and change it while
@@ -3104,21 +3104,22 @@ friends.
 APPROVES, never adds. A `set` that changes nothing answers ok, like a
 repeated friend accept.
 
-`pass` hands out the next six 10-second slots at once:
+`pass` hands out the next six 20-second slots at once:
 
-    {"ok": true, "step": 10, "valid": 20,
-     "slots": [{"at": 1784182410000, "code": "H3KM9P"}, ...6]}
+    {"ok": true, "step": 20, "valid": 30,
+     "slots": [{"at": 1784182420000, "code": "H3KM9P"}, ...6]}
 
 `at` is the server-clock millisecond the slot begins, `step` how far
 apart the slots are and `valid` how long each code is accepted for -
 both in SECONDS, and both read from the answer rather than hard-coded,
-because they are admin-configurable. The overlap is deliberate: a code
-stays valid for two slots, so a code read off a screen still works while
-the screen has already moved on.
+because they are admin-configurable. The grace is deliberate: a code is
+on screen for its step and stays accepted for 10 s after the next slot
+took over, so a code read off a screen still works while the screen has
+already moved on.
 
-Six slots is one minute of QR, which is one request a minute for a
-screen that rotates locally on the synced clock. Ask again before the
-last slot lapses.
+Six slots is two minutes of QR, which is one request every two minutes
+for a screen that rotates locally on the synced clock. Ask again before
+the last slot lapses.
 
 A pass names NO ISSUER. The server never learns who passed an event on,
 and cannot: there is no room for an issuer in 53 bytes. That is also why
