@@ -8,18 +8,15 @@
 #   bash test/live-protocol.sh [base-url]      # default: the live server
 #   LIVE_BASE=https://host/staging bash test/live-protocol.sh
 #
-# It targets the exact paths the 1.0.7 writer-contention cuts touch:
-#   - quick match, where the peer-select now gates on seeker liveness and the
-#     cleanup DELETE is sampled (Matchmaking);
-#   - the "connecting" signal burst, where ConnTrack::set keeps an established
-#     relay mode across a same-state re-stamp but must NEVER swallow a
-#     p2p->relay mode upgrade (ConnTrack).
-# The upgrade's mode is only readable through the admin Duels card, so here we
-# assert the client-observable consequences instead: every signal in the burst
-# still arrives in order, and a relay pairing declared mid-burst still relays
-# and still tears down with a v3.3 "gone". The definitive mode=relay assertion
-# belongs to the client-side (admin-capable) test. NOT wired into checks.sh -
-# CI stays offline; this needs a network and a running deployment.
+# It walks the paths a deploy can break: quick match, where the peer-select
+# gates on seeker liveness (Matchmaking); the "connecting" signal burst,
+# which must arrive in order; the shared start moment; the friend gate on
+# invites; the tournament wire and the cap this deployment hands out; the
+# dual-stack announce; and a TURN credential carrying a DataChannel through
+# the relay. The deprecated HTTP relay is off on every deployed server and
+# is not exercised: each attempt at it is an alert row by design. NOT wired
+# into checks.sh - CI stays offline; this needs a network and a running
+# deployment.
 set -uo pipefail
 
 BASE="${1:-${LIVE_BASE:-https://fok-server.poggensee.it}}"
@@ -84,14 +81,6 @@ sig() { # sig <from> <to> <type> <payload>
 }
 poll() { # drain <id>'s signals: the POST form (4.21), the token in the body
     curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$1\"$(jt "$1")}" "$BASE/api/poll.php"
-}
-rly() { # rly <from> <peer> <payload>
-    curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php" > /dev/null
-}
-rlyget() { # the relay's held read: a POST without a payload (4.21)
-    curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"wait\":${3:-0}}" "$BASE/api/relay.php"
 }
 
 # Fixed throwaway ids (8-hex, the server's id format) so repeat runs reuse the
@@ -174,45 +163,12 @@ sig "$A" "$B" bye ''; poll "$B" > /dev/null
 
 # --- Invites are friend-gated: a stranger cannot be invited (quick match is
 # the sanctioned path to a stranger, and it carries no invite). Assert the
-# gate holds, then drive the relay pairing the quick-match way.
+# gate holds.
 hello "$C" srv-CI-3333; expect "hello C registers" '"ok":true' "$R"
 hello "$D" srv-CI-4444; expect "hello D registers" '"ok":true' "$R"
 INV=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$C\"$(jt "$C"),\"to\":\"$D\",\"type\":\"invite\",\"payload\":\"x\"}" "$BASE/api/signal.php")
 expect "inviting a stranger is refused" 'not friends' "$INV"
-
-# --- The relay. OFF by default since TURN (1.19.2): a no-p2p declaration
-# is refused with 503 and the operator is alerted - that is the state a
-# deployed server is expected in, and it is asserted as such. A server with
-# the relay switched on still walks the old path: relay mode declared
-# DURING the connecting burst (a p2p accept, then the upgrade, then an ice
-# burst on the same pair) relays in order and tears down with a "gone".
-sig "$D" "$C" accept ''
-AR=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$D\"$(jt "$D"),\"to\":\"$C\",\"type\":\"accept-relay\",\"payload\":\"\"}" "$BASE/api/signal.php")
-if [ "$AR" = 503 ]; then
-    echo "ok   the relay is off: a no-p2p declaration is refused (503)"
-    RM=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'         -d "{\"id\":\"$C\"$(jt "$C"),\"peer\":\"$D\",\"payload\":\"IN:1\"}" "$BASE/api/relay.php")
-    expect "and so is a relay message" '503' "$RM"
-    CR=$(poll "$C")
-    expect "the p2p accept before it was delivered" '"type":"accept"' "$CR"
-    sig "$C" "$D" bye ''
-    poll "$D" > /dev/null
-else
-    CR=$(poll "$C")
-    expect "accept delivered" '"type":"accept"' "$CR"
-    expect "relay upgrade delivered mid-connect" '"type":"accept-relay"' "$CR"
-    sig "$C" "$D" ice 'r-1'; sig "$C" "$D" ice 'r-2'
-    poll "$D" > /dev/null
-    rly "$C" "$D" 'IN:1'; rly "$C" "$D" 'IN:2'
-    RR=$(rlyget "$D" "$C" 2)
-    ordered "relay pair delivers in order" 'IN:1' 'IN:2' "$RR"
-    expect "relayed messages carry a server age" '"age":' "$RR"
-    rly "$D" "$C" 'IN:3'
-    expect "the reverse relay direction works" 'IN:3' "$(rlyget "$C" "$D")"
-    sig "$C" "$D" bye ''
-    expect "after bye the relay peer is told it is gone" '"gone":true' "$(rlyget "$D" "$C")"
-    poll "$D" > /dev/null
-fi
 
 # --- Tournament (API 4.1): the server orchestrates, the players play. Not one
 # match or spectator byte passes through it, so what a live run can check is
