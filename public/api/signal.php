@@ -79,10 +79,12 @@ if (($type === 'invite' || $type === 'invite-relay') && !Friends::isFriend($id, 
 // EITHER side) means the game will run through the server hub without a P2P
 // attempt - so relay capacity is checked right now, and a full relay answers
 // 503 before any game setup is wasted.
-if (($type === 'invite-relay' || $type === 'accept-relay')
-    && Relay::capReached($id, $to)) {
-    Alerts::raise('relay', 'Relay duel cap reached: no-P2P game declaration rejected');
-    Util::fail('relay busy', 503);
+if ($type === 'invite-relay' || $type === 'accept-relay') {
+    Relay::refuseIfOff($id, $to, $type);
+    if (Relay::capReached($id, $to)) {
+        Alerts::raise('relay', 'Relay duel cap reached: no-P2P game declaration rejected');
+        Util::fail('relay busy', 503);
+    }
 }
 
 // 'bye' ends the pairing, so its relay backlog dies with it: an

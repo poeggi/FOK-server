@@ -37,8 +37,9 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   relayed duels are capped to protect the shared-hosting worker pool.
   This is NOT WebRTC relaying: there is no TURN server, and the server
   never carries an RTCPeerConnection. WebRTC is abandoned, and plain
-  opaque messages go over HTTP instead. Still live; being phased out in
-  favour of a persistent async hub off this host.
+  opaque messages go over HTTP instead. Still live, OFF by default since
+  1.19.2 (relay_max_duels 0: every attempt is refused with 503 and is an
+  alert of its own); the Relaying bubble stays as the monitor.
 - TURN credentials (contract 4.22): the replacement for that relay. A
   duel no direct path can carry goes through Cloudflare's TURN relay on
   the SAME DataChannel; this server only mints the short-lived

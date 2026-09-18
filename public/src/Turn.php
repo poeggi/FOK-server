@@ -47,9 +47,17 @@ final class Turn
     private const ENFORCE_SECS = 60;
     // The window the cap counts over, in seconds; the setting names it.
     public const WINDOW = 30 * 86400;
-    // Seconds one call to the relay's API may take: a mint runs inside a
-    // player's request.
-    private const HTTP_TIMEOUT = 6;
+    // How long one call to the relay's API may take, in ms. A mint runs
+    // INSIDE a player's request, so it is measured against a healthy call
+    // rather than a patient one: a full round trip to the relay's API,
+    // TLS included, is 120-350 ms from a workstation and less from the
+    // host, so a call still open at this line is an outage and the client
+    // gets its 503 at once instead of waiting on it. A credential that
+    // landed after the client built its connection anyway would be
+    // counted and used by nobody. A revoke runs in the deferred tail or
+    // under the operator's hand, and can afford to wait.
+    private const MINT_TIMEOUT_MS = 600;
+    private const HTTP_TIMEOUT_MS = 6000;
     // The heaviest ids the popup lists.
     private const TOP = 20;
 
@@ -141,7 +149,7 @@ final class Turn
         $r = self::call('POST',
             $cfg['rtc'] . '/v1/turn/keys/' . rawurlencode($cfg['key_id']) . '/credentials/generate-ice-servers',
             ['Authorization: Bearer ' . $cfg['key_token'], 'Content-Type: application/json'],
-            json_encode(['ttl' => $ttl, 'customIdentifier' => $id]));
+            json_encode(['ttl' => $ttl, 'customIdentifier' => $id]), self::MINT_TIMEOUT_MS);
         $ice = $r[0] === 201 || $r[0] === 200 ? self::iceOf($r[1]) : null;
         if ($ice === null) {
             Alerts::raise('turn-error', 'TURN credentials could not be minted: ' . self::said($r), 'error');
@@ -419,7 +427,8 @@ final class Turn
      *
      * @return array{0:int, 1:string}
      */
-    private static function call(string $method, string $url, array $headers, ?string $body): array
+    private static function call(string $method, string $url, array $headers, ?string $body,
+                                 int $timeoutMs = self::HTTP_TIMEOUT_MS): array
     {
         if (self::$http !== null) {
             return (self::$http)($method, $url, $headers, $body);
@@ -431,8 +440,8 @@ final class Turn
                 CURLOPT_HTTPHEADER => $headers,
                 CURLOPT_POSTFIELDS => $body ?? '',
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => self::HTTP_TIMEOUT,
-                CURLOPT_TIMEOUT => self::HTTP_TIMEOUT,
+                CURLOPT_CONNECTTIMEOUT_MS => $timeoutMs,
+                CURLOPT_TIMEOUT_MS => $timeoutMs,
             ]);
             $out = curl_exec($ch);
             $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
@@ -444,7 +453,7 @@ final class Turn
             'method' => $method,
             'header' => implode("\r\n", $headers),
             'content' => $body ?? '',
-            'timeout' => self::HTTP_TIMEOUT,
+            'timeout' => $timeoutMs / 1000,
             'ignore_errors' => true,
         ]]);
         $out = @file_get_contents($url, false, $ctx);

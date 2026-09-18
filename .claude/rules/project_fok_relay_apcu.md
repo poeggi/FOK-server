@@ -2,7 +2,13 @@
 
 DO NOT extend the relay. It is deprecated (still shipped) and slated for
 replacement by a persistent async/WebSocket hub on a VPS. Fix it if it
-breaks; never grow it.
+breaks; never grow it. OFF BY DEFAULT since 1.19.2 (TURN credentials,
+project_fok_turn.md, replace it): relay_max_duels 0 refuses every
+handshake and every relay.php request through Relay::refuseIfOff with
+the contract's 503 "relay busy", and raises `relay-used` for EACH
+attempt (Alerts::raise with cooldown 0 - the one caller that is never
+de-duplicated). The smoke switches the relay on in lib.sh to keep
+covering it and 06_admin puts 0 back and asserts the refusal.
 
 - All relay logic sits behind ONE boundary, the `Relay` facade
   (public/src/Relay.php): `markRelaying`, `activePairs`, `isRelaying`,

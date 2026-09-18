@@ -181,26 +181,38 @@ INV=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$C\"$(jt "$C"),\"to\":\"$D\",\"type\":\"invite\",\"payload\":\"x\"}" "$BASE/api/signal.php")
 expect "inviting a stranger is refused" 'not friends' "$INV"
 
-# --- Relay mode declared DURING the connecting burst (the must-not-break).
-# A p2p accept, then a relay upgrade, then an ice burst on the same pair: if the
-# throttle wrongly swallowed the upgrade the pairing would not be a relay one.
-# Observable proof: it relays in order and tears down with a v3.3 "gone".
+# --- The relay. OFF by default since TURN (1.19.2): a no-p2p declaration
+# is refused with 503 and the operator is alerted - that is the state a
+# deployed server is expected in, and it is asserted as such. A server with
+# the relay switched on still walks the old path: relay mode declared
+# DURING the connecting burst (a p2p accept, then the upgrade, then an ice
+# burst on the same pair) relays in order and tears down with a "gone".
 sig "$D" "$C" accept ''
-sig "$D" "$C" accept-relay ''
-CR=$(poll "$C")
-expect "accept delivered" '"type":"accept"' "$CR"
-expect "relay upgrade delivered mid-connect" '"type":"accept-relay"' "$CR"
-sig "$C" "$D" ice 'r-1'; sig "$C" "$D" ice 'r-2'
-poll "$D" > /dev/null
-rly "$C" "$D" 'IN:1'; rly "$C" "$D" 'IN:2'
-RR=$(rlyget "$D" "$C" 2)
-ordered "relay pair delivers in order" 'IN:1' 'IN:2' "$RR"
-expect "relayed messages carry a server age" '"age":' "$RR"
-rly "$D" "$C" 'IN:3'
-expect "the reverse relay direction works" 'IN:3' "$(rlyget "$C" "$D")"
-sig "$C" "$D" bye ''
-expect "after bye the relay peer is told it is gone" '"gone":true' "$(rlyget "$D" "$C")"
-poll "$D" > /dev/null
+AR=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$D\"$(jt "$D"),\"to\":\"$C\",\"type\":\"accept-relay\",\"payload\":\"\"}" "$BASE/api/signal.php")
+if [ "$AR" = 503 ]; then
+    echo "ok   the relay is off: a no-p2p declaration is refused (503)"
+    RM=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'         -d "{\"id\":\"$C\"$(jt "$C"),\"peer\":\"$D\",\"payload\":\"IN:1\"}" "$BASE/api/relay.php")
+    expect "and so is a relay message" '503' "$RM"
+    CR=$(poll "$C")
+    expect "the p2p accept before it was delivered" '"type":"accept"' "$CR"
+    sig "$C" "$D" bye ''
+    poll "$D" > /dev/null
+else
+    CR=$(poll "$C")
+    expect "accept delivered" '"type":"accept"' "$CR"
+    expect "relay upgrade delivered mid-connect" '"type":"accept-relay"' "$CR"
+    sig "$C" "$D" ice 'r-1'; sig "$C" "$D" ice 'r-2'
+    poll "$D" > /dev/null
+    rly "$C" "$D" 'IN:1'; rly "$C" "$D" 'IN:2'
+    RR=$(rlyget "$D" "$C" 2)
+    ordered "relay pair delivers in order" 'IN:1' 'IN:2' "$RR"
+    expect "relayed messages carry a server age" '"age":' "$RR"
+    rly "$D" "$C" 'IN:3'
+    expect "the reverse relay direction works" 'IN:3' "$(rlyget "$C" "$D")"
+    sig "$C" "$D" bye ''
+    expect "after bye the relay peer is told it is gone" '"gone":true' "$(rlyget "$D" "$C")"
+    poll "$D" > /dev/null
+fi
 
 # --- Tournament (API 4.1): the server orchestrates, the players play. Not one
 # match or spectator byte passes through it, so what a live run can check is

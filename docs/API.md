@@ -1629,7 +1629,10 @@ below reached, or the relay's API not answering - because the client's
 reaction is the same for all of them: build the connection with STUN
 alone, as before 4.22. A client must expect it at any time (what was
 offered a minute ago may have been withdrawn since) and must never fail
-a match on it.
+a match on it. The answer comes within 0.6 s plus the round trip: a
+relay that has not minted by then is the 503, so a client that builds
+its connection after a bounded wait is never left with a credential it
+did not get to use.
 
 What the server does with the budget, so a client knows what it is
 holding: it counts the credentials it hands out. Past `turn_max_per_30d`
@@ -1651,6 +1654,13 @@ being phased out in favour of a persistent async hub off this host. Do not
 build new clients around it. Removal is a MAJOR contract change (it drops
 the two signal types and relay.php) and will be coordinated with the client.
 See DEPRECATED-relay.md in this repo.
+
+OFF BY DEFAULT since TURN credentials (4.22, server 1.19.2): the default
+`relay_max_duels` is 0, and at 0 every `invite-relay` / `accept-relay`
+and every relay.php request is refused with 503 "relay busy" - the same
+answer a full relay gives, so nothing new on the wire - and the operator
+is alerted on each attempt. A client that holds TURN credentials never
+reaches for the relay; one without them may, and gets this.
 
 P2P fails for some pairs (symmetric NAT, UDP-blocking firewalls). When
 the DataChannel does not open within 5 s of signaling (the default

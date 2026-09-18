@@ -21,7 +21,13 @@ credential for a revoke and is half of it).
 `turn.php` answers a client the credential Cloudflare minted (`ice`, the
 iceServers list verbatim minus the port-53 urls, plus `ttl`) or 503
 `turn_unavailable` - ONE refusal for every reason, because the client's
-reaction is the same for all of them (STUN only).
+reaction is the same for all of them (STUN only). The mint's call to
+Cloudflare is capped at 600 ms (Turn::MINT_TIMEOUT_MS, 1.19.2): a
+healthy call is 120-350 ms with TLS from a workstation, less from the
+host, and the client builds its pc without the answer after a bounded
+wait (FOK-snake NET_TURN_WAIT_MS), so a slower mint is a 503 inside
+that window rather than a counted credential nobody uses. Revokes keep
+6 s. Measured 2026-09-18, five calls to rtc.live.cloudflare.com.
 
 ## The cap is a COUNT, and that was a decision
 

@@ -42,9 +42,11 @@ final class Alerts
      * as a duplicate within alert_cooldown. Callers rarely need the return -
      * the log line is written here, not by them.
      */
-    public static function raise(string $type, string $message, string $level = 'alert'): bool
+    public static function raise(string $type, string $message, string $level = 'alert', ?int $cooldown = null): bool
     {
-        $cooldown = Settings::int('alert_cooldown');
+        // A caller that wants EVERY occurrence on the dashboard - an attempt
+        // at something switched off - passes 0 and is never de-duplicated.
+        $cooldown ??= Settings::int('alert_cooldown');
         // The de-duplication gate, in shared memory. A sustained condition
         // calls raise() from every request that observes it and all but one
         // are suppressed - but learning that from the alerts table means a

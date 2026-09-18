@@ -233,6 +233,11 @@ if [ "$ADMIN" -eq 1 ]; then
     # 09 finds it held. 09 sets the gap to 0 wherever it wants a sweep, which
     # bypasses the key, and puts the default back at its end.
     setting tournament_sweep_secs 900
+    # The relay is OFF by default since TURN (relay_max_duels 0: every
+    # attempt refused and alerted). The suite still covers the deprecated
+    # path, so it switches the relay on for the run; 06_admin puts the
+    # default back at its end and asserts the refusal itself.
+    setting relay_max_duels 4
 fi
 
 # ---- helpers more than one part uses -------------------------------------

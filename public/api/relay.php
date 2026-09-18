@@ -144,6 +144,7 @@ if ($method === 'GET') {
     }
     Util::noteCaller($id);
     Ident::require($id, Ident::read($_GET)[1], Util::clientIp());
+    Relay::refuseIfOff($id, $peer, 'held read');
     relay_hold($id, $peer, min((int)($_GET['wait'] ?? 0), FOK_POLL_WAIT_MAX));
 }
 
@@ -159,6 +160,7 @@ if (!Util::isValidId($id) || !Util::isValidId($peer) || $id === $peer) {
 }
 Util::noteCaller($id);
 Ident::require($id, Ident::read($body)[1], Util::clientIp());
+Relay::refuseIfOff($id, $peer, array_key_exists('payload', $body) ? 'message' : 'held read');
 // No payload is the held read (4.21), the GET above as a body.
 if (!array_key_exists('payload', $body)) {
     $wait = $body['wait'] ?? 0;

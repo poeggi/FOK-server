@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Caps.php';
 require_once __DIR__ . '/Settings.php';
+require_once __DIR__ . '/Alerts.php';
 require_once __DIR__ . '/ConnTrack.php';
 require_once __DIR__ . '/RelayStore.php';
 require_once __DIR__ . '/RelayRate.php';
@@ -117,6 +118,24 @@ final class Relay
     {
         return !self::isRelaying($a, $b)
             && self::activePairs() >= Settings::int('relay_max_duels');
+    }
+
+    /**
+     * The relay switched off (relay_max_duels 0, the default since TURN):
+     * every handshake and every request is refused, and each attempt is an
+     * alert of its own - never de-duplicated - because a client still
+     * reaching for the relay is the thing the operator asked to see. The
+     * refusal is the contract's 503 "relay busy": the client's reaction is
+     * the same, and a new error value would be a contract move.
+     */
+    public static function refuseIfOff(string $id, string $peer, string $what): void
+    {
+        if (Settings::int('relay_max_duels') > 0) {
+            return;
+        }
+        Alerts::raise('relay-used', "relay attempted by $id (peer $peer, $what) while the relay is off: refused",
+            'alert', 0);
+        Util::fail('relay busy', 503);
     }
 
     /**

@@ -648,6 +648,24 @@ else
     # two override rows and its anti-probe guard stays off between runs.
     setting friend_rate_interval 1
     setting friend_rate_burst 10
+    # The relay lib.sh switched on for the run goes back to OFF, and off
+    # is what is asserted: every attempt refused, every attempt an alert
+    # row of its own - two attempts, two rows, no de-duplication.
+    setting relay_max_duels 0
+    curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_clear" > /dev/null
+    R=$(sigcode "$ID1" "$ID2" accept-relay '{}')
+    expect "with the relay off a no-p2p declaration is refused" '503' "$R"
+    R=$(rlycode "$ID1" "$ID2" 'anyone')
+    expect "and so is a relay message" '503' "$R"
+    R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'         -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\",\"wait\":0}" "$BASE/api/relay.php")
+    expect "and the held read" '503' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=alerts")
+    expect "each attempt is an alert" '"type":"relay-used"' "$R"
+    expect "three attempts, three rows" '3' "$(grep -o '"type":"relay-used"' <<< "$R" | wc -l | tr -d ' ')"
+    # The read path annotates every id with its name, so the shape is
+    # asserted around that.
+    expect "naming who reached for it" "relay attempted by $ID1" "$R"
+    expect "and what for" 'accept-relay) while the relay is off: refused' "$R"
     setting tournament_sweep_secs 30
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
     expect "and so does the friend-request throttle" '"key":"friend_rate_burst","value":10,"default":10' "$R"

@@ -96,8 +96,10 @@ try {
     if (!result) throw new Error('the page never finished (60 s)');
     adopt(result.tok);
     const show = (r) => r ? `open ${r.openMs} ms, rtt ${r.rttMs} ms, ${r.local.type} ${r.local.addr}`
-        + `${r.local.relayProto ? ' via ' + r.local.relayProto : ''} -> ${r.remote.type} ${r.remote.addr}`
-        + ` (candidates a ${r.candidates.a}, b ${r.candidates.b}, relay ${r.candidates.relay})` : '-';
+        + `${r.local.relayProto ? ' via ' + r.local.relayProto : ''}`
+        + ` -> ${r.remote.type} ${r.remote.addr}`
+        + ` (candidates a ${r.candidates.a}, b ${r.candidates.b}, relay ${r.candidates.relay}`
+        + `${r.candidates.relay ? ': allocated over v4 ' + r.candidates.v4 + ', v6 ' + r.candidates.v6 : ''})` : '-';
     console.log('turn.php:   ' + (result.turn ? result.turn.status + (result.turn.error ? ' ' + result.turn.error : ' ttl ' + result.turn.ttl
         + ', ' + result.turn.urls.length + ' urls') : '-'));
     console.log('relay-only: ' + show(result.relay));

@@ -2944,14 +2944,15 @@ const MODULES = [
                 // TURN credential right now, and how many were handed out
                 // in the last 30 days - the figure the cap counts. The cap
                 // itself and the lifetime total are in the popup (see Turn).
-                { label: 'TURN c | 30d', value: d.turn.live + ' | ' + fmtNum(d.turn.recent),
+                { label: 'TURN active | 30d', value: d.turn.live + ' | ' + fmtNum(d.turn.recent),
                     tip: 'Players holding a TURN credential right now, and credentials handed out '
                         + 'in the last 30 days, of ' + fmtNum(d.turn.cap) + '. '
                         + (d.turn.offered ? 'Offered.' : 'Not offered: ' + TURN_WHY[d.turn.why] + '.')
                         + ' Click for the cap.',
                     open: showTurn },
-                { label: 'Friends active | pending',
-                    value: fmtNum(d.friendships) + ' | ' + fmtNum(d.friendships_pending) },
+                { label: 'Friends act. | pend.',
+                    value: fmtNum(d.friendships) + ' | ' + fmtNum(d.friendships_pending),
+                    tip: 'Friendships accepted, and requests still unanswered.' },
                 { label: 'Scores stored', value: d.scores_total },
             ]);
             box.append(el('p', 'muted', 'Server v' + d.server_version + '.'));

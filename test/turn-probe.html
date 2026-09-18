@@ -33,9 +33,18 @@ async function pair(ice, policy) {
     const cfg = { iceServers: ice, iceTransportPolicy: policy };
     const a = new RTCPeerConnection(cfg);
     const b = new RTCPeerConnection(cfg);
-    const cands = { a: 0, b: 0, relay: 0 };
-    a.onicecandidate = (e) => { if (e.candidate) { cands.a++; if (e.candidate.type === 'relay') cands.relay++; b.addIceCandidate(e.candidate); } };
-    b.onicecandidate = (e) => { if (e.candidate) { cands.b++; if (e.candidate.type === 'relay') cands.relay++; a.addIceCandidate(e.candidate); } };
+    // A relay candidate's relatedAddress is the reflexive address the
+    // allocation was made from: which family this box reached the relay
+    // over, counted per family.
+    const cands = { a: 0, b: 0, relay: 0, v4: 0, v6: 0 };
+    const note = (c) => {
+        if (c.type === 'relay') {
+            cands.relay++;
+            if (c.relatedAddress) cands[c.relatedAddress.includes(':') ? 'v6' : 'v4']++;
+        }
+    };
+    a.onicecandidate = (e) => { if (e.candidate) { cands.a++; note(e.candidate); b.addIceCandidate(e.candidate); } };
+    b.onicecandidate = (e) => { if (e.candidate) { cands.b++; note(e.candidate); a.addIceCandidate(e.candidate); } };
     const dc = a.createDataChannel('probe', { ordered: false, maxRetransmits: 0 });
     b.ondatachannel = (e) => { e.channel.onmessage = (m) => e.channel.send('pong:' + m.data); };
     const t0 = performance.now();
@@ -68,7 +77,11 @@ async function pair(ice, policy) {
     return {
         policy, openMs, rttMs, echo,
         candidates: cands,
-        local: loc ? { type: loc.candidateType, addr: (loc.address || loc.ip) + ':' + loc.port, proto: loc.protocol, relayProto: loc.relayProtocol || null } : null,
+        // relatedAddress of a relay candidate is the reflexive address the
+        // allocation was made from: which family this box reached the
+        // relay over.
+        local: loc ? { type: loc.candidateType, addr: (loc.address || loc.ip) + ':' + loc.port, proto: loc.protocol,
+            relayProto: loc.relayProtocol || null } : null,
         remote: rem ? { type: rem.candidateType, addr: (rem.address || rem.ip) + ':' + rem.port, proto: rem.protocol } : null,
     };
 }

@@ -68,9 +68,12 @@ final class Settings
             'Most ICE candidates one batched ices signal may carry; a larger batch is rejected as invalid.'],
         // DEPRECATED: relay fallback (see docs/DEPRECATED-relay.md). These
         // seven relay_* settings are removed with the feature.
-        'relay_max_duels' => [4, 'Max concurrent relayed duels (protects FPM workers)',
-            'Relayed duels the server carries at once (deprecated relay). A relay handshake beyond it is refused '
-            . 'with 503 and the relay alert is raised. A relayed duel can hold two workers.'],
+        'relay_max_duels' => [0, 'Max concurrent relayed duels (0 = the relay is off; every attempt alerts)',
+            'Relayed duels the server carries at once (deprecated relay). 0, the default since TURN, refuses '
+            . 'every relay handshake and every relay.php request with 503 and raises the relay-used alert for '
+            . 'EACH attempt - a client still reaching for the relay is worth knowing about. Above 0 a handshake '
+            . 'beyond the cap is refused the same way and the relay alert is raised once per cooldown. A '
+            . 'relayed duel can hold two workers.'],
         'relay_max_payload' => [2048, 'Max relayed message bytes',
             'Largest relayed message in bytes; a larger one is rejected as invalid. 2048 fits a base64 packet of '
             . '1280 binary bytes.'],
