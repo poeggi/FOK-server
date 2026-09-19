@@ -84,10 +84,14 @@ two mints per ttl, whatever it does. The client asks before EVERY peer
 connection it builds (duel, spectator, monitor alike) and takes a fresh
 one when the held credential has under 30 min left (FOK-snake
 NET_TURN_MIN_MS, matched to the server's half), so every connection
-starts on at least 30 min; a connection already open is never renewed,
-and one that outlives its credential drops at the relay's next
-allocation refresh, about ten minutes. That is the headroom the
-operator asked for on 2026-09-19 (15 min before). The switch (`turn_enabled` 0) refuses BEFORE the held
+starts on at least 30 min. A connection already open is never renewed
+- the client's mid-game reconnect builds a NEW pc, never an ICE restart
+- so since FOK-snake 4.5.10 a match whose selected pair has a relay end
+TOPS UP: its liveness pass asks turn.php when the held life is under
+the floor, nothing waited on, and the rebuild finds a fresh credential.
+One extra mint per relayed match past 30 min, then one per half hour;
+a direct match never asks. That is the headroom the operator asked for
+on 2026-09-19 (15 min before). The switch (`turn_enabled` 0) refuses BEFORE the held
 credential is answered: off means off.
 
 ## Revocation happens on the switch, not on the cap
