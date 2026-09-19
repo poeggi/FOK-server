@@ -227,8 +227,13 @@ major. Every minor since is additive; docs/API.md carries them one by one.
                       a connect test through the TURN relay without the
                       game client: headless Edge, two peer connections
                       forced onto the relay, a ping through it (local
-                      server with the key from ~, or --base <deployed>).
-                      Not part of CI.
+                      server with the key from ~, or --base <deployed>;
+                      --family 6|4 pins the relay leg). Not part of CI.
+    test/turn-alloc.mjs
+                      a TURN Allocate over UDP/IPv6 or IPv4 from node
+                      with a live credential: what the relay saw the
+                      allocation come from and the relayed address it
+                      handed out. Not part of CI.
     tools/deploy.sh   FTPS upload of public/ (used by the CI/CD pipeline)
     tools/deploy.ps1  manual FTPS upload (emergency fallback)
     tools/put-turn.ps1

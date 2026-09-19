@@ -5,7 +5,10 @@
 // what the page found: whether a credential was minted, whether a
 // DataChannel forced onto the relay opened and echoed, and which pair ICE
 // picked when a direct path existed beside the relay. The credential is
-// fetched and used inside the page and is never printed here.
+// fetched and used inside the page and is never printed here. Which
+// address family the relay leg took is not readable from a browser (it
+// blanks the related address): --family pins it, test/turn-alloc.mjs
+// asks the relay.
 //
 //   node test/turn-probe.mjs            local server, the key from ~
 //                                       (FOK_CA_BUNDLE=<pem> when this
@@ -15,6 +18,11 @@
 //                                       the page still comes from the
 //                                       local php -S on port 8000, which
 //                                       the API's CORS allowlist admits
+//   ... --family 6 | 4                  pin the relay leg to one address
+//                                       family: the TURN urls are pointed
+//                                       at the relay's AAAA (or A) record
+//                                       as a literal, so the allocation
+//                                       can only be made over that family
 //
 // Needs php, node 22+ and Microsoft Edge on this box. Exit 0 when the
 // relayed echo came back, 1 otherwise.
@@ -22,9 +30,17 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, copyFileSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
+import { promises as dns } from 'node:dns';
 
 const args = process.argv.slice(2);
 const remote = args.includes('--base') ? args[args.indexOf('--base') + 1].replace(/\/$/, '') : '';
+const family = args.includes('--family') ? args[args.indexOf('--family') + 1] : '';
+// The relay host as a literal of the asked family: turn.cloudflare.com
+// carries both records, and a literal leaves the browser no choice.
+let relayLit = '';
+if (family === '6') relayLit = '[' + (await dns.resolve6('turn.cloudflare.com'))[0] + ']';
+else if (family === '4') relayLit = (await dns.resolve4('turn.cloudflare.com'))[0];
+else if (family !== '') { console.error('--family takes 6 or 4'); process.exit(1); }
 const port = 8000;
 const cdp = 9334;
 const edgePath = ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -85,7 +101,9 @@ try {
     const cmd = (method, params) => new Promise((res) => { const id = ++seq; pending.set(id, res); ws.send(JSON.stringify({ id, method, params: params || {} })); });
     const evalJs = async (expr) => (await cmd('Runtime.evaluate', { expression: expr, returnByValue: true })).result.result.value;
     await cmd('Page.enable');
-    const query = remote ? '?base=' + encodeURIComponent(remote) + '&id=' + ID + (heldTok ? '&tok=' + heldTok : '') : '?id=' + ID;
+    const query = (remote ? '?base=' + encodeURIComponent(remote) + '&id=' + ID + (heldTok ? '&tok=' + heldTok : '') : '?id=' + ID)
+        + (relayLit ? '&relay=' + encodeURIComponent(relayLit) : '');
+    if (relayLit) console.log('relay leg pinned to ' + relayLit);
     await cmd('Page.navigate', { url: 'http://127.0.0.1:' + port + '/turn-probe' + query });
     let result = null;
     for (let i = 0; i < 300 && !result; i++) {
@@ -99,7 +117,7 @@ try {
         + `${r.local.relayProto ? ' via ' + r.local.relayProto : ''}`
         + ` -> ${r.remote.type} ${r.remote.addr}`
         + ` (candidates a ${r.candidates.a}, b ${r.candidates.b}, relay ${r.candidates.relay}`
-        + `${r.candidates.relay ? ': allocated over v4 ' + r.candidates.v4 + ', v6 ' + r.candidates.v6 : ''})` : '-';
+        + `${r.candidates.relay ? ': ' + Object.entries(r.candidates.by).map(([p, n]) => n + ' ' + p).join(', ') : ''})` : '-';
     console.log('turn.php:   ' + (result.turn ? result.turn.status + (result.turn.error ? ' ' + result.turn.error : ' ttl ' + result.turn.ttl
         + ', ' + result.turn.urls.length + ' urls') : '-'));
     console.log('relay-only: ' + show(result.relay));

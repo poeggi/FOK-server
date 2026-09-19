@@ -21,6 +21,14 @@ const q = new URLSearchParams(location.search);
 const base = (q.get('base') || '').replace(/\/$/, '');
 const ID = q.get('id') || '77777e57';
 let TOK = q.get('tok') || null;
+// ?relay=<literal address> points every turn: url at that address instead
+// of the relay's hostname, which pins the allocation to one address
+// family. The turns: urls go with it: a certificate names the hostname,
+// not the literal.
+const RELAY = q.get('relay') || '';
+const pin = (ice) => !RELAY ? ice : ice.map((s) => ({ ...s,
+    urls: s.urls.filter((u) => !u.startsWith('turns:')).map((u) => u.replace('turn.cloudflare.com', RELAY)) }))
+    .filter((s) => s.urls.length);
 const out = [];
 const log = (s) => { out.push(s); document.getElementById('log').textContent = out.join('\n'); };
 const post = async (path, body) => {
@@ -33,14 +41,16 @@ async function pair(ice, policy) {
     const cfg = { iceServers: ice, iceTransportPolicy: policy };
     const a = new RTCPeerConnection(cfg);
     const b = new RTCPeerConnection(cfg);
-    // A relay candidate's relatedAddress is the reflexive address the
-    // allocation was made from: which family this box reached the relay
-    // over, counted per family.
-    const cands = { a: 0, b: 0, relay: 0, v4: 0, v6: 0 };
+    // Relay candidates per transport. The browser blanks a relay
+    // candidate's related address (0.0.0.0), so which family the
+    // allocation went over cannot be read here: pin it with ?relay= (the
+    // driver's --family), or ask the relay itself (test/turn-alloc.mjs).
+    const cands = { a: 0, b: 0, relay: 0, by: {} };
     const note = (c) => {
         if (c.type === 'relay') {
             cands.relay++;
-            if (c.relatedAddress) cands[c.relatedAddress.includes(':') ? 'v6' : 'v4']++;
+            const p = c.relayProtocol || c.protocol;
+            cands.by[p] = (cands.by[p] || 0) + 1;
         }
     };
     a.onicecandidate = (e) => { if (e.candidate) { cands.a++; note(e.candidate); b.addIceCandidate(e.candidate); } };
@@ -77,9 +87,6 @@ async function pair(ice, policy) {
     return {
         policy, openMs, rttMs, echo,
         candidates: cands,
-        // relatedAddress of a relay candidate is the reflexive address the
-        // allocation was made from: which family this box reached the
-        // relay over.
         local: loc ? { type: loc.candidateType, addr: (loc.address || loc.ip) + ':' + loc.port, proto: loc.protocol,
             relayProto: loc.relayProtocol || null } : null,
         remote: rem ? { type: rem.candidateType, addr: (rem.address || rem.ip) + ':' + rem.port, proto: rem.protocol } : null,
@@ -100,10 +107,10 @@ async function pair(ice, policy) {
             urls: t.status === 200 ? t.body.ice.flatMap((s) => s.urls) : [] };
         log('turn.php ' + t.status + (t.body.error ? ' ' + t.body.error : ' ttl ' + t.body.ttl));
         if (t.status !== 200) throw new Error('no credential: ' + (t.body.error || t.status));
-        result.relay = await pair(t.body.ice, 'relay');
+        result.relay = await pair(pin(t.body.ice), 'relay');
         log('relay-only: open ' + result.relay.openMs + ' ms, rtt ' + result.relay.rttMs + ' ms, '
             + JSON.stringify(result.relay.local) + ' -> ' + JSON.stringify(result.relay.remote));
-        result.all = await pair(t.body.ice, 'all');
+        result.all = await pair(pin(t.body.ice), 'all');
         log('all: open ' + result.all.openMs + ' ms, rtt ' + result.all.rttMs + ' ms, '
             + JSON.stringify(result.all.local) + ' -> ' + JSON.stringify(result.all.remote));
         result.ok = result.relay.echo === 'pong:ping' && result.relay.local && result.relay.local.type === 'relay';

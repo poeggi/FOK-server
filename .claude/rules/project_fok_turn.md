@@ -112,6 +112,29 @@ while a mint is out, which is how the concurrent jump is tested. The
 unit block runs with `alert_cooldown` 0, because every TURN alert type
 is raised more than once inside one real minute there.
 
+## Address families: the leg is dual-stack, the relayed address is v4
+
+Measured 2026-09-19 with test/turn-alloc.mjs (a TURN Allocate over UDP
+from node, a live credential): the relay allocates over IPv6
+(2a06:98c1:3200::1, 66 ms) and IPv4 (141.101.90.1, 44 ms) alike, and
+the RELAYED address - the one the other peer sends to - is IPv4 in both
+cases. Cloudflare's documented choice: REQUESTED-ADDRESS-FAMILY is
+ignored. It costs nothing: a v6-only player holding a credential sends
+through its own allocation, two relaying peers meet inside Cloudflare,
+and a v4 peer reaches any relayed address. The one stranded case is a
+v6-only device with no credential and no direct v6 path, which had
+nothing before TURN either. Do not build a second relay for it.
+
+A BROWSER CANNOT SHOW THE FAMILY: Chrome blanks a relay candidate's
+related address to 0.0.0.0, so the probe's earlier "all allocations
+over IPv4" (2026-09-18) was a reading of that blank, not a fact. The
+probe now counts relay candidates per transport only; `--family 6|4`
+pins the leg by pointing the turn: urls at the relay's literal (turns:
+urls dropped, a certificate names the hostname), which proves the leg
+over that family end to end (v6: open ~360 ms, TCP - with a literal the
+browser gathered no UDP relay candidate in either family, a browser
+quirk left unexplained; the hostname form gathers UDP).
+
 ## The client half (FOK-snake)
 
 Briefed 2026-09-18: one credential cache per session, asked for when a
