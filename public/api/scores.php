@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Util.php';
+require_once __DIR__ . '/../src/Words.php';
 require_once __DIR__ . '/../src/Ident.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Scores.php';
@@ -81,7 +82,8 @@ if (isset($body['inputs'])) {
         Util::fail('invalid inputs');
     }
 }
-$name = is_string($body['name'] ?? null) ? $body['name'] : '';
+// Everybody reads the top list, so the name is masked here (see Words).
+$name = Words::mask(is_string($body['name'] ?? null) ? $body['name'] : '');
 $completed = $body['completed'] ?? false;
 if (!is_bool($completed)) {
     Util::fail('invalid completed');

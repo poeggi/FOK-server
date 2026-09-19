@@ -2921,6 +2921,35 @@ function renderUsers(box, d) {
     box.append(legend);
 }
 
+// What players reported (friend.php report): who, whom, the name the
+// target had then, why. Dismiss drops the row; acting on the target is the
+// users tab's delete or the client popup's reset, one click on the id away.
+function renderReports(box, d) {
+    box.replaceChildren();
+    if (!d.reports.length) { box.append(el('p', 'muted', 'No reports.')); return; }
+    const nameOf = (id) => (d.names && d.names[id]) || '';
+    const table = el('table');
+    table.append(row(['When', 'Reporter', 'Target', 'Name then', 'Reason', ''], 'th'));
+    for (const r of d.reports) {
+        const tr = el('tr');
+        const btn = el('button', 'small', 'dismiss');
+        btn.onclick = async () => {
+            btn.disabled = true;
+            await api('report_dismiss', { method: 'POST', body: form({ rid: r.rid }) });
+            refreshModule('players');
+        };
+        const td = el('td');
+        td.append(btn);
+        tr.append(el('td', 'muted', fmtTime(r.created)), idCell(r.reporter, nameOf(r.reporter)),
+            idCell(r.target, nameOf(r.target)), el('td', '', r.name || '-'), el('td', '', r.reason), td);
+        table.append(tr);
+    }
+    const view = el('div', 'pane');
+    view.append(table);
+    box.append(view);
+    sortable(table, 'reports');
+}
+
 function renderScores(box, d) {
     box.replaceChildren();
     if (!d.scores.length) { box.append(el('p', 'muted', 'No scores yet.')); return; }
@@ -3027,6 +3056,11 @@ const MODULES = [
                     key: 'scores',
                     label: 'Global top 100',
                     render: async (p) => renderScores(p, await api('scores')),
+                },
+                {
+                    key: 'reports',
+                    label: 'Reports',
+                    render: async (p) => renderReports(p, await api('reports')),
                 },
             ]);
         },

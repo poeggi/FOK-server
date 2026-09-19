@@ -399,6 +399,35 @@ switch ($action) {
         }
         download('snake-fok-backup-' . $id . '.json', $vault['payload']);
 
+    case 'reports':
+        // What players reported (see Friends::report), newest first, with
+        // the names as they are now beside the name the report kept.
+        $st = Db::get()->query('SELECT id, reporter, target, name, reason, created
+            FROM reports ORDER BY created DESC LIMIT 200');
+        $reports = [];
+        $ids = [];
+        foreach ($st->fetchAll() as $r) {
+            $reports[] = ['rid' => (int)$r['id'], 'reporter' => (string)$r['reporter'],
+                'target' => (string)$r['target'], 'name' => $r['name'], 'reason' => (string)$r['reason'],
+                'created' => (int)$r['created']];
+            $ids[] = (string)$r['reporter'];
+            $ids[] = (string)$r['target'];
+        }
+        $st->closeCursor();
+        Util::jsonOut(['ok' => true, 'now' => time(), 'reports' => $reports,
+            'names' => (object)AdminData::namesFor(array_values(array_unique($ids)))]);
+
+    case 'report_dismiss':
+        // Handled: the row goes. The player it named is acted on from the
+        // users tab (delete) or the client popup (reset), as before.
+        requirePost();
+        $rid = filter_var($_POST['rid'] ?? '', FILTER_VALIDATE_INT);
+        if ($rid === false || $rid < 1) {
+            Util::fail('invalid rid');
+        }
+        Db::retry(static fn() => Db::get()->prepare('DELETE FROM reports WHERE id = ?')->execute([$rid]));
+        Util::jsonOut(['ok' => true]);
+
     case 'clients':
         // The builds in use (see Clients::spread): the Game Statistics
         // bubble's popup, read when it opens.

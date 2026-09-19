@@ -62,10 +62,11 @@ an operator named, which may carry a 0 or a 1, in 4.16, or the identity
 token in 4.20 - the preparation for 5.0, where it is required - and the
 POST forms of the poll, the relay's held read and the vault restore in
 4.21, which take the token off the request line, or TURN credentials for
-a duel no direct path can carry in 4.22, or the client naming its own
-version on hello and being told when a newer build is out, an id its
-owner deletes or moves to another device, and the origins of a packaged
-app's web view in 4.23) is available, and
+a duel no direct path can carry in 4.22, or what a store build needs
+in 4.23: the client naming its own version on hello and being told when
+a newer build is out, an id its owner deletes, a player blocked or
+reported, a name the server masked, and the origins of a packaged app's
+web view) is available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
 
@@ -180,10 +181,8 @@ player. The token is what proves it.
     tok    32 lowercase hex chars (16 random bytes), minted by the server
            on the first hello of an unbound id and answered ONCE. Sent by
            the client on every request that names its id. Only its SHA-256
-           is stored. It changes for an id in two ways only: an operator's
-           reset makes the next hello mint again, and a move to another
-           device (account.php, 4.23) mints for the new device and retires
-           the old token in the same moment.
+           is stored. It never changes for an id; only an operator's reset
+           makes the next hello mint again.
 
 Where it goes: as the `tok` member of every POST body beside `id`. Since
 4.21 every request that names an id has a POST form - poll.php, the
@@ -241,59 +240,33 @@ every request, a hello without it is 401, the vault mints nothing, the
 three GETs are gone, and a wrong token from a pair over the cap answers
 429 `too many attempts` with `retry_after` instead of 401.
 
-## POST /api/account.php - the id itself (4.23)
-
-Three things a player does TO the id rather than with it. `delete` and
-`transfer` need the token that proves it - a bound id and its `tok`,
-nothing less: the leniency for an id nothing proves yet does not reach
-here, exactly as at the vault. `claim` is how a new device becomes the
-owner, so it carries neither.
+## POST /api/account.php - deleting the id (4.23)
 
     POST {"id": "c0ffee42", "tok": "<32-hex>", "action": "delete"}
     -> {"ok": true}
 
-The id and everything the server holds about it: the player row and
+The one thing a player does TO the id rather than with it, and the one
+a store demands of an app that has accounts. It needs the token that
+proves the id - a bound id and its `tok`, nothing less: the leniency for
+an id nothing proves yet does not reach here, exactly as at the vault.
+
+The id and everything the server holds about it go: the player row and
 name, the friendships (each friend is sent the 'friend' `{event:
-"expired"}` signal and reconciles its list), the scores under it, the
-config backup, the item instances it owns (the ledger keeps that they
-existed and where they went), the event memberships (a finished
-tournament's archive keeps the id: it is the record of an evening), and
-the identity binding. Gone is gone: there is no undo, and the answer
-comes after the transaction committed. The client discards the id and
-the token with it and starts afresh with a new id - a hello on the old
-id would register it again, to whoever sends it. A TURN credential
-already handed out lives its ttl.
+"expired"}` signal and reconciles its list), the blocks it placed and
+those placed on it, the scores under it, the config backup, the item
+instances it owns (the ledger keeps that they existed and where they
+went), the event memberships (a finished tournament's archive keeps the
+id: it is the record of an evening), and the identity binding. Reports
+about the id stay with the operator. Gone is gone: there is no undo,
+and the answer comes after the transaction committed. The client
+discards the id and the token with it and starts afresh with a new id -
+a hello on the old id would register it again, to whoever sends it. A
+TURN credential already handed out lives its ttl.
 
-    POST {"id": "c0ffee42", "tok": "<32-hex>", "action": "transfer"}
-    -> {"ok": true, "code": "K7QMX2P9", "valid": 300}
-
-    POST {"action": "claim", "code": "K7QMX2P9"}
-    -> {"ok": true, "id": "c0ffee42", "tok": "<32-hex>"}
-
-Moving an id to another device: a new phone, or the app installed
-beside the web game. The OLD device asks for a code: 8 characters from
-the poster alphabet (`23456789ABCDEFGHJKMNPQRSTUVWXYZ` - no 0/O, no
-1/I/L), valid for `valid` seconds, used once. It shows the code, as
-text to type or in a QR of the client's own making; the server has no
-opinion on the URL. The NEW
-device sends the code, naming no id and holding no token, and is
-answered the id and a FRESH token. The old token is retired in the
-same moment, so the old device's next request is 401: a move is a
-move, and two devices never share an id. The new device stores both
-exactly as it would a hello's `tok` and restores the config from the
-vault under them (Stats backup / restore); a throwaway id it bound
-before the claim it may `delete`. A code is used once - the first
-claim takes it, a second is 404 like any wrong one. Wrong codes are
-counted per address: past `claim_fails_per_min` in a minute the address
-is answered 429 `too many attempts` with `retry_after` for the rest of
-it. Unknown code: 404 `unknown code`. No code store (a host without
-shared memory): 503 `transfer unavailable`.
-
-What this does not do: it does not recover an id whose only device is
-gone. Nothing on the server ties an id to a person, so nothing can hand
-it back. Keeping the token where a reinstall finds it again - the
-platform's keychain, the file backup - is the client's business, and
-the operator's reset is the last resort.
+Moving an id to another device is the client's business, and needs
+nothing here: the token proves the id from any address, so a device
+that carries id and token (the platform's keychain, the file backup)
+carries the identity, and restores the config from the vault under it.
 
 ## Time synchronization and PTS
 
@@ -632,7 +605,9 @@ Request:
                                   the answer then carries the token, once
       "name": "KAI",              optional, display name (max 15 chars);
                                   recorded server-side and shown to
-                                  accepted friends
+                                  accepted friends. 4.23: the server may
+                                  MASK words in it (see Moderation); the
+                                  answer then carries `name`
       "duel_with": "deadbeef",    optional, the peer while a 1vs1 game runs
                                   - REFRESHES what start.php announced
                                   (see Announcing a duel below)
@@ -722,6 +697,9 @@ Response:
                                   `client` below a floor the operator set:
                                   "advised" or "required". Absent: nothing
                                   to do. See The client's version below
+      "name": "K**",              4.23, only when the server masked the
+                                  name this request sent: what it kept.
+                                  Adopt it; never answered unchanged
       "online": 3,                players seen in the last 120 s
       "playing": 2,               players currently in 1vs1 games, private
                                   ones included (see Announcing a duel)
@@ -745,6 +723,10 @@ Response:
          "online": true,
          "latency": 31}
       ],
+      "blocked": ["deadbeef"],               4.23, beside "friends": the ids
+                                             the caller blocked, so a client
+                                             can show them and undo. The
+                                             last answer wins
       "tourneys": [                          only when "tourneys" was true
         {"tid": "<32-hex>", "code": "K7QMX2", "host": "c0ffee42",
          "host_name": "KAI", "players": 3, "max": 8, "stakes": false,
@@ -1561,6 +1543,13 @@ flight and for the fallback path when a server does not answer the flag.
     POST {"id":..., "action":"remove", "peer":...}
       -> {"ok":true}                        declines a request or removes
                                             an existing friendship
+    POST {"id":..., "tok":..., "action":"block", "peer":...}     (4.23)
+      -> {"ok":true}                        see Moderation below
+    POST {"id":..., "tok":..., "action":"unblock", "peer":...}   (4.23)
+      -> {"ok":true}
+    POST {"id":..., "tok":..., "action":"report", "peer":...,
+          "reason":"name"|"abuse"|"cheat"|"other"}               (4.23)
+      -> {"ok":true}
 
 Removal is always immediate and silent: the client performs it WITHOUT
 a confirmation dialog (auto-confirmed), the server notifies nobody, and
@@ -1615,6 +1604,40 @@ incoming requests. Since 4.20 the caller's id is proven by its identity
 token, so a friendship is a statement of the two players it names; before
 that ids were public identities and nothing more, and friendship gating
 was privacy hygiene, not authentication.
+
+## Moderation (4.23)
+
+What a store asks of an app whose players see each other: a filter on
+what they write, a way to block one another, a way to report, and an
+operator who reads the reports. Three verbs on friend.php and one rule
+on hello, all taking the strict proof (a bound id and its `tok`).
+
+BLOCK. `block` ends any friendship or pending request between the two
+(the other side gets the 'friend' `{event: "expired"}` signal it already
+knows, if there was one, and learns nothing else) and records the block.
+A pair blocked in EITHER direction is then held apart where the server
+brings players together: a friend `request` between them is answered as
+if sent and never delivered; a signal between them is accepted and
+dropped (invite, offer, answer, ice, watch alike - the sender cannot
+tell); quick match never pairs them. A tournament seats whoever is in
+the room, and the public score list is public. `unblock` lifts it; both
+are idempotent. The caller's own list rides the hello answer that
+carries the roster, as `blocked`.
+
+REPORT. `report` records the peer with the reason and the name the peer
+has at that moment; the same reporter naming the same peer again within
+a day updates that record rather than adding one. It is throttled like a
+friend request (429 with `retry_after`). The operator sees every report
+on the dashboard beside the tools that act on it and is alerted when one
+arrives; nothing about a report is ever answered to a client.
+
+FILTER. Where a player writes text others read - the name on hello, the
+name on a score submission - the server may MASK words from a list the
+operator keeps, replacing each hit with asterisks, and never refuses the
+request for it: a refused heartbeat reads as offline. A masked hello
+name comes back as `name` in the answer, so the player sees what
+everybody else sees; a submission's name is stored as masked. The list
+itself is not part of the contract.
 
 ## POST /api/match.php - quick match (pair with anyone waiting)
 

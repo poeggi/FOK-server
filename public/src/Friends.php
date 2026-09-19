@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
+require_once __DIR__ . '/Caps.php';
 require_once __DIR__ . '/FriendFeed.php';
 require_once __DIR__ . '/Settings.php';
 
@@ -224,12 +225,111 @@ final class Friends
     }
 
     /** Removes the relation entirely (declines a request or unfriends). */
-    public static function remove(string $me, string $peer): void
+    /** @return bool whether a row - a friendship or a pending request - went */
+    public static function remove(string $me, string $peer): bool
     {
         [$a, $b] = $me < $peer ? [$me, $peer] : [$peer, $me];
-        Db::retry(static fn() => Db::get()->prepare('DELETE FROM friends WHERE a = ? AND b = ?')
-            ->execute([$a, $b]));
+        $gone = (bool)Db::retry(static function () use ($a, $b): bool {
+            $st = Db::get()->prepare('DELETE FROM friends WHERE a = ? AND b = ?');
+            $st->execute([$a, $b]);
+            return $st->rowCount() > 0;
+        });
         FriendFeed::forgetPair($a, $b);
+        return $gone;
+    }
+
+    // ---------------------------------------------------------------
+    // Moderation (docs/API.md, "Moderation"): blocks and reports
+    // ---------------------------------------------------------------
+
+    /** Per-id cache of the ids it blocked, the FriendFeed::acceptedIds shape. */
+    private const BLOCKS = FOK_APCU_NS . 'bl:';
+    private const BLOCKS_TTL = 300;
+
+    /** What a report may say; the note is the operator's to add. */
+    public const REPORT_REASONS = ['name', 'abuse', 'cheat', 'other'];
+
+    /**
+     * $me blocks $peer: the row, and any friendship or pending request
+     * between the two goes with it. Idempotent.
+     * @return bool whether a friendship or request was ended by it
+     */
+    public static function block(string $me, string $peer): bool
+    {
+        Db::retry(static fn() => Db::get()
+            ->prepare('INSERT OR IGNORE INTO blocks (id, peer, created) VALUES (?, ?, ?)')
+            ->execute([$me, $peer, time()]));
+        self::forgetBlocks($me);
+        return self::remove($me, $peer);
+    }
+
+    public static function unblock(string $me, string $peer): void
+    {
+        Db::retry(static fn() => Db::get()->prepare('DELETE FROM blocks WHERE id = ? AND peer = ?')
+            ->execute([$me, $peer]));
+        self::forgetBlocks($me);
+    }
+
+    /**
+     * The ids $me blocked. Cached per id in shared memory, because the
+     * question is asked on the signaling path (see isBlocked) where the
+     * steady state opens no database; the table answers a cold cache.
+     * @return list<string>
+     */
+    public static function blockedIds(string $me): array
+    {
+        if (Caps::apcu()) {
+            $hit = apcu_fetch(self::BLOCKS . $me, $ok);
+            if ($ok && is_array($hit)) {
+                return $hit;
+            }
+        }
+        $st = Db::get()->prepare('SELECT peer FROM blocks WHERE id = ? ORDER BY created DESC');
+        $st->execute([$me]);
+        $ids = array_map('strval', array_column($st->fetchAll(), 'peer'));
+        $st->closeCursor();
+        if (Caps::apcu()) {
+            apcu_store(self::BLOCKS . $me, $ids, self::BLOCKS_TTL);
+        }
+        return $ids;
+    }
+
+    /** Whether either of the two blocked the other: the one gate, three call sites. */
+    public static function isBlocked(string $a, string $b): bool
+    {
+        return in_array($b, self::blockedIds($a), true) || in_array($a, self::blockedIds($b), true);
+    }
+
+    /** Drops a cached block list. Every write to the blocks table calls this. */
+    public static function forgetBlocks(string $id): void
+    {
+        if (Caps::apcu()) {
+            apcu_delete(self::BLOCKS . $id);
+        }
+    }
+
+    /**
+     * $me reports $peer. One row per (reporter, target) per day: a second
+     * report inside it moves the reason and the time onto the first, so a
+     * tap repeated in anger is one line for the operator, not ten. The name
+     * is the peer's at this moment, because it is often what was reported.
+     * @return bool whether this is a NEW row (the alert is raised for those)
+     */
+    public static function report(string $me, string $peer, string $reason, ?string $name): bool
+    {
+        $now = time();
+        return (bool)Db::retry(static function () use ($me, $peer, $reason, $name, $now): bool {
+            $db = Db::get();
+            $st = $db->prepare('UPDATE reports SET reason = ?, name = ?, created = ?
+                WHERE reporter = ? AND target = ? AND created > ?');
+            $st->execute([$reason, $name, $now, $me, $peer, $now - 86400]);
+            if ($st->rowCount() > 0) {
+                return false;
+            }
+            $db->prepare('INSERT INTO reports (reporter, target, name, reason, created) VALUES (?, ?, ?, ?, ?)')
+                ->execute([$me, $peer, $name, $reason, $now]);
+            return true;
+        });
     }
 
     public static function isFriend(string $me, string $peer): bool

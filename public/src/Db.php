@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 51;
+    private const SCHEMA_VERSION = 52;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -106,7 +106,7 @@ final class Db
     private const COUNTED = ['players', 'scores', 'duels',
         'counters', 'alerts', 'settings', 'admin_fails', 'friends',
         'starts', 'items', 'matches', 'ledger', 'item_disputes',
-        'events', 'event_members', 'event_results', 'ident', 'turn_mints'];
+        'events', 'event_members', 'event_results', 'ident', 'turn_mints', 'blocks', 'reports'];
 
     /**
      * How many rows each table above holds, in ONE statement rather than a
@@ -923,6 +923,26 @@ final class Db
             // of builds off once the game is installed from a store.
             $pdo->exec('ALTER TABLE players ADD COLUMN client TEXT');
             $pdo->exec('ALTER TABLE players ADD COLUMN platform TEXT');
+        }
+        if ($v < 52) {
+            // Moderation (see Friends): who blocked whom, and what was
+            // reported to the operator. A block is one row per direction;
+            // a report keeps the name the peer had at the time, because
+            // the name is often what was reported.
+            $pdo->exec('CREATE TABLE IF NOT EXISTS blocks (
+                id TEXT NOT NULL,
+                peer TEXT NOT NULL,
+                created INTEGER NOT NULL,
+                PRIMARY KEY (id, peer)
+            )');
+            $pdo->exec('CREATE TABLE IF NOT EXISTS reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reporter TEXT NOT NULL,
+                target TEXT NOT NULL,
+                name TEXT,
+                reason TEXT NOT NULL,
+                created INTEGER NOT NULL
+            )');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

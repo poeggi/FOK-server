@@ -6,6 +6,7 @@ require_once __DIR__ . '/../src/Ident.php';
 require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Friends.php';
 require_once __DIR__ . '/../src/Signals.php';
+require_once __DIR__ . '/../src/Alerts.php';
 
 /**
  * Friendship management. An ACCEPTED friendship entitles both sides to
@@ -34,6 +35,14 @@ require_once __DIR__ . '/../src/Signals.php';
  *   -> {"ok":true,"friends":[{"id","state":"pending|accepted",
  *       "outgoing":bool,"name","online","latency"}]}
  *   name/online/latency are only filled for accepted friendships.
+ *
+ * Moderation (4.23, docs/API.md): block / unblock / report, all taking
+ * the strict proof (a bound id and its token, as the vault does).
+ *   block   -> {"ok":true}  ends any friendship or request, records the
+ *              block; the pair is never friended, signalled or paired again
+ *   unblock -> {"ok":true}
+ *   report  -> {"ok":true}  with "reason": name|abuse|cheat|other; goes to
+ *              the operator's dashboard, never answered to a client
  */
 Util::cors();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
@@ -46,7 +55,8 @@ if (!Util::isValidId($id)) {
     Util::fail('invalid id');
 }
 Util::noteCaller($id);
-Ident::require($id, Ident::read($body)[1], Util::clientIp());
+[, $tok] = Ident::read($body);
+Ident::require($id, $tok, Util::clientIp());
 $action = $body['action'] ?? '';
 Util::noteAction($action);
 
@@ -61,9 +71,43 @@ $peer = $body['peer'] ?? null;
 if (!Util::isValidId($peer) || $peer === $id) {
     Util::fail('invalid peer');
 }
+if (in_array($action, ['block', 'unblock', 'report'], true) && !Ident::proves($id, $tok)) {
+    Util::fail('bad token', 401);
+}
 
 switch ($action) {
+    case 'block':
+        if (Friends::block($id, $peer)) {
+            Signals::send($id, $peer, 'friend', json_encode(['event' => 'expired', 'from' => $id]));
+        }
+        Util::jsonOut(['ok' => true]);
+    case 'unblock':
+        Friends::unblock($id, $peer);
+        Util::jsonOut(['ok' => true]);
+    case 'report':
+        $reason = $body['reason'] ?? null;
+        if (!is_string($reason) || !in_array($reason, Friends::REPORT_REASONS, true)) {
+            Util::fail('invalid reason');
+        }
+        // Throttled like a request: the same gate, so a tapper backs off
+        // the same way and no second cooldown has to be learned.
+        $gate = Friends::rateHit($id);
+        if ($gate['blocked']) {
+            Util::jsonOut(['ok' => false, 'error' => 'too many reports', 'retry_after' => $gate['retry']], 429);
+        }
+        $name = Presence::namesFor([$peer])[$peer] ?? null;
+        // The dashboard puts the names beside the ids by itself (see
+        // Alerts::withNames); the row keeps the name the target has now.
+        if (Friends::report($id, $peer, $reason, $name)) {
+            Alerts::raise('report', "$id reported $peer for $reason");
+        }
+        Util::jsonOut(['ok' => true]);
     case 'request':
+        // A pair blocked in either direction: answered as if sent, nothing
+        // recorded, nobody told - a block must not be an oracle.
+        if (Friends::isBlocked($id, $peer)) {
+            Util::jsonOut(['ok' => true, 'state' => 'pending', 'exists' => true]);
+        }
         // Throttle first (see Friends::rateHit): the cheapest guard, and it
         // counts every attempt so a hammer trips the cooldown and backs off.
         $gate = Friends::rateHit($id);

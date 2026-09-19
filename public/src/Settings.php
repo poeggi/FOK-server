@@ -254,10 +254,6 @@ final class Settings
             'A client naming a version below this on hello is answered upgrade: required - the client blocks '
             . 'online play and sends the player to the update. The server itself refuses nothing: a refused '
             . 'heartbeat would only read as offline. 0 turns it off.'],
-        'claim_fails_per_min' => [FOK_CLAIM_FAILS_PER_MIN, 'Wrong transfer codes per address per minute before 429',
-            'Wrong device-transfer codes one address may try in a minute (account.php claim); from then on '
-            . 'the answer is 429 with retry_after and the log gets a line. A code is 8 characters of 31 and '
-            . 'lives five minutes, so it cannot be guessed; this puts the attempt on record.'],
         'ident_fails_per_min' => [10, 'Wrong identity tokens per id and address per minute before the log line',
             'Wrong tokens one address may present for one id in a minute before the log gets a line: a stolen '
             . 'id being tried, or a second device on a stale backup. Counted per (id, address) PAIR, so a '

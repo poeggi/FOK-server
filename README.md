@@ -56,8 +56,9 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   platform on hello and is told `upgrade: advised|required` when it is
   below a floor the operator set - never refused, a store build is
   replaced only when its player updates it. account.php lets the owner
-  delete the id (everything about it goes) or move it to another device
-  by a short code that mints a fresh token and retires the old one. The
+  delete the id (everything about it goes). Moderation: a word list
+  masks names, a player blocks another (never paired, signalled or
+  friended again) or reports one to the operator's dashboard. The
   packaged app's web-view origins are on the CORS allowlist.
 - Global highscores: top 100 list. Submissions carry the deterministic
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
@@ -214,8 +215,7 @@ major. Every minor since is additive; docs/API.md carries them one by one.
         signal.php    POST matchmaking/WebRTC signaling message
         backup.php    GET/POST client config backup and restore, under the
                       identity token
-        account.php   the id itself: its owner deletes it, or moves it to
-                      another device by a short code (4.23)
+        account.php   the owner deletes the id and everything about it (4.23)
         .user.ini     PHP limits for the API only (see Capacity below)
       debug/          client debug-report drop -> 4-digit PIN (1 day, 8 MB)
       admin/          session-protected admin UI + JSON API
@@ -524,10 +524,11 @@ host-level. If this outgrows shared hosting, fix workers first.
                           "events":bool?, "nets":[ip,...]?,
                           "client":"4.5.12"?, "platform":"web|ios|android"?}
       -> {"ok":true,"api":"4.23","tok":"<32-hex>"?,"now":ms,"debug":bool,
-          "upgrade":"advised|required"?,
+          "upgrade":"advised|required"?, "name":"<masked>"?,
           "online":n,"playing":n,"registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
-          "friends_delta":{...}?, "tourneys":[...]?, "events":[...]?}
+          "friends_delta":{...}?, "blocked":[...]?, "tourneys":[...]?,
+          "events":[...]?}
          (tok proves the id and rides every request below as well - the
           member on a body, &tok= on a GET; the answer carries it once, on
           the hello that bound the id. The delta only ever names accepted
@@ -538,6 +539,10 @@ host-level. If this outgrows shared hosting, fix workers first.
     POST /api/friend.php {"id","action":"request|accept|remove|list","peer"?}
       -> {"ok":true,"state":...} | {"ok":true,"friends":[...]}
          (request/accept notify the peer via a reserved 'friend' signal)
+    POST /api/friend.php {"id","tok","action":"block|unblock","peer"}   (4.23)
+    POST /api/friend.php {"id","tok","action":"report","peer","reason"} (4.23)
+      -> {"ok":true}   (a blocked pair is never paired, signalled or
+                        friended; reports go to the admin dashboard)
     POST /api/relay.php  {"id","peer","payload","pts"?} -> {"ok":true}
     POST /api/relay.php  {"id","tok","peer","wait"}   the held read (no payload)
       -> {"ok":true,"messages":[...]} | 204   (P2P fallback relay)
@@ -598,11 +603,6 @@ host-level. If this outgrows shared hosting, fix workers first.
       -> {"ok":true,"rank":n,"top":bool}   (no name -> ANONYMOUS; completed =
          cleared the final level; platform = pc|mobile|tv|console, optional)
     POST /api/account.php {"id","tok","action":"delete"}      -> {"ok":true}
-    POST /api/account.php {"id","tok","action":"transfer"}
-      -> {"ok":true,"code":"K7QMX2P9","valid":300}
-    POST /api/account.php {"action":"claim","code":"K7QMX2P9"}
-      -> {"ok":true,"id":"cafe0001","tok":"<32-hex>"}   (the old token is
-         retired; a wrong code is 404, too many from one address 429)
     POST /api/signal.php {"id","to","type":"invite|invite-relay|accept|accept-relay|decline|offer|answer|ice|ices|bye|watch","payload"}
          (the -relay types set the no-P2P bit: honored when either side sends it;
           'ices' (4.4) carries a JSON ARRAY of candidates - one request instead

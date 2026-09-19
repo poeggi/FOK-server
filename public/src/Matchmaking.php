@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Caps.php';
+require_once __DIR__ . '/Friends.php';
 
 /**
  * Quick-match queue: pairs two waiting players into a duel. The longer-
@@ -86,6 +87,11 @@ final class Matchmaking
             return self::collect($id) ?? ['waiting' => true];
         }
         foreach ($cands as $c) {
+            // A pair blocked in either direction is never paired (see
+            // Friends::isBlocked); the next candidate is tried instead.
+            if (Friends::isBlocked($id, $c['id'])) {
+                continue;
+            }
             // The peer waited longer: it gets the offerer role and learns
             // about the match on its next seek poll. The add is what settles
             // the pairing - it fails against a peer that already holds a

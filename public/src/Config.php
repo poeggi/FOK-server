@@ -405,9 +405,11 @@ const FOK_ALLOWED_ORIGINS = [
 // config card without a deploy.
 const FOK_CLIENT_ADVISED_VERSION = '0';
 const FOK_CLIENT_MIN_VERSION = '0';
-// Wrong transfer codes from one address in a minute before 429 (see
-// Account::claim).
-const FOK_CLAIM_FAILS_PER_MIN = 10;
+// Words masked out of what a player writes for others to read - the name
+// on hello, the name on a score (see Words). Lowercase, matched anywhere
+// in the text, case-insensitive; each hit becomes asterisks. Empty until
+// the operator fills it; a fuller list is the operator's and lives here.
+const FOK_WORD_FILTER = [];
 
 const FOK_ADMIN_MAX_FAILS = 5;
 const FOK_ADMIN_LOCK_SECONDS = 300;

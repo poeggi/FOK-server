@@ -12,6 +12,7 @@ require_once __DIR__ . '/../src/Tournament.php';
 require_once __DIR__ . '/../src/Events.php';
 require_once __DIR__ . '/../src/Pace.php';
 require_once __DIR__ . '/../src/Clients.php';
+require_once __DIR__ . '/../src/Words.php';
 
 /**
  * The heartbeat: the beat a client sends when it has nothing else to say
@@ -92,6 +93,13 @@ if (isset($body['name'])) {
         $name = null;
     }
 }
+// The name others read is masked against the operator's word list (see
+// Words); a hit is answered back as `name` so the player sees what
+// everybody else sees. Never a refusal: a refused heartbeat reads as
+// offline.
+$masked = $name === null ? null : Words::mask($name);
+$nameChanged = $masked !== $name;
+$name = $masked;
 $autoAccept = $body['auto_accept'] ?? false;
 if (!is_bool($autoAccept)) {
     Util::fail('invalid auto_accept');
@@ -236,6 +244,9 @@ $upgrade = Clients::upgradeFor($client);
 if ($upgrade !== null) {
     $out['upgrade'] = $upgrade;
 }
+if ($nameChanged) {
+    $out['name'] = $name;
+}
 
 if ($since !== null) {
     // 4.6: the same authorization, asked the other way round. The caller
@@ -255,6 +266,9 @@ if ($since !== null) {
 // second request queued behind it.
 if ($wantRoster) {
     $out['friends'] = Friends::rosterOf($id);
+    // 4.23: who the caller blocked, beside the roster it rides with, so a
+    // client can show them and undo (see Friends::block).
+    $out['blocked'] = Friends::blockedIds($id);
 }
 
 // Lobbies are announced by NETWORK, not by friendship: a tournament is a

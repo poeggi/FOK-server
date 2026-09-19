@@ -72,6 +72,14 @@ Util::checkPts($body['pts'] ?? null, "player $id");
 if (($type === 'invite' || $type === 'invite-relay') && !Friends::isFriend($id, $to)) {
     Util::fail('not friends', 403);
 }
+// A pair blocked in either direction (docs/API.md, Moderation): the
+// signal is accepted like any other and goes nowhere, so the sender cannot
+// tell a block from a peer that never answers. Two shared-memory reads in
+// the steady state (see Friends::blockedIds).
+if (Friends::isBlocked($id, $to)) {
+    Presence::touch($id, Util::clientIp());
+    Util::jsonOut(['ok' => true]);
+}
 
 // DEPRECATED: relay fallback surface (this block, the pairEnded call on
 // bye, and the isRelaying guard on accept below - all through the Relay

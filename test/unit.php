@@ -55,6 +55,7 @@ require_once __DIR__ . '/../public/src/Housekeeping.php';
 require_once __DIR__ . '/../public/src/Turn.php';
 require_once __DIR__ . '/../public/src/Clients.php';
 require_once __DIR__ . '/../public/src/Account.php';
+require_once __DIR__ . '/../public/src/Words.php';
 
 // Util installs a fault handler that answers 500 and exits 0 - right for a
 // request, fatal for a test run, where it would swallow a throwable (a
@@ -1523,7 +1524,7 @@ ok(!Clients::isPlatform('iOS') && !Clients::isPlatform('') && !Clients::isPlatfo
 // The floors are string settings: read through str(), stored as text, the
 // default is no row, and the wrong type is refused at the door.
 ok(Settings::str('client_min_version') === '0' && Settings::str('client_advised_version') === '0', 'both floors are off by default');
-ok(Settings::isStr('client_min_version') && !Settings::isStr('claim_fails_per_min'), 'isStr tells the two kinds apart');
+ok(Settings::isStr('client_min_version') && !Settings::isStr('ident_fails_per_min'), 'isStr tells the two kinds apart');
 $threw = false;
 try {
     Settings::int('client_min_version');
@@ -1549,7 +1550,7 @@ Settings::set('client_min_version', '4.5.0');
 ok(Clients::upgradeFor('4.4.90') === 'required' && Clients::upgradeFor('4.5.12') === 'advised', 'the stricter floor wins, the other applies above it');
 $all = array_column(Settings::all(), null, 'key');
 ok($all['client_min_version']['type'] === 'str' && $all['client_min_version']['value'] === '4.5.0'
-    && $all['claim_fails_per_min']['type'] === 'int', 'all() names the type beside the value');
+    && $all['ident_fails_per_min']['type'] === 'int', 'all() names the type beside the value');
 Settings::set('client_min_version', '0');
 Settings::set('client_advised_version', '0');
 ok((int)Db::get()->query("SELECT COUNT(*) FROM settings WHERE key LIKE 'client_%'")->fetchColumn() === 0, 'saving the default removes the rows');
@@ -1579,7 +1580,7 @@ Presence::forget('c1000001');
 Presence::forget('c1000002');
 Presence::forget('c1000003');
 
-// ---- The id itself (API 4.23): delete, and a move to another device ----
+// ---- The id itself (API 4.23): the owner's delete -----------------------
 $seed = static function (string $id) use ($IP): string {
     $r = Ident::register($id, true, null, $IP);
     Presence::touch($id, $IP, null, 'SRV-CI-ACCT');
@@ -1592,11 +1593,16 @@ $count = static fn(string $sql, string $id): int => (int)Db::get()->query(str_re
 $tokD = $seed('ac000001');
 ok(Ident::proves('ac000001', $tokD) && $count('SELECT COUNT(*) FROM scores WHERE player_id = ?', 'ac000001') === 1
     && Vault::restore('ac000001') !== null, 'a seeded id is bound, has a score and a backup');
+Friends::block('ac000001', 'ac000009');
+Friends::block('ac000008', 'ac000001');
 Account::remove('ac000001', true);
 ok($count('SELECT COUNT(*) FROM players WHERE id = ?', 'ac000001') === 0, 'the owner\'s delete drops the row');
 ok($count('SELECT COUNT(*) FROM scores WHERE player_id = ?', 'ac000001') === 0, 'and the scores');
 ok(Vault::restore('ac000001') === null, 'and the backup');
 ok(Ident::infoOf('ac000001') === null && Presence::entryOf('ac000001') === null, 'and the binding and the entry');
+ok((int)Db::get()->query("SELECT COUNT(*) FROM blocks WHERE id = 'ac000001' OR peer = 'ac000001'")->fetchColumn() === 0,
+    'and the blocks it placed and those placed on it');
+Friends::unblock('ac000008', 'ac000001');
 $tokO = $seed('ac000002');
 Account::remove('ac000002', false);
 ok($count('SELECT COUNT(*) FROM players WHERE id = ?', 'ac000002') === 0 && Ident::infoOf('ac000002') === null, 'the operator\'s delete drops the row and the binding');
@@ -1604,35 +1610,51 @@ ok($count('SELECT COUNT(*) FROM scores WHERE player_id = ?', 'ac000002') === 1 &
 Db::get()->exec("DELETE FROM scores WHERE player_id = 'ac000002'");
 Db::get()->exec("DELETE FROM vault WHERE id = 'ac000002'");
 
-// The move: a code from the old device, a fresh token for the new one.
-$tokOld = $seed('ac000003');
-$t = Account::transfer('ac000003');
-ok($t !== null && strlen($t['code']) === Account::CODE_LEN && Account::isCode($t['code']) && $t['valid'] === Account::CODE_TTL,
-    'transfer answers an 8-character code of the poster alphabet and its validity');
-$t2 = Account::transfer('ac000003');
-ok($t2['code'] !== $t['code'], 'asking again mints another code');
-$c = Account::claim($t2['code'], '198.51.100.9');
-ok($c !== null && $c['id'] === 'ac000003' && preg_match('/^[0-9a-f]{32}$/', $c['tok']) === 1 && $c['tok'] !== $tokOld,
-    'the claim answers the id and a fresh token');
-ok(Ident::verify('ac000003', $c['tok'], $IP) === true, 'the new token proves the id');
-ok(Ident::verify('ac000003', $tokOld, $IP) === false, 'the old one is retired');
-ok(Ident::infoOf('ac000003')['bound_ip'] === '198.51.100.9', 'the row names the new device');
-ok(Presence::entryOf('ac000003')['tok'] === Ident::hashOf($c['tok']), 'the live entry follows at once');
-ok(Account::claim($t2['code'], '198.51.100.9') === null, 'a code is used once');
-ok(Vault::restore('ac000003') !== null, 'the backup waits for the new device');
-ok(str_contains($logTail(), 'id ac000003 SRV-CI-ACCT moved to a new device from 198.51.100.9'), 'the move is on record');
-// Wrong codes are counted per address, and the line is a setting.
-Settings::set('claim_fails_per_min', 3);
-ok(!Account::failsOver('192.0.2.7'), 'a fresh address is not over the line');
-Account::claim('AAAAAAAA', '192.0.2.7');
-Account::claim('AAAAAAAA', '192.0.2.7');
-ok(!Account::failsOver('192.0.2.7'), 'two wrong codes are under a cap of three');
-Account::claim('AAAAAAAA', '192.0.2.7');
-ok(Account::failsOver('192.0.2.7'), 'the third puts the address over it');
-ok(!Account::failsOver('192.0.2.8'), 'another address is untouched');
-ok(str_contains($logTail(), 'wrong transfer codes from 192.0.2.7: 3 in a minute'), 'and the crossing is on record');
-Settings::set('claim_fails_per_min', FOK_CLAIM_FAILS_PER_MIN);
-Account::remove('ac000003', true);
+// ---- Moderation (API 4.23): the word filter, blocks, reports -----------
+ok(Words::mask('SNAKE', ['bad']) === 'SNAKE', 'a clean name passes the filter untouched');
+ok(Words::mask('BadSnake', ['bad']) === '***Snake', 'a hit is masked to asterisks of its length, whatever its case');
+ok(Words::mask('a bad bad word', ['bad', 'word']) === 'a *** *** ****', 'every hit of every word');
+ok(Words::mask('KAI') === 'KAI', 'the shipped list is empty: nothing is masked by default');
+ok(Words::mask("Sch\xc3\xb6nes Wort", ["sch\xc3\xb6n"]) === '*****es Wort', 'a multibyte hit is measured in characters');
+
+// Blocks: one row per direction, either direction gates, the cache follows
+// every write, and a block ends what was between the two.
+Presence::touch('b1000001', $IP, null, 'SRV-CI-BLK1');
+Presence::touch('b1000002', $IP, null, 'SRV-CI-BLK2');
+Presence::touch('b1000003', $IP, null, 'SRV-CI-BLK3');
+Friends::request('b1000001', 'b1000002');
+Friends::accept('b1000002', 'b1000001');
+ok(Friends::isFriend('b1000001', 'b1000002') && !Friends::isBlocked('b1000001', 'b1000002'), 'two friends, nobody blocked');
+ok(Friends::block('b1000001', 'b1000002') === true, 'a block ends the friendship, and says so');
+ok(!Friends::isFriend('b1000001', 'b1000002'), 'the friendship is gone');
+ok(Friends::isBlocked('b1000001', 'b1000002') && Friends::isBlocked('b1000002', 'b1000001'), 'the pair is blocked in either direction');
+ok(Friends::blockedIds('b1000001') === ['b1000002'] && Friends::blockedIds('b1000002') === [], 'the list is the blocker\'s alone');
+ok(Friends::block('b1000001', 'b1000002') === false, 'a second block is idempotent and ends nothing');
+ok(!Friends::isBlocked('b1000001', 'b1000003'), 'a third player is untouched');
+// Quick match never pairs a blocked pair; the next candidate is tried.
+mmWipe();
+ok((Matchmaking::seek('b1000002')['waiting'] ?? false) === true, 'the blocked peer seeks first');
+ok((Matchmaking::seek('b1000001')['waiting'] ?? false) === true, 'the blocker is not paired with it');
+$m = Matchmaking::seek('b1000003');
+ok(($m['matched'] ?? '') === 'b1000002', 'a third seeker takes the longest-waiting seat instead');
+mmWipe();
+Friends::unblock('b1000001', 'b1000002');
+ok(!Friends::isBlocked('b1000001', 'b1000002') && Friends::blockedIds('b1000001') === [], 'unblock lifts it and the cache follows');
+Friends::unblock('b1000001', 'b1000002');
+ok(!Friends::isBlocked('b1000001', 'b1000002'), 'a second unblock is idempotent');
+
+// Reports: one row per reporter and target per day, the name kept as it was.
+Db::get()->exec('DELETE FROM reports');
+ok(Friends::report('b1000003', 'b1000001', 'name', 'SRV-CI-BLK1') === true, 'the first report is a new row');
+ok(Friends::report('b1000003', 'b1000001', 'abuse', 'SRV-CI-BLK1') === false, 'a second within a day folds into it');
+$rep = Db::get()->query("SELECT reporter, target, name, reason FROM reports")->fetchAll();
+ok(count($rep) === 1 && $rep[0]['reason'] === 'abuse' && $rep[0]['name'] === 'SRV-CI-BLK1', 'one row, carrying the latest reason and the name then');
+ok(Friends::report('b1000002', 'b1000001', 'cheat', null) === true, 'another reporter is another row');
+ok((int)Db::get()->query('SELECT COUNT(*) FROM reports')->fetchColumn() === 2, 'two rows');
+Db::get()->exec('DELETE FROM reports');
+Presence::forget('b1000001');
+Presence::forget('b1000002');
+Presence::forget('b1000003');
 
 // ---- Item registry (API 4.0) ----------------------------------------
 // The HTTP smoke walks the whole claim ladder over the wire; what is left

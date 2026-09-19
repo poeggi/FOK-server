@@ -9,6 +9,7 @@ require_once __DIR__ . '/Signals.php';
 require_once __DIR__ . '/ConnTrack.php';
 require_once __DIR__ . '/Caps.php';
 require_once __DIR__ . '/FriendFeed.php';
+require_once __DIR__ . '/Friends.php';
 require_once __DIR__ . '/Ident.php';
 
 /**
@@ -935,6 +936,7 @@ final class Presence
             Signals::send($id, $other, 'friend', json_encode(['event' => 'expired', 'from' => $id]));
         }
         $db->prepare('DELETE FROM friends WHERE a = ? OR b = ?')->execute([$id, $id]);
+        $db->prepare('DELETE FROM blocks WHERE id = ? OR peer = ?')->execute([$id, $id]);
         $db->prepare('DELETE FROM players WHERE id = ?')->execute([$id]);
         // Every event this player was in. The ARCHIVE keeps the id: a
         // finished tournament is the record of an evening, and a name
@@ -950,6 +952,7 @@ final class Presence
             FriendFeed::forgetPair($id, $other);
         }
         FriendFeed::forget($id);
+        Friends::forgetBlocks($id);
         // registered and online are cached (see counts), so the dashboard
         // must not keep showing a player that is gone until the TTL lapses.
         self::flushCounts();

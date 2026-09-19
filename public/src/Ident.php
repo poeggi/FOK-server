@@ -239,30 +239,6 @@ final class Ident
     }
 
     /**
-     * The move to another device (see Account::claim): a fresh token for
-     * the new device, the row replaced under it, the old token retired in
-     * the same write. Bound whether or not the id was before - a code was
-     * minted by the owner, and that is the proof. Answers the token, which
-     * the new device stores as it would a hello's.
-     */
-    public static function rebind(string $id, string $ip): string
-    {
-        $tok = bin2hex(random_bytes(16));
-        $hash = self::hashOf($tok);
-        $now = time();
-        Db::retry(static function () use ($id, $hash, $now, $ip): void {
-            Db::get()->prepare(
-                'INSERT INTO ident (id, tok_hash, bound_at, bound_ip) VALUES (?, ?, ?, ?)
-                 ON CONFLICT (id) DO UPDATE SET tok_hash = excluded.tok_hash,
-                     bound_at = excluded.bound_at, bound_ip = excluded.bound_ip'
-            )->execute([$id, $hash, $now, $ip]);
-        });
-        self::$memo[$id] = ['hash' => $hash, 'confirmed' => true];
-        Presence::setTok($id, $hash, true);
-        return $tok;
-    }
-
-    /**
      * The row as the admin reads it, or null when unbound. bound_ip is ''
      * for a copy off the vault the owner has not confirmed yet.
      * @return ?array{bound_at: int, bound_ip: string}
