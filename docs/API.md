@@ -1609,16 +1609,18 @@ server can meter and withdraw.
           "ice":[{"urls":["stun:stun.cloudflare.com:3478"]},
                  {"urls":["turn:turn.cloudflare.com:3478?transport=udp", ...],
                   "username":"...", "credential":"..."}],
-          "ttl":1800}
+          "ttl":3600}
 
 `ice` is an RTCPeerConnection `iceServers` list, exactly as the relay
 issued it: pass it through `new RTCPeerConnection({iceServers: ice})`.
 `ttl` is how many seconds the credentials are still valid. It is never
-less than half of `turn_ttl_secs` (default 1800): an id that asks again
-while its credentials have that much life left is answered the same
-ones, an ask after that mints fresh ones. Ask when a connection is about
-to be built - a credential outliving its match is normal, and a second
-ask inside its life costs nothing. The credentials are minted for the
+less than half of `turn_ttl_secs` (default 3600, so 30 minutes): an id
+that asks again while its credentials have that much life left is
+answered the same ones, an ask after that mints fresh ones. Ask when a
+connection is about to be built - a credential outliving its match is
+normal, and a second ask inside its life costs nothing. A connection
+keeps the credentials it was built with: one that outlives them loses
+its relayed path at the relay's next allocation refresh. The credentials are minted for the
 asking id and tagged with it, so relayed traffic is attributable per
 player.
 

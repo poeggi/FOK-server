@@ -75,12 +75,19 @@ pool, harmless against the tier, not worth a lock.
 
 ## Two windows on one credential
 
-A credential lives `turn_ttl_secs` (1800; Cloudflare caps at 48 h). An
-id asking again while its credential has at least HALF its life left
-gets the same one back, from shared memory (`fok:turn:c:<id>`, TTL =
-the life), and that counts nothing - it is the only per-id bound on
-minting there is. So one player costs at most two mints per ttl,
-whatever it does. The switch (`turn_enabled` 0) refuses BEFORE the held
+A credential lives `turn_ttl_secs` (3600 since 1.19.4, 1800 before;
+Cloudflare caps at 48 h). An id asking again while its credential has
+at least HALF its life left gets the same one back, from shared memory
+(`fok:turn:c:<id>`, TTL = the life), and that counts nothing - it is
+the only per-id bound on minting there is. So one player costs at most
+two mints per ttl, whatever it does. The client asks before EVERY peer
+connection it builds (duel, spectator, monitor alike) and takes a fresh
+one when the held credential has under 30 min left (FOK-snake
+NET_TURN_MIN_MS, matched to the server's half), so every connection
+starts on at least 30 min; a connection already open is never renewed,
+and one that outlives its credential drops at the relay's next
+allocation refresh, about ten minutes. That is the headroom the
+operator asked for on 2026-09-19 (15 min before). The switch (`turn_enabled` 0) refuses BEFORE the held
 credential is answered: off means off.
 
 ## Revocation happens on the switch, not on the cap

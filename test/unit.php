@@ -4014,7 +4014,7 @@ ok(is_array($r), 'with a key file the ask mints');
 ok(count($turnCalls) === 1
     && $turnCalls[0][1] === 'https://rtc.live.cloudflare.com/v1/turn/keys/kid/credentials/generate-ice-servers',
     'one call, to the relay under the key');
-ok($r['ttl'] === 1800, 'a fresh credential carries the whole ttl');
+ok($r['ttl'] === 3600, 'a fresh credential carries the whole ttl');
 ok($r['ice'][1]['username'] === 'u1-deadbeef' && $r['ice'][1]['credential'] === 'secret1',
     'minted for the asking id, credentials handed on verbatim');
 ok(!in_array('turn:turn.cloudflare.com:53?transport=udp', $turnUrls($r), true)
@@ -4023,22 +4023,22 @@ ok(!in_array('turn:turn.cloudflare.com:53?transport=udp', $turnUrls($r), true)
     && in_array('turns:turn.cloudflare.com:5349?transport=tcp', $turnUrls($r), true),
     'the port-53 urls are dropped, the rest kept');
 ok(str_contains((string)$turnCalls[0][2], '"customIdentifier":"deadbeef"')
-    && str_contains((string)$turnCalls[0][2], '"ttl":1800'), 'the mint names the id and the ttl');
+    && str_contains((string)$turnCalls[0][2], '"ttl":3600'), 'the mint names the id and the ttl');
 
 // The same id inside half the life gets the same credential back.
 $r2 = Turn::mint('deadbeef', $t0 + 100);
-ok($r2['ice'][1]['username'] === 'u1-deadbeef' && $r2['ttl'] === 1700,
+ok($r2['ice'][1]['username'] === 'u1-deadbeef' && $r2['ttl'] === 3500,
     'an ask inside half the life is answered the same credential, with the life left');
 ok(count($turnCalls) === 1, 'and costs no mint');
-$r3 = Turn::mint('deadbeef', $t0 + 1000);
-ok($r3['ice'][1]['username'] === 'u2-deadbeef' && $r3['ttl'] === 1800, 'past half the life a fresh one is minted');
-$turnG = Turn::gauge($t0 + 1000);
+$r3 = Turn::mint('deadbeef', $t0 + 2000);
+ok($r3['ice'][1]['username'] === 'u2-deadbeef' && $r3['ttl'] === 3600, 'past half the life a fresh one is minted');
+$turnG = Turn::gauge($t0 + 2000);
 ok($turnG['live'] === 1 && $turnG['sessions'] === 2 && $turnG['recent'] === 2 && $turnG['cap'] === 1000
     && $turnG['offered'] === true && $turnG['why'] === '',
     'one id holds a credential, two were minted, both in the window, and credentials are offered');
-Turn::mint('cafe0001', $t0 + 1000);
-ok(Turn::gauge($t0 + 1000)['live'] === 2, 'a second id is a second holder');
-$turnD = Turn::detail($t0 + 1000);
+Turn::mint('cafe0001', $t0 + 2000);
+ok(Turn::gauge($t0 + 2000)['live'] === 2, 'a second id is a second holder');
+$turnD = Turn::detail($t0 + 2000);
 ok(count($turnD['live']) === 2 && $turnD['live'][0]['id'] !== '' && !isset($turnD['live'][0]['u']),
     'the popup lists the holders by id and never a username');
 ok($turnD['top'][0]['id'] === 'deadbeef' && $turnD['top'][0]['n'] === 2 && $turnD['top'][1]['n'] === 1,
@@ -4046,41 +4046,41 @@ ok($turnD['top'][0]['id'] === 'deadbeef' && $turnD['top'][0]['n'] === 2 && $turn
 
 // The cap: the lines are settings, crossed by a mint and alerted once.
 Settings::set('turn_max_per_30d', 7);
-ok(Turn::detail($t0 + 1000)['warn'] === 4, 'the warn line is the share of the cap, rounded up');
+ok(Turn::detail($t0 + 2000)['warn'] === 4, 'the warn line is the share of the cap, rounded up');
 ok($turnAlert('turn') === null, 'below the warn line no alert');
-ok(Turn::mint('f00df00d', $t0 + 1001) !== null, 'the fourth mint');
+ok(Turn::mint('f00df00d', $t0 + 2001) !== null, 'the fourth mint');
 ok(str_contains((string)$turnAlert('turn'), 'at 4 of 7 in the last 30 days (50% of the cap)'),
     'crosses the warn line and says so');
-ok(Turn::mint('b0a710ad', $t0 + 1002) !== null && Turn::mint('deadbeef', $t0 + 2000) !== null,
+ok(Turn::mint('b0a710ad', $t0 + 2002) !== null && Turn::mint('deadbeef', $t0 + 4000) !== null,
     'the fifth and sixth');
 ok($turnAlert('turn-stop') === null, 'still no stop alert');
-ok(Turn::mint('cafe0001', $t0 + 2000) !== null, 'the seventh mints');
+ok(Turn::mint('cafe0001', $t0 + 4000) !== null, 'the seventh mints');
 ok(str_contains((string)$turnAlert('turn-stop'), '7 credentials handed out in the last 30 days'),
     'and reaching the cap raises the stop alert');
-ok(Turn::mint('f00df00d', $t0 + 2001) === null, 'the eighth is refused');
-$turnG = Turn::gauge($t0 + 2001);
+ok(Turn::mint('f00df00d', $t0 + 4001) === null, 'the eighth is refused');
+$turnG = Turn::gauge($t0 + 4001);
 ok($turnG['offered'] === false && $turnG['why'] === 'cap' && $turnG['recent'] === 7 && $turnG['live'] === 4,
     'nothing is offered, the reason is the cap, and what is out stays out');
-ok(Turn::mint('deadbeef', $t0 + 2002)['ice'][1]['username'] === 'u6-deadbeef',
+ok(Turn::mint('deadbeef', $t0 + 4002)['ice'][1]['username'] === 'u6-deadbeef',
     'an id still holding a credential inside half its life is answered it even at the cap');
 Settings::set('turn_max_per_30d', 8);
-ok(Turn::mint('f00df00d', $t0 + 2003) !== null, 'a raised cap is obeyed at the next ask');
+ok(Turn::mint('f00df00d', $t0 + 4003) !== null, 'a raised cap is obeyed at the next ask');
 ok(str_contains((string)$turnAlert('turn-stop'), '8 credentials'), 'and reaching the new cap alerts again');
 
 // The window rolls: a mint older than 30 days counts against nothing.
-ok(Turn::mint('b0a710ad', $t0 + 2004) === null, 'at the cap again');
-ok(Turn::gauge($t0 + 1001 + Turn::WINDOW)['recent'] === 4, '30 days on, the first four have fallen out of the count');
-ok(Turn::mint('b0a710ad', $t0 + 1001 + Turn::WINDOW) !== null, 'and a mint fits again');
+ok(Turn::mint('b0a710ad', $t0 + 4004) === null, 'at the cap again');
+ok(Turn::gauge($t0 + 2001 + Turn::WINDOW)['recent'] === 4, '30 days on, the first four have fallen out of the count');
+ok(Turn::mint('b0a710ad', $t0 + 2001 + Turn::WINDOW) !== null, 'and a mint fits again');
 $turnDb = Db::get();
-ok(Turn::prune($turnDb, $t0 + 2005 + Turn::WINDOW) === 8 && Turn::gauge($t0 + 2005 + Turn::WINDOW)['recent'] === 1,
+ok(Turn::prune($turnDb, $t0 + 4005 + Turn::WINDOW) === 8 && Turn::gauge($t0 + 4005 + Turn::WINDOW)['recent'] === 1,
     'the reaping drops what fell out of the window and the count agrees');
-ok(Turn::gauge($t0 + 2005 + Turn::WINDOW)['sessions'] === 9, 'the lifetime total is untouched by it');
+ok(Turn::gauge($t0 + 4005 + Turn::WINDOW)['sessions'] === 9, 'the lifetime total is untouched by it');
 
 // Mints run side by side, so the count a mint read before its call can
 // be several below the count after its row: the alert is on the span,
 // not on equality with the line, or a jump past the line raises nothing.
 Settings::set('turn_max_per_30d', 10);
-$turnT = $t0 + 2010 + Turn::WINDOW;
+$turnT = $t0 + 4010 + Turn::WINDOW;
 $turnSeed = [$turnT, 5];
 ok(Turn::mint('cafe0001', $turnT) !== null, 'a mint that five others overtook');
 ok(str_contains((string)$turnAlert('turn'), 'at 7 of 10 in the last 30 days'),

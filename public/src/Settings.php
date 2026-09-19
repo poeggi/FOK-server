@@ -254,10 +254,11 @@ final class Settings
         'turn_enabled' => [1, 'Offer TURN credentials (0 = off, every credential out is revoked)',
             'Whether turn.php mints TURN credentials at all. 0 refuses every ask and, within a minute, revokes '
             . 'every credential still out; a duel then has STUN only. Needs the key file in the data dir.'],
-        'turn_ttl_secs' => [1800, 'TURN credential lifetime (seconds)',
+        'turn_ttl_secs' => [3600, 'TURN credential lifetime (seconds)',
             'How long a minted credential is valid. An id asking again while its credential has at least half '
-            . 'of this left gets the same one back, which counts once. A relayed match longer than this loses '
-            . 'its relay unless the client refreshes. The relay caps it at 48 hours.'],
+            . 'of this left gets the same one back, which counts once; the client asks before every connection '
+            . 'it builds, so a connection starts on at least half of this. A relayed connection older than what '
+            . 'was left when it was built loses its relay. The relay caps it at 48 hours.'],
         'turn_max_per_30d' => [1000, 'Stop TURN: credentials handed out in the last 30 days above',
             'Credentials minted in a rolling 30 days. At this many nothing more is minted until the window '
             . 'frees or the number is raised; the stop alert is raised once, when it is reached. A credential '

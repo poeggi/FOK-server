@@ -73,11 +73,11 @@ if [ "$REMOTE" -eq 0 ] && [ "$fakeup" -eq 1 ]; then
     R=$(turn "$ID1")
     expect "with a key file credentials are minted" '"ok":true' "$R"
     expect "minted for the asking id" "\"username\":\"u1-$ID1\"" "$R"
-    expect "with the whole ttl" '"ttl":1800' "$R"
+    expect "with the whole ttl" '"ttl":3600' "$R"
     expect "the relay's urls handed on" 'turns:turn.cloudflare.com:5349?transport=tcp' "$R"
     refute "without the port-53 ones" ':53?' "$R"
     refute "the stun one included" 'com:53"' "$R"
-    expect "the fake saw the id and the ttl" "1 $ID1 1800" "$(cat "$FAKE/mints.log")"
+    expect "the fake saw the id and the ttl" "1 $ID1 3600" "$(cat "$FAKE/mints.log")"
     R=$(turn "$ID1")
     expect "the same id asking again gets the same credential" "\"username\":\"u1-$ID1\"" "$R"
     expect "and the relay was not asked again" '1' "$(wc -l < "$FAKE/mints.log" | tr -d ' ')"
