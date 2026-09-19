@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.22", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"4.23", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -62,7 +62,10 @@ an operator named, which may carry a 0 or a 1, in 4.16, or the identity
 token in 4.20 - the preparation for 5.0, where it is required - and the
 POST forms of the poll, the relay's held read and the vault restore in
 4.21, which take the token off the request line, or TURN credentials for
-a duel no direct path can carry in 4.22) is available, and
+a duel no direct path can carry in 4.22, or the client naming its own
+version on hello and being told when a newer build is out, an id its
+owner deletes or moves to another device, and the origins of a packaged
+app's web view in 4.23) is available, and
 which heartbeat the server expects: 60 s from 4.5, which also counts every
 request as a beat, 30 s before it (see Pacing).
 
@@ -113,12 +116,14 @@ works when it is not.
   `^[0-9a-f]{8}$`). It is a PUBLIC identity, not a secret: the friend
   code, the name on every roster. What proves that the caller OWNS the id
   it names is the identity token, `tok` (4.20, next section).
-- CORS: browsers may call the API from `https://poeggi.github.io` and, for
-  local client development, `http://localhost:8000` /
-  `http://127.0.0.1:8000`. Those two are the ONLY `http://` origins in the
-  allowlist, and they are deliberate: loopback never leaves the machine, so
-  there is no cleartext on a wire to protect. Every other origin must be
-  `https://`. Origins outside the allowlist are not sent CORS headers. Two
+- CORS: browsers may call the API from `https://poeggi.github.io`; from
+  the web view of the packaged app, which serves the game from the device
+  itself - `capacitor://localhost` on iOS, `https://localhost` on Android
+  (4.23); and, for local client development, `http://localhost:8000` /
+  `http://127.0.0.1:8000` / `http://localhost` (the last is also an older
+  Android web view). The `http://` origins are all loopback, and they are
+  deliberate: loopback never leaves the machine, so there is no cleartext
+  on a wire to protect. Every other origin must be `https://`. Origins outside the allowlist are not sent CORS headers. Two
   answers come from the web server itself, ahead of the code that holds the
   allowlist, and so cannot consult it;
   both answer any origin. `t.txt` discloses nothing the standard HTTP `Date`
@@ -175,8 +180,10 @@ player. The token is what proves it.
     tok    32 lowercase hex chars (16 random bytes), minted by the server
            on the first hello of an unbound id and answered ONCE. Sent by
            the client on every request that names its id. Only its SHA-256
-           is stored. It never changes for an id; only an operator's reset
-           makes the next hello mint again.
+           is stored. It changes for an id in two ways only: an operator's
+           reset makes the next hello mint again, and a move to another
+           device (account.php, 4.23) mints for the new device and retires
+           the old token in the same moment.
 
 Where it goes: as the `tok` member of every POST body beside `id`. Since
 4.21 every request that names an id has a POST form - poll.php, the
@@ -233,6 +240,60 @@ is on the request line. From that date on, 5.0: `tok` is required on
 every request, a hello without it is 401, the vault mints nothing, the
 three GETs are gone, and a wrong token from a pair over the cap answers
 429 `too many attempts` with `retry_after` instead of 401.
+
+## POST /api/account.php - the id itself (4.23)
+
+Three things a player does TO the id rather than with it. `delete` and
+`transfer` need the token that proves it - a bound id and its `tok`,
+nothing less: the leniency for an id nothing proves yet does not reach
+here, exactly as at the vault. `claim` is how a new device becomes the
+owner, so it carries neither.
+
+    POST {"id": "c0ffee42", "tok": "<32-hex>", "action": "delete"}
+    -> {"ok": true}
+
+The id and everything the server holds about it: the player row and
+name, the friendships (each friend is sent the 'friend' `{event:
+"expired"}` signal and reconciles its list), the scores under it, the
+config backup, the item instances it owns (the ledger keeps that they
+existed and where they went), the event memberships (a finished
+tournament's archive keeps the id: it is the record of an evening), and
+the identity binding. Gone is gone: there is no undo, and the answer
+comes after the transaction committed. The client discards the id and
+the token with it and starts afresh with a new id - a hello on the old
+id would register it again, to whoever sends it. A TURN credential
+already handed out lives its ttl.
+
+    POST {"id": "c0ffee42", "tok": "<32-hex>", "action": "transfer"}
+    -> {"ok": true, "code": "K7QMX2P9", "valid": 300}
+
+    POST {"action": "claim", "code": "K7QMX2P9"}
+    -> {"ok": true, "id": "c0ffee42", "tok": "<32-hex>"}
+
+Moving an id to another device: a new phone, or the app installed
+beside the web game. The OLD device asks for a code: 8 characters from
+the poster alphabet (`23456789ABCDEFGHJKMNPQRSTUVWXYZ` - no 0/O, no
+1/I/L), valid for `valid` seconds, used once. It shows the code, as
+text to type or in a QR of the client's own making; the server has no
+opinion on the URL. The NEW
+device sends the code, naming no id and holding no token, and is
+answered the id and a FRESH token. The old token is retired in the
+same moment, so the old device's next request is 401: a move is a
+move, and two devices never share an id. The new device stores both
+exactly as it would a hello's `tok` and restores the config from the
+vault under them (Stats backup / restore); a throwaway id it bound
+before the claim it may `delete`. A code is used once - the first
+claim takes it, a second is 404 like any wrong one. Wrong codes are
+counted per address: past `claim_fails_per_min` in a minute the address
+is answered 429 `too many attempts` with `retry_after` for the rest of
+it. Unknown code: 404 `unknown code`. No code store (a host without
+shared memory): 503 `transfer unavailable`.
+
+What this does not do: it does not recover an id whose only device is
+gone. Nothing on the server ties an id to a person, so nothing can hand
+it back. Keeping the token where a reinstall finds it again - the
+platform's keychain, the file backup - is the client's business, and
+the operator's reset is the last resort.
 
 ## Time synchronization and PTS
 
@@ -629,6 +690,13 @@ Request:
                                   other, so this is the only way the second
                                   one becomes known - see Self-reported
                                   networks below.
+      "client": "4.5.12",         4.23, optional: the client's own version,
+                                  x.y.z (three or four numbers, no "v").
+                                  Kept with the id; what `upgrade` is
+                                  judged on. See The client's version below
+      "platform": "ios"           4.23, optional: where the client runs -
+                                  "web", "ios" or "android"; up to 8
+                                  lowercase letters, kept as sent
     }
 
 Response:
@@ -650,6 +718,10 @@ Response:
       },                          See Pacing below.
       "debug": false,             the server's instruction: the client MUST
                                   honour it (see Debug mode below)
+      "upgrade": "advised",       4.23, only when the request named a
+                                  `client` below a floor the operator set:
+                                  "advised" or "required". Absent: nothing
+                                  to do. See The client's version below
       "online": 3,                players seen in the last 120 s
       "playing": 2,               players currently in 1vs1 games, private
                                   ones included (see Announcing a duel)
@@ -960,6 +1032,31 @@ Rules:
 - While a 1vs1 game is running, send `duel_with` in every hello. It
   refreshes a duel start.php has already put on record; it is not what
   puts it there (see Announcing a duel below).
+
+### The client's version (`client`, `upgrade`, 4.23)
+
+A web client is replaced at its next page load. A client installed from
+a store is replaced when the player updates it, which may be months
+later - so the server keeps every contract MINOR it published on the
+same MAJOR, and an old build keeps working. What the server cannot do
+by itself is tell the player that a newer build exists. `upgrade` is
+that, and nothing more:
+
+    advised     a newer build is out. Say so once, then play on.
+    required    the operator wants this build replaced. Block online play
+                and send the player to the update.
+
+It is judged on the `client` the request named against two floors the
+operator sets (`client_advised_version`, `client_min_version`, both off
+by default), so a client that names no version is told nothing. The
+server ENFORCES neither: a heartbeat refused reads as offline, and a
+player who cannot update right now deserves the truth on a screen, not
+a dead wire. What the client does with the word is its own business.
+Send `client` on every hello - it costs nothing, the floors may move
+between two of them, and the answer rides a beat the client sends anyway.
+
+The last version and platform an id reported are kept with the player,
+so the operator can see which builds are in use.
 
 ### Announcing a duel
 

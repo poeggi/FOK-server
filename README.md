@@ -52,6 +52,13 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   admin Game Statistics card shows the players holding a credential and
   the credentials handed out in the last 30 days, with the cap and the
   lifetime total in its popup.
+- The store build (contract 4.23): a client names its version and
+  platform on hello and is told `upgrade: advised|required` when it is
+  below a floor the operator set - never refused, a store build is
+  replaced only when its player updates it. account.php lets the owner
+  delete the id (everything about it goes) or move it to another device
+  by a short code that mints a fresh token and retires the old one. The
+  packaged app's web-view origins are on the CORS allowlist.
 - Global highscores: top 100 list. Submissions carry the deterministic
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
   be sanity-checked by re-simulation to prevent spoofing (validated flag).
@@ -207,6 +214,8 @@ major. Every minor since is additive; docs/API.md carries them one by one.
         signal.php    POST matchmaking/WebRTC signaling message
         backup.php    GET/POST client config backup and restore, under the
                       identity token
+        account.php   the id itself: its owner deletes it, or moves it to
+                      another device by a short code (4.23)
         .user.ini     PHP limits for the API only (see Capacity below)
       debug/          client debug-report drop -> 4-digit PIN (1 day, 8 MB)
       admin/          session-protected admin UI + JSON API
@@ -503,7 +512,7 @@ host-level. If this outgrows shared hosting, fix workers first.
 ## API sketch
 
     GET  /api/version.txt
-      -> {"ok":true,"server":"<x.y.z>","api":"4.21","env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":"4.23","env":"live"}
          (static, written by the deploy - it starts no PHP)
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
@@ -512,8 +521,10 @@ host-level. If this outgrows shared hosting, fix workers first.
                           "duel_private":bool?, "duel_end":"deadbeef"?,
                           "latency":ms?, "auto_accept":bool?, "debug":bool?,
                           "friends_since":ms?, "tourneys":bool?,
-                          "events":bool?, "nets":[ip,...]?}
-      -> {"ok":true,"api":"4.21","tok":"<32-hex>"?,"now":ms,"debug":bool,
+                          "events":bool?, "nets":[ip,...]?,
+                          "client":"4.5.12"?, "platform":"web|ios|android"?}
+      -> {"ok":true,"api":"4.23","tok":"<32-hex>"?,"now":ms,"debug":bool,
+          "upgrade":"advised|required"?,
           "online":n,"playing":n,"registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_delta":{...}?, "tourneys":[...]?, "events":[...]?}
@@ -586,6 +597,12 @@ host-level. If this outgrows shared hosting, fix workers first.
                           "platform"?,"pts"?}
       -> {"ok":true,"rank":n,"top":bool}   (no name -> ANONYMOUS; completed =
          cleared the final level; platform = pc|mobile|tv|console, optional)
+    POST /api/account.php {"id","tok","action":"delete"}      -> {"ok":true}
+    POST /api/account.php {"id","tok","action":"transfer"}
+      -> {"ok":true,"code":"K7QMX2P9","valid":300}
+    POST /api/account.php {"action":"claim","code":"K7QMX2P9"}
+      -> {"ok":true,"id":"cafe0001","tok":"<32-hex>"}   (the old token is
+         retired; a wrong code is 404, too many from one address 429)
     POST /api/signal.php {"id","to","type":"invite|invite-relay|accept|accept-relay|decline|offer|answer|ice|ices|bye|watch","payload"}
          (the -relay types set the no-P2P bit: honored when either side sends it;
           'ices' (4.4) carries a JSON ARRAY of candidates - one request instead

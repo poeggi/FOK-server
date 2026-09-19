@@ -607,6 +607,7 @@ function renderClientBody(body, overlay, d, reload) {
     kv('Last seen', fmtTime(c.last_seen) + ' (' + ago(c.last_seen) + ')');
     kv('Sessions', c.hello_count);
     kv('Latency', c.latency === null ? '-' : c.latency + ' ms');
+    kv('Client', buildOf(c));
     kv('Debug', debugLabel(c));
 
     sec('1vs1 / connection');
@@ -2600,6 +2601,49 @@ const TURN_BADGE = { '': 'playing', unconfigured: 'ended', off: 'ended', cap: 'd
 // The TURN popup: the cap and where the count stands, who holds a
 // credential, who took the most, and the revoke-all. Runs on the stats
 // card's interval, like the gauge popups.
+// "4.5.12 ios" for a row carrying client and platform (see Clients); a
+// client from before 4.23 named neither and reads '-'.
+function buildOf(c) {
+    if (!c.client && !c.platform) return '-';
+    return (c.client || '?') + (c.platform ? ' ' + c.platform : '');
+}
+
+async function showClients() {
+    const { overlay, head, title, body, close } = makeModal('Client versions');
+    const refresh = refreshBtn();
+    body._sid = 'clients';
+    const load = async () => {
+        try {
+            const d = await api('clients');
+            flash(refresh);
+            if (!overlay.isConnected) return;
+            body.replaceChildren();
+            body.append(el('p', 'muted', 'Players seen in the last ' + d.days + ' days, by the version '
+                + 'and platform their last hello named. Online is right now.'));
+            if (!d.clients.length) {
+                body.append(el('p', 'muted', 'Nobody yet.'));
+            } else {
+                const t = el('table');
+                t.append(row(['Version', 'Platform', 'Players', 'Online'], 'th'));
+                for (const c of d.clients) {
+                    t.append(row([c.client || '-', c.platform || '-', fmtNum(c.players), fmtNum(c.online)]));
+                }
+                body.append(t);
+                sortable(t, 'clients');
+            }
+            restoreScroll(body);
+        } catch (e) {
+            body.replaceChildren(el('p', 'error', 'Error: ' + e.message));
+        }
+    };
+    refresh.onclick = load;
+    head.append(title, refresh, close);
+    body.append(el('p', 'muted', 'Loading ...'));
+    document.body.append(overlay);
+    follows(overlay, 'stats', load);
+    await load();
+}
+
 async function showTurn() {
     const { overlay, head, title, body, close } = makeModal('TURN');
     const refresh = refreshBtn();
@@ -2816,7 +2860,7 @@ function renderUsers(box, d) {
     const search = liveFilter('Filter by ID or name...', usersFilter, () => applyFilter());
     box.append(search);
     const table = el('table');
-    table.append(row(['ID', 'Name', 'First', 'Last', 'Bound', 'N', 'Lat', 'Debug', ''], 'th'));
+    table.append(row(['ID', 'Name', 'First', 'Last', 'Bound', 'N', 'Lat', 'Client', 'Debug', ''], 'th'));
     for (const u of d.users) {
         const online = d.now - u.last_seen <= d.online_window;
         const r = el('tr');
@@ -2828,7 +2872,8 @@ function renderUsers(box, d) {
         if (u.bound_at !== null && u.bound_ip === '') bound.title = 'held by the client, not yet confirmed on a hello';
         r.append(idCell(u.id), el('td', '', u.name === null ? '-' : u.name),
             el('td', '', fmtTime(u.first_seen)), el('td', '', fmtTime(u.last_seen)), bound,
-            el('td', '', u.hello_count), el('td', '', u.latency === null ? '-' : u.latency + ' ms'));
+            el('td', '', u.hello_count), el('td', '', u.latency === null ? '-' : u.latency + ' ms'),
+            el('td', 'muted', buildOf(u)));
 
         // Debug can be set on an OFFLINE client too: it is a wish
         // stored on the player and applied on its next connect, so
@@ -2954,6 +2999,13 @@ const MODULES = [
                     value: fmtNum(d.friendships) + ' | ' + fmtNum(d.friendships_pending),
                     tip: 'Friendships accepted, and requests still unanswered.' },
                 { label: 'Scores stored', value: d.scores_total },
+                // Which builds are out there: distinct client versions among
+                // players seen lately, the spread itself in the popup. What
+                // the version floors on the config card are set against.
+                { label: 'Client versions', value: d.clients,
+                    tip: 'Distinct client versions among players seen in the last 30 days. '
+                        + 'Click for the spread by version and platform.',
+                    open: showClients },
             ]);
             box.append(el('p', 'muted', 'Server v' + d.server_version + '.'));
             // Server clock lives in the page footer, refreshed with the stats.
@@ -3257,9 +3309,10 @@ const MODULES = [
                     infoModal(s.label, b, s.key);
                 };
                 const input = el('input');
-                input.type = 'number';
+                // A string setting (a version floor) is typed, not counted.
+                input.type = s.type === 'str' ? 'text' : 'number';
                 input.name = s.key;
-                input.min = '0';
+                if (s.type !== 'str') input.min = '0';
                 input.value = s.value;
                 const val = el('td');
                 val.append(input);

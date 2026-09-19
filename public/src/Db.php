@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 50;
+    private const SCHEMA_VERSION = 51;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -916,6 +916,13 @@ final class Db
                 id TEXT NOT NULL
             )");
             $pdo->exec('CREATE INDEX IF NOT EXISTS idx_turn_mints_at ON turn_mints (at)');
+        }
+        if ($v < 51) {
+            // The client's own version and platform, as its hello last
+            // named them (see Clients): what the operator reads the spread
+            // of builds off once the game is installed from a store.
+            $pdo->exec('ALTER TABLE players ADD COLUMN client TEXT');
+            $pdo->exec('ALTER TABLE players ADD COLUMN platform TEXT');
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

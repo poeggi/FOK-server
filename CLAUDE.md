@@ -107,7 +107,9 @@ The measurements and decisions behind the rules below are in
   (public/assets/admin.js). Extend by appending a module, never by
   special-casing the framework.
 - New tunables go into Settings::DEFS with a label and read through
-  Settings::int, never a bare constant.
+  Settings::int, never a bare constant. A string setting (the two client
+  version floors) reads through Settings::str; the type of the DEFS
+  default is what tells them apart, on the card and on import.
 - New monitored conditions call Alerts::raise(type, message),
   de-duplicated per type within alert_cooldown. External delivery is the
   marked TODO in src/Alerts.php.

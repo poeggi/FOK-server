@@ -11,6 +11,7 @@ require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Tournament.php';
 require_once __DIR__ . '/../src/Events.php';
 require_once __DIR__ . '/../src/Pace.php';
+require_once __DIR__ . '/../src/Clients.php';
 
 /**
  * The heartbeat: the beat a client sends when it has nothing else to say
@@ -51,11 +52,16 @@ require_once __DIR__ . '/../src/Pace.php';
  *                               as it discovered them (STUN), so the family
  *                               this request did not arrive over is known
  *                               too - see Presence::claim
+ *   "client": "4.5.12",         optional, 4.23: the client's own version,
+ *                               kept with the id; what `upgrade` is judged
+ *                               on (see Clients)
+ *   "platform": "ios"           optional, 4.23: web, ios or android
  * }
  * Returns presence counters, the server's debug wish for this client,
  * pending signaling messages for the caller (drained on read) and, when a
  * cursor is sent, what changed about the caller's ACCEPTED friends since
- * it - the server names them, the caller never does.
+ * it - the server names them, the caller never does. `upgrade` rides the
+ * answer when the named version is below a floor the operator set.
  * Clients send this every ~60 s when nothing else is in flight (docs/API.md,
  * Pacing); fast polling belongs to poll.php.
  */
@@ -116,6 +122,17 @@ if ($nets !== null) {
     }
 }
 
+// The build itself (4.23). Shape-checked like everything else here; what
+// the server has to say about it is decided after the gate.
+$client = $body['client'] ?? null;
+if ($client !== null && (!is_string($client) || !Clients::isVersion($client))) {
+    Util::fail('invalid client');
+}
+$platform = $body['platform'] ?? null;
+if ($platform !== null && (!is_string($platform) || !Clients::isPlatform($platform))) {
+    Util::fail('invalid platform');
+}
+
 $duelEnd = $body['duel_end'] ?? null;
 if ($duelEnd !== null && !Util::isValidId($duelEnd)) {
     Util::fail('invalid duel_end');
@@ -153,7 +170,7 @@ if (!is_bool($events)) {
 // no trace: no beat, no row, nothing drained.
 $minted = Ident::hello($id, $tokSent, $tok, Util::clientIp());
 
-$debug = Presence::touch($id, Util::clientIp(), $latency, $name, $autoAccept, $debugActive);
+$debug = Presence::touch($id, Util::clientIp(), $latency, $name, $autoAccept, $debugActive, $client, $platform);
 Util::bump('hello');
 if ($nets !== null) {
     Presence::claim($id, $nets);
@@ -211,6 +228,13 @@ $out = [
 // a hello answers, and no later answer carries it again.
 if ($minted !== null) {
     $out['tok'] = $minted;
+}
+// 4.23: a word about the build, never a refusal - a heartbeat refused
+// would only read as offline (see Clients). Absent when there is nothing
+// to say, which is every client until the operator sets a floor.
+$upgrade = Clients::upgradeFor($client);
+if ($upgrade !== null) {
+    $out['upgrade'] = $upgrade;
 }
 
 if ($since !== null) {

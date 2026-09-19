@@ -67,6 +67,17 @@ tests; test/checks.sh fails from 2026-10-01 while any tagged line
 survives outside the plan and itself. Step 9 deletes them, bumps to
 5.0 / 1.20.0, and turns the count into 429.
 
+## The token changes in two ways (4.23)
+
+`Ident::reset` (operator) drops the row; `Ident::rebind` (a claim on
+account.php) replaces it with a fresh token and the caller's address in
+one upsert, so the old device is 401 from that moment. `Account::claim`
+is the ONE caller; the code it consumes lives in APCu only (`xf:`,
+300 s, single use, `apcu_delete` is the claim) and a host without shared
+memory answers 503. `Account::remove` is the ONE removal transaction:
+the operator's delete_player keeps scores and vault, the owner's delete
+takes them too. Both are 4.23 and stay after step 9.
+
 ## The harnesses are 4.20 clients
 
 The smoke carries `tok` on every request: lib.sh `TOK[]`, `jt` (body

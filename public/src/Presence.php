@@ -76,8 +76,12 @@ final class Presence
      * player's arrival costs. The row is upserted - an unknown id registers
      * in silence - and the name and the wish ride back on the same
      * RETURNING, into the entry, where every later beat reads them.
+     *
+     * $client and $platform are what hello names (see Clients); like the
+     * name they are identity, written through to the row when they change,
+     * which is once per build a player installs.
      */
-    public static function touch(string $id, string $ip, ?int $latency = null, ?string $name = null, ?bool $autoAccept = null, ?bool $debugActive = null): bool
+    public static function touch(string $id, string $ip, ?int $latency = null, ?string $name = null, ?bool $autoAccept = null, ?bool $debugActive = null, ?string $client = null, ?string $platform = null): bool
     {
         self::mustHaveApcu();
         $now = time();
@@ -87,13 +91,15 @@ final class Presence
             // A stale entry the fold has not reached carries the last
             // session's latency; it rides into this write, so a quiet
             // server loses nothing of that session either.
-            $row = self::open($id, $ip, $now, $name, $e['lat'] ?? null);
+            $row = self::open($id, $ip, $now, $name, $e['lat'] ?? null, $client, $platform);
             $e = [
                 'seen' => $now,
                 'start' => $now,
                 'ip' => $ip,
                 'lat' => null,
                 'name' => $row['name'],
+                'cv' => $row['client'],
+                'cp' => $row['platform'],
                 'accept' => 0,
                 'dbg' => false,
                 'wish' => (int)$row['debug'] === 1,
@@ -130,6 +136,17 @@ final class Presence
             $e['chg'] = Util::nowMs();
             $moved = true;
         }
+        if (($client !== null && $client !== ($e['cv'] ?? null))
+            || ($platform !== null && $platform !== ($e['cp'] ?? null))) {
+            $cv = $client ?? $e['cv'] ?? null;
+            $cp = $platform ?? $e['cp'] ?? null;
+            Db::retry(static function () use ($id, $cv, $cp): void {
+                Db::get()->prepare('UPDATE players SET client = ?, platform = ? WHERE id = ?')
+                    ->execute([$cv, $cp, $id]);
+            });
+            $e['cv'] = $cv;
+            $e['cp'] = $cp;
+        }
         if ($autoAccept !== null) {
             $e['accept'] = $autoAccept ? $now + FOK_AUTO_ACCEPT_WINDOW + FOK_BEAT_JITTER : 0;
         }
@@ -147,19 +164,21 @@ final class Presence
     }
 
     /** The session-start write: registers or refreshes the row, once per session. */
-    private static function open(string $id, string $ip, int $now, ?string $name, ?int $latency): array
+    private static function open(string $id, string $ip, int $now, ?string $name, ?int $latency, ?string $client, ?string $platform): array
     {
-        return Db::retry(static function () use ($id, $ip, $now, $name, $latency): array {
+        return Db::retry(static function () use ($id, $ip, $now, $name, $latency, $client, $platform): array {
             $st = Db::get()->prepare(
-                'INSERT INTO players (id, ip, ipnet, first_seen, last_seen, hello_count, name, latency)
-                 VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                'INSERT INTO players (id, ip, ipnet, first_seen, last_seen, hello_count, name, latency, client, platform)
+                 VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
                  ON CONFLICT (id) DO UPDATE SET ip = excluded.ip, ipnet = excluded.ipnet,
                      last_seen = excluded.last_seen, hello_count = hello_count + 1,
                      name = COALESCE(excluded.name, players.name),
-                     latency = COALESCE(excluded.latency, players.latency)
-                 RETURNING name, debug'
+                     latency = COALESCE(excluded.latency, players.latency),
+                     client = COALESCE(excluded.client, players.client),
+                     platform = COALESCE(excluded.platform, players.platform)
+                 RETURNING name, debug, client, platform'
             );
-            $st->execute([$id, $ip, Util::ipNet($ip), $now, $now, $name, $latency]);
+            $st->execute([$id, $ip, Util::ipNet($ip), $now, $now, $name, $latency, $client, $platform]);
             $row = $st->fetch();
             // An INSERT ... RETURNING is a write: finish it before anything
             // else touches the database, this retry included (see Db).
@@ -1037,5 +1056,25 @@ final class Presence
         $p = self::population();
         $v6 = (int)($p['online_v6'] ?? 0);
         return ['v4' => $p['online'] - $v6, 'v6' => $v6];
+    }
+
+    /**
+     * Who is online by build: a count per "version|platform" as the
+     * entries carry them (see Clients::spread), '' for a client that
+     * named neither. Admin-only, a scan like the counts.
+     * @return array<string, int>
+     */
+    public static function buildsOnline(): array
+    {
+        $cut = Util::since(FOK_ONLINE_WINDOW);
+        $out = [];
+        foreach (self::all() as $e) {
+            if ((int)$e['seen'] < $cut) {
+                continue;
+            }
+            $k = (string)($e['cv'] ?? '') . '|' . (string)($e['cp'] ?? '');
+            $out[$k] = ($out[$k] ?? 0) + 1;
+        }
+        return $out;
     }
 }

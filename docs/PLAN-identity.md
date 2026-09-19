@@ -189,8 +189,10 @@ launch.
   PREPARATION for 5.0 and the number says so. Additive on the wire:
   `tok` optional everywhere, one new answer (401 bad token) that only
   a bound id can meet.
-- Step 9 (on or after 2026-10-01): 1.20.0 (1.18.0 went to 4.21, 1.19.0 to 4.22, see the
-  status list), FOK_API_VERSION 5.0. `tok` required, the pair throttle
+- Step 9 (on or after 2026-10-01): 1.21.0 (1.18.0 went to 4.21, 1.19.0 to 4.22,
+  1.20.0 to 4.23 - the store build: the client's version on hello, the
+  account endpoint's delete and move; see the status list),
+  FOK_API_VERSION 5.0. `tok` required, the pair throttle
   refuses, the three GET forms gone, and NO migration path is left in
   the tree. A field that was optional becoming required is the
   MAJOR the contract defines.

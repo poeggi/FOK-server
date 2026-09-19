@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.19.4';
+const FOK_SERVER_VERSION = '1.20.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -141,7 +141,7 @@ const FOK_SERVER_VERSION = '1.19.4';
 // a rolling 30 days, a setting - and refuses past it (see Turn), so a
 // client must take the 503 as an ordinary answer. Additive: one new
 // endpoint, nothing else moves.
-const FOK_API_VERSION = '4.22';
+const FOK_API_VERSION = '4.23';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');
@@ -382,12 +382,32 @@ const FOK_PSTATS_WRITE_THROTTLE = 10;
 // host, and this is the path under it.
 const FOK_GAME_URL = 'https://poeggi.github.io/FOK-snake/';
 
-// Game clients are served from these origins (CORS allowlist).
+// Game clients are served from these origins (CORS allowlist). The
+// packaged app serves the game from the device itself, so its web view
+// names no web host: capacitor://localhost is Capacitor's iOS origin,
+// https://localhost its Android one, http://localhost an older Android web
+// view. WKWebView refuses a custom handler for http/https, which is why
+// the app cannot simply present the github.io origin on iOS. Loopback
+// never leaves the machine, so the http:// entries protect nothing less.
 const FOK_ALLOWED_ORIGINS = [
     'https://poeggi.github.io',
+    'capacitor://localhost',
+    'https://localhost',
+    'http://localhost',
     'http://localhost:8000',
     'http://127.0.0.1:8000',
 ];
+
+// The oldest client versions served without an `upgrade` word on hello
+// (docs/API.md, The client's version). Off: a store build is replaced when
+// its player updates it, and these are the only way the server can say a
+// newer one exists. Settings, so a broken build is retired from the
+// config card without a deploy.
+const FOK_CLIENT_ADVISED_VERSION = '0';
+const FOK_CLIENT_MIN_VERSION = '0';
+// Wrong transfer codes from one address in a minute before 429 (see
+// Account::claim).
+const FOK_CLAIM_FAILS_PER_MIN = 10;
 
 const FOK_ADMIN_MAX_FAILS = 5;
 const FOK_ADMIN_LOCK_SECONDS = 300;

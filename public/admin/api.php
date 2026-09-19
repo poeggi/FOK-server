@@ -22,6 +22,8 @@ require_once __DIR__ . '/../src/Items.php';
 require_once __DIR__ . '/../src/Tournament.php';
 require_once __DIR__ . '/../src/Housekeeping.php';
 require_once __DIR__ . '/../src/Turn.php';
+require_once __DIR__ . '/../src/Account.php';
+require_once __DIR__ . '/../src/Clients.php';
 
 Auth::requireLogin();
 // The session is read once, for that check, and never written here: hold its
@@ -160,6 +162,22 @@ function poll(string $action): ?array
         default:
             return null;
     }
+}
+
+/** The bounds every integer setting is held to, on the card and on import. */
+function settingInt(mixed $v): bool
+{
+    return is_int($v) && $v >= 0 && $v <= 1000000000;
+}
+
+/**
+ * The bounds of a string setting. The only ones are the version floors, so
+ * a string is a version or the '0' that turns the floor off - a typo would
+ * otherwise be stored and silently read as off (see Clients::upgradeFor).
+ */
+function settingStr(mixed $v): bool
+{
+    return is_string($v) && ($v === '0' || Clients::isVersion($v));
 }
 
 /** Send an inline text/JSON body as a named download and stop. */
@@ -346,7 +364,7 @@ switch ($action) {
         // and bound_ip '' marks a token copied off the vault that the
         // owner's updated client has not presented yet.
         $st = $db->query('SELECT p.id, p.name, p.ip, p.first_seen, p.last_seen, p.hello_count, p.latency,
-                p.debug, p.debug_active, i.bound_at, i.bound_ip
+                p.debug, p.debug_active, p.client, p.platform, i.bound_at, i.bound_ip
             FROM players p LEFT JOIN ident i ON i.id = p.id ORDER BY p.last_seen DESC LIMIT 200');
         $users = Presence::overlay(array_map(static function (array $u) {
             $u['debug'] = (int)$u['debug'] === 1;
@@ -361,34 +379,13 @@ switch ($action) {
         // Reads $_POST['id'], so a GET (no such field) fails as 'invalid id'
         // rather than deleting - that empty-id path is the guard here.
         $id = requireId('POST');
-        // The player, their friendships and their presence go through the one
-        // removal path the TTL sweep uses, so the two cannot disagree - and
-        // in ONE transaction, as the sweep runs it: a writer lost halfway
-        // through would leave the friendships gone and the player standing.
-        // Their item instances go too, which is where this path parts from the
-        // sweep on purpose: expiry only says a player has been away, and their
-        // property waits for them (see Presence::forget), while an operator
-        // removing a client is taking it away. The ledger is append-only audit
-        // and stays: it records that the instances existed and where they went.
-        Db::retry(static function () use ($id): void {
-            $db = Db::get();
-            $db->exec('BEGIN IMMEDIATE');
-            try {
-                Presence::forget($id);
-                $db->prepare('DELETE FROM items WHERE owner = ?')->execute([$id]);
-                // And the identity binding, for the same reason the items
-                // go: the sweep leaves it for the owner to come back to, an
-                // operator removing a client takes it. The next hello that
-                // asks binds the id afresh, to whoever sends it.
-                $db->prepare('DELETE FROM ident WHERE id = ?')->execute([$id]);
-                $db->exec('COMMIT');
-            } catch (Throwable $e) {
-                if ($db->inTransaction()) {
-                    $db->exec('ROLLBACK');
-                }
-                throw $e;
-            }
-        });
+        // The one removal transaction the owner's own delete shares (see
+        // Account::remove). The operator's form takes the player, the
+        // friendships, the presence, the items and the binding - a client
+        // being removed loses its property, where the TTL sweep would keep
+        // it - and leaves the scores and the vault (vault_export is manual
+        // recovery). The ledger is append-only audit and stays.
+        Account::remove($id, false);
         Util::jsonOut(['ok' => true]);
 
     // ---- config vault (per-client backup) ----
@@ -401,6 +398,12 @@ switch ($action) {
             Util::fail('no backup', 404);
         }
         download('snake-fok-backup-' . $id . '.json', $vault['payload']);
+
+    case 'clients':
+        // The builds in use (see Clients::spread): the Game Statistics
+        // bubble's popup, read when it opens.
+        Util::jsonOut(['ok' => true, 'days' => Clients::SPREAD_DAYS, 'now' => time(),
+            'clients' => Clients::spread()]);
 
     case 'token_reset':
         // Drop a client's identity binding so its next hello mints afresh:
@@ -814,7 +817,7 @@ switch ($action) {
             if (!is_string($key) || !isset(Settings::DEFS[$key])) {
                 Util::fail("unknown setting $key");
             }
-            if (!is_int($value) || $value < 0 || $value > 1000000000) {
+            if (Settings::isStr($key) ? !settingStr($value) : !settingInt($value)) {
                 Util::fail("invalid value for $key");
             }
         }
@@ -830,9 +833,16 @@ switch ($action) {
             if (!isset($_POST[$key])) {
                 continue;
             }
-            $value = filter_var($_POST[$key], FILTER_VALIDATE_INT);
-            if ($value === false || $value < 0 || $value > 1000000000) {
-                Util::fail("invalid value for $key");
+            if (Settings::isStr($key)) {
+                $value = trim((string)$_POST[$key]);
+                if (!settingStr($value)) {
+                    Util::fail("invalid value for $key");
+                }
+            } else {
+                $value = filter_var($_POST[$key], FILTER_VALIDATE_INT);
+                if (!settingInt($value)) {
+                    Util::fail("invalid value for $key");
+                }
             }
             $map[$key] = $value;
         }

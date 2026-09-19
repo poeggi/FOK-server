@@ -62,7 +62,7 @@ if [ "$REMOTE" -eq 1 ] && [ -z "${SMOKE_SEQUENTIAL:-}" ]; then
     group core    "$ID1" "$ID2" "$ID3" "$ID4" 01_core 02_signals_friends 03_start_duel 04_matchmaking 11_turn; P_CORE=$GPID
     group items   "$B1"  "$B2"  "$B3"  "$B4"  05_items;                                                P_ITEMS=$GPID
     group tourney "$C1"  "$C2"  "$C3"  "$C4"  07_tournament 08_events;                                P_TOURNEY=$GPID
-    group ident   "$ID1" "$ID2" "$ID3" "$ID4" 10_ident;                P_IDENT=$GPID   # draws its own ids
+    group ident   "$ID1" "$ID2" "$ID3" "$ID4" 10_ident 12_account;     P_IDENT=$GPID   # both draw their own ids
     echo "     (four groups in flight: core, items, tourney, ident)"
     # Explicit pids: a bare `wait` would also wait on the tunnel.
     wait "$P_CORE" "$P_ITEMS" "$P_TOURNEY" "$P_IDENT" || true
@@ -80,6 +80,7 @@ if [ "$REMOTE" -eq 1 ] && [ -z "${SMOKE_SEQUENTIAL:-}" ]; then
 else
     source test/smoke/01_core.sh                # landing, version, CORS, hello, scores, backup
     source test/smoke/10_ident.sh               # the identity token: the bind, the one refusal, the legacy paths
+    source test/smoke/12_account.sh             # the client's version on hello; account.php: delete, and the move
     source test/smoke/02_signals_friends.sh     # signals, friends, poll, debug reports, time
     source test/smoke/03_start_duel.sh          # start/epoch, directional isolation, relay duel flow, rematch
     source test/smoke/04_matchmaking.sh         # friend-spam ban, quick match

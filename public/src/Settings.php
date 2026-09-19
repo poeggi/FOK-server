@@ -5,9 +5,12 @@ require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
 
 /**
- * Admin-configurable integer settings, stored in the database with the
- * Config constants as defaults. Everything listed in DEFS shows up in
- * the admin config card automatically.
+ * Admin-configurable settings, stored in the database with the Config
+ * constants as defaults. Everything listed in DEFS shows up in the admin
+ * config card automatically. Nearly all are integers, read through int();
+ * the few that are strings (a version floor) are read through str(), and
+ * the TYPE OF THE DEFAULT is what tells them apart everywhere - the load,
+ * the card, the import.
  */
 final class Settings
 {
@@ -16,7 +19,7 @@ final class Settings
      * card shows; the help is what the operator gets on hovering it: what the
      * number bounds and what happens at the bound.
      *
-     * @var array<string, array{0:int, 1:string, 2:string}>
+     * @var array<string, array{0:int|string, 1:string, 2:string}>
      */
     public const DEFS = [
         'admin_max_fails' => [FOK_ADMIN_MAX_FAILS, 'Block admin IP after N failed logins',
@@ -239,6 +242,22 @@ final class Settings
         'event_join_fails_per_min' => [10, 'Wrong event codes per player per minute before 429',
             'Wrong event codes one player may try in a minute; from then on the answer is 429 and the log gets a '
             . 'line. It puts the attempt on record; the codes cannot be guessed.'],
+        // The client's version (docs/API.md, The client's version): the two
+        // floors `upgrade` is judged against, as x.y.z strings. A store
+        // build is replaced when its player updates it, and these are the
+        // only way the server says a newer one exists. '0' is off.
+        'client_advised_version' => [FOK_CLIENT_ADVISED_VERSION, 'Advise clients below this version to update (x.y.z, 0 = off)',
+            'A client naming a version below this on hello is answered upgrade: advised - a newer build is '
+            . 'out, the client says so once and plays on. Compared part by part (4.5.12 is below 4.6.0). '
+            . '0 turns it off. A client that names no version is told nothing.'],
+        'client_min_version' => [FOK_CLIENT_MIN_VERSION, 'Clients below this version are told to update (x.y.z, 0 = off)',
+            'A client naming a version below this on hello is answered upgrade: required - the client blocks '
+            . 'online play and sends the player to the update. The server itself refuses nothing: a refused '
+            . 'heartbeat would only read as offline. 0 turns it off.'],
+        'claim_fails_per_min' => [FOK_CLAIM_FAILS_PER_MIN, 'Wrong transfer codes per address per minute before 429',
+            'Wrong device-transfer codes one address may try in a minute (account.php claim); from then on '
+            . 'the answer is 429 with retry_after and the log gets a line. A code is 8 characters of 31 and '
+            . 'lives five minutes, so it cannot be guessed; this puts the attempt on record.'],
         'ident_fails_per_min' => [10, 'Wrong identity tokens per id and address per minute before the log line',
             'Wrong tokens one address may present for one id in a minute before the log gets a line: a stolen '
             . 'id being tried, or a second device on a stale backup. Counted per (id, address) PAIR, so a '
@@ -290,6 +309,31 @@ final class Settings
 
     public static function int(string $key): int
     {
+        $v = self::get($key);
+        if (!is_int($v)) {
+            throw new InvalidArgumentException("$key is not an integer setting");
+        }
+        return $v;
+    }
+
+    /** The string settings' read, the version floors' way in. */
+    public static function str(string $key): string
+    {
+        $v = self::get($key);
+        if (!is_string($v)) {
+            throw new InvalidArgumentException("$key is not a string setting");
+        }
+        return $v;
+    }
+
+    /** Whether a key holds a string (its default does) rather than an integer. */
+    public static function isStr(string $key): bool
+    {
+        return is_string(self::DEFS[$key][0]);
+    }
+
+    private static function get(string $key): int|string
+    {
         if (self::$cache === null) {
             self::$cache = self::load();
         }
@@ -301,7 +345,7 @@ final class Settings
      * nothing else, so this is the query that decided whether a long poll
      * had to open the database at all - hence shared memory in front of it.
      *
-     * @return array<string, int>
+     * @return array<string, int|string>
      */
     private static function load(): array
     {
@@ -314,7 +358,15 @@ final class Settings
         }
         $rows = [];
         foreach (Db::get()->query('SELECT key, value FROM settings') as $row) {
-            $rows[$row['key']] = (int)$row['value'];
+            // A row for a key the code no longer knows is left alone and
+            // read as nothing; a string key's value comes back as it was
+            // written (the column's affinity keeps non-numeric text).
+            $key = (string)$row['key'];
+            if (isset(self::DEFS[$key]) && self::isStr($key)) {
+                $rows[$key] = (string)$row['value'];
+            } else {
+                $rows[$key] = (int)$row['value'];
+            }
         }
         if ($apcu) {
             apcu_store(self::CACHE_KEY, $rows, self::CACHE_TTL);
@@ -322,7 +374,7 @@ final class Settings
         return $rows;
     }
 
-    public static function set(string $key, int $value): void
+    public static function set(string $key, int|string $value): void
     {
         self::setMany([$key => $value]);
     }
@@ -334,13 +386,16 @@ final class Settings
      * drop the cache as often, with every request in between reloading it
      * from the table.
      *
-     * @param array<string, int> $map
+     * @param array<string, int|string> $map
      */
     public static function setMany(array $map): void
     {
-        foreach (array_keys($map) as $key) {
+        foreach ($map as $key => $value) {
             if (!isset(self::DEFS[$key])) {
                 throw new InvalidArgumentException("unknown setting $key");
+            }
+            if (is_string($value) !== self::isStr($key)) {
+                throw new InvalidArgumentException("wrong type for setting $key");
             }
         }
         if ($map === []) {
@@ -397,17 +452,19 @@ final class Settings
         return function_exists('apcu_fetch') && apcu_enabled();
     }
 
-    /** @return array<int, array{key:string, value:int, default:int, label:string, help:string}> */
+    /** @return array<int, array{key:string, value:int|string, default:int|string, type:string, label:string, help:string}> */
     public static function all(): array
     {
         $out = [];
         foreach (self::DEFS as $key => [$default, $label, $help]) {
             $out[] = [
                 'key' => $key,
-                'value' => self::int($key),
+                'value' => self::get($key),
                 'default' => $default,
                 'label' => $label,
                 'help' => $help,
+                // What the card renders and the import checks: 'int' or 'str'.
+                'type' => is_string($default) ? 'str' : 'int',
             ];
         }
         return $out;

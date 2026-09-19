@@ -208,9 +208,10 @@ button.iconbtn {
 button.iconbtn:disabled { opacity: 0.4; cursor: default; }
 button.iconbtn:disabled:hover { border-color: var(--border); }
 
-/* Settings-form number inputs only; must NOT match the interval control in
-   the card head, or it would override its (narrower) width. */
-.card-body input[type="number"] { width: 90px; padding: 3px 6px; }
+/* Settings-form inputs only (a number, or a version typed into a text
+   field); must NOT match the interval control in the card head, or it would
+   override its (narrower) width. */
+.card-body input[type="number"], .card-body input[type="text"] { width: 90px; padding: 3px 6px; }
 .card form > button { margin-top: 10px; }
 
 /* The live filter above a list (liveFilter in admin.js). */

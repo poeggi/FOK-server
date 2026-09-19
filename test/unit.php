@@ -53,6 +53,8 @@ require_once __DIR__ . '/../public/src/EventAdmin.php';
 require_once __DIR__ . '/../public/src/AdminData.php';
 require_once __DIR__ . '/../public/src/Housekeeping.php';
 require_once __DIR__ . '/../public/src/Turn.php';
+require_once __DIR__ . '/../public/src/Clients.php';
+require_once __DIR__ . '/../public/src/Account.php';
 
 // Util installs a fault handler that answers 500 and exits 0 - right for a
 // request, fatal for a test run, where it would swallow a throwable (a
@@ -1510,6 +1512,127 @@ $traffic = inOneMinute(static function (): array {
 });
 ok($traffic !== [], 'the returned req_min value still reaches the traffic alert');
 Settings::set('alert_req_per_min', 600);
+
+// ---- The client's version (API 4.23) ----------------------------------
+// The shape of what hello accepts, the word it answers, and the record the
+// operator reads the spread off.
+ok(Clients::isVersion('4.5.12') && Clients::isVersion('5.0.0') && Clients::isVersion('4.5.12.3'), 'a version is three or four numbers joined by dots');
+ok(!Clients::isVersion('v4.5.12') && !Clients::isVersion('5.0') && !Clients::isVersion('4.5.') && !Clients::isVersion('0'), 'a v, two numbers (a numeric literal), a trailing dot and 0 are not');
+ok(Clients::isPlatform('ios') && Clients::isPlatform('android') && Clients::isPlatform('web'), 'the three platforms pass');
+ok(!Clients::isPlatform('iOS') && !Clients::isPlatform('') && !Clients::isPlatform('windowsphone'), 'a capital, an empty and a long one do not');
+// The floors are string settings: read through str(), stored as text, the
+// default is no row, and the wrong type is refused at the door.
+ok(Settings::str('client_min_version') === '0' && Settings::str('client_advised_version') === '0', 'both floors are off by default');
+ok(Settings::isStr('client_min_version') && !Settings::isStr('claim_fails_per_min'), 'isStr tells the two kinds apart');
+$threw = false;
+try {
+    Settings::int('client_min_version');
+} catch (InvalidArgumentException $e) {
+    $threw = true;
+}
+ok($threw, 'int() refuses a string setting');
+$threw = false;
+try {
+    Settings::set('client_min_version', 5);
+} catch (InvalidArgumentException $e) {
+    $threw = true;
+}
+ok($threw, 'and set() refuses an integer for one');
+ok(Clients::upgradeFor('4.5.12') === null && Clients::upgradeFor(null) === null, 'with both floors off nobody is told anything');
+Settings::set('client_advised_version', '4.6.0');
+ok(Settings::str('client_advised_version') === '4.6.0', 'a floor is stored and read back as text');
+ok((int)Db::get()->query("SELECT COUNT(*) FROM settings WHERE key = 'client_advised_version'")->fetchColumn() === 1, 'as a row, being an override');
+ok(Clients::upgradeFor('4.5.12') === 'advised', 'a build below the advised floor is advised');
+ok(Clients::upgradeFor('4.6.0') === null && Clients::upgradeFor('4.10.0') === null, 'at or above it nothing, and 4.10 is above 4.6');
+ok(Clients::upgradeFor(null) === null, 'a client naming no version is still told nothing');
+Settings::set('client_min_version', '4.5.0');
+ok(Clients::upgradeFor('4.4.90') === 'required' && Clients::upgradeFor('4.5.12') === 'advised', 'the stricter floor wins, the other applies above it');
+$all = array_column(Settings::all(), null, 'key');
+ok($all['client_min_version']['type'] === 'str' && $all['client_min_version']['value'] === '4.5.0'
+    && $all['claim_fails_per_min']['type'] === 'int', 'all() names the type beside the value');
+Settings::set('client_min_version', '0');
+Settings::set('client_advised_version', '0');
+ok((int)Db::get()->query("SELECT COUNT(*) FROM settings WHERE key LIKE 'client_%'")->fetchColumn() === 0, 'saving the default removes the rows');
+// The record: the session open writes what hello named, a change is
+// written through, a beat naming nothing keeps what is there.
+Presence::touch('c1000001', $IP, null, 'SRV-CI-BUILD', null, null, '4.5.12', 'ios');
+$row = Db::get()->query("SELECT client, platform FROM players WHERE id = 'c1000001'")->fetch();
+ok($row['client'] === '4.5.12' && $row['platform'] === 'ios', 'the session open records the build');
+Presence::touch('c1000001', $IP);
+$row = Db::get()->query("SELECT client, platform FROM players WHERE id = 'c1000001'")->fetch();
+ok($row['client'] === '4.5.12' && $row['platform'] === 'ios', 'a beat naming nothing keeps it');
+Presence::touch('c1000001', $IP, null, null, null, null, '4.6.0', 'ios');
+$row = Db::get()->query("SELECT client, platform FROM players WHERE id = 'c1000001'")->fetch();
+ok($row['client'] === '4.6.0', 'a new build is written through at once');
+ok(Presence::entryOf('c1000001')['cv'] === '4.6.0', 'and the entry follows');
+Presence::touch('c1000002', $IP, null, null, null, null, '4.6.0', 'android');
+Presence::touch('c1000003', $IP);
+$spread = Clients::spread();
+$byKey = [];
+foreach ($spread as $r) {
+    $byKey[($r['client'] ?? '-') . '|' . ($r['platform'] ?? '-')] = $r;
+}
+ok(isset($byKey['4.6.0|ios']) && $byKey['4.6.0|ios']['players'] === 1 && $byKey['4.6.0|ios']['online'] === 1, 'the spread counts a build and who of it is online');
+ok(isset($byKey['4.6.0|android']) && isset($byKey['-|-']), 'per platform, and a client naming nothing is a row of its own');
+ok(Clients::distinct() === 1, 'distinct counts versions, not platforms, and a client naming none is not one');
+Presence::forget('c1000001');
+Presence::forget('c1000002');
+Presence::forget('c1000003');
+
+// ---- The id itself (API 4.23): delete, and a move to another device ----
+$seed = static function (string $id) use ($IP): string {
+    $r = Ident::register($id, true, null, $IP);
+    Presence::touch($id, $IP, null, 'SRV-CI-ACCT');
+    Db::get()->prepare("INSERT INTO scores (player_id, name, score, level, created) VALUES (?, 'SRV-CI-ACCT', 10, 1, ?)")
+        ->execute([$id, time()]);
+    Vault::backup($id, '{"cfg":1}');
+    return $r['tok'];
+};
+$count = static fn(string $sql, string $id): int => (int)Db::get()->query(str_replace('?', "'$id'", $sql))->fetchColumn();
+$tokD = $seed('ac000001');
+ok(Ident::proves('ac000001', $tokD) && $count('SELECT COUNT(*) FROM scores WHERE player_id = ?', 'ac000001') === 1
+    && Vault::restore('ac000001') !== null, 'a seeded id is bound, has a score and a backup');
+Account::remove('ac000001', true);
+ok($count('SELECT COUNT(*) FROM players WHERE id = ?', 'ac000001') === 0, 'the owner\'s delete drops the row');
+ok($count('SELECT COUNT(*) FROM scores WHERE player_id = ?', 'ac000001') === 0, 'and the scores');
+ok(Vault::restore('ac000001') === null, 'and the backup');
+ok(Ident::infoOf('ac000001') === null && Presence::entryOf('ac000001') === null, 'and the binding and the entry');
+$tokO = $seed('ac000002');
+Account::remove('ac000002', false);
+ok($count('SELECT COUNT(*) FROM players WHERE id = ?', 'ac000002') === 0 && Ident::infoOf('ac000002') === null, 'the operator\'s delete drops the row and the binding');
+ok($count('SELECT COUNT(*) FROM scores WHERE player_id = ?', 'ac000002') === 1 && Vault::restore('ac000002') !== null, 'and keeps the scores and the backup');
+Db::get()->exec("DELETE FROM scores WHERE player_id = 'ac000002'");
+Db::get()->exec("DELETE FROM vault WHERE id = 'ac000002'");
+
+// The move: a code from the old device, a fresh token for the new one.
+$tokOld = $seed('ac000003');
+$t = Account::transfer('ac000003');
+ok($t !== null && strlen($t['code']) === Account::CODE_LEN && Account::isCode($t['code']) && $t['valid'] === Account::CODE_TTL,
+    'transfer answers an 8-character code of the poster alphabet and its validity');
+$t2 = Account::transfer('ac000003');
+ok($t2['code'] !== $t['code'], 'asking again mints another code');
+$c = Account::claim($t2['code'], '198.51.100.9');
+ok($c !== null && $c['id'] === 'ac000003' && preg_match('/^[0-9a-f]{32}$/', $c['tok']) === 1 && $c['tok'] !== $tokOld,
+    'the claim answers the id and a fresh token');
+ok(Ident::verify('ac000003', $c['tok'], $IP) === true, 'the new token proves the id');
+ok(Ident::verify('ac000003', $tokOld, $IP) === false, 'the old one is retired');
+ok(Ident::infoOf('ac000003')['bound_ip'] === '198.51.100.9', 'the row names the new device');
+ok(Presence::entryOf('ac000003')['tok'] === Ident::hashOf($c['tok']), 'the live entry follows at once');
+ok(Account::claim($t2['code'], '198.51.100.9') === null, 'a code is used once');
+ok(Vault::restore('ac000003') !== null, 'the backup waits for the new device');
+ok(str_contains($logTail(), 'id ac000003 SRV-CI-ACCT moved to a new device from 198.51.100.9'), 'the move is on record');
+// Wrong codes are counted per address, and the line is a setting.
+Settings::set('claim_fails_per_min', 3);
+ok(!Account::failsOver('192.0.2.7'), 'a fresh address is not over the line');
+Account::claim('AAAAAAAA', '192.0.2.7');
+Account::claim('AAAAAAAA', '192.0.2.7');
+ok(!Account::failsOver('192.0.2.7'), 'two wrong codes are under a cap of three');
+Account::claim('AAAAAAAA', '192.0.2.7');
+ok(Account::failsOver('192.0.2.7'), 'the third puts the address over it');
+ok(!Account::failsOver('192.0.2.8'), 'another address is untouched');
+ok(str_contains($logTail(), 'wrong transfer codes from 192.0.2.7: 3 in a minute'), 'and the crossing is on record');
+Settings::set('claim_fails_per_min', FOK_CLAIM_FAILS_PER_MIN);
+Account::remove('ac000003', true);
 
 // ---- Item registry (API 4.0) ----------------------------------------
 // The HTTP smoke walks the whole claim ladder over the wire; what is left

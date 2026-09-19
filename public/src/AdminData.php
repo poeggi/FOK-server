@@ -18,6 +18,7 @@ require_once __DIR__ . '/Signals.php';
 require_once __DIR__ . '/Counters.php';
 require_once __DIR__ . '/TourneyStore.php';
 require_once __DIR__ . '/Turn.php';
+require_once __DIR__ . '/Clients.php';
 
 /**
  * Read-only aggregation for the admin dashboard's two heaviest views - the
@@ -51,6 +52,9 @@ final class AdminData
             'turn' => Turn::gauge(),
             'friendships' => $friends['accepted'],
             'friendships_pending' => $friends['pending'],
+            // Distinct client versions among players seen in the last 30
+            // days: the bubble's figure, the spread itself is its popup.
+            'clients' => Clients::distinct(),
             'scores_total' => $counts['scores'],
             'db_rows' => array_sum($counts),
             'live' => self::live(),
@@ -606,7 +610,8 @@ final class AdminData
     {
         $db = Db::get();
         $st = $db->prepare('SELECT id, name, ip, first_seen, last_seen, hello_count,
-            latency, debug, debug_active, accept_until, friend_ban_until FROM players WHERE id = ?');
+            latency, debug, debug_active, accept_until, friend_ban_until, client, platform
+            FROM players WHERE id = ?');
         $st->execute([$id]);
         $p = $st->fetch();
         $st->closeCursor();
@@ -653,6 +658,9 @@ final class AdminData
                 'last_seen' => (int)($e['seen'] ?? $p['last_seen']),
                 'hello_count' => (int)$p['hello_count'],
                 'latency' => $e !== null ? $e['lat'] : ($p['latency'] === null ? null : (int)$p['latency']),
+                // The build, as its last hello named it (see Clients).
+                'client' => $p['client'],
+                'platform' => $p['platform'],
                 'online' => $e !== null && (int)$e['seen'] >= Util::since(FOK_ONLINE_WINDOW, $now),
                 'debug' => (int)$p['debug'] === 1,
                 'debug_active' => $e !== null ? (bool)$e['dbg'] : (int)$p['debug_active'] === 1,
