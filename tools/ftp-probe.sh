@@ -44,8 +44,8 @@ prefix='staging/'
 
 now_ms() { date +%s%3N; }
 log() { printf '\n===== %s =====\n' "$*"; }
-lftp_run() { lftp -u "$FTP_USER,$FTP_PASS" "$FTP_HOST" -e "
-    set ssl:verify-certificate no; set ftp:ssl-force true;
+lftp_run() { LFTP_PASSWORD="$FTP_PASS" lftp --env-password -u "$FTP_USER" "$FTP_HOST" -e "
+    set ftp:ssl-force true;
     set ftp:ssl-protect-data true; set net:timeout 20;
     $1
     bye"; }

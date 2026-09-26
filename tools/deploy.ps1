@@ -24,6 +24,9 @@ if (-not (Test-Path $credFile)) {
     Write-Error "Missing $credFile - create it with { host, user, pass }"
 }
 $cred = Get-Content $credFile -Raw | ConvertFrom-Json
+# curl reads the login from stdin (-K -), so the password is on no command
+# line; a curl config value in double quotes escapes backslash and quote.
+$login = 'user = "' + ("$($cred.user):$($cred.pass)" -replace '\\', '\\' -replace '"', '\"') + '"'
 
 $root = Join-Path $PSScriptRoot '..\public' | Resolve-Path
 $base = if ($Only) { Join-Path $root $Only | Resolve-Path } else { $root }
@@ -54,6 +57,15 @@ $files = if ($Only) {
     @(Get-ChildItem -Path $base -Recurse -File |
         Where-Object { $_.FullName -notlike "$srcDir*" -and $_.FullName -notlike "$assetDir*" })
 }
+# The CI deploy uploads only what differs from the manifest its last run
+# left in the webroot (tools/deploy.sh). This upload does not keep that
+# manifest, so it deletes it first: the next CI deploy then uploads the
+# whole tree instead of trusting hashes this upload made wrong. The leading
+# '*' lets the DELE fail when there is no manifest; the path is from the
+# login directory, where curl sends a command before the transfer.
+$null = $login | & curl.exe -K - -sS --ssl-reqd --list-only "ftp://$($cred.host)/" `
+    -Q "*DELE $prefix.htdeploy-manifest"
+if ($LASTEXITCODE -ne 0) { Write-Error 'FTP host unreachable or login refused, nothing uploaded' }
 $done = 0
 foreach ($f in $files) {
     $rel = $f.FullName.Substring($root.Path.Length + 1) -replace '\\', '/'
@@ -64,7 +76,7 @@ foreach ($f in $files) {
     # paths are basenames: curl changes into the target directory first.
     $url = "ftp://$($cred.host)/$prefix$rel.tmp"
     $leaf = $rel.Substring($rel.LastIndexOf('/') + 1)
-    & curl.exe -sS --ssl-reqd --user "$($cred.user):$($cred.pass)" --ftp-create-dirs -T $f.FullName $url `
+    $login | & curl.exe -K - -sS --ssl-reqd --ftp-create-dirs -T $f.FullName $url `
         -Q "-RNFR $leaf.tmp" -Q "-RNTO $leaf"
     if ($LASTEXITCODE -ne 0) { Write-Error "Upload failed: $rel" }
     $done++

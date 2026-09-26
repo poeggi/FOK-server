@@ -134,7 +134,9 @@ the env hand-off in smoke.sh. Shared helpers live in lib.sh.
   public/assets/ needs a bump: asset URLs carry ?v=<version> and are
   cached immutably.
 - bash test/checks.sh runs everything CI runs (needs php CLI; the
-  pre-commit hook in .githooks/ does it and skips without php).
+  pre-commit hook in .githooks/ does it and skips without php). CI runs
+  it on PHP 8.4 and 8.5, the two the host may run, and one deprecation
+  fails it (test/deprecations.php).
 - .htaccess behavior exists only on the real Apache; staging verifies it.
 - One-time server maintenance: upload a temporary PHP script via FTPS,
   invoke it once over HTTPS, delete it immediately.

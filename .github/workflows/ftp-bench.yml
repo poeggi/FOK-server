@@ -28,6 +28,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 jobs:
   bench:
     runs-on: ubuntu-latest
@@ -41,7 +44,7 @@ jobs:
     steps:
       # Full history: the deploy timing checks out earlier versions of
       # tools/deploy.sh out of git so every variant is measured in one run.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install lftp

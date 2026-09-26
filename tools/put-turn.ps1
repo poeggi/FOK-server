@@ -27,12 +27,15 @@ if (-not (Test-Path $credFile)) {
     Write-Error "Missing $credFile - create it with { host, user, pass }"
 }
 $cred = Get-Content $credFile -Raw | ConvertFrom-Json
+# curl reads the login from stdin (-K -), so the password is on no command
+# line; a curl config value in double quotes escapes backslash and quote.
+$login = 'user = "' + ("$($cred.user):$($cred.pass)" -replace '\\', '\\' -replace '"', '\"') + '"'
 
 $dir = if ($Staging) { 'fok-server-data-staging' } else { 'fok-server-data' }
 $target = if ($Staging) { 'STAGING' } else { 'LIVE' }
 
 if ($Remove) {
-    & curl.exe -sS --ssl-reqd --user "$($cred.user):$($cred.pass)" "ftp://$($cred.host)/$dir/" -Q "DELE turn.json"
+    $login | & curl.exe -K - -sS --ssl-reqd "ftp://$($cred.host)/$dir/" -Q "DELE turn.json"
     if ($LASTEXITCODE -ne 0) { Write-Error "Delete failed: $dir/turn.json" }
     Write-Host "Removed $dir/turn.json on $($cred.host) [$target]"
     exit 0
@@ -52,7 +55,7 @@ foreach ($k in 'key_id', 'key_token') {
 
 # Upload to .tmp and RENAME into place, like the deploy: the server may be
 # reading the file at that moment, and a rename is atomic.
-& curl.exe -sS --ssl-reqd --user "$($cred.user):$($cred.pass)" -T $keyFile "ftp://$($cred.host)/$dir/turn.json.tmp" `
+$login | & curl.exe -K - -sS --ssl-reqd -T $keyFile "ftp://$($cred.host)/$dir/turn.json.tmp" `
     -Q "-RNFR turn.json.tmp" -Q "-RNTO turn.json"
 if ($LASTEXITCODE -ne 0) { Write-Error "Upload failed: $dir/turn.json" }
 Write-Host "Uploaded $dir/turn.json to $($cred.host) [$target]"

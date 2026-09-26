@@ -4,16 +4,24 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   checks:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The host runs one of the two, so both must pass.
+        php: ['8.4', '8.5']
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.4'
+          php-version: ${{ matrix.php }}
           extensions: sqlite3, pdo_sqlite, mbstring, apcu
           # Tournament state lives in APCu shared memory, so the unit tests and
           # the php -S smoke run both need it enabled off the web SAPI too.
@@ -27,8 +35,9 @@ jobs:
         if: always()
         run: |
           {
-            echo "## FOK-server CI"
+            echo "## FOK-server CI, PHP ${{ matrix.php }}"
             echo "- PHP syntax lint over all tracked .php files"
+            echo "- No PHP deprecation (lint, unit, smoke)"
             echo "- ASCII-only guard over all text sources"
             echo "- Secret/credential leak guard"
             echo "- strict_types consistency guard"
@@ -56,7 +65,7 @@ jobs:
       FTP_USER: ${{ secrets.FTP_USER }}
       FTP_PASS: ${{ secrets.FTP_PASS }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # curl cannot reuse an FTP connection and the host rate-limits logins,
       # so the deploy needs lftp's pooled connections (tools/deploy.sh).

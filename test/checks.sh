@@ -7,13 +7,26 @@ cd "$(dirname "$0")/.."
 fail=0
 step() { echo; echo "== $1"; }
 
-step "PHP syntax"
+# Every deprecation PHP raises while the unit run and the smoke execute is
+# recorded here (test/deprecations.php, prepended to both), and one line
+# fails the checks. pwd -W hands a native Windows php a path it can open.
+FOK_DEPRECATION_LOG=$(mktemp)
+export FOK_DEPRECATION_LOG
+trap 'rm -f "$FOK_DEPRECATION_LOG"' EXIT
+FOK_PHP_STRICT="-d error_reporting=-1 -d auto_prepend_file=$(pwd -W 2> /dev/null || pwd)/test/deprecations.php"
+export FOK_PHP_STRICT
+
+step "PHP syntax (and no compile-time deprecation)"
 # One php process per file IS this step, and no file's lint depends on
-# another's, so run them as wide as the machine is. A parse error still
-# announces itself on stderr and fails xargs.
-git ls-files '*.php' \
-    | xargs -P "$(getconf _NPROCESSORS_ONLN 2> /dev/null || echo 4)" -n 1 php -l > /dev/null \
-    || fail=1
+# another's, so run them as wide as the machine is. A clean file prints
+# only its "No syntax errors" line; a parse error or a deprecation found
+# while compiling prints more, and that is the failure.
+lint=$(git ls-files '*.php' \
+    | xargs -P "$(getconf _NPROCESSORS_ONLN 2> /dev/null || echo 4)" -n 1 \
+        php -d error_reporting=-1 -d display_errors=1 -d log_errors=0 -l 2>&1) || fail=1
+if grep -v '^No syntax errors detected in ' <<< "$lint" | grep .; then
+    fail=1
+fi
 [ "$fail" -eq 0 ] && echo "OK"
 
 step "ASCII only (no smart quotes, dashes, arrows in sources)"
@@ -85,10 +98,20 @@ else
 fi
 
 step "Unit tests"
-php test/unit.php || fail=1
+# shellcheck disable=SC2086 # the flags are meant to split
+php $FOK_PHP_STRICT test/unit.php || fail=1
 
 step "Smoke test (real HTTP against php -S)"
 bash test/smoke.sh || fail=1
+
+step "No PHP deprecation during the unit run and the smoke ($(php -r 'echo PHP_VERSION;'))"
+if [ -s "$FOK_DEPRECATION_LOG" ]; then
+    sort "$FOK_DEPRECATION_LOG" | uniq -c
+    echo "FAIL: PHP reported the deprecations above"
+    fail=1
+else
+    echo "OK"
+fi
 
 echo
 if [ "$fail" -ne 0 ]; then

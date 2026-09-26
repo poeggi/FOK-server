@@ -266,8 +266,9 @@ script+='set cmd:fail-exit on'$'\n'
 script+="!bash $ROOT/tools/deploy.sh --plan $mf_local $mf_remote '$prefix' $plan $status $mark"$'\n'
 script+="source $plan"$'\n'
 
-if ! lftp -u "$FTP_USER,$FTP_PASS" "$FTP_HOST" -e "
-    set ssl:verify-certificate no; set ftp:ssl-force true;
+# The password goes through the environment, never onto a command line.
+if ! LFTP_PASSWORD="$FTP_PASS" lftp --env-password -u "$FTP_USER" "$FTP_HOST" -e "
+    set ftp:ssl-force true;
     set ftp:ssl-protect-data true; set net:timeout 20;
     $script
     bye" >/dev/null; then

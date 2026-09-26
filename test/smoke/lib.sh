@@ -90,7 +90,9 @@ else
     for attempt in 1 2 3; do
         PORT=$((8300 + RANDOM % 500))
         BASE="http://127.0.0.1:$PORT"
-        php -S "127.0.0.1:$PORT" -t public > "$DATA/server.log" 2>&1 &
+        # test/checks.sh sets FOK_PHP_STRICT, which records every deprecation.
+        # shellcheck disable=SC2086 # the flags are meant to split
+        php ${FOK_PHP_STRICT:-} -S "127.0.0.1:$PORT" -t public > "$DATA/server.log" 2>&1 &
         SERVER_PID=$!
         for _ in $(seq 100); do
             if [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/hello.php")" = 405 ]; then

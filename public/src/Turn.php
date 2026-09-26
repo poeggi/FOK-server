@@ -496,7 +496,6 @@ final class Turn
             $out = curl_exec($ch);
             $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
             $err = curl_error($ch);
-            curl_close($ch);
             return is_string($out) && $status > 0 ? [$status, $out] : [0, $err !== '' ? $err : 'curl failed'];
         }
         $ctx = stream_context_create(['http' => [
@@ -508,7 +507,7 @@ final class Turn
         ]]);
         $out = @file_get_contents($url, false, $ctx);
         $status = 0;
-        foreach ($http_response_header ?? [] as $h) {
+        foreach (http_get_last_response_headers() ?? [] as $h) {
             if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $m)) {
                 $status = (int)$m[1];
             }

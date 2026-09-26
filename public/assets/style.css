@@ -48,7 +48,7 @@ tr:first-child + tr td { color: var(--accent); }
    flips the toggle. A checkbox drives it so it works with no JavaScript;
    without CSS (e.g. a text browser) every row simply shows. The label and
    table are later siblings of the checkbox, so ~ can reach them. */
-.scoretoggle { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); }
+.scoretoggle { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); }
 table.scores tr.extra { display: none; }
 .scoretoggle:checked ~ table.scores tr.extra { display: table-row; }
 .scoretoggle-btn {

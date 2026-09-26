@@ -226,7 +226,8 @@ major. Every minor since is additive; docs/API.md carries them one by one.
                       writing a game client)
     test/checks.sh    all quality checks: PHP lint, ASCII-only guard,
                       secret-leak guard, strict_types guard, unit tests
-                      (test/unit.php), HTTP smoke test (test/smoke.sh)
+                      (test/unit.php), HTTP smoke test (test/smoke.sh);
+                      one PHP deprecation fails them (test/deprecations.php)
     test/load.php     capacity probe, not a pass-fail test (see Capacity)
     test/live-protocol.sh
                       post-deploy wire check: two throwaway clients drive
@@ -250,8 +251,8 @@ major. Every minor since is additive; docs/API.md carries them one by one.
                       ~/.fok-server-turn.json into the data dir over FTPS
                       (-Staging for the staging data dir)
 
-CI (.github/workflows/ci.yml) runs test/checks.sh on every push and PR.
-Run the same checks before every commit via the hook (once per clone):
+CI (.github/workflows/ci.yml) runs test/checks.sh on every push and PR,
+on PHP 8.4 and 8.5: the host runs one of the two. Run the same checks before every commit via the hook (once per clone):
 
     git config core.hooksPath .githooks
 
@@ -302,8 +303,10 @@ pushes never interleave uploads.
 
 Manual fallback (emergencies only, same staging-first rule):
 tools/deploy.ps1 -Staging, then tools/deploy.ps1; -Only api uploads one
-subtree. Credentials: ~/.fok-server-deploy.json locally, FTP_*/FOK_ADMIN_*
-secrets in GitHub Actions.
+subtree. It deletes the CI deploy's manifest first, so the next CI deploy
+uploads the whole tree. Credentials: ~/.fok-server-deploy.json locally,
+FTP_*/FOK_ADMIN_* secrets in GitHub Actions; no script puts the password
+on a command line.
 
 First-run bootstrap: the SQLite database creates and seeds itself on
 the first request (a fresh top 100 starts with the classic

@@ -33,7 +33,15 @@ record() { # $1 = label, $2 = start ms, $3 = rc
     RESULTS+=("$(printf '%s\t%s\t%s' "$1" "$ms" "$3")")
 }
 
-curl_ftp() { curl -sS --ssl-reqd --user "$FTP_USER:$FTP_PASS" "$@"; }
+# curl reads the login from stdin (-K -), so the password is on no command
+# line; a curl config value in double quotes escapes backslash and quote.
+curl_login() {
+    local s="$FTP_USER:$FTP_PASS"
+    s=${s//\\/\\\\}
+    printf 'user = "%s"\n' "${s//\"/\\\"}"
+}
+export -f curl_login
+curl_ftp() { curl_login | curl -K - -sS --ssl-reqd "$@"; }
 export -f curl_ftp
 
 # --- strategy bodies -------------------------------------------------------
@@ -57,7 +65,7 @@ export -f put_batch
 put_batch_clear() {
     local f args=()
     for f in "$@"; do args+=(-T "$f" "ftp://$FTP_HOST/$prefix${f#public/}.tmp"); done
-    curl -sS --ftp-ssl-control --user "$FTP_USER:$FTP_PASS" --ftp-create-dirs "${args[@]}"
+    curl_login | curl -K - -sS --ftp-ssl-control --ftp-create-dirs "${args[@]}"
 }
 export -f put_batch_clear
 
@@ -85,13 +93,13 @@ if command -v lftp >/dev/null; then
     # them - the strongest "one login, many files" candidate. It mirrors real
     # names, so it goes to a scratch dir that is removed right after.
     t=$(now_ms)
-    lftp -u "$FTP_USER,$FTP_PASS" "$FTP_HOST" -e "
-        set ssl:verify-certificate no; set ftp:ssl-force true; set ftp:ssl-protect-data true;
+    LFTP_PASSWORD="$FTP_PASS" lftp --env-password -u "$FTP_USER" "$FTP_HOST" -e "
+        set ftp:ssl-force true; set ftp:ssl-protect-data true;
         set net:timeout 20; set mirror:parallel-transfer-count 6;
         mirror -R --no-perms --parallel=6 public ${prefix}_bench; bye" >/dev/null 2>&1
     record lftp-p6 $t $?
-    lftp -u "$FTP_USER,$FTP_PASS" "$FTP_HOST" -e "
-        set ssl:verify-certificate no; set ftp:ssl-force true;
+    LFTP_PASSWORD="$FTP_PASS" lftp --env-password -u "$FTP_USER" "$FTP_HOST" -e "
+        set ftp:ssl-force true;
         rm -rf ${prefix}_bench; bye" >/dev/null 2>&1 || true
     echo "lftp scratch dir removed"
 fi

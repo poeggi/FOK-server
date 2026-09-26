@@ -215,7 +215,7 @@ button.iconbtn:disabled:hover { border-color: var(--border); }
 .card form > button { margin-top: 10px; }
 
 /* The live filter above a list (liveFilter in admin.js). */
-input.livefilter { width: 100%; margin: 6px 0 8px; padding: 5px 8px; -webkit-appearance: none; }
+input.livefilter { width: 100%; margin: 6px 0 8px; padding: 5px 8px; appearance: none; }
 
 
 /* ------------------------------------------------- surfaces: card, popup */
@@ -346,7 +346,7 @@ td .trunc { cursor: help; border-bottom: 1px dotted var(--muted); }
 /* Debug reports: a per-row select box and a bulk-action bar on top. */
 .seltable th:first-child, .seltable td:first-child { width: 1%; padding-right: 0; }
 .seltable input[type="checkbox"] {
-    appearance: auto; -webkit-appearance: auto;
+    appearance: auto;
     width: auto; height: auto; margin: 0; padding: 0;
     border: 0; background: none; vertical-align: middle;
     accent-color: var(--accent); cursor: pointer;
