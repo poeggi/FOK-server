@@ -16,7 +16,7 @@ require_once __DIR__ . '/Db.php';
  * indexed read (cached per request on top of that). The admin Performance
  * tab shows the result and can force a re-assessment.
  *
- * The relay and the mailbox read apcu() from here; neither ever probes.
+ * The mailbox reads apcu() from here; it never probes.
  */
 final class Caps
 {
@@ -108,9 +108,9 @@ final class Caps
 
     /**
      * Is APCu usable on this host? Load-bearing rather than an optimization:
-     * the signal mailbox and the relay hub live there and have no database
-     * transport, so a false here means those features are down (503) until it
-     * is fixed - see Signals and RelayStore.
+     * the signal mailbox lives there and has no database transport, so a
+     * false here means signaling is down (503) until it is fixed - see
+     * Signals.
      */
     public static function apcu(): bool
     {
@@ -176,8 +176,8 @@ final class Caps
             $flush ? '' : 'bookkeeping runs before the client is answered');
 
         // APCu. Shared memory between workers is load-bearing, not an
-        // optimization: the signal mailbox and the relay hub live there and
-        // have no database transport (see Signals, RelayStore).
+        // optimization: the signal mailbox lives there and has no database
+        // transport (see Signals).
         $enabled = function_exists('apcu_enabled') && apcu_enabled();
         $iterator = class_exists('APCUIterator');
         $roundTrip = false;
@@ -191,7 +191,7 @@ final class Caps
             'APCu shared memory',
             $usable ? 'enabled' : ($enabled ? 'enabled, unusable' : 'unavailable'),
             $usable ? 'good' : 'bad',
-            $usable ? '' : 'signaling and relayed duels are down (503) until this works'
+            $usable ? '' : 'signaling is down (503) until this works'
         );
 
         $db = Db::get();

@@ -193,7 +193,7 @@ launch.
   1.20.0 to 4.23 - the store build: the client's version on hello, the
   account endpoint's delete and move; see the status list),
   FOK_API_VERSION 5.0. `tok` required, the pair throttle
-  refuses, the three GET forms gone, and NO migration path is left in
+  refuses, the GET forms of poll and restore gone, and NO migration path is left in
   the tree. A field that was optional becoming required is the
   MAJOR the contract defines.
 

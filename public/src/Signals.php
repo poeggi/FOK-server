@@ -9,9 +9,8 @@ require_once __DIR__ . '/Util.php';
 
 /**
  * Store-and-forward mailbox for matchmaking and WebRTC signaling.
- * The server never interprets SDP/ICE payloads; it only relays them
- * between player IDs. The game traffic itself is peer-to-peer, except
- * in relay-fallback mode, which runs over relay.php - not through here.
+ * The server never interprets SDP/ICE payloads; it only forwards them
+ * between player IDs. The game traffic itself is peer-to-peer.
  *
  * The mailbox lives in APCu, and only in APCu. A signal is worthless
  * signal_ttl seconds after it is written and is deleted the moment it is
@@ -55,11 +54,11 @@ final class Signals
     // have made that same peer parse an array as one candidate and lose the
     // ones it DID have. The array is bounded in signal.php; its contents stay
     // opaque here, like every other payload.
-    public const TYPES = ['invite', 'invite-relay', 'accept', 'accept-relay', 'decline', 'offer', 'answer', 'ice', 'ices', 'bye', 'watch'];
+    public const TYPES = ['invite', 'accept', 'decline', 'offer', 'answer', 'ice', 'ices', 'bye', 'watch'];
 
     // Types that establish a connection: the sender is waiting for an
     // answer, so it MUST be told when one of these expires undelivered.
-    private const NEEDS_RECEIPT = ['invite', 'invite-relay', 'accept', 'accept-relay'];
+    private const NEEDS_RECEIPT = ['invite', 'accept'];
 
     /**
      * Shared memory is a hard requirement here, not a preference. Called
@@ -85,8 +84,8 @@ final class Signals
     }
 
     // ---- keys ---------------------------------------------------------
-    // One mailbox per RECIPIENT: a player has many possible senders, so
-    // unlike the relay the stream is keyed by its reader alone.
+    // One mailbox per RECIPIENT: a player has many possible senders, so the
+    // stream is keyed by its reader alone.
     private static function seqKey(string $to): string
     {
         return self::PREFIX . "$to:seq";

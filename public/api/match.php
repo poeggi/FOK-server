@@ -48,8 +48,7 @@ if ($action === 'seek') {
         $result['peer_name'] = $info[$result['matched']]['name'] ?? null;
         // The answerer's seek is the one that just finalized the pairing;
         // announce the peer-net hint once, to both sides (the offerer picks
-        // it up on its next poll). Quick match is P2P-first, so no relay
-        // guard here.
+        // it up on its next poll).
         if (($result['role'] ?? '') === 'answerer') {
             Presence::announceNet($id, $result['matched']);
         }

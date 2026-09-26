@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.20.1';
+const FOK_SERVER_VERSION = '1.20.2';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -236,19 +236,6 @@ const FOK_CONN_TTL = 120;
 // long AFTER its liveness lapses (a duel went quiet, a client dropped), so
 // a just-ended entry does not blink out the instant it stops refreshing.
 const FOK_DUEL_LINGER = 10;
-// DEPRECATED: relay fallback (see docs/DEPRECATED-relay.md). FOK_RELAY_WINDOW,
-// FOK_RELAY_TRACK_THROTTLE and FOK_POLL_CHECK_USEC_APCU below go with it.
-// How long a pair holds its relay slot after its last message through the
-// hub. A relaying duel refreshes this many times a second, so the window
-// only has to outlast a pause (level transition, backgrounded tab), or a
-// live duel loses its slot.
-const FOK_RELAY_WINDOW = 90;
-// A relayed pair's tracked connection is only a liveness marker for the
-// admin cards and the duel cap, both read over FOK_RELAY_WINDOW, so
-// stamping it on every message would buy nothing the window does not
-// already give: it is refreshed at most this often per pair - well under
-// the window it feeds.
-const FOK_RELAY_TRACK_THROTTLE = 10;
 // Undelivered signaling messages expire after this many seconds: the
 // online window, so a signal to a client that still counts as online is
 // late at worst, never lost (an idle client drains only on its heartbeat).
@@ -275,7 +262,7 @@ const FOK_MAX_INPUTS = 262144;
 // other fields. In-game messages are one MTU (1280 B); only the
 // end-of-game replay upload is anywhere near this.
 const FOK_MAX_BODY = FOK_MAX_INPUTS + 16384;
-// Max seconds a long poll (poll.php / relay.php) holds the request open.
+// Max seconds a long poll (poll.php) holds the request open.
 // The contract's default hold is 5 s (docs/API.md, Pacing) and a client may
 // ask for up to this. Coupled to the FPM worker model, and kept under the
 // max_execution_time backstop (api/.user.ini) - a design constant, not a
@@ -285,13 +272,6 @@ const FOK_POLL_WAIT_MAX = 9;
 // it must stay small enough that concurrent handshakes cannot exhaust the
 // shared-hosting FPM worker pool.
 const FOK_POLL_CHECK_USEC = 20000;
-// The relay hold loop checks with two shared-memory reads (sub-microsecond),
-// not a database query - the hub has no other transport - so it polls far
-// tighter than the signal mailbox and delivers a message in about a
-// millisecond instead of a full poll interval. This is as close to a push as
-// a pollable store gets; a true wakeup with no poll term needs the persistent
-// hub (see relay.php).
-const FOK_POLL_CHECK_USEC_APCU = 2000;
 
 // How many FPM workers may be held by long polls at once (admin-configurable,
 // see Settings and Holds). The default follows the HOST, like the tournament

@@ -360,10 +360,9 @@ final class Load
      * Hands this request's gauge counts to the shared-memory buffer, once,
      * after the response. Writing a row per request to record that the
      * request wrote rows made the monitoring itself a leading source of load
-     * on the single SQLite writer - on the relay path it doubled the write
-     * transactions a game message costs. Now it costs no write at all: the
-     * buffer folds a whole minute into one statement whoever it is that
-     * carries it (see Counters::flushMinute).
+     * on the single SQLite writer. Here it costs no write at all: the buffer
+     * folds a whole minute into one statement whoever it is that carries it
+     * (see Counters::flushMinute).
      */
     public static function flush(): void
     {

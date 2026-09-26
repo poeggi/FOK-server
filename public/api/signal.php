@@ -8,13 +8,12 @@ require_once __DIR__ . '/../src/Signals.php';
 require_once __DIR__ . '/../src/Friends.php';
 require_once __DIR__ . '/../src/ConnTrack.php';
 require_once __DIR__ . '/../src/Starts.php';
-require_once __DIR__ . '/../src/Relay.php';
 
 /**
- * Matchmaking / WebRTC signaling relay.
+ * Matchmaking / WebRTC signaling: SDP, ICE and the handshake between peers.
  * POST {"id": sender, "to": recipient,
- *       "type": one of Signals::TYPES (invite, invite-relay, accept,
- *         accept-relay, decline, offer, answer, ice, ices, bye) - the
+ *       "type": one of Signals::TYPES (invite, accept, decline, offer,
+ *         answer, ice, ices, bye, watch) - the
  *         reserved 'friend' and 'undelivered' types are server-generated
  *         and rejected here,
  *       "payload": string, opaque to the server (SDP/ICE/profile JSON;
@@ -22,12 +21,11 @@ require_once __DIR__ . '/../src/Relay.php';
  *       "pts": int ms on the shared clock (optional but expected once the
  *         client is time-synced; future-dated values are rejected + logged)}
  *
- * Authorization: invite / invite-relay require an accepted friendship
- * with "to" (403 otherwise); the other types are free-form signaling the
- * client correlates to its own in-progress handshake. The -relay types
- * declare hub-relayed play and are capacity-checked here (503 when the
- * relay-duel cap is reached). Delivery is via the recipient's hello.php
- * or poll.php poll; a flooded recipient mailbox answers 429.
+ * Authorization: invite requires an accepted friendship with "to" (403
+ * otherwise); the other types are free-form signaling the client
+ * correlates to its own in-progress handshake. Delivery is via the
+ * recipient's hello.php or poll.php poll; a flooded recipient mailbox
+ * answers 429.
  */
 Util::cors();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
@@ -69,7 +67,7 @@ Util::checkPts($body['pts'] ?? null, "player $id");
 
 // Game invites require a recorded, accepted friendship; quick match
 // (match.php) is the deliberate way to play with strangers.
-if (($type === 'invite' || $type === 'invite-relay') && !Friends::isFriend($id, $to)) {
+if ($type === 'invite' && !Friends::isFriend($id, $to)) {
     Util::fail('not friends', 403);
 }
 // A pair blocked in either direction (docs/API.md, Moderation): the
@@ -81,32 +79,12 @@ if (Friends::isBlocked($id, $to)) {
     Util::jsonOut(['ok' => true]);
 }
 
-// DEPRECATED: relay fallback surface (this block, the pairEnded call on
-// bye, and the isRelaying guard on accept below - all through the Relay
-// facade). See docs/DEPRECATED-relay.md. The no-P2P declaration (from
-// EITHER side) means the game will run through the server hub without a P2P
-// attempt - so relay capacity is checked right now, and a full relay answers
-// 503 before any game setup is wasted.
-if ($type === 'invite-relay' || $type === 'accept-relay') {
-    Relay::refuseIfOff($id, $to, $type);
-    if (Relay::capReached($id, $to)) {
-        Alerts::raise('relay', 'Relay duel cap reached: no-P2P game declaration rejected');
-        Util::fail('relay busy', 503);
-    }
-}
-
-// 'bye' ends the pairing, so its relay backlog dies with it: an
-// undelivered input must never reach the pair's next duel.
-if ($type === 'bye') {
-    Relay::pairEnded($id, $to);
-}
-
 // The start epoch counts halts within ONE connection, so it resets with
 // the connection - but it resets where the connection BEGINS, because
 // that is the only end the server reliably sees. A bye travels over the
 // open DataChannel and never reaches us, which left the pair's finished
 // epoch line standing and refused their rematch at epoch 0 with a 409
-// until the row aged out. 'invite'/'invite-relay' open the friend flow,
+// until the row aged out. 'invite' opens the friend flow,
 // 'offer' opens quick match (which has no invite) and any renegotiation:
 // one DELETE per duel setup, never per signal. Dropping the row is always
 // safe - the pair simply re-creates it on their next start - so erring
@@ -117,7 +95,7 @@ if ($type === 'bye') {
 // server is the fallback case, where the pair re-handshakes through one of
 // them anyway. Resetting on it bought nothing and spent the writer at the
 // one moment the pair's own start.php wants it.
-if ($type === 'invite' || $type === 'invite-relay' || $type === 'offer') {
+if ($type === 'invite' || $type === 'offer') {
     Starts::forget($id, $to);
 }
 
@@ -129,11 +107,9 @@ if (!Signals::send($id, $to, $type, $payload)) {
 // Only a queued message says anything about the connection.
 ConnTrack::note($id, $to, $type);
 
-// A plain 'accept' confirms a P2P pairing: hand both sides the peer-net
-// hint now, before offer/answer, so a same-family pair can try direct
-// first. Skipped when relay was declared (accept-relay, or either side
-// already relaying) - those will not attempt a direct connection.
-if ($type === 'accept' && !Relay::isRelaying($id, $to)) {
+// An 'accept' confirms the pairing: hand both sides the peer-net hint now,
+// before offer/answer, so a same-family pair can try direct first.
+if ($type === 'accept') {
     Presence::announceNet($id, $to);
 }
 Util::bump('signal');

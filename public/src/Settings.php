@@ -34,10 +34,10 @@ final class Settings
             . 'grace. It equals the online window: a signal lives as long as its recipient counts as online.'],
         // The pool-wide ceiling on held long polls (see Holds). It sits above
         // the per-feature caps below rather than beside them: those bound one
-        // relay or one tournament, this bounds what all of them together may
-        // take from a worker pool that has to answer everything else too.
+        // tournament, this bounds what all of them together may take from a
+        // worker pool that has to answer everything else too.
         'hold_max_workers' => [FOK_HOLD_MAX_WORKERS, 'Max FPM workers held by long polls at once (0 = unlimited)',
-            'How many FPM workers all long polls together (poll.php, the relay GET) may occupy at once. A poll over '
+            'How many FPM workers all long polls together (poll.php) may occupy at once. A poll over '
             . 'the budget answers at once instead of waiting and the client polls again. From half spent, hello '
             . 'withdraws the hold from idle clients first (pace); all spent raises the overload alert. The host '
             . 'has about 20 workers for everything. 0 = no budget.'],
@@ -69,27 +69,6 @@ final class Settings
             . 'caps it at 1000 ms. 0 = all at once.'],
         'ices_max' => [FOK_ICES_MAX, 'Max ICE candidates in one batched signal',
             'Most ICE candidates one batched ices signal may carry; a larger batch is rejected as invalid.'],
-        // DEPRECATED: relay fallback (see docs/DEPRECATED-relay.md). These
-        // seven relay_* settings are removed with the feature.
-        'relay_max_duels' => [0, 'Max concurrent relayed duels (0 = the relay is off; every attempt alerts)',
-            'Relayed duels the server carries at once (deprecated relay). 0, the default since TURN, refuses '
-            . 'every relay handshake and every relay.php request with 503 and raises the relay-used alert for '
-            . 'EACH attempt - a client still reaching for the relay is worth knowing about. Above 0 a handshake '
-            . 'beyond the cap is refused the same way and the relay alert is raised once per cooldown. A '
-            . 'relayed duel can hold two workers.'],
-        'relay_max_payload' => [2048, 'Max relayed message bytes',
-            'Largest relayed message in bytes; a larger one is rejected as invalid. 2048 fits a base64 packet of '
-            . '1280 binary bytes.'],
-        'relay_pending_cap' => [128, 'Max undelivered relay messages per receiver',
-            'Undelivered relay messages queued for one receiver. A message beyond it is refused with 429 (the '
-            . 'sender resends) and the spam alert is raised.'],
-        'relay_ttl' => [30, 'Undelivered relay message lifetime (seconds)',
-            'How long an undelivered relay message is kept before it is dropped.'],
-        'relay_rate_max' => [128, 'Max relay messages per second per client (sustained)',
-            'Sustained relay messages per second one client may send. Above it the client is blocked for '
-            . 'relay_rate_block_secs.'],
-        'relay_rate_block_secs' => [30, 'Relay rate-limit block duration (seconds)',
-            'How long a client over relay_rate_max is refused with 429.'],
         'friend_req_max' => [15, 'Ban: unanswered friend requests per hour above',
             'Unanswered friend requests one player may have sent in the last hour. Above it the player is banned '
             . 'from requesting for friend_ban_seconds and its pending requests are dropped.'],

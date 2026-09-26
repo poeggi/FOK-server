@@ -88,42 +88,9 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\",\"epoch\":-1,\"reason\":\"first\",\"pts\":$(now_ms)}" "$BASE/api/start.php")
 expect "a negative epoch is refused" 'invalid epoch' "$R"
 
-R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\",\"payload\":\"IN:12:up\"}" "$BASE/api/relay.php")
-expect "relay accepts message" '"ok":true' "$R"
-curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\",\"payload\":\"IN:14:left\"}" "$BASE/api/relay.php" > /dev/null
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\",\"wait\":2}" "$BASE/api/relay.php")
-expect "relay delivers in order" '"payload":"IN:12:up"' "$R"
-expect "relay delivers second message" '"payload":"IN:14:left"' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
-expect "relay drained to 204" '204' "$R"
-BIGPAY=$(printf 'x%.0s' $(seq 1 2049))
-R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\",\"payload\":\"$BIGPAY\"}" "$BASE/api/relay.php")
-expect "oversized relay payload rejected" '"error":"invalid payload"' "$R"
-
-# Directional isolation: a message A->B must never come back to A.
-curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\",\"payload\":\"IN:20:up\"}" "$BASE/api/relay.php" > /dev/null
-R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\"}" "$BASE/api/relay.php")
-expect "relay does not echo to sender" '204' "$R"
-curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php" > /dev/null
-
-# Long-poll times out to 204 and actually holds the request. Local only:
-# the hold loop is the same code everywhere, and the host's tolerance for a
-# held request is proven by the 9 s poll cap test.
-if [ "$REMOTE" -eq 0 ]; then
-    T0=$(date +%s)
-    R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\",\"wait\":2}" "$BASE/api/relay.php")
-    T1=$(date +%s)
-    expect "relay long-poll times out to 204" '204' "$R"
-    if [ $((T1 - T0)) -ge 1 ]; then echo "ok   relay long-poll held the request"; else echo "FAIL relay long-poll returned too fast"; fail=1; fi
-fi
-
 # =====================================================================
-# Connection edge cases. An invite or a relayed connection must ALWAYS
-# go through or fail loudly - never a silent ok:true that goes nowhere.
+# Connection edge cases. An invite must ALWAYS go through or fail
+# loudly - never a silent ok:true that goes nowhere.
 # Variations first, then aborts, then a normal connection again: the
 # server has to be sane after everything above.
 # =====================================================================
@@ -185,61 +152,6 @@ R=$(sig "$ID2" "$ID1" accept 'unsolicited')
 expect "unsolicited accept still delivered" '"ok":true' "$R"
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php" > /dev/null
 
-# --- Relay variations
-R=$(rly "$ID1" "$ID1" 'x')
-expect "relay to self rejected" '"error":"invalid id' "$R"
-R=$(rly "$ID1" "$ID2" '')
-expect "empty relay payload rejected" '"error":"invalid payload"' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\",\"payload\":42}" "$BASE/api/relay.php")
-expect "non-string relay payload rejected" '"error":"invalid payload"' "$R"
-MAXR=$(head -c 2048 /dev/zero | tr '\0' 'y')
-R=$(rly "$ID1" "$ID2" "$MAXR")
-expect "relay at the payload cap accepted" '"ok":true' "$R"
-curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php" > /dev/null
-
-# A slow receiver must lose nothing and see the backlog in order.
-rly "$ID1" "$ID2" 'IN:1' > /dev/null
-rly "$ID1" "$ID2" 'IN:2' > /dev/null
-rly "$ID1" "$ID2" 'IN:3' > /dev/null
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
-ordered "slow receiver gets the whole backlog, oldest first" 'IN:1' 'IN:3' "$R"
-expect "backlog keeps the middle message" 'IN:2' "$R"
-expect "relayed messages carry an age (ms on the server)" '"age":' "$R"
-
-# Piggyback (v3.2): a POST with "pull" returns the poster's OWN pending
-# inbound, so delivery does not hang on the held GET alone. ID1 -> ID2, then
-# ID2 posts (to ID1) and pulls: it must get IN:pull back, drained exactly once.
-rly "$ID1" "$ID2" 'IN:pull' > /dev/null
-R=$(rlypull "$ID2" "$ID1" 'ack')
-expect "a POST with pull piggybacks the poster's inbound" 'IN:pull' "$R"
-expect "a piggybacked message carries an age" '"age":' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
-expect "a pulled message is not then delivered again by the GET" '204' "$R"
-# A POST without pull must NOT drain the poster's inbound (old-client safety).
-rly "$ID1" "$ID2" 'IN:keep' > /dev/null
-R=$(rly "$ID2" "$ID1" 'ack2')
-expect "a POST without pull returns no messages" '"ok":true}' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
-expect "and the inbound is still there for the GET" 'IN:keep' "$R"
-# Clean up ID1's inbound (the acks ID2 sent) so later tests start clean.
-curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\"}" "$BASE/api/relay.php" > /dev/null
-
-# Aborting a relayed duel: its undelivered backlog dies with it (a stale input
-# must never reach the next duel), AND the peer's held GET is told the pair is
-# gone (v3.3) instead of being left to time out - the relay's answer to a P2P
-# DataChannel close. 'accept' first: the bye needs a tracked connection to mark.
-sig "$ID1" "$ID2" accept '' > /dev/null
-R=$(curl -s -w '\n%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
-expect "a live pairing is not reported gone" '204' "$R"
-rly "$ID1" "$ID2" 'IN:stale' > /dev/null
-sig "$ID1" "$ID2" bye '' > /dev/null
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
-expect "after a bye the relay GET reports the peer gone" '"gone":true' "$R"
-# The stale input did not leak: a gone reply carries no messages, and the
-# backlog was dropped with the pair (forgetPair).
-curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
-
 # --- ... and now a normal connection again, start to finish.
 R=$(sig "$ID1" "$ID2" invite 'lets play')
 expect "normal invite after all the aborts" '"ok":true' "$R"
@@ -260,10 +172,6 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt
 expect "normal ice delivered" '"type":"ice"' "$R"
 R=$(start_req "$ID1" "$ID2" 0 first "$(now_ms)")
 expect "normal start issued" '"start_pts":' "$R"
-R=$(rly "$ID1" "$ID2" 'IN:42:up')
-expect "normal relay accepted" '"ok":true' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
-expect "normal relay delivered" 'IN:42:up' "$R"
 R=$(sig "$ID1" "$ID2" bye '')
 expect "normal duel ends with bye" '"ok":true' "$R"
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
@@ -283,16 +191,16 @@ sig "$ID1" "$ID2" offer 'sdp-rematch' > /dev/null
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 R=$(start_req "$ID1" "$ID2" 0 first "$(now_ms)")
 expect "an offer opens a fresh epoch line too (quick match)" '"start_pts":' "$R"
-# A RELAY rematch reuses the hub with NO new offer, so nothing clears the
-# line for it. The REASON is what separates it from the first start the pair
-# already has, and both peers land on the one moment.
+# A rematch over the open DataChannel sends NO new offer, so nothing clears
+# the line for it. The REASON is what separates it from the first start the
+# pair already has, and both peers land on the one moment.
 PREV=$(echo "$R" | grep -oE '"start_pts":[0-9]+' | cut -d: -f2)
 R=$(start_req "$ID1" "$ID2" 0 rematch "$(now_ms)")
-expect "a relay rematch gets a start with no handshake at all" '"start_pts":' "$R"
+expect "a rematch gets a start with no handshake at all" '"start_pts":' "$R"
 if [ "$(echo "$R" | grep -oE '"start_pts":[0-9]+' | cut -d: -f2)" != "$PREV" ]; then
     echo "ok   and it is a new moment, not the one before it"
 else
-    echo "FAIL the relay rematch was handed the previous start"; fail=1
+    echo "FAIL the rematch was handed the previous start"; fail=1
 fi
 R=$(start_req "$ID2" "$ID1" 0 rematch "$(now_ms)")
 expect "and the peer joins the reset line" '"start_pts":' "$R"

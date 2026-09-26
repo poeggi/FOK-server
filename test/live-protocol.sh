@@ -13,8 +13,7 @@
 # which must arrive in order; the shared start moment; the friend gate on
 # invites; the tournament wire and the cap this deployment hands out; the
 # dual-stack announce; and a TURN credential carrying a DataChannel through
-# the relay. The deprecated HTTP relay is off on every deployed server and
-# is not exercised: each attempt at it is an alert row by design. NOT wired
+# the relay. The HTTP relay is not deployed (deprecated/relay/). NOT wired
 # into checks.sh - CI stays offline; this needs a network and a running
 # deployment.
 set -uo pipefail

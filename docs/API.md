@@ -87,7 +87,10 @@ no client had ever reached for: hello's `friends` id list with its
 maps, superseded by the delta and now simply not answered; start.php's
 `resync` and the pair cross-check behind it; the `chat` signal type, which
 was only ever reserved; and `GET`/`POST` /api/stats.php, whose table no
-client ever wrote. So the version says what the contract
+client ever wrote. 4.23 carries one more: the HTTP relay - `/api/relay.php`
+and the `invite-relay` / `accept-relay` signal types - which had refused
+every attempt since server 1.19.2 and which the game no longer calls (see
+Relay fallback, withdrawn). So the version says what the contract
 PERMITS, not what the server in front of you implements. FEATURE-DETECT
 every optional field - ask for it, use it when the answer carries it, fall
 back when it does not - and never gate an optional feature on the MINOR. The
@@ -168,7 +171,7 @@ works when it is not.
 - Timestamps: ALL timing/sync values are unix MILLISECONDS - `pts` and
   hello's `now` (the same PTS clock everywhere). The one exception is
   t.txt's `X-Fok-T` header, which is MICROSECONDS.
-  Only `created` fields on stored records (scores, relayed signals)
+  Only `created` fields on stored records (scores, signals)
   are unix SECONDS: they are calendar bookkeeping, never used for
   timing - format dates from them, do not mix them with PTS.
 
@@ -185,9 +188,9 @@ player. The token is what proves it.
            makes the next hello mint again.
 
 Where it goes: as the `tok` member of every POST body beside `id`. Since
-4.21 every request that names an id has a POST form - poll.php, the
-relay's held read and the vault restore were GETs, and each now takes the
-same members as a JSON body - so the token never travels on a request
+4.21 every request that names an id has a POST form - poll.php and the
+vault restore were GETs, and each now takes the same members as a JSON
+body - so the token never travels on a request
 line, which the web server's access log records on every hit. The GET
 forms with `&tok=` still answer (TEMPORARY(ident), below) and are for a
 client built before 4.21 only. A client
@@ -233,11 +236,10 @@ client has not yet presented it on a hello - so a client from before the
 token keeps working until it updates. Such a hello binds nothing. A first
 backup.php POST from such a client still mints (the vault's own mint from
 before 4.20, answered as `tok` and as `token`), and backup.php reads
-`token` as an alias of `tok`. The GET forms of poll.php, the relay's held
-read and the vault restore are TEMPORARY(ident) too: a token in a query
-is on the request line. From that date on, 5.0: `tok` is required on
-every request, a hello without it is 401, the vault mints nothing, the
-three GETs are gone, and a wrong token from a pair over the cap answers
+`token` as an alias of `tok`. The GET forms of poll.php and the vault
+restore are TEMPORARY(ident) too: a token in a query is on the request
+line. From that date on, 5.0: `tok` is required on every request, a
+hello without it is 401, the vault mints nothing, the two GETs are gone, and a wrong token from a pair over the cap answers
 429 `too many attempts` with `retry_after` instead of 401.
 
 ## POST /api/account.php - deleting the id (4.23)
@@ -486,9 +488,8 @@ what tells the server the pair wants a NEW moment rather than the one it
 already issued them. A stored start also ages out of the pairing window
 after a few seconds, which covers a rematch that repeats both fields.
 
-The server never pushes a start. The peers agree over the DataChannel (or
-the relay) that play is beginning; the server is asked only for its
-timing.
+The server never pushes a start. The peers agree over the DataChannel
+that play is beginning; the server is asked only for its timing.
 
 - `epoch`: integer 0..1000000, REQUIRED. Both peers name the same one.
 - `reason`: one of the two above, REQUIRED.
@@ -520,7 +521,7 @@ client reports, so no measurement a client makes can move the moment
 play begins. Clients never compute it; they trigger on `start_pts`.
 
 The epoch line belongs to one pairing, and the server resets it when a
-pairing BEGINS: an `invite`, an `invite-relay` or an `offer` for the pair
+pairing BEGINS: an `invite` or an `offer` for the pair
 drops whatever line was standing, so their next match opens at `epoch: 0`
 again. It is deliberately not keyed on `bye`: once the DataChannel is
 open a bye travels over it and never reaches the server, so a rematch
@@ -566,7 +567,7 @@ these gates.
 What arrives is pts + one-way delay, so the trip already pays for a clock
 that is a little fast; a reading that still lands ahead is an anchor off
 by more than the trip. Endpoints that accept a `pts` field (signal.php,
-scores.php, start.php, relay.php) sort those readings into two:
+scores.php, start.php) sort those readings into two:
 
 - ahead by more than `pts_ahead_max_ms` / 2 (default 200, a setting, so
   100 ms): ANSWERED NORMALLY, one WARNING in the server log. The anchor
@@ -1136,7 +1137,7 @@ With `wait` (seconds, capped server-side at 9) this is a LONG POLL: the
 server holds the request open and answers the moment a signal arrives,
 checking every 20 ms. This is the lowest-latency delivery path - during
 an active handshake, loop `wait=5` requests back-to-back (the default
-hold, see Pacing; anything up to 9 is served) and a relayed signal
+hold, see Pacing; anything up to 9 is served) and a forwarded signal
 reaches you in ~20 ms plus network, instead of a full poll interval.
 Without `wait` it degrades to the plain cheap poll (one indexed read,
 204).
@@ -1215,9 +1216,9 @@ fast 204 as an error or back off on it.
 
 Same drain semantics as hello's `signals`. Use it ONLY while waiting
 for or performing matchmaking/signaling; stop when the DataChannel
-opens or the attempt is abandoned. In P2P mode the server is then out
-of the in-game path entirely - peer packets flow directly and there is
-no server hop to optimize. In relay mode it is the path (relay.php).
+opens or the attempt is abandoned. The server is then out of the
+in-game path entirely - peer packets flow directly and there is no
+server hop to optimize.
 A tournament participant's poll also runs that tournament's deadlines
 (see Tournament mode, When nobody answers); the request and the answer
 are unchanged.
@@ -1343,13 +1344,7 @@ Types (fixed set, anything else is rejected):
 
     invite    ask "to" for a 1vs1 game            payload: JSON {"profile": <profile>}
               (requires an ACCEPTED friendship with "to", else 403)
-    invite-relay  invite WITH the no-P2P bit set  payload: JSON {"profile": <profile>}
-              (friendship gate + relay capacity
-              checked immediately, 503 when full)
     accept    accept an invite                    payload: JSON {"profile": <profile>}
-    accept-relay  accept WITH the no-P2P bit set  payload: JSON {"profile": <profile>}
-              (relay capacity checked immediately,
-              503 when full)
     decline   decline an invite                   payload: ""
     offer     WebRTC SDP offer                    payload: JSON {"sdp": <RTCSessionDescription>,
                                                                  "seed": <32-bit int>,
@@ -1398,7 +1393,7 @@ within its poll cadence; an offline client finds the pending entry via
 friend.php list on next start (mailbox signals expire after 120 s).
 
 The 'undelivered' signal is the FAILURE RECEIPT for a connection attempt.
-An invite / invite-relay / accept / accept-relay that nobody picks up
+An invite / accept that nobody picks up
 before it expires (signal_ttl, 120 s) is a failed attempt, so the sender
 is told instead of waiting forever on the ok:true it got. It is addressed
 "from" the peer that never collected the message and names the lost
@@ -1414,13 +1409,11 @@ BOTH mailboxes. It carries the peer's server-observed IP and address
 family (the address that peer reaches the server from) plus the
 recipient's own, so a client can compare the two. When both sides share
 a family (two IPv6, or two IPv4) a direct path is likely, so the client
-SHOULD try the direct ICE path first and fall back to relay only if that
+SHOULD try the direct ICE path first and fall back to TURN only if that
 fails. It is a hint, not a guarantee: the server sees the request source
 address, not the eventual UDP port, and cannot know whether two
 addresses can actually reach each other; family 0 means the address was
-unknown. It is NOT sent when relay was declared ('accept-relay', or a
-pair already relaying), since those never attempt a direct connection.
-It is additive - a client that ignores the type is unaffected - and it
+unknown. It is additive - a client that ignores the type is unaffected - and it
 bumps only the api MINOR (3.1). The major stays 3, so a v3 client stays
 compatible; a client reads the minor to know the hint is available.
 
@@ -1480,7 +1473,7 @@ ID), matchmaking messages carry a profile object:
   snake color, worn items) already in the invite dialog.
 - offer/answer carry it too, because quick-matched players (match.php)
   skipped the invite step; including it always keeps one code path.
-- The server relays profiles verbatim and never stores them. Clients
+- The server forwards profiles verbatim and never stores them. Clients
   MUST treat received profile fields as untrusted: clamp name to 15
   chars, clamp color/shopItems to known values, and render as text
   only (canvas/textContent, never HTML).
@@ -1719,8 +1712,7 @@ A duel is peer to peer, and a peer behind a NAT that STUN cannot open
 has no path to the other. TURN is the standard way through: a relay the
 ICE agent adds to its candidates by itself and uses only when no direct
 pair works, with the same DataChannel and the same netcode - one
-forwarding hop instead of the deprecated HTTP relay's polled round
-trips. This server runs no relay. It hands out short-lived credentials
+forwarding hop. This server runs no relay. It hands out short-lived credentials
 for Cloudflare's, and the credential is the one thing on that path the
 server can meter and withdraw.
 
@@ -1768,145 +1760,18 @@ moment ends the way it ends on any lost path. None of this is pushed;
 the only signals a client gets are the 503 and its own DataChannel
 closing.
 
-## Relay fallback - when P2P cannot connect
+## Relay fallback, withdrawn
 
-DEPRECATED. This endpoint and the `invite-relay` / `accept-relay` signal
-types are still live and unchanged, but the server-side relay fallback is
-being phased out in favour of a persistent async hub off this host. Do not
-build new clients around it. Removal is a MAJOR contract change (it drops
-the two signal types and relay.php) and will be coordinated with the client.
-See DEPRECATED-relay.md in this repo.
-
-OFF BY DEFAULT since TURN credentials (4.22, server 1.19.2): the default
-`relay_max_duels` is 0, and at 0 every `invite-relay` / `accept-relay`
-and every relay.php request is refused with 503 "relay busy" - the same
-answer a full relay gives, so nothing new on the wire - and the operator
-is alerted on each attempt. A client that holds TURN credentials never
-reaches for the relay; one without them may, and gets this.
-
-P2P fails for some pairs (symmetric NAT, UDP-blocking firewalls). When
-the DataChannel does not open within 5 s of signaling (the default
-fallback timeout; both peers must use the same value), BOTH clients
-fall back to relaying through the server.
-
-THE NO-P2P BIT - BOTH MODES COEXIST. Clients implement a "disable P2P"
-setting whose DEFAULT IS OFF:
-
-- Setting OFF (default, the old way): send plain `invite` / `accept`,
-  attempt the P2P DataChannel, and fall back to the relay only after
-  the 5 s timeout. Nothing changes for these clients.
-- Setting ON (the new way): declare relay mode UP FRONT - the inviter
-  by sending `invite-relay` instead of `invite`, or the acceptor by
-  answering `accept-relay` instead of `accept`.
-
-The declaration is HONORED when set by EITHER side, regardless of the
-other side's setting: as soon as one of the two signals carried it,
-the game runs through the hub from the start and both peers skip
-WebRTC entirely. Consequently every client MUST handle RECEIVING
-`invite-relay` and `accept-relay` even when its own setting is off.
-In relay mode the inviter still sends the `offer` signal but with
-payload {"seed": n, "profile": ...} and NO sdp, the acceptor answers
-with {"profile": ...} - then both call start.php and use relay.php
-immediately. The server checks relay capacity at the declaring signal
-itself, so a full relay answers 503 "relay busy" before any game setup
-is wasted. When neither side declared the bit, nothing is checked
-early and the 5 s-fallback path applies unchanged. Budget ~200-400 ms
-one-way as a CONSERVATIVE upper bound - the figure the prediction/correction
-model should be built to absorb, not a measured typical. The server's own
-contribution is small: the hub runs in APCu shared memory - its only
-transport - and forwards in roughly a millisecond. The rest is client cadence,
-round trips and the wider internet. Relay INPUT events, state hashes and control
-messages only - never high-rate state. The local snake stays instant; the
-remote side trails and the model absorbs the lag. Show a "relay mode"
-indicator so latency self-explains.
-
-    POST /api/relay.php {"id":me, "peer":opponent, "payload":"...",
-                         "pts": ms?, "pull": bool?}
-      -> {"ok":true}
-      -> {"ok":true,"messages":[{"seq":n,"payload":"...","created":s,"age":ms}]}
-                                    only when "pull":true AND inbound was
-                                    pending (piggyback, see below)
-      -> 429 "relay backlog full"   receiver stopped fetching; back off
-      -> 429 "relay store full"     hub shared memory was momentarily full
-                                    and refused this message; RESEND it, do
-                                    not treat it as delivered
-      -> 429 "relay rate limit"     you are sending too fast; back off
-      -> 503 "relay busy"           concurrent relayed-duel cap reached:
-                                    tell the user the server is full and
-                                    end the match attempt
-      -> 503 "relay unavailable"    this host has no usable shared memory, so
-                                    the hub cannot run at all (GET answers it
-                                    too): there is no relay play on this
-                                    deployment, do not retry
-
-    POST /api/relay.php {"id":"me","tok":"<32-hex>","peer":"opponent","wait":9}
-    GET  /api/relay.php?id=me&tok=<32-hex>&peer=opponent&wait=9
-      (the held READ, 4.21: a POST with NO payload member is this read, the
-       GET is the same read in the form from before 4.21 - TEMPORARY(ident),
-       the token is on the request line there, gone with 5.0)
-      -> {"ok":true,"messages":[{"seq":n,"payload":"...","created":s,"age":ms}]}
-         oldest first, delivered exactly once
-      -> {"ok":true,"gone":true}   the pairing was torn down (a bye/decline
-         marked it ended): the peer LEFT - end the session now (v3.3)
-      -> 204 after the hold when nothing arrived (loop wait=9 requests
-         back-to-back while in relay mode, like poll.php). Also like
-         poll.php, the hold is subject to the server's worker budget and
-         may answer at once instead of waiting - the pass still drains,
-         and POST "pull" is the delivery path that never depends on the
-         held GET being held.
-
-LEAVE ("gone", v3.3). In relay mode the peer is watching only its held GET,
-not the signal mailbox, so a P2P DataChannel-close has no equivalent: without
-this the peer sat in the game until its own liveness timeout after the other
-side left. The held GET now answers {"ok":true,"gone":true} the moment the
-pairing is torn down (a bye or decline). Read it and end the session, same as
-an in-band bye. A v3.2 client ignores it and keeps timing out.
-
-PIGGYBACK ("pull", v3.2). A relayed duel POSTs constantly (an input plus a
-keepalive), so a sender can collect its OWN inbound on those responses
-instead of leaning entirely on the held GET - which stalls if the FPM pool
-is saturated. Set "pull":true on the POST and read messages[] off the reply,
-through the SAME exactly-once/seq dedup as the GET (a message drains to
-whichever of the two arrives first, never both). It is drained on return, so
-a client that does not consume the reply LOSES it: only set "pull" if you do.
-A v3.1 server ignores it and answers the plain {"ok":true}. With "pull" the
-held GET can be dropped or slowed, which also frees server workers.
-
-"age" (ms, v3.2) is how long the message sat on the server before this
-delivery - it separates "waited in the mailbox" (a store/poll delay) from
-"queued before any server code ran" (pool exhaustion). "created" stays whole seconds.
-
-payload is opaque to the server (max 2 KB, defaults admin-configurable);
-seq is a server-assigned increasing number for ordering. Keep sending
-hello with duel_with during relayed games too, and duel_end when one ends. The concurrent-duel cap
-exists because every relayed duel holds server workers with its long
-polls - a capped, honest "busy" beats degrading the server for everyone.
-
-Send rate is also capped per client: a sender sustaining more than
-relay_rate_max messages a second (measured over more than a second, so a
-brief burst is fine) is blocked with 429 for relay_rate_block_secs and an
-alert is raised. Legitimate in-duel traffic is an order of magnitude under
-this, so the cap only catches a runaway or malicious client.
-
-A slot is taken by the first message a pair really pushes through the hub
-and held until ~90 s after its last one (a running duel refreshes it many
-times a second), so a 503 can only hit a pair that is not relaying yet -
-a live game is never cut off by a full server. Declaring the no-P2P bit
-does NOT reserve a slot: that 503 is a capacity preflight, so a pair can
-still be turned away at its first relayed message. Handle it the same way
-in both places.
-
-`bye` also discards that pair's undelivered relay backlog, so a stale
-input from a finished duel can never reach the pair's next one. Relay
-messages undelivered after relay_ttl (30 s, admin-configurable) are
-dropped: this is a live channel, not
-a queue for an absent peer - a receiver away longer than that has lost
-the duel anyway (its in-game liveness timeout fires first).
+The HTTP relay is not deployed. `/api/relay.php` does not exist (404),
+and `invite-relay` / `accept-relay` are refused like any type the server
+does not know (400 "invalid type"). A duel no direct path can carry uses
+TURN (see TURN credentials) on the same DataChannel. The code stays in
+this repository's `deprecated/relay/` for reference and runs nowhere.
 
 ## In-game liveness
 
-In P2P mode - the normal case - the server is NOT polled during
-gameplay and the DataChannel itself is the session:
+The server is NOT polled during gameplay and the DataChannel itself is
+the session:
 
 - Game state updates arrive at the net tick rate: recommended
   netInterval = max(2, ticksPerMove) on the 60 Hz engine, i.e. up to
@@ -1921,11 +1786,6 @@ gameplay and the DataChannel itself is the session:
 
 This gives the required once-per-second alive check at zero server load
 and much lower latency than any HTTP poll could.
-
-In RELAY mode there is no DataChannel and no connectionState: the
-relay.php long poll is the session. The same 1 s in-band ping and ~3 s
-timeout apply, carried as relay messages; a 429/503 or repeated
-transport errors end the match the same way "connection lost" does.
 
 ## Stats backup / restore
 
@@ -2150,7 +2010,7 @@ In a claim the two tags play different roles:
   ownership state at the same tick.
 
 A client computes its own tag from the `secret` start.php gave it and
-obtains the peer's tag over the DataChannel (or the relay) as part of
+obtains the peer's tag over the DataChannel as part of
 agreeing the transfer in-game. Exchange it in-band: a packet that ARRIVED
 cannot have been corrupted into a well-formed but WRONG tag, so the server
 treats a shape-valid tag that does not verify as provable tampering rather
@@ -2287,8 +2147,7 @@ an ordinary P2P duel between the two players the server names, established
 exactly like any other duel (`offer`/`answer`/`ice`, then `start.php` for
 the shared start, the match id and the match secret). Spectator feeds are
 P2P as well. No match traffic and no spectator traffic passes through the
-server at any point, and tournament mode has nothing to do with the
-deprecated relay fallback. What the server owns is the schedule, the roles,
+server at any point. What the server owns is the schedule, the roles,
 the results and the bracket - and what a client renders is what the server
 says, never a bracket of its own devising.
 

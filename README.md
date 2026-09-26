@@ -3,7 +3,7 @@
 Central game server for FOK Snake (and future games). Runs as plain PHP on
 shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 
-Version 1.0.0 was the first stable release. The admin, relay and matchmaking
+Version 1.0.0 was the first stable release. The admin and matchmaking
 surfaces are considered production-stable.
 
 Contract 4.8 is the current API line: 4.0 was the first MAJOR bump since
@@ -30,18 +30,7 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   the opponent's name). Players not seen for 180 days (configurable) are
   expired automatically: removed from the database, friendships cancelled,
   friends notified.
-- Relay fallback (DEPRECATED - see docs/DEPRECATED-relay.md): when the P2P
-  DataChannel cannot connect, duels relay
-  their (input-level) messages through the server via relay.php long
-  polls - degraded latency but works through any firewall; concurrent
-  relayed duels are capped to protect the shared-hosting worker pool.
-  This is NOT WebRTC relaying: there is no TURN server, and the server
-  never carries an RTCPeerConnection. WebRTC is abandoned, and plain
-  opaque messages go over HTTP instead. Still live, OFF by default since
-  1.19.2 (relay_max_duels 0: every attempt is refused with 503 and is an
-  alert of its own); the Relaying bubble stays as the monitor.
-- TURN credentials (contract 4.22): the replacement for that relay. A
-  duel no direct path can carry goes through Cloudflare's TURN relay on
+- TURN credentials (contract 4.22): a duel no direct path can carry goes through Cloudflare's TURN relay on
   the SAME DataChannel; this server only mints the short-lived
   credentials (turn.php), one set per player, tagged with the player's
   id. The credential is the tap: the server counts what it hands out,
@@ -64,15 +53,15 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   replay material (seed + tick-stamped inputs) verbatim, so scores can later
   be sanity-checked by re-simulation to prevent spoofing (validated flag).
 - 1vs1 matchmaking hub: friends invite each other (gated by an accepted
-  friendship) or quick-match with anyone waiting; the server relays
+  friendship) or quick-match with anyone waiting; the server forwards
   matchmaking and WebRTC signaling (SDP/ICE) through a store-and-forward
   mailbox and issues the shared level-start time. A connection attempt
   either goes through or fails loudly: caps answer a distinct status
   (429/503), and an invite that expires before anyone picks it up sends
-  its sender a failure receipt instead of evaporating behind an "ok". Game traffic normally
-  runs peer-to-peer over a WebRTC DataChannel (server not involved); when
-  P2P cannot connect it falls back to relaying through the server (see
-  Relay fallback above).
+  its sender a failure receipt instead of evaporating behind an "ok". Game
+  traffic runs peer-to-peer over a WebRTC DataChannel (server not
+  involved), through TURN where no direct path exists (see TURN
+  credentials above).
 - Item registry (contract 4.0): the server owns item-instance OWNERSHIP.
   An item a player carries is a row in the server's item table, not a
   client-side flag, so a restored backup or an edited save cannot
@@ -125,10 +114,10 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   fired at either moment. Ending an event freezes it and keeps every
   record; only the operator can restart it, from the dashboard.
 - Connection tracking: per-client state of the current 1vs1 connection -
-  idle, inviting, invited, connecting or playing, with the peer and
-  whether the pair runs p2p or relayed. Inferred from traffic the server
-  relays anyway (invite handshake, ICE exchange, duel heartbeat, relay
-  messages), so clients report nothing for it; the admin dashboard lists
+  idle, inviting, invited, connecting or playing, with the peer.
+  Inferred from traffic the server forwards anyway (invite handshake, ICE
+  exchange, duel heartbeat), so clients report nothing for it; the admin
+  dashboard lists
   it for every online client.
 - Admin interface at /admin/: a one-screen dashboard - game statistics,
   players (registered users, top-100 management), connection state of
@@ -208,7 +197,6 @@ major. Every minor since is additive; docs/API.md carries them one by one.
                       own secret, and is where a duel is announced
         items.php     item registry: list/mint/seed/claim - server-owned
                       item ownership, transfers attested by both peers
-        relay.php     in-duel message relay (P2P fallback), long-polled
         turn.php      TURN credentials for a duel no direct path can
                       carry: minted per player, capped per 30 days
         scores.php    GET top 100 / POST submit score
@@ -327,15 +315,15 @@ and an index behind every WHERE on a request path.
 
 What limits this server, in order:
 
-1. **PHP-FPM workers.** Every long poll (poll.php, relay.php with
-   wait=N) holds one worker for the whole hold, and this host serves
+1. **PHP-FPM workers.** Every long poll (poll.php with wait=N) holds
+   one worker for the whole hold, and this host serves
    about 20 at once (measured against live: 20 parallel 6 s holds are
    absorbed with no queueing at all, 22 queue exactly one). No PHP
    setting changes that. Thousands of IDLE clients on the 60 s heartbeat
    are cheap (~85 short req/s at 5000 clients); thousands matchmaking at
    once are not - that is ~1 held worker each, and the reason
-   FOK_POLL_WAIT_MAX and relay_max_duels exist. Those cap one hold and
-   one feature; `hold_max_workers` (default 12, see Holds) caps their
+   FOK_POLL_WAIT_MAX and tournament_max_players exist. Those cap one hold
+   and one feature; `hold_max_workers` (default 12, see Holds) caps their
    SUM, because the per-feature caps were each sized against the whole
    pool and nothing stopped them adding up to it. A poll that cannot get
    a slot answers 204 at once instead of queueing - it still reads its
@@ -344,13 +332,8 @@ What limits this server, in order:
    that are actually doing work.
 2. **SQLite has one writer.** Every hello writes. Sustained contention
    shows up as latency, then 500s (busy_timeout is 5 s), so a long poll
-   does not touch the database at all while it waits - the mailbox and
-   the relay hub it is watching are both in shared memory (see below).
-3. **Relayed duels**, the most expensive client: a long poll each plus
-   ~30 messages/s. relay_max_duels (default 4, i.e. 8 held workers) is
-   the honest "busy". It is deliberately a small share of the pool: the
-   relay is deprecated and is the P2P fallback, so it may not price out
-   the traffic it exists beside.
+   does not touch the database at all while it waits - the mailbox it
+   is watching is in shared memory (see below).
 
 Whether that ceiling is actually being reached is measured rather than
 inferred. Apache stamps the moment it RECEIVED the request into a request
@@ -443,10 +426,10 @@ and a schema read that every request pays identically would be the mean.
 
 For the writer itself, the lever is how OFTEN a request takes the lock
 rather than how long any one wait turns out to be, so nothing that dies
-within seconds is kept in the database any more. The signal mailbox, the relay hub, the presence-counter
-cache and the request counters all live in APCu shared memory: the mailbox
-and the hub because a long poll asks them "anything for me?" every 20 ms -
-every 2 ms for the hub, which no query could carry - the counters because
+within seconds is kept in the database any more. The signal mailbox, the
+presence-counter cache and the request counters all live in APCu shared
+memory: the mailbox because a long poll asks it "anything for me?" every
+20 ms, the counters because
 they took the lock once per request to add one to a number (they are now
 accumulated in memory and folded into the counters table once a minute,
 see Counters). Presence lives there too: a beat, from any endpoint, is
@@ -454,8 +437,8 @@ one shared-memory store, and the database sees a session - one write when
 a player arrives and one when the fold finds them gone (see Presence).
 
 That makes shared memory load-bearing rather than an optimization, and it
-is treated as such: the signal mailbox and the relay hub both live there
-with NO database transport at all, and answer 503 with an alert on a host
+is treated as such: the signal mailbox lives there with NO database
+transport at all, and answer 503 with an alert on a host
 without usable APCu - an untested fallback would only move the outage
 into the write lock. Whether this host has usable APCu is assessed live
 on the Properties card, which also reports opcache, whether the deferred
@@ -546,9 +529,6 @@ host-level. If this outgrows shared hosting, fix workers first.
     POST /api/friend.php {"id","tok","action":"report","peer","reason"} (4.23)
       -> {"ok":true}   (a blocked pair is never paired, signalled or
                         friended; reports go to the admin dashboard)
-    POST /api/relay.php  {"id","peer","payload","pts"?} -> {"ok":true}
-    POST /api/relay.php  {"id","tok","peer","wait"}   the held read (no payload)
-      -> {"ok":true,"messages":[...]} | 204   (P2P fallback relay)
     POST /api/turn.php   {"id":"cafe0001","tok":"<32-hex>"}
       -> {"ok":true,"ice":[{"urls":[...]},{"urls":[...],"username","credential"}],
           "ttl":secs}
@@ -606,9 +586,8 @@ host-level. If this outgrows shared hosting, fix workers first.
       -> {"ok":true,"rank":n,"top":bool}   (no name -> ANONYMOUS; completed =
          cleared the final level; platform = pc|mobile|tv|console, optional)
     POST /api/account.php {"id","tok","action":"delete"}      -> {"ok":true}
-    POST /api/signal.php {"id","to","type":"invite|invite-relay|accept|accept-relay|decline|offer|answer|ice|ices|bye|watch","payload"}
-         (the -relay types set the no-P2P bit: honored when either side sends it;
-          'ices' (4.4) carries a JSON ARRAY of candidates - one request instead
+    POST /api/signal.php {"id","to","type":"invite|accept|decline|offer|answer|ice|ices|bye|watch","payload"}
+         ('ices' (4.4) carries a JSON ARRAY of candidates - one request instead
           of the trickle burst, see docs/API.md)
       -> {"ok":true}   (matchmaking payloads carry the player profile,
                         see docs/API.md)
@@ -619,8 +598,8 @@ matchmaking/signaling. Two further signal types are server-generated and
 rejected (400) if a client sends them, but every client must HANDLE them:
 'friend' (a request/acceptance/expiry notification) and 'undelivered' (a
 connection attempt expired before the peer collected it - the attempt is
-dead). Caps answer a distinct status: 429 (mailbox full, relay backlog
-full, or relay rate limit), 503 (relay busy), 413 (body over the cap).
+dead). Caps answer a distinct status: 429 (mailbox full), 413 (body
+over the cap).
 
 ## License
 

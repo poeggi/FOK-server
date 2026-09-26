@@ -149,18 +149,6 @@ sigcode() { # like sig, but prints the HTTP status instead of the body
     curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$1\"$(jt "$1"),\"to\":\"$2\",\"type\":\"$3\",\"payload\":\"$4\"}" "$BASE/api/signal.php"
 }
-rly() { # rly <from> <peer> <payload>
-    curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php"
-}
-rlycode() { # like rly, but prints the HTTP status instead of the body
-    curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"payload\":\"$3\"}" "$BASE/api/relay.php"
-}
-rlypull() { # rlypull <from> <peer> <payload> : POST with pull, print body
-    curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$1\"$(jt "$1"),\"peer\":\"$2\",\"payload\":\"$3\",\"pull\":true}" "$BASE/api/relay.php"
-}
 hello() { # hello <id>
     curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$1\"$(jt "$1")}" "$BASE/api/hello.php"
 }
@@ -235,11 +223,6 @@ if [ "$ADMIN" -eq 1 ]; then
     # 09 finds it held. 09 sets the gap to 0 wherever it wants a sweep, which
     # bypasses the key, and puts the default back at its end.
     setting tournament_sweep_secs 900
-    # The relay is OFF by default since TURN (relay_max_duels 0: every
-    # attempt refused and alerted). The suite still covers the deprecated
-    # path, so it switches the relay on for the run; 06_admin puts the
-    # default back at its end and asserts the refusal itself.
-    setting relay_max_duels 4
 fi
 
 # ---- helpers more than one part uses -------------------------------------

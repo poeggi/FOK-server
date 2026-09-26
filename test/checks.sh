@@ -87,9 +87,11 @@ step "The identity token's legacy paths do not outlive their date"
 # Ident::LEGACY_UNTIL, 2026-10-01 00:00 UTC. From that day this fails
 # until the tagged lines are deleted (docs/PLAN-identity.md, step 9),
 # so the cleanup release cannot be forgotten. The plan and this check
-# may name the tag; nothing else may once the date has passed.
+# may name the tag, and so may deprecated/, which is never deployed;
+# nothing else may once the date has passed.
 if [ "$(date -u +%s)" -ge 1790812800 ] \
     && git ls-files | grep -v '^docs/PLAN-identity.md$' | grep -v '^test/checks.sh$' \
+        | grep -v '^deprecated/' \
         | xargs grep -ln 'TEMPORARY(ident)' 2>/dev/null | grep .; then
     echo "FAIL: TEMPORARY(ident) survives past 2026-10-01 (see above)"
     fail=1

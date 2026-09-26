@@ -7,7 +7,6 @@ require_once __DIR__ . '/Caps.php';
 require_once __DIR__ . '/Presence.php';
 require_once __DIR__ . '/ConnTrack.php';
 require_once __DIR__ . '/Matchmaking.php';
-require_once __DIR__ . '/Relay.php';
 require_once __DIR__ . '/Load.php';
 require_once __DIR__ . '/Vault.php';
 require_once __DIR__ . '/Ident.php';
@@ -46,7 +45,6 @@ final class AdminData
             // Ids with an identity binding, beside the registered count: the
             // figure to watch the migration converge on (see Ident).
             'bound' => $counts['ident'],
-            'relaying' => Relay::activePairs(),
             // The TURN bubble: ids holding a credential, credentials
             // minted since ever, and whether anything is offered (see Turn).
             'turn' => Turn::gauge(),
@@ -77,7 +75,7 @@ final class AdminData
 
     /**
      * How full the shared memory segment is. Not an optimization gauge: the
-     * signal mailbox, the relay hub and the presence cache live there and
+     * signal mailbox and the presence cache live there and
      * have no database transport, so a full segment is an outage rather
      * than a slowdown (see Caps::apcu).
      */
@@ -602,7 +600,7 @@ final class AdminData
 
     /**
      * Everything known about one client for the detail popup - identity,
-     * presence, its 1vs1 state, relay/matchmaking/friend/score/mailbox
+     * presence, its 1vs1 state, matchmaking/friend/score/mailbox
      * counters and its config backup. Null if the id is unknown. Read-only,
      * gathered from the tables each subsystem already keeps.
      */
@@ -626,7 +624,6 @@ final class AdminData
             $duel['age'] = $now - $duel['updated'];
             $duel['live'] = $duel['updated'] >= Util::since(FOK_CONN_TTL, $now);
         }
-        $rate = Relay::rateDetail($id);
         $queue = Matchmaking::stateOf($id);
         $fr = $db->prepare("SELECT state, COUNT(*) c FROM friends WHERE a = ? OR b = ? GROUP BY state");
         $fr->execute([$id, $id]);
@@ -667,7 +664,6 @@ final class AdminData
                 'accept_until' => (int)($e['accept'] ?? $p['accept_until']),
                 'friend_ban_until' => (int)$p['friend_ban_until'],
                 'duel' => $duel,
-                'relay_rate' => $rate,
                 'matchmaking' => $queue,
                 'friends' => $friends,
                 'scores' => ['count' => (int)$scores['c'],

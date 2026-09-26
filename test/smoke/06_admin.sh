@@ -252,18 +252,12 @@ else
     expect "a client in a handshake is on the Duels card" "$(strict "\"id\":\"$ID1\"")" "$R"
     expect "handshake tracked as connecting" '"state":"connecting"' "$R"
     expect "duel peer tracked" "$(strict "\"peer\":\"$ID2\"")" "$R"
-    expect "duel mode tracked as p2p" '"mode":"p2p"' "$R"
-
-    curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"to\":\"$ID1\",\"type\":\"accept-relay\",\"payload\":\"{}\"}" "$BASE/api/signal.php" > /dev/null
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
-    expect "no-p2p declaration tracked as relay" '"mode":"relay"' "$R"
+    refute "the Duels card carries no transport mode" '"mode":' "$(grep -oE '"duels":\[[^]]*\]' <<< "$R")"
 
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"duel_with\":\"$ID2\"}" "$BASE/api/hello.php" > /dev/null
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
     expect "running duel tracked as playing" '"state":"playing"' "$R"
-    expect "playing keeps the relay mode" '"mode":"relay"' "$R"
     # Presence is the full picture now: a client in a duel is on Connections
     # too, and only the Duels card breaks out the duel phase.
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=conns")
@@ -507,93 +501,20 @@ else
     setting mailbox_cap 64
     curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
-    setting relay_pending_cap 2
-    rly "$ID1" "$ID2" 'p1' > /dev/null
-    rly "$ID1" "$ID2" 'p2' > /dev/null
-    R=$(rlycode "$ID1" "$ID2" 'p3')
-    expect "a full relay backlog fails loudly with 429" '429' "$R"
-    setting relay_pending_cap 128
-    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php" > /dev/null
-
-    # TODO(smoke/relay-flood): re-enable. This checks the per-client relay
-    # RATE cap (429) but never sets relay_max_duels, so it inherits whatever
-    # the persistent staging DB holds. relay.php checks the concurrent-DUEL
-    # cap before the rate cap, so once staging's active-pair count reaches
-    # relay_max_duels the flood gets 503 (relay busy) before the rate limiter
-    # can answer 429 - a false failure that blocked live deploys. Fix: pin
-    # relay_max_duels high here (the duel cap has its own tests just below),
-    # then restore the block. The rate-limit path itself works (passes locally).
-    # setting relay_rate_max 1
-    # for i in 1 2 3 4 5; do rly aa11aa11 bb22bb22 "f$i" > /dev/null; done
-    # sleep 3
-    # rly aa11aa11 bb22bb22 'trips the rate check' > /dev/null
-    # R=200
-    # for i in 1 2 3 4 5 6 7 8; do
-    #     R=$(rlycode aa11aa11 bb22bb22 'now blocked')
-    #     [ "$R" = "429" ] && break
-    #     sleep 1
-    # done
-    # expect "a sustained relay flood is blocked with 429" '429' "$R"
-    # setting relay_rate_max 128
-
-    # A full hub rejects a NEW relayed duel loudly - but a duel that is
-    # already relaying must never be cut off by it. The cap counts relay_seen
-    # stamps on the tracked connections; what lets a duel already relaying
-    # through is the pair's own APCu admission marker (see relay.php).
-    setting relay_max_duels 1
-    rly "$ID1" "$ID2" 'holding the slot' > /dev/null
-    R=$(rlycode "$ID3" "$ID4" 'may i')
-    expect "relay cap rejects a new duel with 503" '503' "$R"
-    R=$(sigcode "$ID3" "$ID4" accept-relay '{}')
-    expect "relay cap rejects a no-p2p declaration with 503" '503' "$R"
-    R=$(rly "$ID1" "$ID2" 'still here')
-    expect "a duel already relaying is never cut off" '"ok":true' "$R"
-
-    # Only real hub traffic may hold a slot. accept-relay is not
-    # friendship-gated, so if a bare declaration counted, a few invented
-    # pairs would deny the relay to the whole server.
-    setting relay_max_duels 2
+    # A stranger must not be able to end a duel it has nothing to do with:
+    # bye is not friendship-gated.
     curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"$ID3\"$(jt "$ID3"),\"to\":\"$ID4\",\"type\":\"accept-relay\",\"payload\":\"{}\"}" \
-        "$BASE/api/signal.php" > /dev/null
-    R=$(rly "$ID1" "$ID2" 'still mine')
-    expect "a claimed relay duel cannot squeeze out a real one" '"ok":true' "$R"
-
-    # A stranger must not be able to end a duel it has nothing to do with.
+        -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"duel_with\":\"$ID2\"}" "$BASE/api/hello.php" > /dev/null
     sig "$ID3" "$ID1" bye '' > /dev/null
-    R=$(rly "$ID1" "$ID2" 'stranger cannot end this')
-    expect "a stranger's bye cannot kill a live relayed duel" '"ok":true' "$R"
-    setting relay_max_duels 3
-    curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php" > /dev/null
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels" | grep -oE "\{\"id\":\"$ID1\"[^}]*\}" || true)
+    expect "a stranger's bye cannot end a live duel" '"state":"playing"' "$R"
     curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php" > /dev/null
     curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID4\"$(jt "$ID4")}" "$BASE/api/poll.php" > /dev/null
 
-    # Hub delivery end to end. The relay runs in APCu shared memory and
-    # nothing else - the database transport is gone - so a host that cannot
-    # offer it answers 503 "relay unavailable" and every assertion below fails
-    # loudly. That is the honest signal: there is no relay play on such a
-    # host, and no silent fallback pretending otherwise.
+    # The shared memory the signal mailbox has no transport without.
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=caps")
-    expect "the host offers the shared memory the hub requires" '"apcu":true' "$R"
-    R=$(rly "$ID1" "$ID2" 'TRANSPORT:1')
-    expect "the hub accepts a message" '"ok":true' "$R"
-    rly "$ID1" "$ID2" 'TRANSPORT:2' > /dev/null
-    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\",\"wait\":2}" "$BASE/api/relay.php")
-    expect "the hub delivers" 'TRANSPORT:1' "$R"
-    expect "the hub delivers the second message" 'TRANSPORT:2' "$R"
-    ordered "the hub preserves order" 'TRANSPORT:1' 'TRANSPORT:2' "$R"
-    R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
-    expect "the hub delivers exactly once" '204' "$R"
-    R=$(rly "$ID2" "$ID1" 'TRANSPORT:back')
-    expect "the hub carries the other direction too" '"ok":true' "$R"
-    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\",\"wait\":2}" "$BASE/api/relay.php")
-    expect "the reverse direction is separate" 'TRANSPORT:back' "$R"
-    rly "$ID1" "$ID2" 'TRANSPORT:orphan' > /dev/null
+    expect "the host offers the shared memory signaling requires" '"apcu":true' "$R"
     sig "$ID1" "$ID2" bye '' > /dev/null
-    # bye tears the pair down: the held GET reports gone (v3.3, from ConnTrack)
-    # and the orphan backlog dies with it (a gone reply carries no messages).
-    R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\"}" "$BASE/api/relay.php")
-    expect "bye tears down the pair" '"gone":true' "$R"
     curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
     # An invite nobody picks up must not evaporate behind its ok:true:
@@ -648,24 +569,12 @@ else
     # two override rows and its anti-probe guard stays off between runs.
     setting friend_rate_interval 1
     setting friend_rate_burst 10
-    # The relay lib.sh switched on for the run goes back to OFF, and off
-    # is what is asserted: every attempt refused, every attempt an alert
-    # row of its own - two attempts, two rows, no de-duplication.
-    setting relay_max_duels 0
-    curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=alerts_clear" > /dev/null
-    R=$(sigcode "$ID1" "$ID2" accept-relay '{}')
-    expect "with the relay off a no-p2p declaration is refused" '503' "$R"
-    R=$(rlycode "$ID1" "$ID2" 'anyone')
-    expect "and so is a relay message" '503' "$R"
-    R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'         -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"peer\":\"$ID1\",\"wait\":0}" "$BASE/api/relay.php")
-    expect "and the held read" '503' "$R"
-    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=alerts")
-    expect "each attempt is an alert" '"type":"relay-used"' "$R"
-    expect "three attempts, three rows" '3' "$(grep -o '"type":"relay-used"' <<< "$R" | wc -l | tr -d ' ')"
-    # The read path annotates every id with its name, so the shape is
-    # asserted around that.
-    expect "naming who reached for it" "relay attempted by $ID1" "$R"
-    expect "and what for" 'accept-relay) while the relay is off: refused' "$R"
+    # The HTTP relay is not deployed (deprecated/relay/), and the dashboard
+    # says nothing about it: no setting, no gauge.
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
+    refute "no relay setting is offered" '"key":"relay_' "$R"
+    R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=stats")
+    refute "and no relay gauge is reported" '"relaying"' "$R"
     setting tournament_sweep_secs 30
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=settings")
     expect "and so does the friend-request throttle" '"key":"friend_rate_burst","value":10,"default":10' "$R"

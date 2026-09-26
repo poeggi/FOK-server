@@ -29,11 +29,11 @@ The measurements and decisions behind the rules below are in
 
 - Shared hosting: Apache + PHP-FPM only. No daemons, no WebSockets, no
   cron. Real-time is client-polled HTTP or peer-to-peer WebRTC; the
-  server relays SDP/ICE signaling and mints credentials for
+  server forwards SDP/ICE signaling and mints credentials for
   Cloudflare's TURN relay (src/Turn.php, .claude/rules/project_fok_turn.md);
-  it runs no relay of its own. The ONE exception is
-  the relay fallback (api/relay.php): DEPRECATED, still live, do not
-  extend it (docs/DEPRECATED-relay.md has the delete manifest).
+  it runs no relay of its own. The deprecated HTTP relay sits in
+  deprecated/relay/ for reference: outside public/, so never deployed,
+  and nothing under public/ may require it.
 - No persistent state: the database IS the state, and "background" work
   piggybacks on the next request through Util::defer, which runs after
   the response is flushed. ONLY defer what the client never observes
@@ -70,7 +70,7 @@ The measurements and decisions behind the rules below are in
   Ordinary expiry is a MISSING key, an eviction is a key present and
   wrong; alert only on the second (Signals::any).
 - Server-issued starts are keyed on (pair, epoch), never the pair alone.
-  The epoch resets where a pairing BEGINS (invite/invite-relay/offer in
+  The epoch resets where a pairing BEGINS (invite/offer in
   signal.php), NOT on 'bye' - a bye goes peer-to-peer once the
   DataChannel is open and the server never sees it. Dropping the row is
   always safe, missing one breaks a rematch.

@@ -118,17 +118,21 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"hack\",\"payload\":\"\"}" "$BASE/api/signal.php")
 expect "signal rejects bad type" '"error":"invalid type"' "$R"
 
+# The HTTP relay is not deployed (deprecated/relay/): its two signal types
+# are refused like any other the server does not know, and its endpoint is
+# absent. The endpoint is checked locally only: the deploy never deletes, so
+# a host's copy answers 404 only once it is deleted there by hand.
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"to\":\"$ID1\",\"type\":\"accept-relay\",\"payload\":\"{}\"}" "$BASE/api/signal.php")
-expect "relay-first accept allowed" '"ok":true' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php")
-expect "relay-first accept delivered" '"type":"accept-relay"' "$R"
-
+expect "the relay's accept is refused" '"error":"invalid type"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"invite-relay\",\"payload\":\"{}\"}" "$BASE/api/signal.php")
-expect "no-p2p invite allowed" '"ok":true' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php")
-expect "no-p2p invite delivered" '"type":"invite-relay"' "$R"
+expect "and so is its invite" '"error":"invalid type"' "$R"
+if [ "$REMOTE" -eq 0 ]; then
+    R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+        -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"peer\":\"$ID2\",\"payload\":\"x\"}" "$BASE/api/relay.php")
+    expect "the relay endpoint is not deployed" '404' "$R"
+fi
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"chat\",\"payload\":\"gone\"}" "$BASE/api/signal.php")

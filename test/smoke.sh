@@ -76,20 +76,20 @@ if [ "$REMOTE" -eq 1 ] && [ -z "${SMOKE_SEQUENTIAL:-}" ]; then
     done
     EXTRA_IDS="$B1 $B2 $B3 $B4 $C1 $C2 $C3 $C4"   # 06_admin removes these too
     source test/smoke/09_sweep.sh               # the tournament sweep, alone
-    source test/smoke/06_admin.sh               # admin dashboard, relay caps and hub, config, remote cleanup
+    source test/smoke/06_admin.sh               # admin dashboard, config, remote cleanup
 else
     source test/smoke/01_core.sh                # landing, version, CORS, hello, scores, backup
     source test/smoke/10_ident.sh               # the identity token: the bind, the one refusal, the legacy paths
     source test/smoke/12_account.sh             # the client's version on hello; account.php: delete, and the move
     source test/smoke/02_signals_friends.sh     # signals, friends, poll, debug reports, time
-    source test/smoke/03_start_duel.sh          # start/epoch, directional isolation, relay duel flow, rematch
+    source test/smoke/03_start_duel.sh          # start/epoch, connection edge cases, rematch
     source test/smoke/04_matchmaking.sh         # friend-spam ban, quick match
     source test/smoke/11_turn.sh                # TURN credentials: the wire, and the budget against a fake relay
     source test/smoke/05_items.sh               # item registry: seed, mint, the claim ladder, freezes
     source test/smoke/07_tournament.sh          # tournaments: lobby, schedule, roles, the result ladder
     source test/smoke/08_events.sh              # events: the door, the two codes, the monitor, event tournaments
     source test/smoke/09_sweep.sh               # the tournament sweep, alone: it decides by which request fires it
-    source test/smoke/06_admin.sh               # admin dashboard, relay caps and hub, config, remote cleanup
+    source test/smoke/06_admin.sh               # admin dashboard, config, remote cleanup
     # 06_admin.sh runs LAST whatever its number: it asserts exact counts and,
     # on a remote run, deletes this run's test data at the end.
 fi

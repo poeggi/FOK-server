@@ -11,7 +11,7 @@ script end; only >=64KB per write flushed in real time (32KB irregular,
 - Server-Sent Events / ANY incremental streaming push is NOT viable here:
   forcing real-time flush needs ~64KB padding per message (~600x blowup
   on a ~100B game message - prohibitive bandwidth).
-- Long-poll (poll.php / relay.php GET) works FINE despite this, precisely
+- Long-poll (poll.php) works FINE despite this, precisely
   because it computes-holds-then-sends ONE response at script end;
   buffering never applies to a single end-of-script write. That is why
   long-poll is the right pattern on this host and streaming is not.

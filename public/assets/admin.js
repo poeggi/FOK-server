@@ -418,8 +418,8 @@ function ipCell(ip) {
 }
 
 // One condensed popup with everything known about a client: identity,
-// presence, its 1vs1 / connection state, relay counters, matchmaking,
-// friendships, scores and mailbox. Opened by clicking any id.
+// presence, its 1vs1 / connection state, matchmaking, friendships,
+// scores and mailbox. Opened by clicking any id.
 // Popup-local auto-refresh cadence (seconds), shared by every details
 // popup; not a server setting. 0 = off.
 let clientRefreshSecs = 2;
@@ -614,9 +614,7 @@ function renderClientBody(body, overlay, d, reload) {
     if (c.duel) {
         kv('State', STATE_LABEL[c.duel.state] || c.duel.state);
         kvId('Peer', c.duel.peer);
-        kv('Mode', c.duel.mode);
         kv('Updated', c.duel.age + ' s ago (' + (c.duel.live ? 'live' : 'stale') + ')');
-        if (c.duel.relay_seen) kv('Last relay', (now - c.duel.relay_seen) + ' s ago');
     } else {
         kv('State', 'not in a duel');
     }
@@ -625,9 +623,7 @@ function renderClientBody(body, overlay, d, reload) {
         else kv('Matchmaking', 'seeking since ' + ago(c.matchmaking.since));
     }
 
-    sec('Relay & scores');
-    kv('Relay messages', c.relay_rate ? c.relay_rate.total : 0);
-    if (c.relay_rate && c.relay_rate.blocked_until > now) kv('Rate-limited', 'for ' + (c.relay_rate.blocked_until - now) + ' s');
+    sec('Friends & scores');
     kv('Friends', c.friends.accepted + ' (' + c.friends.pending + ' pending)');
     kv('Scores', c.scores.count + (c.scores.best !== null ? ', best ' + c.scores.best : ''));
     kv('Items', c.items.length ? c.items.length + ' (' + c.items.join(', ') + ')' : 'none');
@@ -1333,8 +1329,8 @@ function renderServerLive(box, d) {
         { label: 'APCu memory', value: m.total === 0 ? '-' : fmtBytes(m.used),
             tip: m.total === 0 ? 'Shared memory is not usable on this host'
                 : 'Shared memory in use of ' + fmtBytes(m.total) + ' ('
-                    + Math.round(m.used / m.total * 100) + '%). Signaling, relayed'
-                    + ' duels and tournaments live here and fail when it fills. ' + day,
+                    + Math.round(m.used / m.total * 100) + '%). Signaling and'
+                    + ' tournaments live here and fail when it fills. ' + day,
             charts: m.total === 0 ? null
                 : [['APCu memory', 'chart-cpu', one('g:apcu'), fmtBytes, true,
                     m.used]] },
@@ -2991,12 +2987,6 @@ const MODULES = [
         async refresh(box) {
             const d = await api('stats');
             box.replaceChildren();
-            const relaying = {
-                label: 'Relaying',
-                charts: [['Relayed duels', 'chart-req', one('g:relaying'),
-                    fmtNum, true, d.relaying]],
-            };
-            lastGauges.stats = [relaying];
             bubbles(box, [
                 { label: 'Users online', value: d.counts.online },
                 { label: 'Online v4 | v6', value: d.families.v4 + ' | ' + d.families.v6,
@@ -3005,19 +2995,10 @@ const MODULES = [
                 { label: 'Tournaments', value: d.tourneys },
                 { label: 'Users registered | bound', value: d.counts.registered + ' | ' + d.bound,
                     tip: 'Registered ids, and how many of them are bound to an identity token.' },
-                // A game reading, not a server one: it says how many duels
-                // failed to find a peer-to-peer path, which is about the
-                // players' networks. Its history is a sampled LEVEL, so the
-                // popup is the same 24 h graph whichever window the server
-                // card happens to be set to (see showGaugeCharts).
-                { label: 'Relaying', value: d.relaying,
-                    tip: 'Right now. Duels whose game messages pass through the '
-                        + 'server instead of going peer to peer. Click for the last 24 h.',
-                    open: () => showGaugeCharts(relaying, 'stats') },
-                // The relay's replacement, read the same way: who holds a
-                // TURN credential right now, and how many were handed out
-                // in the last 30 days - the figure the cap counts. The cap
-                // itself and the lifetime total are in the popup (see Turn).
+                // Who holds a TURN credential right now, and how many were
+                // handed out in the last 30 days - the figure the cap counts.
+                // The cap itself and the lifetime total are in the popup
+                // (see Turn).
                 { label: 'TURN active | 30d', value: d.turn.live + ' | ' + fmtNum(d.turn.recent),
                     tip: 'Players holding a TURN credential right now, and credentials handed out '
                         + 'in the last 30 days, of ' + fmtNum(d.turn.cap) + '. '
@@ -3100,7 +3081,7 @@ const MODULES = [
             if (!d.duels.length) box.append(el('p', 'muted', 'No 1vs1 activity.'));
             else {
                 const table = el('table');
-                table.append(row(['Client', 'Name', 'Peer', 'State', 'Mode', 'Lat', 'Msgs', 'Age'], 'th'));
+                table.append(row(['Client', 'Name', 'Peer', 'State', 'Lat', 'Age'], 'th'));
                 for (const c of d.duels) {
                     const r = el('tr');
                     r.classList.add(c.state === 'ended' ? 'gone' : 'online');
@@ -3109,16 +3090,14 @@ const MODULES = [
                     r.append(idCell(c.id), el('td', '', c.name === null ? '-' : c.name),
                         c.peer === null ? el('td', '', '-') : idCell(c.peer));
                     r.append(state);
-                    r.append(el('td', c.mode === 'relay' ? 'error' : '', c.mode === null ? '-' : c.mode));
                     r.append(el('td', '', c.latency === null ? '-' : c.latency + ' ms'));
-                    r.append(el('td', 'muted', c.msgs));
                     r.append(el('td', 'muted', (d.now - c.since) + ' s'));
                     table.append(r);
                 }
                 box.append(table);
                 sortable(table, 'duels');
                 box.append(el('p', 'muted', 'Every phase of a 1vs1 - matchmaking, invite, connect, play - '
-                    + 'and 10 s after it ends. Msgs: relay messages sent. Click a header to sort.'));
+                    + 'and 10 s after it ends. Click a header to sort.'));
             }
             box.append(el('h3', 'subhead', 'Tournaments'));
             const ts = d.tourneys || [];

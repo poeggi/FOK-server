@@ -25,7 +25,6 @@ require_once __DIR__ . '/../public/src/Presence.php';
 require_once __DIR__ . '/../public/src/Signals.php';
 require_once __DIR__ . '/../public/src/Scores.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
-require_once __DIR__ . '/../public/src/Relay.php';
 
 $players = (int)($argv[1] ?? 5000);
 $duels = (int)($argv[2] ?? 50);
@@ -47,11 +46,6 @@ for ($i = 0; $i < 200; $i++) {
     // The mailbox is shared memory now, so it is filled through its own
     // interface rather than by inserting rows (see Signals).
     Signals::send(sprintf('%08x', $i), 'ffffff01', 'ice', 'c');
-}
-for ($i = 0; $i < 200; $i++) {
-    // The relay hub is shared memory too, so it is filled through its own
-    // interface rather than by inserting rows (see RelayStore).
-    RelayStore::push(sprintf('%08x', $i), 'ffffff01', 'IN:1:up');
 }
 for ($i = 0; $i < 200; $i++) {
     Scores::submit(sprintf('%08x', $i), "P$i", $i, 1, 1, 0, '{}', null, null);
@@ -77,7 +71,6 @@ bench('Presence::counts()  [every hello]', 200, static fn() => Presence::counts(
 bench('Presence::touch()   [every hello]', 200, static fn(int $i) => Presence::touch(sprintf('%08x', $i), '10.0.0.2'));
 bench('Signals::take()     [every hello]', 200, static fn() => Signals::take('eeeeee01'));
 bench('Signals::any()      [every poll]', 200, static fn() => Signals::any('eeeeee01'));
-bench('Relay::activePairs()  [relay]', 200, static fn() => Relay::activePairs());
 bench('ConnTrack::listPresence() [admin]', 20, static fn() => ConnTrack::listPresence());
 bench('Scores::top()       [landing]', 20, static fn() => Scores::top());
 

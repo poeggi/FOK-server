@@ -11,7 +11,7 @@ require_once __DIR__ . '/Load.php';
 final class Db
 {
     // Highest step of the migration ladder below.
-    private const SCHEMA_VERSION = 52;
+    private const SCHEMA_VERSION = 53;
 
     private static ?PDO $pdo = null;
     private static float $bootUs = 0.0;
@@ -99,10 +99,10 @@ final class Db
         return self::$pdo;
     }
 
-    // Every table the "DB entries" gauge sums. The signal mailbox, the relay
-    // hub, the tracked connections, the quick-match queue and the presence-
-    // counter cache are not here: they live in shared memory, not in any
-    // table (see Signals, RelayStore, ConnTrack and Matchmaking).
+    // Every table the "DB entries" gauge sums. The signal mailbox, the
+    // tracked connections, the quick-match queue and the presence-counter
+    // cache are not here: they live in shared memory, not in any table (see
+    // Signals, ConnTrack and Matchmaking).
     private const COUNTED = ['players', 'scores', 'duels',
         'counters', 'alerts', 'settings', 'admin_fails', 'friends',
         'starts', 'items', 'matches', 'ledger', 'item_disputes',
@@ -162,10 +162,10 @@ final class Db
      * is followed by closeCursor(); fetchAll() finishes the statement itself.
      *
      * Runs a write through a transient lock. WAL leaves exactly one writer,
-     * so two requests writing at the same moment - a relayed duel sends from
-     * both ends at once - can still collide after busy_timeout is spent.
-     * Losing that write means a dropped signal or a dropped game message,
-     * i.e. a broken duel, which is worth a few ms of backoff rather than the
+     * so two requests writing at the same moment - both peers of a duel
+     * starting at once - can still collide after busy_timeout is spent.
+     * Losing that write means a dropped start or a dropped claim, i.e. a
+     * broken duel, which is worth a few ms of backoff rather than the
      * 500 the caller would otherwise get. Read paths do not need this: in
      * WAL a reader never blocks and is never blocked.
      */
@@ -943,6 +943,12 @@ final class Db
                 reason TEXT NOT NULL,
                 created INTEGER NOT NULL
             )');
+        }
+        if ($v < 53) {
+            // The HTTP relay is not deployed (deprecated/relay/), so nothing
+            // raises its two alert types; the rows they left would stay on
+            // the Alerts card, an unseen one for ever.
+            $pdo->exec("DELETE FROM alerts WHERE type IN ('relay', 'relay-used')");
         }
         // Only ever written when a step actually ran: this is a WRITE, and
         // every request goes through here - including the long polls that

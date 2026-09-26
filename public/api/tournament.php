@@ -42,11 +42,10 @@ require_once __DIR__ . '/../src/Events.php';
  * NO GAME TRAFFIC PASSES THROUGH THE SERVER. A tournament match is an
  * ordinary P2P duel: the roles sheet names the two players and the feeder,
  * that pair calls start.php themselves for the mid and secret exactly as any
- * other duel does, and the spectator feeds are peer-to-peer as well. The
- * deprecated relay hub plays no part in tournament mode. What the server owns
- * is the schedule, the roles, the results and the bracket - and nothing here
- * ever decides a match on its own: a result is what the two players who
- * played it agree happened, or it is frozen for an admin.
+ * other duel does, and the spectator feeds are peer-to-peer as well. What
+ * the server owns is the schedule, the roles, the results and the bracket -
+ * and nothing here ever decides a match on its own: a result is what the
+ * two players who played it agree happened, or it is frozen for an admin.
  */
 Util::cors();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {

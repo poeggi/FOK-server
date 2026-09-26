@@ -350,9 +350,6 @@ with FAIL).
 
 ## Decided, do not re-open
 
-- relay_max_payload STAYS 2048: relay.php is HTTP over TCP, and a base64
-  packet of 1280 binary bytes is 1708 chars. The relay payload encoding
-  is the client's choice and stays out of docs/API.md.
 - NEVER CHAIN TWO confirm() DIALOGS: a browser may suppress the second
   and a suppressed confirm() returns CANCEL. Arm-then-confirm in the
   card, with the armed state outside the DOM.
@@ -379,9 +376,15 @@ type; stats.php, PStats and the pstats table (schema 43).
 REMOVED in 1.9.1 (4.10): net.php; version.php (api/version.txt now);
 the contract's demand that a client check the version.
 
-LEFT, and why: the relay - the only way to play without WebRTC; removal
-is a MAJOR contract change and the admin 'relaying' gauge decides it.
-~36 of 59 settings are contract numbers read at one site: admin clutter
+WITHDRAWN in 1.20.2 (4.23, no MAJOR): the HTTP relay - relay.php, the
+invite-relay / accept-relay types, the six relay_* settings, the admin
+Relaying bubble and the Duels card's Mode / Msgs columns. It had refused
+every attempt since 1.19.2 and FOK-snake cut its half the same day
+(1fb8a5b), so the contract recorded a withdrawal, the 4.7 way. The code
+is in deprecated/relay/ (outside public/, never deployed); schema 53
+deletes the relay alert rows; the host's copies were deleted by hand.
+
+LEFT, and why: ~30 of 53 settings are contract numbers read at one site: admin clutter
 only, and constants would churn config export/import for nothing.
 
 REMOVED in 1.16.1: time.php, the t.txt fallback. No client reads it
@@ -406,7 +409,7 @@ no database.
   `matches` already holds (mid, a, b, opened, matches_pair index) - so
   start.php could read the pair's newest match and the whole table could
   move to shared memory, taking the last SQL write off the signaling
-  path (the reset at invite/invite-relay/offer). THE HARD PART: the mint
+  path (the reset at invite/offer). THE HARD PART: the mint
   stays in SQLite, so splitting the epoch line off breaks the one
   transaction that guarantees both peers the same mid and start_pts. It
   needs an apcu_add lock plus whole-entry read-modify-write (the

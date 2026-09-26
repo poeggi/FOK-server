@@ -29,13 +29,10 @@ require_once __DIR__ . '/../public/src/Matchmaking.php';
 require_once __DIR__ . '/../public/src/Starts.php';
 require_once __DIR__ . '/../public/src/Friends.php';
 require_once __DIR__ . '/../public/src/FriendFeed.php';
-require_once __DIR__ . '/../public/src/RelayRate.php';
 require_once __DIR__ . '/../public/src/ConnTrack.php';
 require_once __DIR__ . '/../public/src/Caps.php';
 require_once __DIR__ . '/../public/src/Holds.php';
 require_once __DIR__ . '/../public/src/Pace.php';
-require_once __DIR__ . '/../public/src/RelayStore.php';
-require_once __DIR__ . '/../public/src/Relay.php';
 require_once __DIR__ . '/../public/src/Load.php';
 require_once __DIR__ . '/../public/src/Vault.php';
 require_once __DIR__ . '/../public/src/Ident.php';
@@ -582,9 +579,9 @@ ok(Starts::REASONS === ['first', 'rematch'], 'a start begins play, or it is not 
 
 // A rematch names epoch 0 exactly as the first start did, so the REASON is
 // the only thing on the wire saying "a new game, not the one you issued us".
-// A relay rematch reuses the hub with no new offer, so nothing clears the
-// line for it (see signal.php) - without this it would read back the moment
-// the pair already played to.
+// A rematch over the open DataChannel sends no new offer, so nothing clears
+// the line for it (see signal.php) - without this it would read back the
+// moment the pair already played to.
 $again = Starts::request('aaaaaaaa', 'bbbbbbbb', 0, 'rematch')['start_pts'];
 ok(is_int($again) && $again !== $passed, 'a rematch at the same epoch is a moment of its own');
 ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 0, 'rematch')['start_pts'] === $again, 'and the peer joins that one');
@@ -637,59 +634,6 @@ $startedBefore = Stats::all()['duel_started'] ?? 0;
 ok(Starts::request('bbbbbbbb', 'aaaaaaaa', 3, 'first')['start_pts'] === $aged, 'the peer joins that same start');
 ok((Stats::all()['duel_started'] ?? 0) === $startedBefore,
     'and a start already issued counts no second duel');
-
-// The relay hub and its rate guard live in APCu and have no database
-// transport at all (see RelayStore), so start from a clean keyspace: a
-// backlog left behind by an earlier run would make the counts below depend
-// on history.
-apcu_delete(new APCUIterator('/^fok:r[qr]:/'));
-
-// RelayRate: the backlog is drained on delivery, so the send rate is tracked
-// as a running total per client. The slice mark is pre-set so a full slice
-// has already passed and the very next record() checks the rate.
-apcu_store('fok:rr:dddddddd:t', 1000, 3600);
-apcu_store('fok:rr:dddddddd:m', ['t' => 0, 's' => time() - 3], 3600);
-RelayRate::record('dddddddd'); // ~334 msg/s over 3 s, far over the 128 default
-ok(RelayRate::blocked('dddddddd'), 'a client over the sustained relay rate is blocked');
-ok(RelayRate::totalOf('dddddddd') === 1001, 'the running message total is readable for the admin gauge');
-$rateDetail = RelayRate::detail('dddddddd');
-ok($rateDetail !== null && $rateDetail['total'] === 1001 && $rateDetail['blocked_until'] > time(),
-    'the admin popup reads the total and the live block');
-ok(RelayRate::detail('ffffffff') === null, 'a client that never relayed has no rate detail');
-apcu_store('fok:rr:eeeeeeee:t', 10, 3600);
-apcu_store('fok:rr:eeeeeeee:m', ['t' => 0, 's' => time() - 3], 3600);
-RelayRate::record('eeeeeeee'); // ~3 msg/s, comfortably under the cap
-ok(!RelayRate::blocked('eeeeeeee'), 'a client under the sustained relay rate is not blocked');
-ok(!RelayRate::blocked('ffffffff'), 'an unseen client is never blocked');
-
-// RelayStore: exactly-once and ordered, and push() reports success so the
-// caller does not turn it into a 429.
-ok(RelayStore::push('11111111', '22222222', 'IN:1') === true, 'a relayed message enqueues');
-RelayStore::push('11111111', '22222222', 'IN:2');
-ok(RelayStore::hasAny('22222222', '11111111'), 'the receiver sees a pending message');
-ok(!RelayStore::hasAny('11111111', '22222222'), 'the sender has nothing pending back');
-ok(RelayStore::pending('22222222', '11111111') === 2, 'pending counts the receiver backlog from the sender');
-ok(RelayStore::shouldTrackRelay('11111111', '22222222', time()),
-    "the pair's first message refreshes its liveness marker");
-ok(!RelayStore::shouldTrackRelay('11111111', '22222222', time()),
-    'the next one is throttled off the single writer');
-$drained = RelayStore::drain('22222222', '11111111');
-ok(count($drained) === 2 && $drained[0]['payload'] === 'IN:1' && $drained[1]['payload'] === 'IN:2',
-    'the backlog drains oldest first');
-// created is exposed in whole seconds; age is ms the message spent on the server.
-ok($drained[0]['created'] >= time() - 2 && $drained[0]['created'] <= time(),
-    'created is exposed in whole seconds');
-ok($drained[0]['age'] >= 0 && $drained[0]['age'] < 5000, 'age is milliseconds on the server');
-ok(RelayStore::drain('22222222', '11111111') === [], 'a drained backlog is empty (exactly-once)');
-ok(RelayStore::pending('22222222', '11111111') === 0, 'a drained backlog is no longer pending');
-// A bye must leave nothing behind: an undelivered input reaching the pair's
-// NEXT duel would be an input from the wrong game.
-RelayStore::push('11111111', '22222222', 'IN:3');
-RelayStore::markAdmitted('11111111', '22222222');
-ok(RelayStore::admitted('22222222', '11111111'), 'a relaying pair is admitted from either side');
-RelayStore::forgetPair('11111111', '22222222');
-ok(!RelayStore::hasAny('22222222', '11111111'), 'a bye drops the undelivered backlog');
-ok(!RelayStore::admitted('11111111', '22222222'), 'and releases the relay slot for a rematch');
 
 // The debug flag: the admin's wish and the client's report are separate
 ok(Presence::touch('eeeeeeee', '1.2.3.4') === false, 'debug is off for a new player');
@@ -803,7 +747,7 @@ ok($desyncs() === $wasDesync + 1, 'but a real eviction is alerted');
 apcu_delete(new APCUIterator('/^fok:sg:bbbbbbbb:/'));
 
 // ConnTrack: the duel state both peers are in, inferred from the
-// signaling traffic the server relays anyway. A client shows on the Duels
+// signaling traffic the server forwards anyway. A client shows on the Duels
 // card only while it is in a duel phase (listDuels); presence - every
 // online client - is a separate, fuller list (listPresence).
 function duelOf(string $id): array
@@ -845,7 +789,6 @@ ok(duelOf('aaaaaaaa')['state'] === 'inviting', 'inviter is inviting');
 ok(duelOf('aaaaaaaa')['peer'] === 'bbbbbbbb', 'inviter tracks its peer');
 ok(duelOf('bbbbbbbb')['state'] === 'invited', 'invited peer sees the invite');
 ok(duelOf('bbbbbbbb')['peer'] === 'aaaaaaaa', 'invited peer tracks the inviter');
-ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'plain invite means p2p');
 ok(onPresence('aaaaaaaa'), 'a dueling client is still on the presence card too');
 ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'accept');
 ok(duelOf('aaaaaaaa')['state'] === 'connecting', 'accept moves both to connecting');
@@ -854,7 +797,6 @@ ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'ice');
 ok(duelOf('aaaaaaaa')['state'] === 'connecting', 'ice keeps connecting');
 ConnTrack::playing('aaaaaaaa', 'bbbbbbbb');
 ok(duelOf('aaaaaaaa')['state'] === 'playing', 'duel heartbeat means playing');
-ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'playing keeps the negotiated mode');
 
 // bye no longer wipes the pair: both sides keep a short-lived 'ended' row
 // so the duel lingers on the Duels card for FOK_DUEL_LINGER seconds.
@@ -866,44 +808,10 @@ connPoke('aaaaaaaa', ['updated' => time() - FOK_DUEL_LINGER - 1]);
 connPoke('bbbbbbbb', ['updated' => time() - FOK_DUEL_LINGER - 1]);
 ok(duelOf('aaaaaaaa') === [], 'past the linger the ended duel drops off the card');
 
-// ConnTrack: the no-P2P bit is honored from either side and sticks within
-// a duel; reopening a just-ended pairing starts its mode clean.
-ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'invite-relay');
-ok(duelOf('bbbbbbbb')['mode'] === 'relay', 'invite-relay declares relay');
-ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'the invited peer sees relay too');
-ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'accept');
-ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'a plain accept cannot downgrade to p2p');
-ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
-ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
-ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'accept-relay');
-ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'accept-relay declares relay from the other side');
-
-// ConnTrack: an UNDECLARED p2p -> relay fallback still shows as relay, and
-// a plain invite reopening the ended pairing resets the mode to p2p first.
-ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
-ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
-ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'plain invite starts out p2p');
-Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
-ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'relay traffic reports relay without a declaration');
-ok(duelOf('aaaaaaaa')['state'] === 'playing', 'relay traffic means the game runs');
-
-// ConnTrack: an ICE burst is a run of same-state 'connecting' signals, each
-// of which re-applies the mode rule (see ConnTrack::set). A same-state ice
-// must leave a negotiated mode alone, and a relay declaration arriving in
-// the middle of the burst must still upgrade both sides - the p2p -> relay
-// bit is the one thing in such a burst that means anything.
-ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'bye');
-ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
-ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'accept');
-ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'a fresh accept negotiates p2p');
-ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'ice');
-ok(duelOf('aaaaaaaa')['mode'] === 'p2p', 'a same-state ice refresh leaves the mode untouched');
-ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'accept-relay');
-ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'a relay upgrade lands in the middle of the connecting burst');
-ok(duelOf('bbbbbbbb')['mode'] === 'relay', 'the peer side sees the mid-burst upgrade too');
-
 // ConnTrack: a duel that goes quiet (no bye reached us) is shown as ended
 // for the linger window, then drops off.
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
+ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'accept');
 connPoke('aaaaaaaa', ['updated' => time() - FOK_CONN_TTL - FOK_BEAT_JITTER]);
 ok(duelOf('aaaaaaaa')['state'] !== 'ended', 'a heartbeat one second late is not a quiet duel');
 connPoke('aaaaaaaa', ['updated' => time() - FOK_CONN_TTL - FOK_BEAT_JITTER - 1]);
@@ -946,69 +854,22 @@ mmSeeker('aaaaaaaa', time(), time() - FOK_MATCH_WINDOW - 1);
 ok(duelOf('aaaaaaaa') === [], 'a seeker that stopped polling drops off the Duels card');
 mmWipe();
 
-// Relay: relay admission is counted from the hub traffic a pair
-// really caused, not from queued messages (gone the instant the receiver
-// drains them) and not from what a client claims.
+// ConnTrack vs teardown: bye and decline are not friendship-gated, so a
+// stranger must not be able to end someone else's connection.
 connWipe();
-ok(Relay::activePairs() === 0, 'no relayed pairs on a quiet server');
-ok(!Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'idle pair holds no relay slot');
-Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
-ok(Relay::activePairs() === 1, 'relaying pair counted once');
-ok(Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'relaying pair holds its slot');
-ok(Relay::isRelaying('bbbbbbbb', 'aaaaaaaa'), 'slot is held from either side');
-Relay::markRelaying('bbbbbbbb', 'aaaaaaaa');
-ok(Relay::activePairs() === 1, 'both directions are still one pair');
-connPoke('aaaaaaaa', ['relay_seen' => time() - FOK_RELAY_WINDOW - 1]);
-connPoke('bbbbbbbb', ['relay_seen' => time() - FOK_RELAY_WINDOW - 1]);
-ok(Relay::activePairs() === 0, 'a pair that stopped relaying frees its slot');
-
-// Relay: a DECLARATION must never take a relay slot. accept-relay is
-// not friendship-gated, so if a claim counted, a handful of invented
-// pairs would deny the relay to everyone.
-connWipe();
-ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite-relay');
-ok(duelOf('aaaaaaaa')['mode'] === 'relay', 'declaration is tracked as relay mode');
-ok(Relay::activePairs() === 0, 'a no-p2p declaration takes no relay slot');
-ok(!Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'declaring pair holds no slot yet');
-Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
-ok(Relay::activePairs() === 1, 'real hub traffic takes the slot');
-
-// Relay vs teardown: bye and decline are not friendship-gated either, so a
-// stranger must not be able to end someone else's connection - let alone
-// drop the slot of a live relayed duel and get it turned away on resume.
-ok(Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'duel is relaying before the stranger');
+ConnTrack::note('aaaaaaaa', 'bbbbbbbb', 'invite');
+ConnTrack::playing('aaaaaaaa', 'bbbbbbbb');
 ConnTrack::note('cccccccc', 'aaaaaaaa', 'bye');
 ok(duelOf('aaaaaaaa')['peer'] === 'bbbbbbbb', "a stranger's bye leaves the connection alone");
-ok(Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), "a stranger's bye cannot drop the relay slot");
-ConnTrack::playing('aaaaaaaa', 'bbbbbbbb');
-ok(Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'the duel heartbeat keeps the relay slot');
-// peerLeft is the relay leave signal: a live duel is NOT gone; the real
-// peer's bye makes it gone at once (a relayed peer holding a GET reads this
-// instead of waiting out its liveness timeout).
-ok(!Relay::peerLeft('aaaaaaaa', 'bbbbbbbb'), 'a live duel does not read as the peer having left');
+ok(duelOf('aaaaaaaa')['state'] === 'playing', 'and the duel plays on');
 ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'bye');
 ok(duelOf('aaaaaaaa')['state'] === 'ended', "the real peer's bye ends it (it lingers)");
-ok(!Relay::isRelaying('aaaaaaaa', 'bbbbbbbb'), 'and frees the relay slot at once');
-ok(Relay::peerLeft('aaaaaaaa', 'bbbbbbbb'), "the real peer's bye reads as gone");
+connWipe();
 
-// A rematch INSIDE the write throttle. The pair's slot is stamped at most
-// once per FOK_RELAY_TRACK_THROTTLE (RelayStore::shouldTrackRelay), so a bye
-// that zeroed the stamp and left that marker standing would leave the pair's
-// next relayed duel unmarked for the rest of the window: it would hold no
-// slot at all, uncounted by the duel cap and absent from the admin cards,
-// while running.
-connWipe();
-ok(RelayStore::shouldTrackRelay('aaaaaaaa', 'bbbbbbbb', time()),
-    'the first relayed message of a duel marks the pair');
-Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
-ok(Relay::activePairs() === 1, 'which is how it holds its slot');
-ConnTrack::note('bbbbbbbb', 'aaaaaaaa', 'bye');
-ok(Relay::activePairs() === 0, 'the bye hands the slot straight back');
-ok(RelayStore::shouldTrackRelay('aaaaaaaa', 'bbbbbbbb', time()),
-    'and takes the throttle with it, so a rematch re-marks the pair at once');
-Relay::markRelaying('aaaaaaaa', 'bbbbbbbb');
-ok(Relay::activePairs() === 1, 'so the rematch holds a slot of its own');
-connWipe();
+// The relay's two signal types are not accepted: the relay is not deployed
+// (deprecated/relay/), so a handshake for it would lead nowhere.
+ok(!in_array('invite-relay', Signals::TYPES, true) && !in_array('accept-relay', Signals::TYPES, true),
+    'the relay signal types are not client-sendable');
 
 // An early fetch - fetchColumn(), fetch() - that leaves its statement open
 // pins this connection to a read snapshot. Once ANOTHER connection commits,

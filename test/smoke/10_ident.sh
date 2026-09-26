@@ -72,10 +72,9 @@ R=$(curl -s -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\"$
 expect "and a wait that is not a number is refused" '"error":"invalid wait"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\"$(jt "$IA"),\"fs\":-1}" "$BASE/api/poll.php")
 expect "as is a negative cursor" '"error":"invalid fs"' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\"$(jt "$IA"),\"peer\":\"$IB\"}" "$BASE/api/relay.php")
-expect "the relay's held read as a POST without a payload" '204' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"peer\":\"$IB\"}" "$BASE/api/relay.php")
-expect "refuses a wrong token like the send" '401' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"restore\":true}" "$BASE/api/backup.php")
+expect "a backup read with a wrong token is 401" '401' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"to\":\"$IB\",\"type\":\"ice\",\"payload\":\"x\"}" "$BASE/api/signal.php")
 expect "a signal with a wrong token is refused" '"error":"bad token"' "$R"
@@ -100,8 +99,9 @@ expect "and a score submit" '401' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"peer\":\"$IB\",\"epoch\":0,\"reason\":\"first\",\"pts\":1}" "$BASE/api/start.php")
 expect "and a start" '401' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/relay.php?id=$IA&peer=$IB&tok=$WRONG")
-expect "and the relay" '401' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\"}" "$BASE/api/turn.php")
+expect "and a TURN credential" '401' "$R"
 # The wrong token is put on record per (id, address) pair: the line lands
 # as the pair crosses the cap, which the tries above did at the default.
 if [ "$ADMIN" -eq 1 ]; then

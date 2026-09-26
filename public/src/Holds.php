@@ -8,12 +8,12 @@ require_once __DIR__ . '/Settings.php';
 /**
  * How many FPM workers the long polls may hold at once.
  *
- * A held request (poll.php, relay.php) occupies a worker for its whole wait
+ * A held request (poll.php) occupies a worker for its whole wait
  * while doing nothing at all. That is the point of it, and it is also the one
  * resource this deployment genuinely runs out of: the host serves about twenty
  * concurrent PHP requests, and the caps that sit around the holds
- * (relay_max_duels, tournament_max_players) are each sized against that pool
- * on their own. Nothing stopped their sum from taking all of it - and when it
+ * (tournament_max_players) are each sized against that pool on their own.
+ * Nothing stopped their sum from taking all of it - and when it
  * is taken, ordinary requests (a hello, a score, a tournament state read)
  * queue behind requests that are deliberately idle.
  *

@@ -32,8 +32,7 @@ require_once __DIR__ . '/Stats.php';
  *
  * IT CARRIES NO GAME TRAFFIC. Every match in a tournament is an ordinary P2P
  * duel between the two players the roles sheet names, and every spectator feed
- * is P2P as well; the deprecated relay hub is not involved and nothing here
- * references it. The server deals the roles, waits, and settles - the play
+ * is P2P as well. The server deals the roles, waits, and settles - the play
  * itself never touches it. The pair also calls start.php themselves like any
  * other duel, so mid/secret issuance and the items attestation chain are
  * unchanged: a tournament node merely RECORDS the mid the pair reports.

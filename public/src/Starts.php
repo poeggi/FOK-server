@@ -138,10 +138,10 @@ final class Starts
      * handed the wrong moment. The EPOCH, so the two peers are naming one
      * start. The REASON, because a rematch names epoch 0 just as the first
      * start did and is the only thing on the wire that says "a new game, not
-     * the one you have" - a relay rematch reuses the hub with no new offer,
-     * so nothing clears the old row for it (see signal.php). And the WINDOW
-     * on read(), which catches the case neither covers: a rematch after a
-     * rematch, identical in both fields.
+     * the one you have" - a rematch over the open DataChannel sends no new
+     * offer, so nothing clears the old row for it (see signal.php). And the
+     * WINDOW on read(), which catches the case neither covers: a rematch
+     * after a rematch, identical in both fields.
      *
      * @param array<string, mixed>|false $row
      * @return array{start_pts:int, mid:string}|null

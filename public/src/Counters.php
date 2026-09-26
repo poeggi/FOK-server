@@ -14,8 +14,8 @@ require_once __DIR__ . '/Load.php';
  * the hourly load history and the item mint buckets are all things an
  * operator expects to survive a restart, so the database is their home. What
  * does NOT belong there is the arrival of a single request - that used to be
- * an upsert on the single SQLite writer for every hello, signal and relayed
- * message, purely to add one to a number.
+ * an upsert on the single SQLite writer for every hello and every signal,
+ * purely to add one to a number.
  *
  * So this is a write-behind buffer, not a second store: requests increment
  * an APCu counter per minute, and the first request to arrive after a minute
@@ -265,8 +265,8 @@ final class Counters
 
     /**
      * Records the server's LEVELS for the current hour: how full shared
-     * memory is, how big the database has grown, how many rows it holds, how
-     * many duels are being relayed. These do not accumulate - two samples an
+     * memory is, how big the database has grown, how many rows it holds.
+     * These do not accumulate - two samples an
      * hour apart are the same reading taken twice, not twice as much of
      * anything - so the newest sample of an hour replaces the one before it,
      * and an hour that got no sample keeps the last known value when it is
@@ -282,13 +282,11 @@ final class Counters
      */
     public static function gaugeLevels(): array
     {
-        require_once __DIR__ . '/Relay.php';
         $sma = Caps::apcu() ? apcu_sma_info(true) : false;
         $used = is_array($sma)
             ? (int)($sma['num_seg'] ?? 0) * (int)($sma['seg_size'] ?? 0) - (int)($sma['avail_mem'] ?? 0)
             : 0;
         return [
-            'relaying' => Relay::activePairs(),
             'db_rows' => Db::rowCount(),
             'db_size' => is_file(FOK_DB_FILE) ? (int)filesize(FOK_DB_FILE) : 0,
             'apcu' => $used,

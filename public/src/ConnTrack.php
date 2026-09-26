@@ -5,25 +5,22 @@ require_once __DIR__ . '/Config.php';
 require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Caps.php';
 require_once __DIR__ . '/Matchmaking.php';
-require_once __DIR__ . '/Relay.php';
 
 /**
  * Per-client state of the current 1vs1 connection, one entry per player.
- * Inferred from traffic the server relays anyway (signal handshake, duel
- * heartbeat, relay messages), so clients report nothing for it.
+ * Inferred from traffic the server forwards anyway (signal handshake, duel
+ * heartbeat), so clients report nothing for it.
  *
  * States: inviting, invited, connecting, playing, plus the terminal
  * declined / ended that linger briefly on the Duels card (see listDuels).
- * mode is 'p2p' or 'relay'; relay is never downgraded within a duel, the
- * no-P2P bit counts from either side.
  *
  * The state lives in shared memory rather than in a table because it is
  * liveness with a TTL of seconds, written twice per signaling message and
  * twice per duel heartbeat: the busiest writer the single SQLite writer
  * carried, in service of nothing but two admin cards. There is no database
- * transport and no fallback, exactly as for the signal mailbox and the
- * relay hub (see Signals, RelayStore) - a host with no usable APCu shows an
- * empty Duels card rather than a stale one.
+ * transport and no fallback, exactly as for the signal mailbox (see
+ * Signals) - a host with no usable APCu shows an empty Duels card rather
+ * than a stale one.
  *
  * Presence - every online client, dueling or not - is Presence's own list
  * (see Presence::recent); listPresence hands it through for the card.
@@ -34,29 +31,25 @@ final class ConnTrack
     private const PREFIX = FOK_APCU_NS . 'conn:';
 
     /**
-     * How long an untouched entry survives. It has to outlast every window
-     * an entry is read over - FOK_CONN_TTL + FOK_DUEL_LINGER for the cards,
-     * FOK_RELAY_WINDOW for the relay slot - so that expiry only ever drops
-     * an entry no reader would have shown anything for. Every write
-     * refreshes it, so a live duel never reaches it.
+     * How long an untouched entry survives. It has to outlast the window the
+     * cards read an entry over, FOK_CONN_TTL + FOK_DUEL_LINGER, so that
+     * expiry only ever drops an entry no reader would have shown anything
+     * for. Every write refreshes it, so a live duel never reaches it.
      */
-    public const TTL = FOK_RELAY_WINDOW > FOK_CONN_TTL + FOK_DUEL_LINGER
-        ? FOK_RELAY_WINDOW : FOK_CONN_TTL + FOK_DUEL_LINGER;
+    public const TTL = FOK_CONN_TTL + FOK_DUEL_LINGER;
 
-    /** Signal type => [sender state, recipient state, mode]. */
+    /** Signal type => [sender state, recipient state]. */
     private const BY_TYPE = [
-        'invite' => ['inviting', 'invited', 'p2p'],
-        'invite-relay' => ['inviting', 'invited', 'relay'],
-        'accept' => ['connecting', 'connecting', 'p2p'],
-        'accept-relay' => ['connecting', 'connecting', 'relay'],
-        'offer' => ['connecting', 'connecting', 'p2p'],
-        'answer' => ['connecting', 'connecting', 'p2p'],
-        'ice' => ['connecting', 'connecting', 'p2p'],
-        'ices' => ['connecting', 'connecting', 'p2p'],
+        'invite' => ['inviting', 'invited'],
+        'accept' => ['connecting', 'connecting'],
+        'offer' => ['connecting', 'connecting'],
+        'answer' => ['connecting', 'connecting'],
+        'ice' => ['connecting', 'connecting'],
+        'ices' => ['connecting', 'connecting'],
         // decline is special-cased in note() (it leaves a 'declined' entry);
         // bye ends the pairing for both sides.
-        'decline' => [null, null, null],
-        'bye' => [null, null, null],
+        'decline' => [null, null],
+        'bye' => [null, null],
     ];
 
     /** What a signaling message means for both endpoints. */
@@ -69,7 +62,7 @@ final class ConnTrack
             // Keep the rejection visible: the decliner holds a short-lived
             // 'declined' entry naming who it turned down, so the Duels card
             // shows the decline and who made it; the inviter returns to idle.
-            self::set($from, $to, 'declined', null);
+            self::set($from, $to, 'declined');
             self::clear($to, $from);
             return;
         }
@@ -80,30 +73,28 @@ final class ConnTrack
             self::end($from, $to);
             return;
         }
-        [$mine, $theirs, $mode] = self::BY_TYPE[$type];
+        [$mine, $theirs] = self::BY_TYPE[$type];
         if ($mine === null) {
             self::clear($from, $to);
             self::clear($to, $from);
             return;
         }
-        self::set($from, $to, $mine, $mode);
-        self::set($to, $from, $theirs, $mode);
+        self::set($from, $to, $mine);
+        self::set($to, $from, $theirs);
     }
 
-    /** The duel heartbeat: the 1vs1 game is running. Keeps the pair's mode. */
+    /** The duel heartbeat: the 1vs1 game is running. */
     public static function playing(string $a, string $b): void
     {
-        self::set($a, $b, 'playing', null);
-        self::set($b, $a, 'playing', null);
+        self::set($a, $b, 'playing');
+        self::set($b, $a, 'playing');
     }
 
     /**
      * A clean teardown (bye): both sides keep a short-lived 'ended' entry so
-     * the duel lingers on the Duels card for FOK_DUEL_LINGER seconds, and
-     * the relay slot is freed at once (relay_seen = 0) so a byed relay duel
-     * does not hold the cap for the whole relay window. Touches only entries
-     * that are actually THIS pairing (same guard as clear): a stranger's
-     * bye must not end a duel it has nothing to do with.
+     * the duel lingers on the Duels card for FOK_DUEL_LINGER seconds.
+     * Touches only entries that are actually THIS pairing (same guard as
+     * clear): a stranger's bye must not end a duel it has nothing to do with.
      */
     public static function end(string $a, string $b): void
     {
@@ -119,30 +110,15 @@ final class ConnTrack
         }
         $cur['state'] = 'ended';
         $cur['updated'] = time();
-        $cur['relay_seen'] = 0;
         self::store($id, $cur);
-        // An entry of this pairing really did end, so the slot it held is
-        // gone - and the throttle that guards it must go with it, or the
-        // pair's next relayed duel would not re-mark the entry and would
-        // hold no slot at all (see Relay::slotFreed).
-        Relay::slotFreed($id, $peer);
     }
 
-    // The relay slot accounting lives on the Relay facade, not here, so the
-    // whole relay fallback deletes with that file (docs/DEPRECATED-relay.md).
-    // The only relay references left in this class, each a one-token removal:
-    // markEnded zeroes relay_seen inside the bye write and tells the facade
-    // the slot is gone (freeing a byed duel's slot at once, marked above),
-    // TTL is held up by FOK_RELAY_WINDOW, the entry shape carries relay_seen
-    // for the facade to stamp, and set()/BY_TYPE understand the 'relay'
-    // connection mode.
-
     /**
-     * The raw tracked-connection entry for one client (admin detail view,
-     * and the relay's slot record), or null if it holds no duel state - and
-     * null on a host with no usable APCu, where there is nothing to read.
-     * Callers render the linger/ended semantics themselves (see listDuels).
-     * @return array{peer:?string,state:string,mode:?string,updated:int,relay_seen:int}|null
+     * The raw tracked-connection entry for one client (admin detail view),
+     * or null if it holds no duel state - and null on a host with no usable
+     * APCu, where there is nothing to read. Callers render the linger/ended
+     * semantics themselves (see listDuels).
+     * @return array{peer:?string,state:string,updated:int}|null
      */
     public static function stateOf(string $id): ?array
     {
@@ -153,11 +129,7 @@ final class ConnTrack
         return is_array($e) ? $e : null;
     }
 
-    /**
-     * The key one client's entry lives under. Public because the relay stamps
-     * its slot onto that entry and counts entries itself, so the whole relay
-     * mechanism stays inside its own facade and deletes with it (see Relay).
-     */
+    /** The key one client's entry lives under. */
     public static function key(string $id): string
     {
         return self::PREFIX . $id;
@@ -166,11 +138,10 @@ final class ConnTrack
     /**
      * Every tracked entry, keyed by client id. The scan only ever covers
      * clients in a duel phase - the TTL is seconds and an idle client holds
-     * no entry - and only the admin cards, forget() and the relay's pair
-     * count ask for it. An id of nothing but digits is a valid id and PHP
-     * makes it an INTEGER array key, so a caller that passes a key on as an
-     * id casts it back.
-     * @return array<string,array{peer:?string,state:string,mode:?string,updated:int,relay_seen:int}>
+     * no entry - and only the admin cards and forget() ask for it. An id of
+     * nothing but digits is a valid id and PHP makes it an INTEGER array
+     * key, so a caller that passes a key on as an id casts it back.
+     * @return array<string,array{peer:?string,state:string,updated:int}>
      */
     public static function entries(): array
     {
@@ -221,13 +192,13 @@ final class ConnTrack
 
     /**
      * The 1vs1 Duels card: one row per client in a duel phase - inferred
-     * from the entry the signal handshake, duel heartbeat and relay write
-     * leave - plus quick-match seekers with no peer yet. A live phase shows
+     * from the entry the signal handshake and the duel heartbeat leave -
+     * plus quick-match seekers with no peer yet. A live phase shows
      * while the entry is fresh (FOK_CONN_TTL); a clean bye or decline leaves
      * a terminal entry that lingers exactly FOK_DUEL_LINGER seconds, and a
      * duel that simply goes quiet is shown as 'ended' for the same tail - so
      * nothing blinks out mid-glance.
-     * @return array [{id, name, peer, state, mode, latency, msgs, since}]
+     * @return array [{id, name, peer, state, latency, since}]
      */
     public static function listDuels(int $limit = 200): array
     {
@@ -270,9 +241,7 @@ final class ConnTrack
                 'name' => $players[$id]['name'],
                 'peer' => $e['peer'],
                 'state' => $e['state'],
-                'mode' => $e['mode'],
                 'latency' => $players[$id]['latency'],
-                'msgs' => Relay::msgsFor($id),
                 'since' => $e['updated'],
             ];
         }
@@ -290,9 +259,7 @@ final class ConnTrack
                 'name' => $p['name'],
                 'peer' => null,
                 'state' => 'matchmaking',
-                'mode' => null,
                 'latency' => $p['latency'],
-                'msgs' => 0,
                 'since' => $since,
             ];
         }
@@ -318,30 +285,12 @@ final class ConnTrack
         return $out;
     }
 
-    /**
-     * $mode null keeps whatever the pair already declared (the duel
-     * heartbeat does not know the mode); a 'p2p' write never overwrites a
-     * standing 'relay' for the same peer, so the no-P2P bit sticks - but
-     * only within a live duel: an invite that reopens a just-ended pairing
-     * (state ended/declined) starts its mode clean.
-     */
-    private static function set(string $id, string $peer, string $state, ?string $mode): void
+    private static function set(string $id, string $peer, string $state): void
     {
-        $cur = self::stateOf($id);
-        if ($cur !== null && $cur['peer'] === $peer
-            && $cur['state'] !== 'ended' && $cur['state'] !== 'declined'
-            && ($mode === null || $cur['mode'] === 'relay')) {
-            $mode = $cur['mode'];
-        }
         self::store($id, [
             'peer' => $peer,
             'state' => $state,
-            'mode' => $mode,
             'updated' => time(),
-            // The relay slot is the hub's to give and take (see Relay), never
-            // a signaling event's: a declaration must not earn one, and an
-            // ordinary handshake message must not hand one back.
-            'relay_seen' => $cur === null ? 0 : $cur['relay_seen'],
         ]);
     }
 
@@ -358,7 +307,7 @@ final class ConnTrack
         }
     }
 
-    /** @param array{peer:?string,state:string,mode:?string,updated:int,relay_seen:int} $entry */
+    /** @param array{peer:?string,state:string,updated:int} $entry */
     private static function store(string $id, array $entry): void
     {
         if (Caps::apcu()) {
