@@ -1,4 +1,4 @@
-# What a store build needs (API 4.23): the client's version on hello and
+# What a store build needs: the client's version on hello and
 # the upgrade word, account.php's delete, and moderation - block, report,
 # the name mask. The decisions are unit-tested against Clients, Friends,
 # Words and Account; this is the wire: the members, the answers, the

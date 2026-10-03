@@ -479,7 +479,6 @@ final class Db
             // A score may optionally record the device category it was played
             // on - pc, mobile, tv, console (see FOK_SCORE_PLATFORMS,
             // api/scores.php). Nullable: NULL means the client reported none.
-            // The API contract stays 3.4 - the field is additive and optional.
             $pdo->exec('ALTER TABLE scores ADD COLUMN platform TEXT');
         }
         if ($v < 22) {

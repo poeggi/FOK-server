@@ -9,7 +9,7 @@ require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Presence.php';
 
 /**
- * Friend presence as a delta against a cursor (API 4.6, see docs/API.md).
+ * Friend presence as a delta against a cursor (see docs/API.md).
  *
  * The four friend-facing screens ask "what changed since I last looked"
  * instead of naming their whole friend list and reading the whole status

@@ -9,7 +9,7 @@ require_once __DIR__ . '/Alerts.php';
 require_once __DIR__ . '/Stats.php';
 
 /**
- * TURN credentials (API 4.22): the tap on Cloudflare's relay.
+ * TURN credentials: the tap on Cloudflare's relay.
  *
  * A duel is peer to peer, and a peer behind a NAT that STUN cannot open has
  * no path. TURN is the standard way through and this host cannot run one,

@@ -1,4 +1,4 @@
-# Tournament mode (API 4.3): the server runs the tournament, the players run
+# Tournament mode: the server runs the tournament, the players run
 # the games. Nothing here goes near a match - a tournament match is an ordinary
 # P2P duel between the two players the server names, and no match or spectator
 # traffic ever passes through the server - so what this walks is the
@@ -215,7 +215,7 @@ expect "leaving an abandoned lobby is a harmless no-op" '"ok":true' "$R"
 R=$(hellot "$ID1")
 expect "an abandoned lobby is no longer announced" '"tourneys":[]' "$R"
 
-# --- Replacing the one you host (4.8), and the operator's view of one.
+# --- Replacing the one you host, and the operator's view of one.
 # The client offers "end that one and start a new one" where the plain create
 # is answered 409, so the server does both halves in one call: a client that
 # left and then created could lose the second half and hold neither. Kept to
@@ -282,7 +282,7 @@ else
     echo "skip the replace and operator checks: both need admin"
 fi
 
-# --- The start level (4.9). The host picks the level round 1 is played at;
+# --- The start level. The host picks the level round 1 is played at;
 # the ladder still climbs one per round from there, and a level the game does
 # not have is clamped rather than refused.
 if [ "$ADMIN" -eq 1 ]; then
@@ -304,7 +304,7 @@ if [ "$ADMIN" -eq 1 ]; then
     setting tournament_max_level 10
 fi
 
-# --- A speed tournament (4.10). The flag is the host's and the server only
+# --- A speed tournament. The flag is the host's and the server only
 # carries it: onto the lobby, which is where a player decides whether to join
 # one, and onto every roles sheet the tournament deals.
 if [ "$ADMIN" -eq 1 ]; then

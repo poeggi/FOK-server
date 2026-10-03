@@ -145,7 +145,7 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
 expect "offer allows large payload" '"ok":true' "$R"
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 
-# 'ices' (4.4): a side's whole ICE trickle in ONE request. The cost on this
+# 'ices': a side's whole ICE trickle in ONE request. The cost on this
 # host is per request, not per byte, so this is the type that pays. The
 # server stays opaque to what a candidate looks like and checks only that the
 # payload IS a bounded list - the count is the entire point of the type.
@@ -229,7 +229,7 @@ expect "both ends leave nobody playing" "$(strict '"playing":0')" "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"duel_end\":\"nothex\"}" "$BASE/api/hello.php")
 expect "a malformed duel_end is refused" '"error":"invalid duel_end"' "$R"
 
-# 4.9: the same end, stated on the poll the client is already holding.
+# The same end, stated on the poll the client is already holding.
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"duel_with\":\"$ID2\"}" "$BASE/api/hello.php" > /dev/null
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"duel_with\":\"$ID1\"}" "$BASE/api/hello.php")
 expect "a duel announced again, for the poll to end" "$(strict '"playing":2')" "$R"
@@ -245,7 +245,7 @@ expect "with the latency it reported" '"latency":31' "$R"
 expect "and the name it goes by" '"name":"SMOKE TWO"' "$R"
 
 # The whole roster on the heartbeat a screen showing it was sending anyway,
-# byte for byte what friend.php `list` returns (4.4 re-release).
+# byte for byte what friend.php `list` returns.
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"friends_list\":true}" "$BASE/api/hello.php")
 expect "hello serves the whole roster on request" '"friends":[' "$R"
 expect "the roster carries the peer state" '"state":"accepted"' "$R"
@@ -254,7 +254,7 @@ expect "the roster carries the peer name" '"name":"SMOKE TWO"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"latency\":99999}" "$BASE/api/hello.php")
 expect "absurd latency rejected" '"error":"invalid latency"' "$R"
 
-# The same status, asked as a delta (4.6): no ids on the wire, and the
+# The same status, asked as a delta: no ids on the wire, and the
 # cursor comes back with the answer.
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"friends_since\":0}" "$BASE/api/hello.php")
 expect "hello serves a friend delta" '"friends_delta":{' "$R"
@@ -283,7 +283,7 @@ expect "a poll with nothing pending still answers 204" '204' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"fs\":\"nonsense\"}" "$BASE/api/poll.php")
 expect "a bogus cursor is refused" '"error":"invalid fs"' "$R"
 
-# 4.9: the last three answers a screen holding this poll needed a hello for.
+# The last three answers a screen holding this poll needed a hello for.
 # fl and tl answer AT ONCE: the body proves the answer, the clock proves the
 # poll did not wait out the hold it asked for.
 T0=$(date +%s)

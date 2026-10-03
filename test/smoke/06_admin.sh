@@ -275,7 +275,7 @@ else
 
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"to\":\"$ID2\",\"type\":\"bye\",\"payload\":\"\"}" "$BASE/api/signal.php" > /dev/null
-    # A clean bye no longer wipes the pair: the duel lingers as 'ended' on
+    # A clean bye does not wipe the pair: the duel lingers as 'ended' on
     # the Duels card for FOK_DUEL_LINGER seconds instead of vanishing.
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=duels")
     expect "an ended duel lingers on the Duels card" '"state":"ended"' "$R"
@@ -315,7 +315,7 @@ else
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=users")
     expect "a client debugging by itself still reports active" '"debug":false,"debug_active":true' "$R"
 
-    # 4.9: the instruction reaches a client that only polls. A poll naming a
+    # The instruction reaches a client that only polls. A poll naming a
     # state the server disagrees with is answered instead of held, and the
     # client's own next report is what settles it again.
     R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"db\":1,\"wait\":3}" "$BASE/api/poll.php")

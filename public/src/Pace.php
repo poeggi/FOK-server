@@ -6,7 +6,7 @@ require_once __DIR__ . '/Settings.php';
 require_once __DIR__ . '/Holds.php';
 
 /**
- * The one pacing decision only the server can make (API 4.4, hello `pace`):
+ * The one pacing decision only the server can make (hello `pace`):
  * whether this client may hold a long poll right now.
  *
  * The beat itself - the heartbeat, the poll wait, the gap between a client's

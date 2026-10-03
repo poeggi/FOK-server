@@ -96,7 +96,7 @@ expect "version endpoint answers" '"ok":true' "$V"
 # Clients gate on the MAJOR only (see docs/API.md "Versioning"), so that is
 # what a protocol harness pins: a MINOR bump is additive by definition and
 # must not fail a run, where a MAJOR one means this script's wire is gone.
-expect "api contract is major 4" '"api":"4.' "$V"
+expect "api contract is major 5" '"api":"5.' "$V"
 
 # Skew the client clock to the server so a start pts lands just in the past,
 # never the future the sync gate rejects. The clock is t.txt's X-Fok-T
@@ -169,7 +169,7 @@ INV=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$C\"$(jt "$C"),\"to\":\"$D\",\"type\":\"invite\",\"payload\":\"x\"}" "$BASE/api/signal.php")
 expect "inviting a stranger is refused" 'not friends' "$INV"
 
-# --- Tournament (API 4.1): the server orchestrates, the players play. Not one
+# --- Tournament: the server orchestrates, the players play. Not one
 # match or spectator byte passes through it, so what a live run can check is
 # the orchestration wire - and above all the two things that only ever bite in
 # production: the cap this deployment actually hands out, and the rule that a
@@ -321,7 +321,7 @@ else
     echo "skip the dual-stack announce checks: this machine reaches $BASE over one family only (v4=$V4 v6=$V6)"
 fi
 
-# --- TURN (API 4.22). A credential from THIS server carries a DataChannel
+# --- TURN. A credential from THIS server carries a DataChannel
 # through Cloudflare's relay: test/turn-probe.mjs drives headless Edge with
 # two peer connections forced onto the relay and reads the echo back. The
 # server offering no TURN (503: no key on the host) is the operator's

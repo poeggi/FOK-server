@@ -66,8 +66,8 @@ fi
 R=$(start_req "$ID2" "$ID1" 0 rematch "$(now_ms)")
 expect "and the peer joins that one, not the first" '"start_pts":' "$R"
 
-# The in-run halts are settled peer-to-peer and the server no longer knows
-# the words for them.
+# The in-run halts are settled peer-to-peer; the server does not know the
+# words for them.
 R=$(start_req "$ID1" "$ID2" 0 level "$(now_ms)")
 expect "an in-run reason is not a reason any more" 'invalid reason' "$R"
 
@@ -219,7 +219,7 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt
 expect "request pending after QR screen closed" '"state":"pending"' "$R"
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"remove\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php" > /dev/null
 
-# 4.9: the poll arms it too, so the QR screen needs no hello beside the poll
+# The poll arms it too, so the QR screen needs no hello beside the poll
 # it is already holding.
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"aa\":1}" "$BASE/api/poll.php" > /dev/null
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"request\",\"peer\":\"$ID2\"}" "$BASE/api/friend.php")
@@ -231,6 +231,6 @@ expect "a bogus arm flag is refused" '"error":"invalid aa"' "$R"
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php" > /dev/null
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/poll.php" > /dev/null
 
-# --- API 4.4 on the start answer: q_ms is this request's own queue wait.
+# --- The start answer: q_ms is this request's own queue wait.
 R=$(start_req "$ID1" "$ID2" 900 first "$(now_ms)")
 expect "a start carries the queue figure" '"q_ms":' "$R"

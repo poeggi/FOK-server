@@ -13,8 +13,8 @@ require_once __DIR__ . '/../src/ConnTrack.php';
  * POST {"id": "8-hex", "peer": "8-hex", "epoch": <n>, "reason": "first",
  *       "pts": <ms>, "duel_private": <bool>}
  *   -> {"ok":true, "start_pts": <ms>, "epoch": <n>, "now": <ms>,
- *       "q_ms": <ms>,                          (since API 4.4)
- *       "mid": "32-hex", "secret": "32-hex"}   (mid/secret since API 4.0)
+ *       "q_ms": <ms>,
+ *       "mid": "32-hex", "secret": "32-hex"}
  *
  * BOTH peers call this where play BEGINS - the first start and a rematch,
  * which are the only two reasons there are - and each receives the

@@ -1,4 +1,4 @@
-# The item registry (API 4.0): server-authoritative ownership of item
+# The item registry: server-authoritative ownership of item
 # instances. Runs entirely over real HTTP, so the same file is what verifies a
 # deployment - the staging run in CI walks this ladder on the real host before
 # live is touched.

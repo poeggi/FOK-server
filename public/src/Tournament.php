@@ -1862,8 +1862,7 @@ final class Tournament
      * matched on every network it has recently been seen on, against every
      * network the CALLER has recently been seen on (see Presence::seenOn).
      * A pair that never overlaps at all still has the join code, and a
-     * device that has only ever spoken one family has exactly one network,
-     * which is the old behaviour.
+     * device that has only ever spoken one family has exactly one network.
      *
      * And the host has to still count as present. That window is its own
      * setting rather than FOK_ONLINE_WINDOW: a host waiting in a lobby is a

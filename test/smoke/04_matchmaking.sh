@@ -1,5 +1,5 @@
 
-# Friend feature suite (API 3.5): existence feedback, spam ban, request
+# Friend feature suite: existence feedback, spam ban, request
 # throttle. It needs admin to lower the ban cap, to re-enable the throttle
 # lib.sh disabled suite-wide, and to register/delete its temporary peers - an
 # unknown peer now answers exists:false and records nothing - so a bare remote

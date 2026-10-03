@@ -1,4 +1,4 @@
-# Events (API 4.11): a room an operator opens, entered by scanning its QR.
+# Events: a room an operator opens, entered by scanning its QR.
 #
 # What only real HTTP can show is what this walks: the door in both settings,
 # the two codes, the throttle, who may read what, the reserved signal, and an
@@ -428,7 +428,7 @@ expect "nor by its code" '"error":"not in the event"' "$R"
 R=$(evact "$ID3" monitor "$EID4")
 expect "while it watches the same tournament as the screen" "\"tid\":\"$MTID\"" "$R"
 
-# THE MONITOR AS A SPECTATOR (4.14). Once a match is up, the roles sheet
+# THE MONITOR AS A SPECTATOR. Once a match is up, the roles sheet
 # names the screen - so every client grants it a feed, private duels
 # included - and the screen receives the tournament's signals like a seat
 # would, while sitting in none of the sheet's lists. A member joins, the

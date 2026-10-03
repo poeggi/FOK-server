@@ -27,7 +27,7 @@ expect "game origin allowed by CORS" 'poeggi.github.io' "$R"
 # it, and a client reads those to tell a cold connection from a warm one. The
 # allowlist governs it too, because the breakdown includes the response size.
 expect "timing allowed for the game origin"     'timing-allow-origin: https://poeggi.github.io' "$(echo "$R" | tr 'A-Z' 'a-z')"
-# The packaged app's web view names no web host (4.23): Capacitor's iOS
+# The packaged app's web view names no web host: Capacitor's iOS
 # origin is the one a browser could never send.
 R=$(curl -s -i -H 'Origin: capacitor://localhost' "$BASE/api/hello.php" | tr 'A-Z' 'a-z')
 expect "the app's web view origin is allowed by CORS" 'access-control-allow-origin: capacitor://localhost' "$R"

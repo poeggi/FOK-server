@@ -154,7 +154,7 @@ Util::fail($res['error'], $res['code']);
  * Best-effort extraction of a player's owned item ids from its config vault,
  * for legacy seeding. The vault payload is the client's whole config as an
  * opaque JSON blob; we look only for a top-level "items" array of ids or an
- * "owned" object whose truthy keys are ids (the shapes documented for 4.0).
+ * "owned" object whose truthy keys are ids.
  * Anything else - no vault, unparseable, neither shape - returns null,
  * and seeding falls back to the client's submitted list.
  *

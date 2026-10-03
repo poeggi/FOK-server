@@ -8,7 +8,7 @@ require_once __DIR__ . '/Util.php';
 require_once __DIR__ . '/Settings.php';
 
 /**
- * Events (API 4.11, see docs/API.md): a room an operator opens on the
+ * Events (see docs/API.md): a room an operator opens on the
  * server, entered by scanning its QR - the long-lived key printed on a
  * poster, or the 20-second pass a member shows on screen.
  *

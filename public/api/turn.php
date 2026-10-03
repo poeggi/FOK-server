@@ -7,7 +7,7 @@ require_once __DIR__ . '/../src/Presence.php';
 require_once __DIR__ . '/../src/Turn.php';
 
 /**
- * TURN credentials for a duel no direct path can carry (API 4.22).
+ * TURN credentials for a duel no direct path can carry.
  * POST {"id": "8-hex", "tok": "<32-hex>"}
  *   -> {"ok":true, "ice":[...iceServers...], "ttl":<seconds left>}
  *   -> 503 {"ok":false, "error":"turn_unavailable"}   STUN only, then

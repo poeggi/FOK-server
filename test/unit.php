@@ -1352,7 +1352,7 @@ $traffic = inOneMinute(static function (): array {
 ok($traffic !== [], 'the returned req_min value still reaches the traffic alert');
 Settings::set('alert_req_per_min', 600);
 
-// ---- The client's version (API 4.23) ----------------------------------
+// ---- The client's version ---------------------------------------------
 // The shape of what hello accepts, the word it answers, and the record the
 // operator reads the spread off.
 ok(Clients::isVersion('4.5.12') && Clients::isVersion('5.0.0') && Clients::isVersion('4.5.12.3'), 'a version is three or four numbers joined by dots');
@@ -1448,7 +1448,7 @@ ok($count('SELECT COUNT(*) FROM scores WHERE player_id = ?', 'ac000002') === 1 &
 Db::get()->exec("DELETE FROM scores WHERE player_id = 'ac000002'");
 Db::get()->exec("DELETE FROM vault WHERE id = 'ac000002'");
 
-// ---- Moderation (API 4.23): the word filter, blocks, reports -----------
+// ---- Moderation: the word filter, blocks, reports ----------------------
 ok(Words::mask('SNAKE', ['bad']) === 'SNAKE', 'a clean name passes the filter untouched');
 ok(Words::mask('BadSnake', ['bad']) === '***Snake', 'a hit is masked to asterisks of its length, whatever its case');
 ok(Words::mask('a bad bad word', ['bad', 'word']) === 'a *** *** ****', 'every hit of every word');
@@ -1494,7 +1494,7 @@ Presence::forget('b1000001');
 Presence::forget('b1000002');
 Presence::forget('b1000003');
 
-// ---- Item registry (API 4.0) ----------------------------------------
+// ---- Item registry --------------------------------------------------
 // The HTTP smoke walks the whole claim ladder over the wire; what is left
 // for here is what a browserless request cannot see - the MAC construction,
 // the hash chain, checkpoint truncation, and conservation at the row level.
@@ -1871,7 +1871,7 @@ ok(Presence::entryOf('deadbeef') === null, 'a restore empties the presence store
 Util::runDeferred();
 ok($tail === false, 'the tail queued before a restore never runs');
 
-// ---- Tournaments (API 4.1) -------------------------------------------
+// ---- Tournaments -----------------------------------------------------
 // Bracket is pure math with a normative spec (docs/API.md "Tournament
 // mode"), and a client renders what it computes - so the rules are pinned
 // here against the document rather than against the implementation.
@@ -2544,7 +2544,7 @@ Tournament::join($wo[1], $tidW);
 Tournament::start($wo[0], $tidW);
 $vW = Tournament::view($wo[0], $tidW);
 $pW = $vW['roles']['players'];
-// The walkover clock (4.15) is the deal's stamp plus the window, so every
+// The walkover clock is the deal's stamp plus the window, so every
 // screen counts down to the same server moment.
 $dealtW = TourneyStore::get($tidW)['data']['results']['r1.1']['dealt'];
 ok($vW['roles']['walkover_at'] === $dealtW + Settings::int('tournament_walkover_ms'),
@@ -2811,7 +2811,7 @@ ok(TourneyStore::byCode($c1['code'])['tid'] === $c1['tid'], 'the join code finds
 Tournament::leave('77000001', $c1['tid']);
 ok(TourneyStore::byCode($c1['code']) === null, 'and is released the moment it stops being open');
 ok(Tournament::create('77000001', false)['ok'] === true, 'as is the host, who can create again');
-// replace (4.8): the answer to that 409. One call, because a client that
+// replace: the answer to that 409. One call, because a client that
 // had to leave and then create can lose the second half.
 $held = TourneyStore::hostedBy('77000001');
 Signals::take('77000001');
@@ -2853,7 +2853,7 @@ Tournament::leave('77000002', $c2['tid']);
 ok(apcu_key_info($k2)['ttl'] === Settings::int('tournament_abandoned_ttl'),
     'and an abandoned one only long enough to tell the players who were in it');
 
-// The start level (4.9): the host picks what round 1 is played at and the
+// The start level: the host picks what round 1 is played at and the
 // ladder climbs from there, so the field still decides how much deeper the
 // final gets.
 $sl = ['77000005', '77000006'];
@@ -2874,7 +2874,7 @@ Tournament::leave($sl[0], TourneyStore::hostedBy($sl[0]) ?? '');
 ok(Tournament::create($sl[0], false)['lvl'] === 1, 'and a create that says nothing starts at 1');
 Tournament::leave($sl[0], TourneyStore::hostedBy($sl[0]) ?? '');
 
-// A speed tournament (4.10): the host says every round is played as a speed
+// A speed tournament: the host says every round is played as a speed
 // round, and the server only carries the flag. It reaches the lobby, because a
 // player decides on it before joining, and every roles sheet, because that is
 // what the two players preset the match from.
@@ -3093,7 +3093,7 @@ Util::noteAction('<b>x</b>');
 Util::noteAction(['pass']);
 ok((Util::who()['a'] ?? null) === 'pass', 'anything but a plain word is ignored');
 
-// ---- Friend presence deltas (API 4.6) --------------------------------
+// ---- Friend presence deltas ------------------------------------------
 // The entries are shared memory, so a test that needs a friend who last beat
 // three minutes ago writes one directly rather than waiting for a window.
 function ffEntry(string $id, array $over = []): void
@@ -3928,7 +3928,7 @@ ok(isset($evSeen['members']), 'a monitor reads the event as a member does');
 ok(!isset($evSeen['ach']), 'but is granted no achievement: it was posted, not joined');
 ok(isset(EventView::forCaller($evMonC, '22227e57', 'member', 5000)['ach']),
     'while somebody who actually joined is');
-// ---- TURN credentials (API 4.22): the tap, and the cap behind it ------
+// ---- TURN credentials: the tap, and the cap behind it -----------------
 //
 // The relay is faked at the transport: what is asserted is what this
 // server sends it (the token on each call, the id and ttl on a mint, the

@@ -1,4 +1,4 @@
-# TURN credentials (API 4.22): the wire of turn.php and, against a fake
+# TURN credentials: the wire of turn.php and, against a fake
 # relay, the cap behind it - the warn line, the stop, the operator's
 # switch with its revocations. The fake is a second php -S serving
 # test/smoke/turn-fake.php, which turn.json's rtc_base points the server
