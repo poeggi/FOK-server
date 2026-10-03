@@ -356,7 +356,7 @@ else
     expect "the export downloads as a snake-fok-backup file" 'snake-fok-backup' "$R"
     R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=vault_export&id=$ID1")
     expect "export 404s for a client with no backup" '404' "$R"
-    # The identity binding (API 4.20) in the details popup, and the
+    # The identity binding in the details popup, and the
     # operator's reset: the way a hijacked or lost id is handed back. The
     # next hello that asks mints afresh, whatever token it still carries,
     # and the old token is refused from then on.
@@ -521,10 +521,10 @@ else
     # the sender is told. (The sweep runs on the next mailbox read, so
     # the inviter's own heartbeat both raises and delivers the receipt.)
     # Uses the fresh pair: ID1/ID2 unfriended above, and ID1 is still
-    # friend-request banned by the spam test. ID4 has only ever hit backup.php
-    # (no player row), so register it first - a request to an unregistered id
-    # now records nothing and reports exists:false (API 3.5).
-    hello "$ID4" > /dev/null
+    # friend-request banned by the spam test. ID3 and ID4 have no player
+    # row yet, so bind them first - a request to an unregistered id records
+    # nothing and reports exists:false.
+    bound "$ID3" "$ID4"
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID3\"$(jt "$ID3"),\"action\":\"request\",\"peer\":\"$ID4\"}" "$BASE/api/friend.php" > /dev/null
     curl -s -X POST -H 'Content-Type: application/json' \

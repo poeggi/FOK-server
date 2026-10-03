@@ -50,7 +50,7 @@ Util::noteAction($type);
 if (!is_string($payload) || strlen($payload) > FOK_SIGNAL_MAX_PAYLOAD) {
     Util::fail('invalid payload');
 }
-// 'ices' (4.4) is the one payload with a shape, because its whole reason for
+// 'ices' is the one payload with a shape, because its whole reason for
 // existing is the count: a side's trickle in ONE request instead of a request
 // per candidate. The server checks that it IS a bounded list and nothing
 // more - what a candidate looks like stays between the two peers, as it does

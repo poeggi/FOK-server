@@ -47,13 +47,10 @@ final class Signals
     // every other signaling type here, and NOT in NEEDS_RECEIPT - a spectator
     // that gets no feed simply keeps watching the scoreboard, which is not
     // the failed-connection case a receipt exists for.
-    // 'ices' (4.4) is 'ice' with a JSON ARRAY payload - one message for a
-    // side's whole trickle instead of a request per candidate. A separate
-    // type on purpose: a peer built before 4.4 has no case for it and drops
-    // the message, which loses candidates it never had; reshaping 'ice' would
-    // have made that same peer parse an array as one candidate and lose the
-    // ones it DID have. The array is bounded in signal.php; its contents stay
-    // opaque here, like every other payload.
+    // 'ices' is 'ice' with a JSON ARRAY payload - one message for a
+    // side's whole trickle instead of a request per candidate. The array is
+    // bounded in signal.php; its contents stay opaque here, like every
+    // other payload.
     public const TYPES = ['invite', 'accept', 'decline', 'offer', 'answer', 'ice', 'ices', 'bye', 'watch'];
 
     // Types that establish a connection: the sender is waiting for an

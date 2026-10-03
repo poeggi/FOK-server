@@ -152,11 +152,11 @@ sigcode() { # like sig, but prints the HTTP status instead of the body
 hello() { # hello <id>
     curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$1\"$(jt "$1")}" "$BASE/api/hello.php"
 }
-# The identity token of every id this suite bound (API 4.20): the suite is
-# a client, and a client carries its token on every request that names its
-# id - as a JSON member after the id in a body (jt), as a query parameter
-# after id= on a GET (qt). An id that was never bound carries nothing and
-# passes as a client from before the token, until the cutoff.
+# The identity token of every id this suite bound: the suite is a client,
+# and a client carries its token on every request that names its id, as a
+# JSON member after the id in a body (jt). qt puts it on a query string,
+# for the assertions that a GET is refused. An id that was never bound
+# carries nothing and is refused everywhere but on a binding hello.
 declare -A TOK=()
 jt() { if [ -n "${TOK[$1]:-}" ]; then printf ',"tok":"%s"' "${TOK[$1]}"; fi; }
 qt() { if [ -n "${TOK[$1]:-}" ]; then printf '&tok=%s' "${TOK[$1]}"; fi; }

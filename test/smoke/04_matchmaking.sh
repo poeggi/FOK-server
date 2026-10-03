@@ -17,7 +17,7 @@ else
     else
         echo "ok   unknown-id request records no state"
     fi
-    hello "aa000010" > /dev/null
+    bound "aa000010"
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"request\",\"peer\":\"aa000010\"}" "$BASE/api/friend.php")
     expect "request to a known id records it" '"state":"pending"' "$R"
@@ -26,7 +26,7 @@ else
     # Mass friend requests: alert + timed ban + purge of the spammer's
     # pendings. Lower the cap so a handful trips it; the peers must exist.
     setting friend_req_max 3
-    for p in aa000011 aa000012 aa000013 aa000014; do hello "$p" > /dev/null; done
+    bound aa000011 aa000012 aa000013 aa000014
     for p in aa000011 aa000012 aa000013 aa000014; do
         R=$(curl -s -X POST -H 'Content-Type: application/json' \
             -d "{\"id\":\"$ID1\"$(jt "$ID1"),\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
@@ -49,19 +49,20 @@ else
     # Per-id request throttle (the anti-probe guard). Re-enable it at tight
     # caps with dedicated prober ids: first the 1-per-interval scale, then the
     # burst -> cooldown scale, whose trip must land a visible server-log line.
+    bound c0c0c0c0 c1c1c1c1 c2c2c2c2
     setting friend_rate_interval 5
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"c0c0c0c0\",\"action\":\"request\",\"peer\":\"aa000010\"}" "$BASE/api/friend.php")
+        -d "{\"id\":\"c0c0c0c0\"$(jt c0c0c0c0),\"action\":\"request\",\"peer\":\"aa000010\"}" "$BASE/api/friend.php")
     expect "first request passes the throttle" '"ok":true' "$R"
     R=$(curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"id\":\"c0c0c0c0\",\"action\":\"request\",\"peer\":\"aa000011\"}" "$BASE/api/friend.php")
+        -d "{\"id\":\"c0c0c0c0\"$(jt c0c0c0c0),\"action\":\"request\",\"peer\":\"aa000011\"}" "$BASE/api/friend.php")
     expect "a second request within the interval is throttled" 'friend requests too fast' "$R"
     expect "the throttle answers 429 with retry_after" '"retry_after":5' "$R"
     setting friend_rate_interval 0
     setting friend_rate_burst 3
     for p in aa000010 aa000011 aa000012 aa000099; do
         R=$(curl -s -X POST -H 'Content-Type: application/json' \
-            -d "{\"id\":\"c1c1c1c1\",\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
+            -d "{\"id\":\"c1c1c1c1\"$(jt c1c1c1c1),\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
     done
     expect "a burst trips the cooldown" 'friend request cooldown' "$R"
     if [ "$REMOTE" -eq 0 ]; then
@@ -87,13 +88,13 @@ else
     setting friend_rate_burst 1
     for p in aa000010 aa000011; do
         R=$(curl -s -X POST -H 'Content-Type: application/json' \
-            -d "{\"id\":\"c2c2c2c2\",\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
+            -d "{\"id\":\"c2c2c2c2\"$(jt c2c2c2c2),\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
     done
     expect "a first burst trips the short cooldown" "\"retry_after\":$CD" "$R"
     sleep "$NAP"
     for p in aa000010 aa000011; do
         R=$(curl -s -X POST -H 'Content-Type: application/json' \
-            -d "{\"id\":\"c2c2c2c2\",\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
+            -d "{\"id\":\"c2c2c2c2\"$(jt c2c2c2c2),\"action\":\"request\",\"peer\":\"$p\"}" "$BASE/api/friend.php")
     done
     expect "a repeat burst within the window escalates to the long cooldown" '"retry_after":7200' "$R"
     if [ "$REMOTE" -eq 0 ]; then
@@ -119,6 +120,7 @@ else
     # admin stats test (delete_player clears the counts cache).
     for p in aa000010 aa000011 aa000012 aa000013 aa000014 c0c0c0c0 c1c1c1c1 c2c2c2c2; do
         curl -s -b "$COOKIES" -X POST -d "id=$p" "$BASE/admin/api.php?action=delete_player" > /dev/null
+        unset "TOK[$p]"
     done
 fi
 

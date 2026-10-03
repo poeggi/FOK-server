@@ -68,18 +68,17 @@ if [ "$REMOTE" -eq 1 ]; then
 fi
 
 # The first hello of an id carries tok as null and is answered the token
-# that proves the id from then on (API 4.20, see lib.sh bind): every
+# that proves the id from then on (see lib.sh bind): every
 # request this suite makes for the id carries it.
 bind "$ID1"
 expect "hello registers" "$(strict '"registered":1')" "$R"
 expect "hello online" "$(strict '"online":1')" "$R"
 expect "the first hello binds the id and answers its token" '"tok":"' "$R"
-# A poll is a beat too (4.5): a client that only ever polls is online.
-curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/poll.php"
+bind "$ID2"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID1\"$(jt "$ID1")}" "$BASE/api/hello.php")
-expect "a poll counts as a beat" "$(strict '"online":2')" "$R"
+expect "a second bound id is online" "$(strict '"online":2')" "$R"
 expect "hello carries api version" '"api":' "$R"
-# 4.4, both additive. q_ms is this request's own queue wait - the client
+# q_ms is this request's own queue wait - the client
 # reads it to know not to anchor its clock against a busy moment. pace
 # carries the one thing only the server can decide: whether a long poll may
 # be held right now. The beat itself is a contract constant, not a field.
@@ -92,7 +91,6 @@ if [ "${#HN}" -eq 13 ]; then echo "ok   hello now is milliseconds"; else echo "F
 
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"id":"XYZ"}' "$BASE/api/hello.php")
 expect "hello rejects bad id" '"error":"invalid id"' "$R"
-bind "$ID2"
 refute "a hello with the token answers no token" '"tok":"' "$(hello "$ID2")"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\",\"tok\":\"00000000000000000000000000000000\"}" "$BASE/api/hello.php")
@@ -158,9 +156,7 @@ expect "score submissions throttled" '429' "$R"
 
 # Client config backup / restore, under the identity token (see
 # docs/API.md). ID2 is a bound, registered player, so the admin client view
-# finds its backup below. TEMPORARY(ident): ID4 is a client from before the
-# token - no tok member - whose first backup still mints, and it stores the
-# answer as its token like the vault's old client did.
+# finds its backup below.
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"restore\":true}" "$BASE/api/backup.php")
 expect "restore with no backup is 404" '404' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
@@ -168,10 +164,12 @@ R=$(curl -s -X POST -H 'Content-Type: application/json' \
 expect "backup stored" '"ok":true' "$R"
 expect "and stamped" '"updated":' "$R"
 refute "a bound id is minted nothing on backup" '"tok":"' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID2")
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"restore\":true}" "$BASE/api/backup.php")
 expect "restore without the token is 401" '401' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID2&tok=00000000000000000000000000000000")
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\",\"tok\":\"00000000000000000000000000000000\",\"restore\":true}" "$BASE/api/backup.php")
 expect "restore with a wrong token is 401" '401' "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/backup.php?id=$ID2$(qt "$ID2")")
+expect "a GET restore is refused" '405' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"restore\":true}" "$BASE/api/backup.php")
 expect "restore with the token returns the config" 'config-blob-1' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
@@ -184,28 +182,15 @@ curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"payload\":\"config-blob-2\"}" "$BASE/api/backup.php" > /dev/null
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2"),\"restore\":true}" "$BASE/api/backup.php")
 expect "a tokened overwrite replaces the config" 'config-blob-2' "$R"
-R=$(curl -s "$BASE/api/backup.php?id=$ID2&token=${TOK[$ID2]}")
-expect "the vault's old member name still reads" 'config-blob-2' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d "{\"id\":\"$ID4\",\"payload\":\"legacy-blob\"}" "$BASE/api/backup.php")
-expect "a first backup from a client before the token still mints" '"token":"' "$R"
-expect "and answers it under the new name too" '"tok":"' "$R"
-TOK[$ID4]=$(echo "$R" | grep -oE '"token":"[a-f0-9]{32}"' | cut -d'"' -f4 || true)
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID4\"$(jt "$ID4"),\"restore\":true}" "$BASE/api/backup.php")
-expect "which reads the backup back" 'legacy-blob' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID4\"}" "$BASE/api/hello.php")
-expect "and that client still hellos without one" '"ok":true' "$R"
-# That hello registered ID4, and the admin section asserts an exact
-# registered count: take the row away again, binding included.
-if [ "$ADMIN" -eq 1 ]; then
-    curl -s -b "$COOKIES" -X POST -d "id=$ID4" "$BASE/admin/api.php?action=delete_player" > /dev/null
-    unset "TOK[$ID4]"
-fi
+    -d "{\"id\":\"$ID4\",\"payload\":\"orphan-blob\"}" "$BASE/api/backup.php")
+expect "an id nothing binds backs up nothing" '"error":"bad token"' "$R"
+refute "and is minted no token" '"tok":"' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"nothex\",\"payload\":\"x\"}" "$BASE/api/backup.php")
 expect "backup rejects a malformed id" '"error":"invalid id"' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID4\"$(jt "$ID4")}" "$BASE/api/backup.php")
+R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$ID2\"$(jt "$ID2")}" "$BASE/api/backup.php")
 expect "backup rejects a missing payload" '"error":"invalid payload"' "$R"
-{ printf '{"id":"%s","payload":"' "$ID4"; head -c 70000 /dev/zero | tr '\0' 'x'; printf '"}'; } > "$DATA/bigbak.json"
+{ printf '{"id":"%s","tok":"%s","payload":"' "$ID2" "${TOK[$ID2]}"; head -c 70000 /dev/zero | tr '\0' 'x'; printf '"}'; } > "$DATA/bigbak.json"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     --data-binary "@$DATA/bigbak.json" "$BASE/api/backup.php")
 expect "oversized backup rejected with 413" '413' "$R"

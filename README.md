@@ -3,14 +3,8 @@
 Central game server for FOK Snake (and future games). Runs as plain PHP on
 shared hosting (Apache + PHP-FPM, SQLite), deployed to fok-server.poggensee.it.
 
-Version 1.0.0 was the first stable release. The admin and matchmaking
-surfaces are considered production-stable.
-
-Contract 4.8 is the current API line: 4.0 was the first MAJOR bump since
-3.x - the server now owns item-instance ownership (see Item registry below),
-and while the wire additions are backward-compatible, a client that carries
-items must speak the registry to play online, which is what makes it a
-major. Every minor since is additive; docs/API.md carries them one by one.
+The API contract is docs/API.md, version 5.0. Every request that names
+a player id carries the identity token that proves it.
 
 ## What it does
 
@@ -27,10 +21,11 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   burst) on top of the unanswered-request spam ban. New requests and
   acceptances notify the peer via a reserved 'friend' signal in its
   mailbox. Quick match stays open to strangers (the match response carries
-  the opponent's name). Players not seen for 180 days (configurable) are
+  the opponent's name). Players not seen for 365 days (configurable) are
   expired automatically: removed from the database, friendships cancelled,
   friends notified.
-- TURN credentials (contract 4.22): a duel no direct path can carry goes through Cloudflare's TURN relay on
+- TURN credentials: a duel no direct path can carry goes through
+  Cloudflare's TURN relay on
   the SAME DataChannel; this server only mints the short-lived
   credentials (turn.php), one set per player, tagged with the player's
   id. The credential is the tap: the server counts what it hands out,
@@ -41,7 +36,7 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   admin Game Statistics card shows the players holding a credential and
   the credentials handed out in the last 30 days, with the cap and the
   lifetime total in its popup.
-- The store build (contract 4.23): a client names its version and
+- The store build: a client names its version and
   platform on hello and is told `upgrade: advised|required` when it is
   below a floor the operator set - never refused, a store build is
   replaced only when its player updates it. account.php lets the owner
@@ -62,7 +57,7 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   traffic runs peer-to-peer over a WebRTC DataChannel (server not
   involved), through TURN where no direct path exists (see TURN
   credentials above).
-- Item registry (contract 4.0): the server owns item-instance OWNERSHIP.
+- Item registry: the server owns item-instance OWNERSHIP.
   An item a player carries is a row in the server's item table, not a
   client-side flag, so a restored backup or an edited save cannot
   resurrect an item that was traded away. A transfer MOVES the single
@@ -78,13 +73,13 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   stays client-trusted (the coin economy is client-side), so this makes
   items conserved and auditable, not unforgeable - see the scope boundary
   in docs/API.md.
-- Tournament mode (contract 4.1): 2-8 players in a lobby joined by a
+- Tournament mode: 2-8 players in a lobby joined by a
   6-character code, a sparse first round, a seeded knockout and standings
   between them. The server orchestrates and settles only - schedule, roles,
   results, bracket - and never carries a byte of match traffic: every
   tournament match is an ordinary P2P duel between the two players its
   roles sheet names. A player who stops asking for a minute forfeits the
-  match in flight, and the sheet carries that clock (4.15) so every screen
+  match in flight, and the sheet carries that clock so every screen
   waiting on the match counts down to it. Open lobbies are also ANNOUNCED
   to the host's own network, so people in one room find each other
   without typing a code.
@@ -95,7 +90,7 @@ major. Every minor since is additive; docs/API.md carries them one by one.
   addresses the client reports about itself (hello "nets"), which rank
   below what the server saw for itself. The code remains the capability
   and the way in from anywhere else.
-- Events (contract 4.11 to 4.16): a room an operator opens - a LAN party,
+- Events: a room an operator opens - a LAN party,
   a club night, a stand at a fair. A player gets in by scanning its QR:
   the printed key on the poster, or the 20-second pass a member shows on
   screen. The door is OPEN (a scan joins) or CLOSED (a scan asks, and the
@@ -201,9 +196,9 @@ major. Every minor since is additive; docs/API.md carries them one by one.
                       carry: minted per player, capped per 30 days
         scores.php    GET top 100 / POST submit score
         signal.php    POST matchmaking/WebRTC signaling message
-        backup.php    GET/POST client config backup and restore, under the
+        backup.php    client config backup and restore, under the
                       identity token
-        account.php   the owner deletes the id and everything about it (4.23)
+        account.php   the owner deletes the id and everything about it
         .user.ini     PHP limits for the API only (see Capacity below)
       debug/          client debug-report drop -> 4-digit PIN (1 day, 8 MB)
       admin/          session-protected admin UI + JSON API
@@ -353,8 +348,8 @@ is saturated. Waiting is not the same as the pool being short of workers:
 measured on live, every wait above a millisecond was served by a worker
 that was already WARM, which puts the contention above the FPM pool - at
 the connection and stream-scheduling layer, where the cost is paid per
-REQUEST rather than per byte. That is why 4.4 spends its effort on making
-clients send FEWER SIMULTANEOUS requests (`ices`, `pace`, `after_ms`)
+REQUEST rather than per byte. That is why the contract spends its effort
+on making clients send FEWER SIMULTANEOUS requests (`ices`, `pace`, `after_ms`)
 rather than smaller ones. `RequestHeader set` overwrites, so a client
 cannot forge its own wait, and an absent header is ordinary rather than
 an error - the built-in PHP server used by the smoke tests ignores
@@ -480,12 +475,11 @@ host-level. If this outgrows shared hosting, fix workers first.
   from it, tagged with the client's id and valid for turn_ttl_secs. An
   optional rtc_base member points the API calls elsewhere; the smoke test
   uses it against a fake.
-- Player IDs are public identities (as designed in FOK-snake). Since API
-  4.20 the identity token proves that the caller owns the id it names:
-  16 random bytes hello mints for an unbound id, presented on every
-  request from then on, only their hash stored (src/Ident.php). Until
-  2026-10-01 a client from before the token still passes on an id nothing
-  proves yet (TEMPORARY(ident)); 5.0 requires it everywhere. Replay-based
+- Player IDs are public identities (as designed in FOK-snake). The
+  identity token proves that the caller owns the id it names: 16 random
+  bytes hello mints for an unbound id, required on every request from
+  then on, only their hash stored (src/Ident.php). Wrong tokens from one
+  (id, address) pair past a per-minute cap answer 429. Replay-based
   score validation is still future work.
 - Item ownership is server-authoritative, but MINTING is not: a client
   asserts its own box opens and purchases and is only rate-limited, so the
@@ -498,7 +492,7 @@ host-level. If this outgrows shared hosting, fix workers first.
 ## API sketch
 
     GET  /api/version.txt
-      -> {"ok":true,"server":"<x.y.z>","api":"4.23","env":"live"}
+      -> {"ok":true,"server":"<x.y.z>","api":"5.0","env":"live"}
          (static, written by the deploy - it starts no PHP)
     GET  /api/t.txt
       -> header X-Fok-T: t=<server MICROseconds>   clock source, no PHP
@@ -509,15 +503,16 @@ host-level. If this outgrows shared hosting, fix workers first.
                           "friends_since":ms?, "tourneys":bool?,
                           "events":bool?, "nets":[ip,...]?,
                           "client":"4.5.12"?, "platform":"web|ios|android"?}
-      -> {"ok":true,"api":"4.23","tok":"<32-hex>"?,"now":ms,"debug":bool,
+      -> {"ok":true,"api":"5.0","tok":"<32-hex>"?,"now":ms,"debug":bool,
           "upgrade":"advised|required"?, "name":"<masked>"?,
           "online":n,"playing":n,"registered":n,
           "signals":[{"from":"...","type":"invite","payload":"...","created":s},...],
           "friends_delta":{...}?, "blocked":[...]?, "tourneys":[...]?,
           "events":[...]?}
-         (tok proves the id and rides every request below as well - the
-          member on a body, &tok= on a GET; the answer carries it once, on
-          the hello that bound the id. The delta only ever names accepted
+         (tok proves the id and is REQUIRED beside id in every request
+          below; the answer carries it once, on the hello that bound the
+          id. A missing or wrong tok is 401, a wrong one past the pair
+          cap 429. The delta only ever names accepted
           friends; tourneys lists the open
           lobbies hosted on one of the caller's own networks. duel_with sets
           the duel and duel_end clears it - see docs/API.md, Announcing a
@@ -525,8 +520,8 @@ host-level. If this outgrows shared hosting, fix workers first.
     POST /api/friend.php {"id","action":"request|accept|remove|list","peer"?}
       -> {"ok":true,"state":...} | {"ok":true,"friends":[...]}
          (request/accept notify the peer via a reserved 'friend' signal)
-    POST /api/friend.php {"id","tok","action":"block|unblock","peer"}   (4.23)
-    POST /api/friend.php {"id","tok","action":"report","peer","reason"} (4.23)
+    POST /api/friend.php {"id","tok","action":"block|unblock","peer"}
+    POST /api/friend.php {"id","tok","action":"report","peer","reason"}
       -> {"ok":true}   (a blocked pair is never paired, signalled or
                         friended; reports go to the admin dashboard)
     POST /api/turn.php   {"id":"cafe0001","tok":"<32-hex>"}
@@ -534,8 +529,6 @@ host-level. If this outgrows shared hosting, fix workers first.
           "ttl":secs}
        | 503 {"ok":false,"error":"turn_unavailable"}   (STUN only, then)
     POST /api/poll.php   {"id":"cafe0001","tok":"<32-hex>","wait":8,...}
-                         (the GET with the same members as a query stays
-                          until 5.0: it puts the token on the request line)
       -> 204 (nothing pending) | {"ok":true,"signals":[...]}
          (wait=N long-polls: answers ~20 ms after a signal arrives)
     POST /api/match.php  {"id":"cafe0001","action":"seek|cancel"}
@@ -552,15 +545,10 @@ host-level. If this outgrows shared hosting, fix workers first.
          Both peers calling it is also what ANNOUNCES the duel, so a
          friend is offered the feed from the moment play begins rather
          than from the next heartbeat; duel_private keeps it counted but
-         unattributed. mid + secret (4.0, additive) are the pair's match
-         id and the CALLER'S OWN attestation secret, for item claims
-         below; one match
-         spans the whole duel and each side gets only its own secret.
-         q_ms + resync (4.4, additive) are this request's own queue wait
-         and the pair clock cross-check: both peers prove their clock
-         against the SAME start, so the difference between their two
-         proofs is a clock error only the server can see. A hint - the
-         start is issued either way (see Skew, docs/API.md).
+         unattributed. mid + secret are the pair's match id and the
+         CALLER'S OWN attestation secret, for item claims below; one
+         match spans the whole duel and each side gets only its own
+         secret. q_ms is this request's own queue wait.
     POST /api/items.php  {"id":"cafe0001","action":"list|mint|seed|claim",...}
       -> list  {"ok":true,"items":[{"uid":"<32-hex>","item_id":"crown",
                                     "seq":n},...]}
@@ -587,7 +575,7 @@ host-level. If this outgrows shared hosting, fix workers first.
          cleared the final level; platform = pc|mobile|tv|console, optional)
     POST /api/account.php {"id","tok","action":"delete"}      -> {"ok":true}
     POST /api/signal.php {"id","to","type":"invite|accept|decline|offer|answer|ice|ices|bye|watch","payload"}
-         ('ices' (4.4) carries a JSON ARRAY of candidates - one request instead
+         ('ices' carries a JSON ARRAY of candidates - one request instead
           of the trickle burst, see docs/API.md)
       -> {"ok":true}   (matchmaking payloads carry the player profile,
                         see docs/API.md)

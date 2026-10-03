@@ -267,13 +267,13 @@ final class Presence
     /**
      * One player's entry, or null when there is none. Shape:
      * {seen, start, ip, lat, name, accept, dbg, wish, chg, duel, dpeer,
-     * dpriv, tok, tokc, nets:{family:{net, seen, src}}}
+     * dpriv, tok, nets:{family:{net, seen, src}}}
      * - seen is the last beat, start the session's first; accept is the
      * moment the auto-accept flag lapses (0 = off); dbg is the client's own
      * report and wish the operator's; chg is the last transition a friend's
      * cursor is compared against; duel/dpeer/dpriv are the spectate offer
      * (see touchDuel); tok is the identity token's hash (null while the id
-     * is unbound) and tokc whether the binding is confirmed (see Ident);
+     * is unbound, see Ident);
      * nets is one network per address family with the moment it was seen
      * and whether it was observed ('o') or claimed ('c').
      */
@@ -534,16 +534,15 @@ final class Presence
 
     /**
      * The identity binding as the entry carries it (see Ident): written
-     * when an id is bound, confirmed or reset, and when an entry from
-     * before the binding is first asked. A player who is not here has no
-     * entry to update, and reads the row on arrival.
+     * when an id is bound or reset, and when an entry without it is first
+     * asked. A player who is not here has no entry to update, and reads
+     * the row on arrival.
      */
-    public static function setTok(string $id, ?string $hash, bool $confirmed): void
+    public static function setTok(string $id, ?string $hash): void
     {
         $e = self::entryOf($id);
         if ($e !== null) {
             $e['tok'] = $hash;
-            $e['tokc'] = $confirmed;
             self::store($id, $e);
         }
     }

@@ -7,7 +7,7 @@
 # that follows asserts an exact registered count, and every extra id would
 # have to be cleaned up again.
 
-# The head of a group on a remote run: bind the ids (API 4.20, see lib.sh).
+# The head of a group on a remote run: bind the ids (see lib.sh).
 bound "$ID1" "$ID2"
 
 # A transfer is attested with a truncated HMAC over "mid|tick|ws_digest",

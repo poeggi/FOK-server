@@ -42,8 +42,7 @@ final class AdminData
         return [
             'counts' => Presence::counts(),
             'families' => Presence::families(),
-            // Ids with an identity binding, beside the registered count: the
-            // figure to watch the migration converge on (see Ident).
+            // Ids bound to an identity token: the user accounts (see Ident).
             'bound' => $counts['ident'],
             // The TURN bubble: ids holding a credential, credentials
             // minted since ever, and whether anything is offered (see Turn).
@@ -672,9 +671,7 @@ final class AdminData
                 'mailbox' => $mailbox,
                 'backup' => $backup === null ? null
                     : ['updated' => $backup['updated'], 'bytes' => strlen($backup['payload'])],
-                // The identity binding (see Ident): when, and from where -
-                // '' for a token copied off the config vault that the
-                // owner's updated client has not presented yet.
+                // The identity binding (see Ident): when, and from where.
                 'ident' => $ident,
             ],
         ];

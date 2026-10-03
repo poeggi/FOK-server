@@ -1,9 +1,8 @@
-# The identity token (API 4.20): the id is public, `tok` proves it. What
-# only real HTTP can show is the wire - the member on a body, the
-# parameter on a GET, the mint riding a hello answer, the one refusal - and
-# the paths a client from before the token still walks. The decisions
-# themselves (who binds, who confirms, who is counted) are unit-tested
-# against Ident directly, where the cutoff can be moved.
+# The identity token: the id is public, `tok` proves it. What only real
+# HTTP can show is the wire - the member on a body, the mint riding a
+# hello answer, the refusals and the pair throttle's 429. The decisions
+# themselves (who binds, who is counted) are unit-tested against Ident
+# directly.
 #
 # Its own two ids, bound and unbound here and touched by no other part:
 # binding is the one thing the rest of the suite does exactly once per id,
@@ -25,16 +24,20 @@ hellocode() { # like hellotok, but prints the HTTP status
     curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$1\",\"tok\":$2}" "$BASE/api/hello.php"
 }
+pollb() { # pollb <json-body> : prints the HTTP status
+    curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+        -d "$1" "$BASE/api/poll.php"
+}
 
-# TEMPORARY(ident): a client from before the token sends no member at all,
-# and until the cutoff an id nothing binds lets it through everywhere.
+# An id nothing binds proves nothing: everything but a binding hello is
+# refused, and a hello without the member binds nothing.
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$IA\"}" "$BASE/api/hello.php")
-expect "a hello without the member passes an unbound id" '"ok":true' "$R"
-refute "and binds nothing: no token is answered" '"tok":"' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$IA")
-expect "a poll without the parameter passes an unbound id" '204' "$R"
-R=$(sig "$IA" "$IB" ice 'legacy')
-expect "and so does a signal" '"ok":true' "$R"
+expect "a hello without the member is 401 on an unbound id" '"error":"bad token"' "$R"
+refute "and binds nothing" '"tok":"' "$R"
+R=$(pollb "{\"id\":\"$IA\"}")
+expect "and so is a poll" '401' "$R"
+R=$(sig "$IA" "$IB" ice 'unbound')
+expect "and a signal" '"error":"bad token"' "$R"
 
 # The bind: the first hello carrying the member - null, the client has none
 # - is answered the token, once.
@@ -45,65 +48,75 @@ expect "a hello with the token passes" '"ok":true' "$R"
 refute "and answers no token again" '"tok":"' "$R"
 R=$(hellocode "$IA" null)
 expect "a second device asking to bind the same id is 401" '401' "$R"
-R=$(hellocode "$IA" "\"$WRONG\"")
-expect "a wrong token on a hello is 401" '401' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$IA\"}" "$BASE/api/hello.php")
 expect "a hello without the member is 401 once the id is bound" '"error":"bad token"' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$IA")
-expect "a poll without the parameter is 401 on a bound id" '401' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$IA&tok=$WRONG")
-expect "a poll with a wrong token is 401" '401' "$R"
+
+# The poll is a POST, the token a member of its body: never on a request
+# line, which the web server's access log records.
 R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/poll.php?id=$IA$(qt "$IA")")
-expect "a poll with the token holds as usual" '204' "$R"
-# The token off the request line (4.21): the same poll as a POST body, the
-# same members, the same answers. The GET above is the form from before it.
-pollb() { # pollb <json-body> : prints the HTTP status
-    curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json'         -d "$1" "$BASE/api/poll.php"
-}
+expect "a GET poll is refused" '405' "$R"
 R=$(pollb "{\"id\":\"$IA\"$(jt "$IA")}")
-expect "the poll as a POST body holds as usual" '204' "$R"
-R=$(pollb "{\"id\":\"$IA\",\"tok\":\"$WRONG\"}")
-expect "and refuses a wrong token in the body" '401' "$R"
+expect "the poll with the token holds as usual" '204' "$R"
 R=$(pollb "{\"id\":\"$IA\"}")
-expect "and one without" '401' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\"$(jt "$IA"),\"fl\":true,\"aa\":1,\"wait\":5}" "$BASE/api/poll.php")
+expect "and one without is 401" '401' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$IA\"$(jt "$IA"),\"fl\":true,\"aa\":1,\"wait\":5}" "$BASE/api/poll.php")
 expect "a body carries the flags as booleans or numbers" '"friends":[' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\"$(jt "$IA"),\"wait\":\"x\"}" "$BASE/api/poll.php")
-expect "and a wait that is not a number is refused" '"error":"invalid wait"' "$R"
-R=$(curl -s -X POST -H 'Content-Type: application/json'     -d "{\"id\":\"$IA\"$(jt "$IA"),\"fs\":-1}" "$BASE/api/poll.php")
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$IA\"$(jt "$IA"),\"aa\":\"1\"}" "$BASE/api/poll.php")
+expect "and refuses a flag given as a string" '"error":"invalid aa"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$IA\"$(jt "$IA"),\"wait\":\"5\"}" "$BASE/api/poll.php")
+expect "and a wait that is not a number" '"error":"invalid wait"' "$R"
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$IA\"$(jt "$IA"),\"fs\":-1}" "$BASE/api/poll.php")
 expect "as is a negative cursor" '"error":"invalid fs"' "$R"
+
+# A wrong token is refused on every endpoint that names an id. These are
+# the first ten wrong tokens of the pair (this id, this address), which is
+# the default ident_fails_per_min: each one is a 401.
+R=$(hellocode "$IA" "\"$WRONG\"")
+expect "a wrong token on a hello is 401" '401' "$R"
+R=$(pollb "{\"id\":\"$IA\",\"tok\":\"$WRONG\"}")
+expect "and on a poll" '401' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"restore\":true}" "$BASE/api/backup.php")
-expect "a backup read with a wrong token is 401" '401' "$R"
+expect "and on a backup read" '401' "$R"
 R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"to\":\"$IB\",\"type\":\"ice\",\"payload\":\"x\"}" "$BASE/api/signal.php")
-expect "a signal with a wrong token is refused" '"error":"bad token"' "$R"
+expect "and on a signal" '"error":"bad token"' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"action\":\"list\"}" "$BASE/api/items.php")
-expect "and so is an item list" '401' "$R"
+expect "and on an item list" '401' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"action\":\"list\"}" "$BASE/api/friend.php")
-expect "and a friend list" '401' "$R"
+expect "and on a friend list" '401' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"action\":\"seek\"}" "$BASE/api/match.php")
-expect "and a quick-match seek" '401' "$R"
+expect "and on a quick-match seek" '401' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"action\":\"state\"}" "$BASE/api/tournament.php")
-expect "and a tournament read" '401' "$R"
+expect "and on a tournament read" '401' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"action\":\"state\",\"eid\":\"AAAA\"}" "$BASE/api/event.php")
-expect "and an event read" '401' "$R"
+expect "and on an event read" '401' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"name\":\"SRV-CI-X\",\"score\":1,\"level\":1,\"diff\":1}" "$BASE/api/scores.php")
-expect "and a score submit" '401' "$R"
-R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+expect "and on a score submit" '401' "$R"
+
+# Past the cap the pair is answered 429 with retry_after - and the right
+# token still passes from the same address.
+R=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\",\"peer\":\"$IB\",\"epoch\":0,\"reason\":\"first\",\"pts\":1}" "$BASE/api/start.php")
-expect "and a start" '401' "$R"
+expect "the eleventh wrong token is too many attempts" '"error":"too many attempts"' "$R"
+expect "with retry_after" '"retry_after":60' "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"id\":\"$IA\",\"tok\":\"$WRONG\"}" "$BASE/api/turn.php")
-expect "and a TURN credential" '401' "$R"
-# The wrong token is put on record per (id, address) pair: the line lands
-# as the pair crosses the cap, which the tries above did at the default.
+expect "as an HTTP 429" '429' "$R"
+R=$(pollb "{\"id\":\"$IA\"}")
+expect "a missing token is still a plain 401" '401' "$R"
+R=$(hello "$IA")
+expect "and the right token passes from the same address" '"ok":true' "$R"
 if [ "$ADMIN" -eq 1 ]; then
     R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=log")
     expect "wrong tokens are on record" "FOK warning ident: wrong token for $IA from" "$R"
@@ -115,7 +128,6 @@ fi
 R=$(hellotok "$IB" "\"$WRONG\"")
 expect "a hello carrying a token binds an unbound id" '"tok":"' "$R"
 refute "with a token of the server's own" "\"tok\":\"$WRONG\"" "$R"
-expect "and drains the candidate the legacy signal above queued" '"payload":"legacy"' "$R"
 TOK[$IB]=$(echo "$R" | grep -oE '"tok":"[a-f0-9]{32}"' | cut -d'"' -f4 || true)
 R=$(hellocode "$IB" "\"$WRONG\"")
 expect "and the one it carried is refused from then on" '401' "$R"

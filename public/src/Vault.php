@@ -9,10 +9,8 @@ require_once __DIR__ . '/Db.php';
  * token's question, answered in front of every call here (see Ident and
  * api/backup.php): the vault stores and hands back, and never judges.
  *
- * The token_hash column is the vault's own token from before the identity
- * existed, copied into the ident table by schema 49 and dead since; it is
- * left in place, written by nothing, until the host's SQLite is known to
- * drop columns.
+ * The token_hash column is dead: written as '' and read by nothing. It
+ * stays until the host's SQLite is known to drop columns.
  */
 final class Vault
 {

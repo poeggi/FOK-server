@@ -20,7 +20,7 @@ require_once __DIR__ . '/../src/Words.php';
  * mailbox.
  * POST {
  *   "id": "8-hex",
- *   "tok": "32-hex" | null,     4.20: the proof of the id (see Ident). null
+ *   "tok": "32-hex" | null,     the proof of the id (see Ident). null
  *                               on an unbound id asks for one, and the
  *                               answer carries it as "tok", once
  *   "name": "PLAYER",           optional, display name; recorded and shown
@@ -28,10 +28,10 @@ require_once __DIR__ . '/../src/Words.php';
  *   "duel_with": "8-hex",       optional, the peer while a 1vs1 runs. It
  *                               REFRESHES a duel start.php already put on
  *                               record; it is not what puts it there
- *   "duel_private": bool,       optional, 4.7: this duel counts but is
+ *   "duel_private": bool,       optional: this duel counts but is
  *                               never attributed to the caller, so no
  *                               friend is offered a spectate link for it
- *   "duel_end": "8-hex",        optional, 4.7: the peer the caller has just
+ *   "duel_end": "8-hex",        optional: the peer the caller has just
  *                               STOPPED playing, sent at teardown
  *   "latency": int ms,          optional, the client's measured latency
  *                               (mandated regularly, see docs/API.md)
@@ -53,10 +53,10 @@ require_once __DIR__ . '/../src/Words.php';
  *                               as it discovered them (STUN), so the family
  *                               this request did not arrive over is known
  *                               too - see Presence::claim
- *   "client": "4.5.12",         optional, 4.23: the client's own version,
+ *   "client": "4.5.12",         optional: the client's own version,
  *                               kept with the id; what `upgrade` is judged
  *                               on (see Clients)
- *   "platform": "ios"           optional, 4.23: web, ios or android
+ *   "platform": "ios"           optional: web, ios or android
  * }
  * Returns presence counters, the server's debug wish for this client,
  * pending signaling messages for the caller (drained on read) and, when a
@@ -130,7 +130,7 @@ if ($nets !== null) {
     }
 }
 
-// The build itself (4.23). Shape-checked like everything else here; what
+// The build itself. Shape-checked like everything else here; what
 // the server has to say about it is decided after the gate.
 $client = $body['client'] ?? null;
 if ($client !== null && (!is_string($client) || !Clients::isVersion($client))) {
@@ -219,11 +219,11 @@ $out = [
     'ok' => true,
     'api' => FOK_API_VERSION,
     'now' => Util::nowMs(),
-    // Additive since 4.4: how long THIS request waited for a worker before
+    // How long THIS request waited for a worker before
     // any PHP ran. Normally 0. A client reads it to know the host is busy
     // right now - above all, not to anchor its clock against this moment.
     'q_ms' => $q === null ? 0 : (int)round($q / 1000),
-    // Additive since 4.4: the beat the server wants from this client. Only
+    // The beat the server wants from this client. Only
     // the server can see its own load, so only the server can set it.
     'pace' => Pace::forTier($tier),
     // The client MUST honour this: true turns its debug mode on, false
@@ -237,7 +237,7 @@ $out = [
 if ($minted !== null) {
     $out['tok'] = $minted;
 }
-// 4.23: a word about the build, never a refusal - a heartbeat refused
+// A word about the build, never a refusal - a heartbeat refused
 // would only read as offline (see Clients). Absent when there is nothing
 // to say, which is every client until the operator sets a floor.
 $upgrade = Clients::upgradeFor($client);
@@ -249,7 +249,7 @@ if ($nameChanged) {
 }
 
 if ($since !== null) {
-    // 4.6: the same authorization, asked the other way round. The caller
+    // The same authorization, asked the other way round. The caller
     // names no ids - the server answers for the friendships it already
     // knows about, and only for what changed since the cursor.
     $delta = FriendFeed::delta($id, $since);
@@ -266,7 +266,7 @@ if ($since !== null) {
 // second request queued behind it.
 if ($wantRoster) {
     $out['friends'] = Friends::rosterOf($id);
-    // 4.23: who the caller blocked, beside the roster it rides with, so a
+    // Who the caller blocked, beside the roster it rides with, so a
     // client can show them and undo (see Friends::block).
     $out['blocked'] = Friends::blockedIds($id);
 }

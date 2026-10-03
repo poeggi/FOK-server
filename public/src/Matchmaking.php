@@ -13,9 +13,10 @@ require_once __DIR__ . '/Friends.php';
  *
  * The queue lives in shared memory, and only there. A seeker is worth
  * FOK_MATCH_WINDOW seconds and polls once or twice a second for as long as
- * it waits, so every poll used to take the single write lock the whole
- * database shares - to restamp a row nothing durable ever reads. There is
- * deliberately no database transport to fall back to, exactly as for the
+ * it waits; in the database every poll would take the single write lock
+ * the whole database shares - to restamp a row nothing durable ever reads.
+ * There is deliberately no database transport to fall back to, exactly as
+ * for the
  * signal mailbox and the tracked connections (see Signals, ConnTrack): on a
  * host without usable shared memory a seeker simply keeps waiting.
  *

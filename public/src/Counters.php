@@ -13,9 +13,9 @@ require_once __DIR__ . '/Load.php';
  * The counters table itself stays where it is: lifetime totals (see Stats),
  * the hourly load history and the item mint buckets are all things an
  * operator expects to survive a restart, so the database is their home. What
- * does NOT belong there is the arrival of a single request - that used to be
- * an upsert on the single SQLite writer for every hello and every signal,
- * purely to add one to a number.
+ * does NOT belong there is the arrival of a single request: an upsert on
+ * the single SQLite writer for every hello and every signal, purely to add
+ * one to a number.
  *
  * So this is a write-behind buffer, not a second store: requests increment
  * an APCu counter per minute, and the first request to arrive after a minute

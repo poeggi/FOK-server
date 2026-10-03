@@ -79,7 +79,7 @@ if [ "$REMOTE" -eq 1 ] && [ -z "${SMOKE_SEQUENTIAL:-}" ]; then
     source test/smoke/06_admin.sh               # admin dashboard, config, remote cleanup
 else
     source test/smoke/01_core.sh                # landing, version, CORS, hello, scores, backup
-    source test/smoke/10_ident.sh               # the identity token: the bind, the one refusal, the legacy paths
+    source test/smoke/10_ident.sh               # the identity token: the bind, the refusals, the pair throttle
     source test/smoke/12_account.sh             # the client's version on hello; account.php: delete, and the move
     source test/smoke/02_signals_friends.sh     # signals, friends, poll, debug reports, time
     source test/smoke/03_start_duel.sh          # start/epoch, connection edge cases, rematch

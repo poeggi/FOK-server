@@ -117,9 +117,8 @@ final class Tournament
      * $fn receives the loaded tournament BY REFERENCE and returns the
      * caller's response.
      *
-     * The lock is what BEGIN IMMEDIATE used to be: it serialises transitions
-     * on ONE tournament without serialising them against the rest of the
-     * server. Rollback needs no machinery here - $fn works on a local copy
+     * The lock serialises transitions on ONE tournament without
+     * serialising them against the rest of the server. Rollback needs no machinery here - $fn works on a local copy
      * and nothing is stored until it returns, so a throw leaves the stored
      * tournament exactly as it was.
      *
@@ -200,8 +199,7 @@ final class Tournament
 
     /**
      * Everything a transition can change. players is in here because a join
-     * or a leave used to be a row write of its own and is now a mutation of
-     * this array like any other.
+     * or a leave is a mutation of this array like any other.
      *
      * @return list<string>
      */
@@ -237,7 +235,7 @@ final class Tournament
                 Signals::send($from, $to, 'tourney', (string)json_encode($payload));
                 continue;
             }
-            // after_ms (4.4): a round board wakes every participant in the
+            // after_ms: a round board wakes every participant in the
             // same instant and they all call back together - the ICE burst
             // again, eight-handed, and on a host whose cost is paid per
             // request that burst is the expensive part of a tournament. The
@@ -258,7 +256,7 @@ final class Tournament
 
     /**
      * Queues one event per participant, or per id in $only. A BROADCAST on an
-     * event tournament also reaches the event's monitor (4.14): it is the
+     * event tournament also reaches the event's monitor: it is the
      * screen that shows this tournament, and it should move with it rather
      * than on its own lease. A targeted send ($only) does not - the caller
      * decides the monitor's copy, see deal().
@@ -1539,12 +1537,12 @@ final class Tournament
             $names[$pid] = $info[$pid]['name'] ?? null;
         }
         [$pos, $of] = self::position($t, $nid);
-        // The event's monitor (4.14), named so every client grants it a feed
+        // The event's monitor, named so every client grants it a feed
         // - a private duel included - while nothing lists, draws or counts
         // it: it is in none of players, primaries, secondaries or names and
         // takes no tree slot. Absent when there is no event or no holder.
         $mon = self::monitorOf($t);
-        // The walkover clock (4.15): the first instant the node may be
+        // The walkover clock: the first instant the node may be
         // handed over for a gone seat, so every screen waiting on the
         // match counts down the same server moment. Null before the deal
         // stamped it, which is no clock.

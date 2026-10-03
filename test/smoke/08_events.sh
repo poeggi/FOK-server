@@ -27,7 +27,7 @@ evadmin() { # evadmin <action> <post-data...>
     for kv in "$@"; do args+=(--data-urlencode "$kv"); done
     curl -s -b "$COOKIES" -X POST "${args[@]}" "$BASE/admin/api.php?action=$a"
 }
-# The third player is this file's alone, and bound here (API 4.20); the
+# The third player is this file's alone, and bound here; the
 # others are the group's, bound by its head where this is not the head.
 bound "$ID1" "$ID2" "$ID3"
 # A no-match grep exits 1 under set -e, so the extractors swallow it.
@@ -377,8 +377,9 @@ expect "and a member cannot take a reserved slot while its screen is online" '"e
 # A RESERVATION IS A RIGHT OF WAY, NOT A HOLD. While the reserved screen is
 # offline a member may stand in; the screen takes the seat back by asking,
 # and the stand-in is told so rather than left to find out. The screen is
-# an id no other part touches, so the server has never heard from it, and
-# it is forgotten again at the end so a persistent instance keeps nothing.
+# an id no other part touches, so the server has not heard from it until
+# it binds, right before it asks; it is forgotten again at the end so a
+# persistent instance keeps nothing.
 TV=7e57c0de
 evadmin delete_player "id=$TV" > /dev/null
 R=$(evadmin event_create "name=srv-CI-wall" "organizer=$ID1" "closed=0" "mode=active" "monitor=$TV")
@@ -394,6 +395,7 @@ R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=event&eid=$EID6")
 expect "and the dashboard names the stand-in" "\"monitor_holder\":\"$ID1\"" "$R"
 R=$(evact "$ID1" monitor "$EID6")
 expect "who keeps the seat by asking" '"reserved":true' "$R"
+bound "$TV"
 R=$(evact "$TV" monitor "$EID6")
 expect "until the reserved screen asks, which always succeeds" '"you":{"state":"monitor"' "$R"
 R=$(evact "$ID1" monitor "$EID6")
@@ -405,6 +407,7 @@ expect "the screen renews like any holder" '"reserved":true' "$R"
 R=$(curl -s -b "$COOKIES" "$BASE/admin/api.php?action=event&eid=$EID6")
 expect "and the dashboard names it as showing" "\"monitor_holder\":\"$TV\"" "$R"
 R=$(evadmin delete_player "id=$TV")
+unset "TOK[$TV]"
 expect "the screen is forgotten with the run" '"ok":true' "$R"
 
 # A screen never takes a seat, so a tournament being watched still seats

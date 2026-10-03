@@ -39,7 +39,7 @@ ordered() { # ordered <name> <first> <second> <actual>
     fi
 }
 
-# --- Identity (API 4.20). This harness is a client, so every request that
+# --- Identity. This harness is a client, so every request that
 # names one of its ids carries that id's token. The cast is bound on the
 # first run against an environment - the hello that carries tok as null is
 # answered the token - and the tokens are kept OUTSIDE the repo, one line
@@ -78,7 +78,7 @@ sig() { # sig <from> <to> <type> <payload>
     curl -s -X POST -H 'Content-Type: application/json' \
         -d "{\"id\":\"$1\"$(jt "$1"),\"to\":\"$2\",\"type\":\"$3\",\"payload\":\"$4\"}" "$BASE/api/signal.php" > /dev/null
 }
-poll() { # drain <id>'s signals: the POST form (4.21), the token in the body
+poll() { # drain <id>'s signals: a POST, the token in the body
     curl -s -X POST -H 'Content-Type: application/json' -d "{\"id\":\"$1\"$(jt "$1")}" "$BASE/api/poll.php"
 }
 

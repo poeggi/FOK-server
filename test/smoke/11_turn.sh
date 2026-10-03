@@ -124,15 +124,17 @@ if [ "$REMOTE" -eq 0 ] && [ "$fakeup" -eq 1 ]; then
     expect "the bubble shows the cap reached" '"turn":{"live":4,"sessions":4,"recent":4,"cap":4,"offered":false,"why":"cap"}' "$R"
     setting turn_max_per_30d 1000
 
-    # The operator's switch: refused at once, revoked within the minute.
+    # The operator's switch: revoked by the button, refused at once. The
+    # button goes first: a client request's deferred tick revokes too,
+    # once a minute, and would leave the button nothing to count.
     setting turn_enabled 0
-    R=$(turncode "$ID1")
-    expect "turn_enabled 0 refuses at the next ask" '503' "$R"
     R=$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$BASE/admin/api.php?action=turn_revoke")
     expect "turn_revoke via GET rejected" '405' "$R"
     R=$(curl -s -b "$COOKIES" -X POST "$BASE/admin/api.php?action=turn_revoke")
     expect "the revoke-all takes every credential out" '"revoked":4' "$R"
     expect "and nobody holds one" '"live":[]' "$R"
+    R=$(turncode "$ID1")
+    expect "turn_enabled 0 refuses at the next ask" '503' "$R"
     expect "revoked at the relay" "u1-$ID1" "$(cat "$FAKE/revokes.log")"
     expect "by their usernames" "u2-$ID2" "$(cat "$FAKE/revokes.log")"
     expect "all four" '4' "$(wc -l < "$FAKE/revokes.log" | tr -d ' ')"

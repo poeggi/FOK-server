@@ -8,12 +8,10 @@ require_once __DIR__ . '/../src/Alerts.php';
 require_once __DIR__ . '/../src/Account.php';
 
 /**
- * Deleting the id (docs/API.md, "POST /api/account.php", 4.23).
+ * Deleting the id (docs/API.md, "POST /api/account.php").
  *   POST {id, tok, action: "delete"}  -> {ok}   the id and everything about
  *                                              it, gone
- * It takes the STRICT proof - a bound id and its token, as the vault does -
- * because the gate's leniency for an id nothing proves yet must not extend
- * to removing one.
+ * It takes the STRICT proof - a bound id and its token, as the vault does.
  */
 Util::cors();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {

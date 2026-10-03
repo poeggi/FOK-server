@@ -1,9 +1,9 @@
 # Identity - proof of ownership for a player id
 
-Status: steps 1-7 SHIPPED in 1.17.0 (API 4.20, schema 49, 2026-09-16).
-Step 8 collects every client-side topic for FOK-snake. Step 9 is the
-cleanup release after the cutoff. Where the code differs from the text
-below, the code is right and this list says how:
+Status: DONE. Steps 1-7 shipped in 1.17.0 (API 4.20, schema 49,
+2026-09-16), step 9 in 2.0.0 (API 5.0, 2026-10-04): no migration path
+is left. Where the code differs from the text below, the code is right
+and this list says how:
 
 - The class is `Ident` (src/Ident.php), not `Auth`: Auth is the admin
   login. `Ident::require` / `Ident::hello` answer 401; `Ident::verify` /

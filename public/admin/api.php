@@ -360,9 +360,7 @@ switch ($action) {
     case 'users':
         $db = Db::get();
         $total = (int)$db->query('SELECT COUNT(*) FROM players')->fetchColumn();
-        // bound_at rides each row (see Ident): null while the id is unbound,
-        // and bound_ip '' marks a token copied off the vault that the
-        // owner's updated client has not presented yet.
+        // bound_at rides each row (see Ident): null while the id is unbound.
         $st = $db->query('SELECT p.id, p.name, p.ip, p.first_seen, p.last_seen, p.hello_count, p.latency,
                 p.debug, p.debug_active, p.client, p.platform, i.bound_at, i.bound_ip
             FROM players p LEFT JOIN ident i ON i.id = p.id ORDER BY p.last_seen DESC LIMIT 200');

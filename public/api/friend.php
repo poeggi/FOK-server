@@ -36,7 +36,7 @@ require_once __DIR__ . '/../src/Alerts.php';
  *       "outgoing":bool,"name","online","latency"}]}
  *   name/online/latency are only filled for accepted friendships.
  *
- * Moderation (4.23, docs/API.md): block / unblock / report, all taking
+ * Moderation (docs/API.md): block / unblock / report, all taking
  * the strict proof (a bound id and its token, as the vault does).
  *   block   -> {"ok":true}  ends any friendship or request, records the
  *              block; the pair is never friended, signalled or paired again

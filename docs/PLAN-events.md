@@ -187,7 +187,7 @@ holds no copy: every screen reads `members` fresh, nothing reconciles at
 startup, the vault carries nothing. That is deliberately NOT the
 friends-list pattern, whose local copy plus startup reconciliation is
 what trips the friend-request cooldown after a config restore
-(.claude/rules/project_fok_friend_cooldown_alert.md). The operator's
+(.claude/rules/monitoring.md). The operator's
 dashboard is a second remote control for the same rows, with the same
 verbs. The `events` list on hello is the same truth read from the other
 side: a member's client learns it was removed by the event vanishing

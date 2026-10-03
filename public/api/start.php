@@ -98,10 +98,9 @@ Presence::touch($id, Util::clientIp());
 Util::bump('start');
 
 // The start, and with it the pair's match id and the CALLER'S OWN match
-// secret (never the peer's), additive since API 4.0: every start mints a
-// fresh match, and the client uses these to attest item transfers to
-// api/items.php. A client on an older API simply ignores both fields. mid
-// is '' only for the degenerate case of no open match.
+// secret (never the peer's): every start mints a fresh match, and the
+// client uses these to attest item transfers to api/items.php. mid is ''
+// only for the degenerate case of no open match.
 $start = Starts::request($id, $peer, $epoch, $reason);
 
 // AFTER the start is issued, never before: a request that fails validation
@@ -122,7 +121,7 @@ Util::jsonOut([
     'start_pts' => $start['start_pts'],
     'epoch' => $epoch,
     'now' => $now,
-    // Additive since 4.4. q_ms is what THIS request waited for a worker
+    // q_ms is what THIS request waited for a worker
     // before any PHP ran: a client reads it to know its own round trip was
     // queued and is therefore a poor clock sample. It is ignorable.
     'q_ms' => $q === null ? 0 : (int)round($q / 1000),

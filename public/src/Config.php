@@ -2,146 +2,15 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '1.20.2';
+const FOK_SERVER_VERSION = '2.0.0';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
 // newer than the one they were built against. The MINOR bumps on additive,
 // backward-compatible changes (a new optional signal type or field); a
-// client on the same major stays compatible and may read the minor to
-// detect optional features. A string, so major/minor split on the dot.
-// v2: friendship-gated status and invites, ms hello.now, friend
-// notifications, relay fallback.
-// v3: start.php requires epoch + reason + pts. Peers name the start they
-// mean instead of racing for it, and an unsynced client is turned away
-// rather than let into a desynced game.
-// v3.1: additive 'peer-net' direct-connection hint (see docs/API.md). The
-// major stays 3, so v3 clients interoperate and simply ignore it.
-// v3.2: additive relay piggyback. POST /api/relay.php accepts an optional
-// "pull": true; when set, the response also drains and returns the poster's
-// own pending inbound as "messages":[...] (same shape as the GET), so
-// delivery no longer depends on the held GET alone. A client MUST set it
-// only if it reads those messages back - they are drained, so an unread
-// response loses them. Relayed messages also gain an additive "age" (ms since
-// the server received the message) in both replies, to tell a mailbox delay
-// apart from an FPM queue delay. Major stays 3; v3.1 clients send no "pull",
-// get the old {"ok":true}, and ignore "age".
-// v3.3: additive relay leave signal. A held GET /api/relay.php returns
-// {"ok":true,"gone":true} once the pairing is torn down (a bye/decline
-// marked the connection ended), so a relayed peer learns the other side
-// left at once instead of waiting out its own liveness timeout - the
-// relay's answer to a P2P DataChannel close. Major stays 3; a client that
-// does not read "gone" simply keeps timing out as before.
-// save cumulative gameplay counters (games, levels cleared, furthest level,
-// deaths, duels, playtime) and read them back to restore progress on another
-// device (see docs/API.md). Self-reported, stored monotonically. The same 3.4
-// line also adds two optional, additive score fields: "completed" (the run
-// cleared the final level) and "platform" (the device category it was played
-// on). Major stays 3; a client that uses none of these is unaffected, and one
-// that adopts 3.4 picks them all up.
-// v3.5: additive friend-request feedback. POST /api/friend.php action
-// "request" now returns an "exists" boolean; an unknown peer id answers
-// {"ok":true,"exists":false} without recording anything, so a mistyped id is
-// caught rather than left as a dead pending row. The same action gains a
-// per-id request throttle (at most one per second, then a cooldown after a
-// burst), answering 429 with "retry_after". Major stays 3; a client that
-// ignores "exists" and never trips the throttle behaves exactly as on 3.4.
-// v4.0: the item registry. The server now owns item-instance OWNERSHIP -
-// ownership is a row in the items table, moved only by a compare-and-swap
-// transfer through the new POST /api/items.php (list/mint/seed/claim), logged
-// to a hash-chained ledger, and start.php now also returns the pair's match id
-// and the caller's own match secret so a client can attest transfers (see
-// docs/API.md). The wire additions are backward-compatible - an older client
-// ignores the new start.php fields and never calls items.php - but this is a
-// MAJOR bump, not a minor one: for a client that DOES carry items, ownership
-// is no longer a private boolean it may assert freely, so a client that goes
-// online with items but does not speak the registry can find its claims
-// unconfirmed or its instances frozen. Clients gate online item play on the
-// major matching. Minting stays client-trusted (see the scope boundary in
-// docs/API.md): 4.0 makes items conserved and auditable, not unforgeable.
-// v4.1: additive tournament mode. New POST /api/tournament.php runs a lobby,
-// a sparse first round, a seeded knockout and the standings for 2-8 players
-// (see docs/API.md), announcing every transition as a server-generated
-// 'tourney' signal; hello.php gains an optional "tourneys" request flag that
-// returns the open lobbies hosted on the caller's own address, plus an
-// additive "friends_playing" list. The client-sendable signal type 'watch'
-// is added for spectator feed requests. The server orchestrates only: a
-// tournament match is an ordinary P2P duel between the two players its roles
-// sheet names, start.php is still the sole mid/secret authority, and no match
-// or spectator traffic passes through the server. Major stays 4 - a 4.0
-// client never calls tournament.php, never sets "tourneys" and simply does
-// not offer tournaments.
-// v4.2: additive self-reported networks. hello.php gains an optional "nets"
-// list - the caller's OWN public addresses, as the client discovered them
-// (a STUN reflexive candidate names one per family). The server observes
-// only the family a given request arrived over and cannot ask a browser for
-// the other, so on a dual-stack line the second network is unobservable
-// here; this is how it becomes known, and it is what lets the tournament
-// announce put a v6 host and a v4 joiner in the same room. It is a CLAIM:
-// it never displaces a network the server saw for itself (see
-// Presence::seenOn). Major stays 4 - a client that sends nothing is matched
-// exactly as before, on the families we happen to see it on.
-// v4.3: additive tournament rounds. A tournament now advances the LEVEL the
-// game is played at as the field narrows - round 1 at level 1, each round
-// after it one deeper, capped at the game's last level - so the size of the
-// lobby decides how far the final gets. The level rides on the roles sheet
-// and on every node as "lvl", beside the hearts a client already reads. The
-// server also stops BETWEEN rounds now: it sends a 'round' event with the
-// scoreboard, who is through and what the next stage is, and waits for the
-// host to POST the new "continue" action (the projection carries the same
-// board as "break"). A break clears itself after tournament_break_ttl_ms, so
-// a host that closed its browser cannot wedge the tournament. Major stays 4:
-// a 4.2 client ignores "lvl" and plays every round at level 1 as before, and
-// its ordinary state() polling carries it through a break without ever
-// pressing continue - it simply sees the next roles sheet a little later.
-// 4.4 answers a measurement rather than a wish. Live shows tens of ms of
-// queue wait on workers that were ALREADY WARM, so the cost on this host is
-// paid per REQUEST, above the PHP pool, and the only lever is fewer
-// simultaneous requests. Three additive fields and one additive signal type
-// pull that lever: 'ices' collapses the duel-start ICE trickle into one
-// message, q_ms tells a client when its own round trip was queued (so it
-// does not anchor its clock against a busy moment), pace says whether the
-// server can afford to hold this client's long poll, and after_ms staggers
-// the callbacks a broadcast provokes. Major stays 4: every one of them is
-// ignorable, and a 4.3 client behaves exactly as it does today.
-// 4.4 re-release: pace is down to that one decision. It first carried a
-// per-session jitter offset (spread_ms) and then the beat itself - heartbeat,
-// poll wait, request gap. The jitter only pays at a client count this host
-// will not see, while the burst that DOES cost here is a single client
-// stacking its own requests, which the gap and after_ms both act on, in
-// milliseconds, at the moment it happens. The beat never followed load, so
-// handing it over bought nothing a constant in docs/API.md does not; it is
-// stated there now. Dropping fields reads like a MAJOR break; it is not one.
-// pace is optional, its members are individually optional, and the contract
-// already requires an absent one to be treated as the client's own default -
-// which for the beat IS the contract's constant, and for a jitter budget is
-// no jitter. A client that read them keeps working exactly as before.
-// v4.20: the identity token (see Ident, docs/API.md "Identity token"). An
-// id is public and until now every request was believed; `tok`, the
-// 128-bit secret the config vault already minted, now proves it on every
-// request that names the id, and hello mints it for an id that has none.
-// The minor JUMPS from 4.16 to 4.20 on purpose: this is the PREPARATION for
-// 5.0, where the token is required, and the number says so. Additive on
-// the wire - `tok` is optional everywhere, and the one new answer, 401
-// `bad token`, only a bound id can meet. Every path that carries a client
-// from before the token is tagged TEMPORARY(ident) and closes on
-// Ident::LEGACY_UNTIL, whatever release is running then.
-// v4.21: the token leaves the request line. poll.php, the relay's held
-// read and the vault restore were GETs with `tok` in the query, and a
-// query is the request line the web server's access log records on every
-// hit - the poll alone is one line per 5 s per client. Each of the three
-// now answers a POST whose JSON body carries exactly the members its
-// query took; the GET stays until 5.0 and is tagged TEMPORARY(ident) with
-// the rest. Additive: a second method on three endpoints, nothing else.
-// v4.22: TURN credentials (see Turn, docs/API.md "TURN credentials"). A
-// duel no direct path can carry has had the deprecated HTTP relay and
-// nothing else; POST /api/turn.php now mints short-lived credentials for
-// Cloudflare's TURN relay, which the ICE agent uses on the SAME
-// DataChannel. The server caps what it hands out - so many credentials in
-// a rolling 30 days, a setting - and refuses past it (see Turn), so a
-// client must take the 503 as an ordinary answer. Additive: one new
-// endpoint, nothing else moves.
-const FOK_API_VERSION = '4.23';
+// client on the same major stays compatible and feature-detects optional
+// fields. A string, so major/minor split on the dot.
+const FOK_API_VERSION = '5.0';
 
 // Never leak stack traces or paths to clients; errors go to the server log.
 ini_set('display_errors', '0');

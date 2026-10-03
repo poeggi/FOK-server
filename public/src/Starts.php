@@ -41,10 +41,8 @@ final class Starts
     // second, so anything older belongs to the pair's PREVIOUS match - and
     // handing its moment to a new game would begin that game in the past.
     //
-    // This is what the epoch's ordering used to do. It cannot any more: a
-    // rematch names epoch 0 exactly as a first start does, and with the in-run
-    // halts gone nothing ever advances the epoch above it, so "a higher stored
-    // epoch" - the old test for a leftover line - can no longer happen.
+    // The epoch's ordering cannot tell: a rematch names epoch 0 exactly as a
+    // first start does, and nothing advances the epoch above it.
     private const PAIR_WINDOW_MS = 5000;
 
     // How long the ROW itself is kept, which is a different question: past

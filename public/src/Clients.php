@@ -83,9 +83,8 @@ final class Clients
      * The builds in use: one row per (version, platform) among players
      * seen in the last SPREAD_DAYS, most players first, with how many of
      * each are online right now. A player whose client never named a
-     * version is a row of its own (null), which is the pre-4.23 web
-     * client until it updates. The popup's read: one GROUP BY over a
-     * small table plus a scan of the presence entries.
+     * version is a row of its own (null). The popup's read: one GROUP BY
+     * over a small table plus a scan of the presence entries.
      * @return list<array{client: ?string, platform: ?string, players: int, online: int}>
      */
     public static function spread(?int $now = null): array

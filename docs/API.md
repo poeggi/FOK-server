@@ -12,7 +12,7 @@ and may change without notice.
 
 Two versions exist and both are exposed by `GET /api/version.txt`:
 
-    {"ok":true, "server":"<x.y.z>", "api":"4.23", "env":"live"}
+    {"ok":true, "server":"<x.y.z>", "api":"5.0", "env":"live"}
 
 - `server` (FOK_SERVER_VERSION) is the implementation version; it bumps with
   every release and is informational.
@@ -24,8 +24,11 @@ Two versions exist and both are exposed by `GET /api/version.txt`:
     signal type or field). It advertises a capability; it never breaks a
     client on the same major.
 
+5.0 is the baseline: everything this document describes is in it. A
+later 5.x MINOR is listed here when one exists.
+
 A client is told `api` without asking: every hello and every poll body
-carries it (4.9). `version.txt` answers it too, for anything that is not
+carries it. `version.txt` answers it too, for anything that is not
 a client - a deploy, a probe, a person. What a client does with it is its
 own business: the server checks nothing, and behaves no differently
 whether a client reads it or ignores it.
@@ -38,64 +41,19 @@ and is answered while the server is busy.
 What the two halves mean, for a client that wants a compatibility gate:
 a MAJOR newer than the one a client was built against says fields it
 relies on may be gone, which is the point at which talking to the server
-anyway is worse than saying so. A newer MINOR on the same MAJOR
-is safe to talk to; a client may read the MINOR to tell whether an
-optional feature (e.g. the peer-net hint, added in 3.1, tournament mode,
-added in 4.1, self-reported networks, added in 4.2, the tournament round
-ladder and its round breaks, added in 4.3, batched ICE candidates, the
-queue-wait figure and the hold decision, added in 4.4, friend presence
-deltas, added in 4.6, the announced end of a duel and private duels,
-added in 4.7, replacing the tournament you host, added in 4.8, or the
-poll carrying the whole beat - auto-accept, the roster, the tournament
-announce, the announced end of a duel, the debug report, and `api` and
-the debug instruction on every body it sends, with a 5 s default
-hold - added in 4.9, or one request at a time from a client while its
-poll is parked, with a margin a clock reading may be ahead by before it
-is refused - added in 4.10, or events: a room an operator opens, whose
-members get in by scanning a code, whose roster lives only on the server
-and whose tournaments nobody outside it can see - added in 4.11, its
-printed key shortened to fit the code the game itself can scan in 4.12 and
-that key made to join an event that has not started yet in 4.13, the
-event's monitor named on the roles sheet and sent the tournament's
-signals in 4.14, the walkover clock on that sheet in 4.15, an event id
-an operator named, which may carry a 0 or a 1, in 4.16, or the identity
-token in 4.20 - the preparation for 5.0, where it is required - and the
-POST forms of the poll, the relay's held read and the vault restore in
-4.21, which take the token off the request line, or TURN credentials for
-a duel no direct path can carry in 4.22, or what a store build needs
-in 4.23: the client naming its own version on hello and being told when
-a newer build is out, an id its owner deletes, a player blocked or
-reported, a name the server masked, and the origins of a packaged app's
-web view) is available, and
-which heartbeat the server expects: 60 s from 4.5, which also counts every
-request as a beat, 30 s before it (see Pacing).
+anyway is worse than saying so. A newer MINOR on the same MAJOR is safe
+to talk to.
 
-A MINOR is also RE-RELEASED when a later server on the SAME `api` string
-gains an optional flag or field that an earlier server of that MINOR does
-not have. 4.4 carries such re-releases: `friends_list` on hello with its `friends`
-response, and later the latency report on hello relaxed from mandated to
-optional, once the start lead stopped depending on it (see start.php:
-the lead is a flat 1000 ms). The same rule runs the other way: a later server may
-stop sending an optional field, as 4.4 dropped `pace.spread_ms` - a
-per-session jitter offset that bought nothing a client could not get from
-the request gap and `after_ms`, both of which act where the requests
-actually stack - and later the interval fields of `pace` (`hello_ms`,
-`poll_ms`, `gap_ms`), which had only ever carried the constants the contract
-states under Pacing. 4.7 carries the same kind of withdrawal, of everything
-no client had ever reached for: hello's `friends` id list with its
-`friends_online` / `friends_latency` / `friends_name` / `friends_playing`
-maps, superseded by the delta and now simply not answered; start.php's
-`resync` and the pair cross-check behind it; the `chat` signal type, which
-was only ever reserved; and `GET`/`POST` /api/stats.php, whose table no
-client ever wrote. 4.23 carries one more: the HTTP relay - `/api/relay.php`
-and the `invite-relay` / `accept-relay` signal types - which had refused
-every attempt since server 1.19.2 and which the game no longer calls (see
-Relay fallback, withdrawn). So the version says what the contract
-PERMITS, not what the server in front of you implements. FEATURE-DETECT
-every optional field - ask for it, use it when the answer carries it, fall
-back when it does not - and never gate an optional feature on the MINOR. The
-rule costs nothing when the field is present and is the only thing that
-works when it is not.
+A MINOR may also be RE-RELEASED: a later server on the SAME `api` string
+may gain an optional field or flag that an earlier server of that MINOR
+does not have. The rule runs the other way too: a later server may stop
+sending an optional field where this contract says a client does without
+it by its own default. So the version says what the contract PERMITS, not
+what the server in front of you implements. FEATURE-DETECT every optional
+field - ask for it, use it when the answer carries it, fall back when it
+does not - and never gate an optional feature on the MINOR. The rule
+costs nothing when the field is present and is the only thing that works
+when it is not.
 
 ## Conventions
 
@@ -103,27 +61,33 @@ works when it is not.
   (`Content-Type: application/json`), responses are JSON objects.
 - Every response contains `"ok": true` or `"ok": false`. On failure the
   object is `{"ok": false, "error": "<short reason>"}` with an HTTP status
-  of 400 (bad input), 401 (the id is not proven, see Identity token; 4.20),
+  of 400 (bad input), 401 (`bad token`: the id is not proven, on every
+  endpoint that names an id, see Identity token),
   403 (not friends, see signal.php), 404 (unknown),
   405 (wrong method), 413 (request
   body over ~272 KB, only a score submission ever comes close), 429 (rate
-  cap, see below), 503 (relay busy; no TURN on offer) or 500 (server
-  fault). Clients must
+  cap, see below), 503 (unavailable right now, e.g. no TURN on offer) or
+  500 (server fault). Clients must
   treat any non-`ok` answer as a soft failure: log it, back off, never
   crash gameplay.
 - Abuse caps returning 429 (defaults, admin-configurable): a recipient's
   signal mailbox holds at most 64 pending messages, and a player may
   submit at most 10 scores per 5 minutes. Normal play never reaches
-  either; on 429, stop and retry later instead of hammering.
+  either; on 429, stop and retry later instead of hammering. On every
+  endpoint that names an id, a wrong identity token from one address
+  past `ident_fails_per_min` answers 429 `too many attempts` with
+  `retry_after` (see Identity token).
 - Player identity is the FOK-snake player ID: a 32-bit value encoded as
   exactly 8 lowercase hex chars, e.g. `"c0ffee42"` (regex
   `^[0-9a-f]{8}$`). It is a PUBLIC identity, not a secret: the friend
   code, the name on every roster. What proves that the caller OWNS the id
-  it names is the identity token, `tok` (4.20, next section).
+  it names is the identity token, `tok` (next section). It is REQUIRED
+  beside `id` in every /api/ request that takes one, including the
+  examples below that leave it out for brevity.
 - CORS: browsers may call the API from `https://poeggi.github.io`; from
   the web view of the packaged app, which serves the game from the device
-  itself - `capacitor://localhost` on iOS, `https://localhost` on Android
-  (4.23); and, for local client development, `http://localhost:8000` /
+  itself - `capacitor://localhost` on iOS, `https://localhost` on
+  Android; and, for local client development, `http://localhost:8000` /
   `http://127.0.0.1:8000` / `http://localhost` (the last is also an older
   Android web view). The `http://` origins are all loopback, and they are
   deliberate: loopback never leaves the machine, so there is no cleartext
@@ -159,7 +123,7 @@ works when it is not.
 - Connections: HTTP/2 (ALPN `h2`, with HTTP/1.1 fallback) and persistent
   (keep-alive). Clients should REUSE one connection across requests -
   browsers do this automatically. It matters for the long-poll pattern:
-  over HTTP/2 a held poll GET and any outbound POSTs share one multiplexed
+  over HTTP/2 a held poll and any other requests share one multiplexed
   connection, with no per-request TLS handshake and no HTTP-level
   head-of-line blocking between them. This is transport only: it keeps
   connections up, it does NOT let the server push without a held request
@@ -175,11 +139,10 @@ works when it is not.
   are unix SECONDS: they are calendar bookkeeping, never used for
   timing - format dates from them, do not mix them with PTS.
 
-## Identity token (4.20)
+## Identity token
 
-An id is public, so on its own it proves nothing: before 4.20 every
-request was believed, and anyone who had seen an id could act as that
-player. The token is what proves it.
+An id is public, so on its own it proves nothing: anyone who has seen an
+id can name it. The token is what proves the caller owns it.
 
     tok    32 lowercase hex chars (16 random bytes), minted by the server
            on the first hello of an unbound id and answered ONCE. Sent by
@@ -187,15 +150,11 @@ player. The token is what proves it.
            is stored. It never changes for an id; only an operator's reset
            makes the next hello mint again.
 
-Where it goes: as the `tok` member of every POST body beside `id`. Since
-4.21 every request that names an id has a POST form - poll.php and the
-vault restore were GETs, and each now takes the same members as a JSON
-body - so the token never travels on a request
-line, which the web server's access log records on every hit. The GET
-forms with `&tok=` still answer (TEMPORARY(ident), below) and are for a
-client built before 4.21 only. A client
-that has none yet sends `"tok": null` on hello - the member's presence is
-what says the client speaks 4.20 - and the answer to that hello carries
+Where it goes: as the `tok` member of every POST body beside `id`.
+Every request that names an id is a POST, so the token never travels on
+a request line, which the web server's access log records on every hit.
+A client that has no token yet sends `"tok": null` on hello; the member
+must be present for hello to bind. The answer to that hello carries
 `tok`. THE ONE RULE FOR A CLIENT: whenever a hello answer carries `tok`,
 store it. That covers the first bind, a re-bind after the operator's
 reset, and a return after the server forgot the id. A hello that carries a
@@ -205,8 +164,11 @@ the server's own, which replaces the client's copy.
 What the server checks:
 
     unbound id, hello carrying tok (null or not) -> mint, bind, answer tok
+    unbound id, hello without the tok member     -> 401 {"ok":false,"error":"bad token"}
+    unbound id, any other request                -> 401
     bound id, any request, the right tok         -> ok
-    bound id, any request, a wrong or no tok     -> 401 {"ok":false,"error":"bad token"}
+    bound id, any request, no tok                -> 401
+    bound id, any request, a wrong tok           -> 401; 429 past the pair cap (below)
     unknown id                                   -> as unbound (hello registers)
 
 Nothing else runs for a refused request: no beat, no row, nothing
@@ -214,9 +176,14 @@ drained. On 401 a client must stop and say so - the id is bound to
 another device, or its copy is stale (a restored file that predates the
 binding) - and never retry in a loop; what re-opens the wire is a hello
 that is answered, after the player restored the right file, reset the id,
-or an operator reset the binding. Wrong tokens are counted per (id,
-address) pair and put on the server log; the right token is never refused
-from any address.
+or an operator reset the binding.
+
+Wrong tokens are counted per (id, address) pair in a one-minute window
+and put on the server log. Past `ident_fails_per_min` (an operator
+setting, default 10) a wrong token from that pair answers **429**
+`{"ok":false,"error":"too many attempts","retry_after":60}` instead of
+401. The right token is never refused, from any address. A client backs
+off by `retry_after` and never retries in a loop.
 
 The same token is what the config vault reads (Stats backup / restore),
 so a client keeps one secret beside its id: FOK-snake holds it in a cookie
@@ -226,31 +193,18 @@ everything here: a token in a captured body is the id.
 
 Disclosure, stated: a `"tok": null` hello on a bound id answers 401, so
 "this id exists and is bound" is learnable. Ids are public; the binding
-state is the one new fact, and it is the fact the owner wants an impostor
-to meet.
+state is the one fact this adds, and it is the fact the owner wants an
+impostor to meet.
 
-TEMPORARY(ident), until 2026-10-01 00:00 UTC: a request that carries NO
-`tok` member passes on an id nothing proves yet - one never bound, or one
-whose token the server copied off the config vault and whose owner's
-client has not yet presented it on a hello - so a client from before the
-token keeps working until it updates. Such a hello binds nothing. A first
-backup.php POST from such a client still mints (the vault's own mint from
-before 4.20, answered as `tok` and as `token`), and backup.php reads
-`token` as an alias of `tok`. The GET forms of poll.php and the vault
-restore are TEMPORARY(ident) too: a token in a query is on the request
-line. From that date on, 5.0: `tok` is required on every request, a
-hello without it is 401, the vault mints nothing, the two GETs are gone, and a wrong token from a pair over the cap answers
-429 `too many attempts` with `retry_after` instead of 401.
-
-## POST /api/account.php - deleting the id (4.23)
+## POST /api/account.php - deleting the id
 
     POST {"id": "c0ffee42", "tok": "<32-hex>", "action": "delete"}
     -> {"ok": true}
 
 The one thing a player does TO the id rather than with it, and the one
 a store demands of an app that has accounts. It needs the token that
-proves the id - a bound id and its `tok`, nothing less: the leniency for
-an id nothing proves yet does not reach here, exactly as at the vault.
+proves the id - a bound id and its `tok`, nothing less, exactly as at
+the vault.
 
 The id and everything the server holds about it go: the player row and
 name, the friendships (each friend is sent the 'friend' `{event:
@@ -331,7 +285,7 @@ together, leaving no clean sample to pick. A sweep is EXCLUSIVE: from
 the first sample to the last, no other HTTP request leaves the client
 for this server (the rule below).
 
-#### Anchor the clock when the wire is quiet (4.4)
+#### Anchor the clock when the wire is quiet
 
 The offset is the client's ONE binding onto the shared clock, and every
 simultaneous moment in a duel is derived from it. Where it is measured
@@ -495,25 +449,23 @@ that play is beginning; the server is asked only for its timing.
 - `reason`: one of the two above, REQUIRED.
 - `pts`: the caller's own current PTS, REQUIRED - the proof it is synced
   (see below).
-- `duel_private` (4.7, ADDITIVE): this duel is counted but never
-  attributed, so no friend is offered a spectate link for it. Absent means
-  public, exactly as on hello - the flag is a property of the duel, stated
-  on every request that holds it up, not a latch set once (see Announcing
-  a duel).
+- `duel_private` (optional): this duel is counted but never attributed,
+  so no friend is offered a spectate link for it. Absent means public,
+  exactly as on hello - the flag is a property of the duel, stated on
+  every request that holds it up, not a latch set once (see Announcing a
+  duel).
 - `start_pts`: absolute, on the shared clock. Trigger everything
   (music, READY/GO, first tick) exactly then, via the local offset.
 - `now`: a free clock re-check.
-- `q_ms` (4.4, ADDITIVE): how long THIS request waited for a free request
-  worker, before any server code ran, in ms; normally 0. A non-trivial figure says the host
-  was busy serving this very request, so the round trip around it is not a
-  clean sample - see the clock-anchor rule above.
-- `mid`, `secret` (contract 4.0, ADDITIVE): the pair's match id and the
-  CALLER'S OWN per-match secret - never the peer's, each side gets only
-  its own. They exist so a client can attest item transfers to
-  /api/items.php; see the Item registry below. Every start begins play, so
-  every one mints a fresh match and both peers read the same `mid` for the
-  duel it opens. A client on an older contract simply ignores both
-  fields.
+- `q_ms`: how long THIS request waited for a free request worker,
+  before any server code ran, in ms; normally 0. A non-trivial figure
+  says the host was busy serving this very request, so the round trip
+  around it is not a clean sample - see the clock-anchor rule above.
+- `mid`, `secret`: the pair's match id and the CALLER'S OWN per-match
+  secret - never the peer's, each side gets only its own. They exist so
+  a client can attest item transfers to /api/items.php; see the Item
+  registry below. Every start begins play, so every one mints a fresh
+  match and both peers read the same `mid` for the duel it opens.
 
 The lead time is chosen by the server and is the same for every pair:
 1000 ms (`start_lead_ms`, admin-configurable). It depends on nothing a
@@ -560,8 +512,6 @@ it is not a licence to skip the sync: the procedure above (HOW to sample)
 is the contract; WHEN to sweep is the client's business, bounded only by
 these gates.
 
-##### The pair cross-check (4.4)
-
 ### Server-side PTS validation
 
 What arrives is pts + one-way delay, so the trip already pays for a clock
@@ -580,9 +530,7 @@ scores.php, start.php) sort those readings into two:
 The thresholds are drawn where honest anchoring error ends - min-RTT
 sampling keeps it to a few ms, and the worst honest case is a sample
 taken on a busy wire - and far below the error of a client that never
-synced at all, whose clock is off by seconds to minutes. Before 4.10 the
-line was at zero, which refused clients whose only fault was where they
-anchored.
+synced at all, whose clock is off by seconds to minutes.
 
 The 400 is not bookkeeping: nothing on the server reads the value, so
 the only reason to refuse is that the CLIENT cannot see a server log.
@@ -601,31 +549,28 @@ Request:
 
     {
       "id": "c0ffee42",           required, player ID
-      "tok": "<32-hex>" | null,   4.20: the proof of the id (see Identity
-                                  token). null on an id that has none yet:
-                                  the answer then carries the token, once
+      "tok": "<32-hex>" | null,   required, the proof of the id (see
+                                  Identity token). null on an id that has
+                                  none yet: the answer then carries the
+                                  token, once
       "name": "KAI",              optional, display name (max 15 chars);
                                   recorded server-side and shown to
-                                  accepted friends. 4.23: the server may
+                                  accepted friends. The server may
                                   MASK words in it (see Moderation); the
                                   answer then carries `name`
       "duel_with": "deadbeef",    optional, the peer while a 1vs1 game runs
                                   - REFRESHES what start.php announced
                                   (see Announcing a duel below)
-      "duel_private": false,      optional, 4.7: this duel counts in the
+      "duel_private": false,      optional: this duel counts in the
                                   "playing" figure but is never attributed
                                   to the caller, so no friend is offered a
                                   spectate link for it
-      "duel_end": "deadbeef",     optional, 4.7: the peer the caller has
+      "duel_end": "deadbeef",     optional: the peer the caller has
                                   just STOPPED playing
       "latency": 23,              optional, measured latency in ms (see
                                   Latency measurement; display only, the
                                   server keeps the last value)
-      "friends": ["deadbeef"],    optional, up to 64 IDs to check (send the
-                                  friend list when the multiplayer screen
-                                  is open). Superseded by "friends_since"
-                                  in 4.6, and ignored when that is present
-      "friends_since": 0,         optional, 4.6: a cursor in ms. Answer
+      "friends_since": 0,         optional: a cursor in ms. Answer
                                   with the caller's ACCEPTED friends whose
                                   presence changed after it, no ids sent.
                                   0 asks for all of them. See Friend
@@ -635,8 +580,8 @@ Request:
                                   incoming friend requests are then accepted
                                   immediately (see Friendships). Expires
                                   ~120 s after the last flagged hello; a
-                                  hello without the flag clears it. Since
-                                  4.9 poll.php's `aa=1` arms it too, so a
+                                  hello without the flag clears it.
+                                  poll.php's `aa` arms it too, so a
                                   client already holding a poll needs no
                                   hello for it.
       "debug": true,              optional bool: whether the client IS in
@@ -647,15 +592,11 @@ Request:
                                   array friend.php list returns. Send it in
                                   place of a separate friend.php call while
                                   a screen that shows the roster is open.
-                                  It is a 4.4 RE-RELEASE addition, so a 4.4
-                                  server may not have it: fall back to
-                                  friend.php when the response carries no
-                                  "friends", never gate on the version.
       "tourneys": true            optional bool: ask for the open tournament
                                   lobbies hosted on the caller's own network
                                   (see Tournament mode). Send it only while a
                                   screen that shows them is open.
-      "events": true              4.11, optional bool: ask for the caller's
+      "events": true              optional bool: ask for the caller's
                                   own events (see Events). Send it on the
                                   hello before a screen that needs them,
                                   not on every beat.
@@ -666,11 +607,11 @@ Request:
                                   other, so this is the only way the second
                                   one becomes known - see Self-reported
                                   networks below.
-      "client": "4.5.12",         4.23, optional: the client's own version,
+      "client": "4.5.12",         optional: the client's own version,
                                   x.y.z (three or four numbers, no "v").
                                   Kept with the id; what `upgrade` is
                                   judged on. See The client's version below
-      "platform": "ios"           4.23, optional: where the client runs -
+      "platform": "ios"           optional: where the client runs -
                                   "web", "ios" or "android"; up to 8
                                   lowercase letters, kept as sent
     }
@@ -679,26 +620,26 @@ Response:
 
     {
       "ok": true,
-      "api": "4.20",              contract version, see Versioning
-      "tok": "<32-hex>",          4.20: ONLY on the hello that bound the id
+      "api": "5.0",               contract version, see Versioning
+      "tok": "<32-hex>",          ONLY on the hello that bound the id
                                   - store it (see Identity token)
       "now": 1784182417123,       server PTS clock, unix MILLISECONDS
                                   (free coarse re-sync on every heartbeat)
-      "q_ms": 0,                  4.4: ms THIS request waited for a free
+      "q_ms": 0,                  ms THIS request waited for a free
                                   worker, before any server code ran;
                                   normally 0.
                                   Non-trivial means the host is busy NOW -
                                   do not anchor the clock against it
-      "pace": {                   4.4: whether this client may hold a long
-        "hold": true              poll right now. Additive and ignorable.
+      "pace": {                   whether this client may hold a long
+        "hold": true              poll right now. A client may ignore it.
       },                          See Pacing below.
       "debug": false,             the server's instruction: the client MUST
                                   honour it (see Debug mode below)
-      "upgrade": "advised",       4.23, only when the request named a
+      "upgrade": "advised",       only when the request named a
                                   `client` below a floor the operator set:
                                   "advised" or "required". Absent: nothing
                                   to do. See The client's version below
-      "name": "K**",              4.23, only when the server masked the
+      "name": "K**",              only when the server masked the
                                   name this request sent: what it kept.
                                   Adopt it; never answered unchanged
       "online": 3,                players seen in the last 120 s
@@ -717,15 +658,15 @@ Response:
       "friends_at": 1784182417123,           the cursor for the next read
       "friends_more": false,                 true: ask again immediately
       "friends": [                           only when "friends_list" was
-        {"id": "deadbeef",                   true, AND only on a server that
-         "state": "accepted",                has the 4.4 re-release. Byte
-         "outgoing": false,                  for byte what friend.php list
-         "name": "KAI",                      returns - see Friendships
+        {"id": "deadbeef",                   true. Byte for byte what
+         "state": "accepted",                friend.php list returns - see
+         "outgoing": false,                  Friendships
+         "name": "KAI",
          "online": true,
          "latency": 31}
       ],
-      "blocked": ["deadbeef"],               4.23, beside "friends": the ids
-                                             the caller blocked, so a client
+      "blocked": ["deadbeef"],               beside "friends": the ids the
+                                             caller blocked, so a client
                                              can show them and undo. The
                                              last answer wins
       "tourneys": [                          only when "tourneys" was true
@@ -747,18 +688,16 @@ names for ids the client has never seen. Presence is a different question
 and a different shape: it comes from the delta below, which the caller asks
 for with a cursor and never with a list of ids.
 
-### Friend presence deltas (`friends_since`, 4.6)
+### Friend presence deltas (`friends_since`)
 
-The maps above answer for the ids the request names, in full, every time.
-From 4.6 there is a second way to read the same thing: ask for what
-CHANGED.
+Friend presence is read as what CHANGED:
 
     hello.php   "friends_since": 0     request field, a cursor in ms
-    poll.php    ?fs=0                  query parameter, the same cursor
+    poll.php    "fs": 0                body member, the same cursor
 
 The caller sends no ids. Status is served for the caller's ACCEPTED
-friends, which the server already knows, under the same authorization
-gate: an id with no accepted friendship is not in the answer at all.
+friends, which the server already knows: an id with no accepted
+friendship is not in the answer at all.
 
 Response, on both endpoints:
 
@@ -806,11 +745,6 @@ What is pushed and what is derived:
   windows at the moment the delta is read. Nothing wakes for them - they
   are the absence of a beat - and they are at worst one read late.
 
-`friends_delta` and the `friends_*` maps are alternatives, not layers. A
-request carrying `friends_since` is answered with the delta and no maps; a
-request carrying `friends` is answered exactly as in 4.5. Sending both is
-not an error - the delta wins - but there is no reason to.
-
 `tourneys` is served only when the request set `"tourneys": true`, and
 lists the OPEN lobbies whose host shares a NETWORK with the caller: the
 same public IPv4 address, or the same IPv6 /64. The two are not
@@ -821,8 +755,8 @@ everything else is joined by `code`, and the code is the capability (see
 Tournament mode).
 
 One exception, and it is the point of it: an EVENT's open lobbies are
-listed to that event's MEMBERS whatever network they are on (4.11), and
-to nobody else. A lobby carrying an `eid` is an event's - see Events.
+listed to that event's MEMBERS whatever network they are on, and to
+nobody else. A lobby carrying an `eid` is an event's - see Events.
 
 A player is on as many networks as the address families it has spoken.
 A dual-stack client picks a family per connection, so the host's hello can
@@ -840,7 +774,7 @@ host waiting in a lobby is a background tab or a phone with the screen off
 as often as not, and browsers throttle background timers to about one a
 minute.
 
-### Pacing (`pace`, 4.4)
+### Pacing (`pace`)
 
 The beat is part of the contract. Three constants, stated here and not on
 the wire, the same for every client:
@@ -849,12 +783,11 @@ the wire, the same for every client:
                 flight. Half the 120 s online window, so one missed beat
                 never reads as offline. The server checks the window with
                 one second of grace, so a beat that lands the odd second
-                late still counts. Against a server reporting `api` 4.4
-                or older, beat every 30 s: its window is 60 s.
-                EVERY request is a beat (4.5), poll.php included. A client
+                late still counts.
+                EVERY request is a beat, poll.php included. A client
                 looping a poll is therefore already beating, and a hello
                 beside it is a second request in flight for nothing (see
-                the gap below). From 4.9 the poll carries everything the
+                the gap below). The poll carries everything the
                 SERVER has to say unasked - `api` and `debug` on every
                 body it sends, the pace and the counters beside them - so
                 nothing a client cannot see coming rides on a hello. Two
@@ -864,8 +797,8 @@ the wire, the same for every client:
                 client itself knows is due and the server cannot: a
                 rename, a latency reading, its `nets`, and `duel_with`
                 during a game, where nothing is holding a poll anyway.
-                Send a hello for those once the poll has answered (4.10 -
-                see the gap). Otherwise the poll is the beat.
+                Send a hello for those once the poll has answered (see
+                the gap). Otherwise the poll is the beat.
     poll wait   ask poll.php for `wait` of 5 s. The server serves any
                 hold up to 9 s, the longest it keeps a worker for, so a
                 client may ask for more; anything shorter is served as
@@ -889,7 +822,7 @@ the wire, the same for every client:
                 in flight, and two exempt calls sent in the same tick race
                 each other - BOTH pay the full queue wait rather than one
                 of them paying it.
-                ONE AT A TIME (4.10). While a poll is parked, a client
+                ONE AT A TIME. While a poll is parked, a client
                 should send nothing else that reaches a worker. What is due
                 waits for the poll to answer - one hold at most - and goes
                 then, or rides the next poll. Try very hard not to break
@@ -926,17 +859,13 @@ the wire, the same for every client:
     screen tick The lobby, friends, MY ID and tournament-lobby screens
                 refresh out of the poll they are already holding: `fs`
                 makes it carry the friend delta, the presence counters and
-                the hold decision (4.6), and `aa` / `fl` / `tl` carry the
-                last three answers those screens needed a hello for (4.9).
-                Against a 4.9 server they send nothing beside the poll at
-                all - not even the 60 s beat, because the poll is one. Against
-                a server older than 4.6 there is no delta: fall back to
-                `friends` on hello at the screen's own tick, and feature-
-                detect on the response, never on the version.
+                the hold decision, and `aa` / `fl` / `tl` carry the last
+                three answers those screens would need a hello for. They
+                send nothing beside the poll at all - not even the 60 s
+                beat, because the poll is one.
 
 Only one thing depends on the moment, and that is all the `pace` object
-carries. It is additive - a client that ignores it behaves exactly as it
-does today.
+carries. A client may ignore it.
 
     hold        whether this client may hold a long poll AT ALL. A held
                 poll occupies a request worker for its whole duration, which
@@ -945,10 +874,6 @@ does today.
                 tier - a client in a duel or reconnecting keeps it
                 longest, then a tournament screen with a match pending,
                 then one merely browsing the lobby.
-
-Earlier 4.4 servers also sent `hello_ms`, `poll_ms` and `gap_ms` in this
-object. They only ever carried the constants above; treat them, present or
-absent, as exactly those.
 
 None of this is enforced. The server never rate-limits, delays or refuses a
 request for arriving too close behind another one - a heartbeat is how a
@@ -964,9 +889,9 @@ pays it on the LAST request of a burst rather than the first. That is what
 The server only learns a network when a request actually arrives over that
 address family, and a browser gives the client no way to choose one: on a
 dual-stack line Happy Eyeballs may pick IPv6 for hours on end, so the
-device's public IPv4 address stays unknown here indefinitely. Optional and
-additive, `nets` closes that: the client reports its own public addresses
-and the server records the family it could not observe.
+device's public IPv4 address stays unknown here indefinitely. Optional,
+`nets` closes that: the client reports its own public addresses and the
+server records the family it could not observe.
 
     "nets": ["198.51.100.7", "2a02:1:2:3:4:5:6:7"]
 
@@ -996,8 +921,8 @@ server yields a server-reflexive candidate per family - the public IPv4
 address and the global IPv6 one - without ever connecting to us over
 either. Send them on every hello once gathered (the server no-ops when
 nothing changed), re-gather every few minutes and on a network change. A
-client that sends nothing keeps today's behaviour exactly: it is matched on
-the families the server happens to see it on.
+client that sends nothing is matched on the families the server happens
+to see it on.
 
 Rules:
 
@@ -1005,10 +930,11 @@ Rules:
   The client must process every element of `signals` immediately.
 - Cadence: hello every ~60 s from a client with nothing else in flight
   (see Pacing). hello is a complementary keepalive and only that. Every
-  request a client makes is a beat (4.5) - poll.php included - so hello is
-  the beat a client sends when it has nothing else to say: it keeps the
+  request a client makes is a beat - poll.php included - so hello is the
+  beat a client sends when it has nothing else to say: it keeps the
   player online and drains whatever the mailbox holds by then. A client
-  looping a poll is already beating and owes no hello for presence. Nothing time-critical rides on it -
+  looping a poll is already beating and owes no hello for presence.
+  Nothing time-critical rides on it -
   a signal or a tournament event that matters now reaches a client
   through /api/poll.php, and hello merely catches what a client with no
   poll running would otherwise see a minute late.
@@ -1016,7 +942,7 @@ Rules:
   refreshes a duel start.php has already put on record; it is not what
   puts it there (see Announcing a duel below).
 
-### The client's version (`client`, `upgrade`, 4.23)
+### The client's version (`client`, `upgrade`)
 
 A web client is replaced at its next page load. A client installed from
 a store is replaced when the player updates it, which may be months
@@ -1053,8 +979,8 @@ first of them is not the heartbeat:
   peer's request being slow does not delay the other's side of it.
 - **`duel_with` on hello REFRESHES it**, once a beat, which is what holds
   the offer up for as long as the match runs.
-- **`duel_end` on hello CLEARS it**, naming the peer just left. Since 4.9
-  poll.php's `de=` says the same thing, which is where a client that
+- **`duel_end` on hello CLEARS it**, naming the peer just left.
+  poll.php's `de` says the same thing, which is where a client that
   returns to a screen holding a poll can say it without a second request.
   An end for
   a peer the server does not have the caller playing is ignored, so an end
@@ -1086,17 +1012,17 @@ in the field without asking its user to do anything.
 
 Two separate bits are involved, and they are deliberately independent:
 
-- **The instruction**, `debug` in the hello RESPONSE and (4.9) on every
+- **The instruction**, `debug` in the hello RESPONSE and on every
   poll answer with a body. What the server wants. The client MUST
   honour it: `true` turns its debug mode on, `false` turns it off
   again. It arrives on the client's next hello, or on the next poll
   that reports `db` - answered at once when the two differ (see
   poll.php), so within one hold period - and never sooner than the
   client's next request.
-- **The report**, `debug` in the hello REQUEST and `db` on the poll
-  (4.9). What the client IS actually doing. Send `true` in every
-  hello, and `db=1` on every poll, while debug mode is on, whatever
-  turned it on.
+- **The report**, `debug` in the hello REQUEST and `db` on the poll.
+  What the client IS actually doing. Send `true` in every hello, and
+  `"db": 1` on every poll, while debug mode is on, whatever turned it
+  on.
 
 They differ legitimately, and the admin view names each case: `pending`
 is an instruction the client has not picked up yet, and `self` is a
@@ -1107,28 +1033,21 @@ true, honour what is asked.
 What "debug mode" shows is entirely the client's business; the server
 only carries the bit.
 
-## GET /api/poll.php - fast signal poll
+## POST /api/poll.php - fast signal poll
 
     POST /api/poll.php {"id": "c0ffee42", "tok": "<32-hex>", "wait"?: 5,
                         "fs"?: <cursor>, "aa"?: 1, "fl"?: 1, "tl"?: 1,
                         "ev"?: 1, "de"?: "<8-hex>", "db"?: 0|1}
 
-    GET  /api/poll.php?id=c0ffee42&tok=<32-hex>[&wait=5][&fs=<cursor>]
-                      [&aa=1][&fl=1][&tl=1][&ev=1][&de=<8-hex>][&db=0|1]
-
-The POST (4.21) and the GET are ONE request: the same members, the same
-semantics, the same answers. In a body a flag is `1`/`0`, `true`/`false`
-or the same as a string, and `wait` and `fs` are numbers (their digits as
-a string are accepted too); in a query everything is a string, as it
-always was. Send the POST: the GET puts the token on the request line,
-which the web server's access log records, and it is TEMPORARY(ident) -
-the form from before 4.21, gone with 5.0. A POST costs one preflight per
-Max-Age, answered by Apache without a worker, and the poll's URL is then
-one fixed URL rather than its query variants. `tok` is the identity token
-(4.20): a bound id without it, or with a wrong one, is answered 401
-before anything is read. The check runs once at the top of the request,
-off the presence entry while the player is here (one row read on arrival,
-beside the session write), never inside the hold.
+POST only; any other method is 405 `POST only`. A flag (`aa`, `fl`,
+`tl`, `ev`, `db`) is `0`, `1`, `true` or `false`; `wait` and `fs` are
+JSON integers. Anything else in one of them is a 400. A POST costs one
+preflight per Max-Age, answered by Apache without a worker, and the poll
+is one fixed URL. `tok` is the identity token: a bound id without it, or
+with a wrong one, is answered 401 (429 past the pair cap, see Identity
+token) before anything is read. The check runs once at the top of the
+request, off the presence entry while the player is here (one row read on
+arrival, beside the session write), never inside the hold.
 
     -> 204 No Content                          nothing pending
     -> 200 {"ok":true,"signals":[...]}         pending messages, drained
@@ -1136,20 +1055,20 @@ beside the session write), never inside the hold.
 With `wait` (seconds, capped server-side at 9) this is a LONG POLL: the
 server holds the request open and answers the moment a signal arrives,
 checking every 20 ms. This is the lowest-latency delivery path - during
-an active handshake, loop `wait=5` requests back-to-back (the default
+an active handshake, loop `"wait": 5` requests back-to-back (the default
 hold, see Pacing; anything up to 9 is served) and a forwarded signal
 reaches you in ~20 ms plus network, instead of a full poll interval.
 Without `wait` it degrades to the plain cheap poll (one indexed read,
 204).
 
-A poll is a beat (4.5): like every other request it refreshes the
+A poll is a beat: like every other request it refreshes the
 caller's presence, so a client looping poll.php stays online whether or
 not its hello is on time - and needs no hello to stay online at all.
 
-Every answer WITH A BODY carries `api` and `debug` (4.9), beside the
+Every answer WITH A BODY carries `api` and `debug`, beside the
 `signals` array:
 
-      "api": "4.16",             the contract version, re-read here for
+      "api": "5.0",             the contract version, re-read here for
                                 the same reason hello carries it: it
                                 un-latches a client after a rollback
       "debug": false,           the server's debug instruction for this
@@ -1160,28 +1079,27 @@ due, so it can never be its job to ask - which is what makes a poll a
 complete beat rather than most of one. `now` and `q_ms` are NOT here:
 they are readings, and hello's (see Pacing).
 
-`aa`, `fl`, `tl`, `de` and `db` (4.9), and `ev` (4.11), carry what a
-screen holding this poll would otherwise send a hello for. Each is the
-hello field of the same name, on the request the client is already
-making:
+`aa`, `fl`, `tl`, `ev`, `de` and `db` carry what a screen holding this
+poll would otherwise send a hello for. Each does what the hello field
+named beside it does, on the request the client is already making:
 
-    aa=1        arm auto-accept for ~120 s, as hello's `auto_accept`
-                does. A poll can only ARM it; only a hello clears it
-                early, and it expires on its own either way.
-    fl=1        answer `friends`, the whole roster, as hello's
-                `friends_list` does.
-    tl=1        answer `tourneys`, the local tournament announce, as
-                hello's `tourneys` does.
-    ev=1        answer `events`, the caller's own events, as hello's
-                `events` does (4.11).
-    de=<8-hex>  the peer this client has just STOPPED playing, as hello's
-                `duel_end` does (4.7). The screen a client returns to
-                after a match is one holding this poll, so state it here
-                and the WATCH row goes down with the match.
-    db=0|1      what this client reports its OWN debug mode to be, as
-                hello's `debug` does. ABSENT IS NOT FALSE here: a poll
-                that did not mention it is not a client saying no, so
-                absence changes nothing.
+    "aa": 1        arm auto-accept for ~120 s, as hello's `auto_accept`
+                   does. A poll can only ARM it; only a hello clears it
+                   early, and it expires on its own either way.
+    "fl": 1        answer `friends`, the whole roster, as hello's
+                   `friends_list` does.
+    "tl": 1        answer `tourneys`, the local tournament announce, as
+                   hello's `tourneys` does.
+    "ev": 1        answer `events`, the caller's own events, as hello's
+                   `events` does.
+    "de": <8-hex>  the peer this client has just STOPPED playing, as
+                   hello's `duel_end` does. The screen a client returns
+                   to after a match is one holding this poll, so state it
+                   here and the WATCH row goes down with the match.
+    "db": 0|1      what this client reports its OWN debug mode to be, as
+                   hello's `debug` does. ABSENT IS NOT FALSE here: a poll
+                   that did not mention it is not a client saying no, so
+                   absence changes nothing.
 
 `fl` and `tl` ANSWER AT ONCE - a screen that just opened is not waiting
 for a signal that is not coming - so a poll carrying either is a 200 with
@@ -1199,11 +1117,7 @@ holds resume. It happens at most once per hold period, because a
 disagreement may legitimately STAND - an instruction of false against a
 client whose user turned debug on locally - and a client that re-arms the
 moment it is answered would otherwise never hold again. A client that
-never sends `db` is never woken this way and behaves as it always did.
-
-Feature-detect `fl` and `tl` on the response, never on the version.
-`aa`, `de` and `db` are not visible in a 204, so a client that intends to
-stop beating for them gates on `api` >= 4.9.
+never sends `db` is never woken this way.
 
 `wait` is a REQUEST, not a promise. A held request occupies one of the
 server's limited workers, so there is a budget for how many may be held
@@ -1223,9 +1137,9 @@ A tournament participant's poll also runs that tournament's deadlines
 (see Tournament mode, When nobody answers); the request and the answer
 are unchanged.
 
-### Friend presence on the poll (`fs`, 4.6)
+### Friend presence on the poll (`fs`)
 
-With `fs=<cursor>` the answer also carries the friend delta described
+With `"fs": <cursor>` the answer also carries the friend delta described
 under hello (`friends_delta`, `friends_at`, `friends_more`), the presence
 counters and `pace`, so a screen holding a poll needs nothing else to stay
 current:
@@ -1264,9 +1178,9 @@ Response:
           "diff": 2,
           "color": 3,
           "shopItems": {"hat": 1},
-          "completed": true,       bool (3.4): the run cleared the final level
+          "completed": true,       bool: the run cleared the final level
                                    (finished the game), not merely reached it
-          "platform": "mobile",    string|null (3.4): device category the run
+          "platform": "mobile",    string|null: device category the run
                                    was played on - pc, mobile, tv or console;
                                    null if the client did not report one
           "date": "16.07.26",      DD.MM.YY, same format as the local list
@@ -1297,10 +1211,10 @@ Request:
       "shopItems": {"hat": 1},    optional, object, max 2 KB as JSON
       "seed": 305419896,          optional, the 32-bit game seed
       "inputs": [[12,1],[40,2]],  optional, tick-stamped input log, max 256 KB as JSON
-      "completed": true,          optional bool (3.4), default false: the run
+      "completed": true,          optional bool, default false: the run
                                   CLEARED the final level (finished the game),
                                   not merely reached it; client-asserted
-      "platform": "mobile",       optional string (3.4): the device category
+      "platform": "mobile",       optional string: the device category
                                   the run was played on - one of pc, mobile,
                                   tv, console; an absent or unrecognized value
                                   is stored as null (unknown)
@@ -1340,7 +1254,7 @@ Request:
 
 Response: `{"ok": true}`
 
-Types (fixed set, anything else is rejected):
+Types (fixed set, anything else is refused 400 `invalid type`):
 
     invite    ask "to" for a 1vs1 game            payload: JSON {"profile": <profile>}
               (requires an ACCEPTED friendship with "to", else 403)
@@ -1352,7 +1266,7 @@ Types (fixed set, anything else is rejected):
     answer    WebRTC SDP answer                   payload: JSON {"sdp": <RTCSessionDescription>,
                                                                  "profile": <profile>}
     ice       ICE candidate                       payload: JSON-encoded RTCIceCandidate
-    ices      SEVERAL ICE candidates (4.4)        payload: JSON ARRAY of RTCIceCandidate,
+    ices      SEVERAL ICE candidates              payload: JSON ARRAY of RTCIceCandidate,
               see "Batching ICE candidates"                max 24 entries
     bye       leave / abort the session           payload: ""
     watch     ask a peer to feed you a match      payload: JSON {"nid": <node id>,
@@ -1383,7 +1297,7 @@ Types (fixed set, anything else is rejected):
                                                      Tournament mode
     event     RESERVED - server-generated only     payload: JSON, see
               (clients cannot send it: 400)          The `event` signal
-                                                     under Events (4.11)
+                                                     under Events
 
 The 'friend' signal is the friendship NOTIFICATION: the server delivers
 it into the peer's mailbox when a friend request is created for them or
@@ -1413,11 +1327,9 @@ SHOULD try the direct ICE path first and fall back to TURN only if that
 fails. It is a hint, not a guarantee: the server sees the request source
 address, not the eventual UDP port, and cannot know whether two
 addresses can actually reach each other; family 0 means the address was
-unknown. It is additive - a client that ignores the type is unaffected - and it
-bumps only the api MINOR (3.1). The major stays 3, so a v3 client stays
-compatible; a client reads the minor to know the hint is available.
+unknown. A client that ignores the type is unaffected.
 
-### Batching ICE candidates (`ices`, 4.4)
+### Batching ICE candidates (`ices`)
 
 A duel start trickles 4-10 ICE candidates per side, and one POST each puts
 them all on the wire inside the same second, over one HTTP/2 connection,
@@ -1439,13 +1351,6 @@ The rules matter more than the saving:
   about a millisecond - and holding it back to fill a batch would trade a
   real win for a theoretical one. Batch the TAIL, over a short gather
   window.
-- GATE ON THE PEER'S VERSION, NOT THE SERVER'S. The server will mailbox
-  an `ices` to anybody. A peer built before 4.4 has no case for the type
-  and drops the WHOLE array in silence, narrowing ICE for the entire
-  match with no error raised anywhere. The answerer learns the peer's
-  version from the offer and may batch immediately; the offerer only
-  learns it from the answer and sends singles until then. That asymmetry
-  is expected and self-healing.
 - RETRY THE WHOLE ARRAY. Delivery is one-shot and a lost candidate
   quietly narrows ICE, which is why even a single candidate is retried
   once on 5xx. Batched, one lost POST costs every candidate in it, so the
@@ -1489,7 +1394,7 @@ request/accept handshake below for every local friend.
 
 The server records friendship relations as a mutual handshake. An
 ACCEPTED friendship is what entitles a client to query the friend's
-status (hello's friends_* maps, friend.php list) and to send game
+status (the friend presence delta, friend.php list) and to send game
 invites; quick match remains open to strangers by design.
 
 READING the roster does not need this endpoint. `list` is the one action
@@ -1498,8 +1403,8 @@ sending a second request alongside a heartbeat it was sending anyway - two
 requests into the same instant, the second queued behind the first. Send
 hello's `friends_list` flag instead and read `friends` off the heartbeat;
 call friend.php only for the mutating actions below, which are
-user-initiated and rare. `list` stays for clients that have no heartbeat in
-flight and for the fallback path when a server does not answer the flag.
+user-initiated and rare. `list` stays for a client that has no heartbeat
+in flight.
 
     POST {"id":"c0ffee42", "action":"request", "peer":"deadbeef"}
       -> {"ok":true,"state":"pending","exists":true}
@@ -1514,7 +1419,7 @@ flight and for the fallback path when a server does not answer the flag.
                                             handshake completes instantly
                                             and both sides get an
                                             'accepted' notification
-      -> {"ok":true,"exists":false}         (API 3.5) NO player has ever
+      -> {"ok":true,"exists":false}         NO player has ever
                                             registered that id: nothing is
                                             recorded and the peer is not
                                             notified, so "state" is absent.
@@ -1522,26 +1427,23 @@ flight and for the fallback path when a server does not answer the flag.
                                             mistyped or stale code, since a
                                             real id is shared by QR or link.
 
-    The "exists" field is added in API 3.5. It reports only whether a
-    players row exists for the peer (it has contacted the server at least
-    once), never whether it is online. On a pre-3.5 server the field is
-    absent AND a request to an unknown id records a normal "pending" row as
-    before; a client that reads "exists" MUST treat its ABSENCE as unknown
-    and fall back to the "state" it got. Because an id is a public
-    identity, this is a deliberate existence oracle: ids are not secret,
-    and the identity token (4.20) proves the CALLER, not the peer.
+    The "exists" field reports only whether a players row exists for the
+    peer (it has contacted the server at least once), never whether it is
+    online. Because an id is a public identity, this is a deliberate
+    existence oracle: ids are not secret, and the identity token proves
+    the CALLER, not the peer.
 
     POST {"id":..., "action":"accept", "peer":...}
       -> {"ok":true,"state":"accepted"}     404 without a pending request
     POST {"id":..., "action":"remove", "peer":...}
       -> {"ok":true}                        declines a request or removes
                                             an existing friendship
-    POST {"id":..., "tok":..., "action":"block", "peer":...}     (4.23)
+    POST {"id":..., "tok":..., "action":"block", "peer":...}
       -> {"ok":true}                        see Moderation below
-    POST {"id":..., "tok":..., "action":"unblock", "peer":...}   (4.23)
+    POST {"id":..., "tok":..., "action":"unblock", "peer":...}
       -> {"ok":true}
     POST {"id":..., "tok":..., "action":"report", "peer":...,
-          "reason":"name"|"abuse"|"cheat"|"other"}               (4.23)
+          "reason":"name"|"abuse"|"cheat"|"other"}
       -> {"ok":true}
 
 Removal is always immediate and silent: the client performs it WITHOUT
@@ -1563,7 +1465,7 @@ list is authoritative. Scores remain as history.
           pending entry with "outgoing":false is a request awaiting MY
           acceptance.
 
-Request rate (API 3.5): the "request" action is throttled per id on three
+Request rate: the "request" action is throttled per id on three
 scales, independent of the spam ban below. Its job is to stop the "exists"
 oracle above from being used to enumerate ids: the throttle is checked
 BEFORE existence, so a rapid prober is turned away with 429 (learning
@@ -1593,12 +1495,10 @@ while the ban lasts answers 429 `friend requests banned`. Match on the
 status, not the text. Normal use never gets close.
 
 Poll list (or rely on hello) while the friends screen is open to notice
-incoming requests. Since 4.20 the caller's id is proven by its identity
-token, so a friendship is a statement of the two players it names; before
-that ids were public identities and nothing more, and friendship gating
-was privacy hygiene, not authentication.
+incoming requests. The caller's id is proven by its identity token, so
+a friendship is a statement of the two players it names.
 
-## Moderation (4.23)
+## Moderation
 
 What a store asks of an app whose players see each other: a filter on
 what they write, a way to block one another, a way to report, and an
@@ -1656,7 +1556,7 @@ without a seek poll). After a match both sides continue at step 3 of the
 ## 1vs1 game flow (the intended sequence)
 
 Player A wants to play with player B (A knows B's ID, e.g. from the
-friend list; the hello `friends` field tells A whether B is online):
+friend list; the friend presence delta tells A whether B is online):
 
     1. A -> signal {type: "invite", to: B, payload: {"profile": ...}};
        A starts polling poll.php (~1 s). B's UI can now show who is
@@ -1668,8 +1568,8 @@ friend list; the hello `friends` field tells A whether B is online):
     3. A (on accept) generates the 32-bit duel seed, creates an
        RTCPeerConnection with a DataChannel (unreliable, unordered:
        maxRetransmits 0, ordered false) - with the TURN credentials
-       from turn.php in its iceServers when it holds any (4.22, see
-       TURN credentials) - and sends signal offer with
+       from turn.php in its iceServers when it holds any (see TURN
+       credentials) - and sends signal offer with
        payload = JSON {"sdp": <description>, "seed": n, "profile": ...}.
        The offerer ALWAYS generates the seed; both clients start the
        deterministic duel sim from it (startDuel(seed)).
@@ -1678,9 +1578,8 @@ friend list; the hello `friends` field tells A whether B is online):
        same-family pair SHOULD prefer the direct ICE path first.
     4. B sets the remote description, answers: B -> signal answer.
     5. Both sides exchange candidates as they arrive: the FIRST as an
-       `ice` immediately, the rest batched into `ices` when the peer is
-       on 4.4 or newer and as further `ice` messages when it is not
-       (see "Batching ICE candidates").
+       `ice` immediately, the rest batched into `ices` (see "Batching
+       ICE candidates").
     6. When the DataChannel opens on both ends, BOTH clients stop
        polling poll.php, sync the clock (t.txt) - HERE, with the
        handshake finished and the wire quiet, never in parallel with
@@ -1706,7 +1605,7 @@ friend list; the hello `friends` field tells A whether B is online):
        it server-side, precisely because a DataChannel bye never
        reaches the server).
 
-## POST /api/turn.php - TURN credentials (4.22)
+## POST /api/turn.php - TURN credentials
 
 A duel is peer to peer, and a peer behind a NAT that STUN cannot open
 has no path to the other. TURN is the standard way through: a relay the
@@ -1741,7 +1640,7 @@ offers no TURN right now, and one answer covers every reason on
 purpose - no relay configured, switched off by the operator, the cap
 below reached, or the relay's API not answering - because the client's
 reaction is the same for all of them: build the connection with STUN
-alone, as before 4.22. A client must expect it at any time (what was
+alone. A client must expect it at any time (what was
 offered a minute ago may have been withdrawn since) and must never fail
 a match on it. The answer comes within 0.6 s plus the round trip: a
 relay that has not minted by then is the 503, so a client that builds
@@ -1759,14 +1658,6 @@ allocation at its next refresh, and a relayed match running at that
 moment ends the way it ends on any lost path. None of this is pushed;
 the only signals a client gets are the 503 and its own DataChannel
 closing.
-
-## Relay fallback, withdrawn
-
-The HTTP relay is not deployed. `/api/relay.php` does not exist (404),
-and `invite-relay` / `accept-relay` are refused like any type the server
-does not know (400 "invalid type"). A duel no direct path can carry uses
-TURN (see TURN credentials) on the same DataChannel. The code stays in
-this repository's `deprecated/relay/` for reference and runs nowhere.
 
 ## In-game liveness
 
@@ -1790,28 +1681,24 @@ and much lower latency than any HTTP poll could.
 ## Stats backup / restore
 
 A client can back its OWN config up to the server and restore it on another
-device from its id and its identity token alone. Live; clients may use it
-now.
+device from its id and its identity token alone.
 
     POST /api/backup.php {"id": "c0ffee42", "tok": "<hex>", "payload": "<string>"}
       -> 200 {"ok": true, "updated": <unix seconds>}
-      -> 401 {"error": "bad token"}       the id is bound to another token
+      -> 401 {"error": "bad token"}       missing or wrong token
+      -> 413 {"error": "payload too large"}
     POST /api/backup.php {"id": "c0ffee42", "tok": "<hex>", "restore": true}
       -> 200 {"ok": true, "payload": "<string>", "updated": <unix seconds>}
       -> 404 {"error": "no backup"}       nothing stored for this id
       -> 401 {"error": "bad token"}       missing or wrong token
-    GET  /api/backup.php?id=c0ffee42&tok=<hex>
-      -> the same restore in the form from before 4.21. TEMPORARY(ident):
-         the token is on the request line there; gone with 5.0
 
-The token is the identity token (4.20; see Identity token): the one hello
+POST only. A wrong token from one address past the pair cap answers 429,
+as in Identity token.
+
+The token is the identity token (see Identity token): the one hello
 minted for the id, the same one every other request carries. A backup is
-read and replaced by that token and nothing else - here the gate makes no
-exception for an id nothing proves yet, because the data behind it is the
-player's whole config. Before 4.20 the vault minted a token of its own on
-the first backup; it was the same 128-bit secret, and a token the vault
-minted IS the identity token now (the server copied every enrolled one
-into the binding when 4.20 was installed). Keep the token OUT of the
+read and replaced by that token and nothing else, because the data
+behind it is the player's whole config. Keep the token OUT of the
 payload: a backup that carries its own proof is self-authenticating, so
 anyone who obtains the file (a shared copy, the operator export below)
 would gain full read/overwrite. FOK-snake holds it beside the id, never in
@@ -1859,9 +1746,9 @@ paths live only behind /admin.
 
 ## Item registry
 
-Added in contract 4.0, and the reason 4.0 is a MAJOR bump. The server now
-owns item-instance OWNERSHIP: a cosmetic a player carries between games is
-a ROW in the server's item table, not a flag in the client's own config.
+The server owns item-instance OWNERSHIP: a cosmetic a player carries
+between games is a ROW in the server's item table, not a flag in the
+client's own config.
 That is what stops a restored backup or an edited local save from
 resurrecting an item that was traded away - the server decides who owns
 what, and a transfer MOVES the one instance instead of copying it.
@@ -1870,11 +1757,12 @@ what, and a transfer MOVES the one instance instead of copying it.
 
 Only OWNERSHIP is authoritative. MINTING is still CLIENT-TRUSTED: the coin
 economy lives on the client, so opening a box or buying in the shop is
-asserted by the client and merely rate-limited. So 4.0 makes items
-CONSERVED and AUDITABLE, not unforgeable. Concretely, a client can still
-create an item it did not earn; it can NOT end up holding an instance that
-another player also holds, take one without a transfer both sides can be
-shown to have observed, or roll ownership back by restoring an old backup.
+asserted by the client and merely rate-limited. So the registry makes
+items CONSERVED and AUDITABLE, not unforgeable. Concretely, a client can
+still create an item it did not earn; it can NOT end up holding an
+instance that another player also holds, take one without a transfer
+both sides can be shown to have observed, or roll ownership back by
+restoring an old backup.
 Every mint and every move lands on a tamper-evident ledger for
 after-the-fact review. Unforgeable minting needs the coin economy to move
 server-side, which is future work and a later contract.
@@ -1918,16 +1806,16 @@ boundary, so capped per player per hour (`mint_max_per_hour`, default 60,
 admin-configurable); over the cap answers 429. Normal play never reaches
 it; on 429 stop and retry later rather than hammering.
 
-### seed - the one-time legacy grandfather
+### seed - the one-time grandfather
 
     POST /api/items.php {"id":"c0ffee42", "action":"seed",
                          "items":["crown","hat","neon_1"]}
       -> {"ok":true, "items":[{"uid":"<32-hex>","item_id":"crown"}, ...]}
 
-Mints instances for what a player already owned BEFORE 4.0, so an existing
-wardrobe survives ownership moving server-side. Call it ONCE, the first
-time a 4.0-capable client starts against a 4.0 server, then use list from
-then on.
+Mints instances for what a player owned before the item registry existed,
+so a wardrobe kept in the client's own config survives ownership moving
+server-side. Call it ONCE, the first time the client talks to the
+registry for this player, then use list from then on.
 
 It is ONE-TIME and IDEMPOTENT per player: the first call mints, every
 later call simply returns the current wardrobe unchanged. A retry after a
@@ -1944,10 +1832,10 @@ either of two optional shapes:
     {"items":  ["crown", "hat"]}         an array of catalog ids, OR
     {"owned":  {"crown": 1, "hat": 1}}   an object whose truthy keys are ids
 
-Neither shape present, an unparseable payload, or no enrolled backup falls
+Neither shape present, an unparseable payload, or no stored backup falls
 back to the submitted `items` list. Send the real owned list either way;
 the amnesty is one-shot and the fallback is what covers a client that
-never enrolled.
+never backed up.
 
 ### claim - report a transfer
 
@@ -2068,9 +1956,6 @@ on an instance already out of play cannot rewrite the finding.
   gameplay, and never retry in a tight loop. `stale seq` and `lost race`
   are the only ones worth an immediate retry, and only after a fresh
   `list`.
-- Gate item play on the contract MAJOR, as for every other feature: a
-  client built against 3.x must not carry items into an online duel
-  against a 4.x server, since its transfers would go unreported.
 - Do not surface any of the tampering outcomes to the user as an
   accusation. They are operator signals (below), and a single one can be
   an ordinary lost packet.
@@ -2171,8 +2056,8 @@ two reports agree, when one is enough, and when they contradict each other
 - `done`: the final has been settled.
 - `abandoned`: the host left the lobby or ended it for everyone, nobody
   started it within `tournament_join_ttl` (15 min), or none of its players
-  had been seen for `tournament_idle_ttl` (3 min) and the server ended it
-  (4.8). The last one is why a client that goes away and comes back may
+  had been seen for `tournament_idle_ttl` (3 min) and the server ended
+  it. The last one is why a client that goes away and comes back may
   find a `lobby` event saying `abandoned` with no one having pressed
   anything: every request is a beat, so a tournament reads as abandoned
   only when nobody at it has made ANY request for that long.
@@ -2203,14 +2088,13 @@ recycle. `stakes` (default false) declares that the matches are played for
 items; it is passed through to the clients and the server does not act on
 it - item transfers go through the item registry exactly as in any duel.
 
-`lvl` (4.9, default 1, clamped to 1..`tournament_max_level`) is the level
-ROUND 1 is played at; every round after it is one deeper, as always (see
-The round ladder). Absent reads as 1, which is what every client sent
-before the field existed. It rides the create's answer back, and nothing
-else carries it: a player who JOINS learns the level from the first `roles`
-sheet.
+`lvl` (default 1, clamped to 1..`tournament_max_level`) is the level
+ROUND 1 is played at; every round after it is one deeper (see The round
+ladder). Absent reads as 1. It rides the create's answer back, and
+nothing else carries it: a player who JOINS learns the level from the
+first `roles` sheet.
 
-`speed` (4.10, default false) says every round of this tournament is
+`speed` (default false) says every round of this tournament is
 played as a speed round. Like `stakes` it is carried, never acted on: the
 server has no idea what a speed round is, and what the two players do
 with the flag is their business. It is a property of the TOURNAMENT and
@@ -2218,7 +2102,7 @@ is fixed at create - there is no way to turn it on later. Unlike `lvl` it
 rides the lobby as well as the `roles` sheet, so a player can see it
 before joining.
 
-`eid` (4.11, optional) makes this an EVENT tournament: the caller must be
+`eid` (optional) makes this an EVENT tournament: the caller must be
 that event's organizer and the event must be active. It changes nothing
 about how the tournament runs - the difference is who may join it (its
 event's members, and 403 `not in the event` for anyone else, by tid and
@@ -2230,7 +2114,7 @@ absent or null means an ordinary tournament. See Events.
 A host may hold one open-or-running tournament at a time (409), and may
 create one every `tournament_create_cooldown` (429 with `retry_after`).
 
-`replace` (4.8, default false) is the answer to that 409: it ends the
+`replace` (default false) is the answer to that 409: it ends the
 tournament the caller is hosting - exactly as their own `leave` would -
 and opens the new one in the same call. Its players get the usual `lobby`
 event, with `reason` "host opened a new one". Ask the player first: a
@@ -2495,7 +2379,7 @@ tournament.php request, or any participant's poll.php or hello.
   that beats only at the 60 s heartbeat is at the edge of it: keep the
   poll open while seated. A slow match between two players who both keep
   asking is never taken away from them. The roles sheet carries the
-  deadline as `walkover_at` (4.15), so a screen can count down to it.
+  deadline as `walkover_at`, so a screen can count down to it.
 - a match NOBODY EVER STARTED is re-dealt once after
   `tournament_deadlock_ms` (2.5 min) and voided at the same distance
   again. This is the case the test above cannot see: both players are
@@ -2609,11 +2493,11 @@ payload carries `tid`.
                   speed, stakes, eid, players, feeder, primaries,
                   secondaries, names, walkover_at, you, monitor?}
                  a match is up. `match`/`of` are its 1-based position in
-                 the stage. `you` differs per recipient. `monitor` (4.14)
+                 the stage. `you` differs per recipient. `monitor`
                  is the event's monitor holder when this is an event
                  tournament and somebody holds the slot, and ABSENT
                  otherwise - see The monitor as a spectator.
-                 `walkover_at` (4.15) is the walkover clock: server ms of
+                 `walkover_at` is the walkover clock: server ms of
                  the first instant this node may be handed over for a
                  seat that is gone - the deal plus `tournament_walkover_ms`
                  (see When nobody answers). The same value reaches every
@@ -2673,14 +2557,14 @@ payload carries `tid`.
                  there is no third-place match. The podium is empty when
                  the final itself was voided - both finalists gone.
 
-Every pushed event may carry `after_ms` (4.4, ADDITIVE): a small
+Every pushed event may carry `after_ms`: a small
 per-recipient delay in milliseconds to wait before making any follow-up
 REQUEST the event prompts. A round board wakes eight clients in the same
 instant and they all call back together - the same pile-up the ICE burst
 makes, eight-handed - so the server staggers them by seat: 100 ms per
 seat, seat 0 waits nothing, the eighth seat 700 ms, never more than
 1000 ms. Render the event itself immediately and delay only the calls it
-provokes. A client that ignores the field behaves exactly as before.
+provokes.
 
 A client MUST NOT act on a `tourney` signal it did not expect to the
 extent of playing a match it cannot see in `state` - when in doubt, call
@@ -2728,8 +2612,8 @@ each for 19 matches. The largest single push is the round-break scoreboard
 at ~1.6 KB; the steady ones are the roles sheet and the result, ~0.75 KB
 each per match per participant.
 
-The result is that size because it carries the standings rows (server
-1.4.17; 211 B without them). That buys out the `state` read a client
+The result is that size because it carries the standings rows (211 B
+without them). That buys out the `state` read a client
 would otherwise make after every settle - 152 of them at ~5 KB, ~760 KB,
 more than twice the whole event stream - and the burst those make,
 eight-handed, 19 times a tournament.
@@ -2755,11 +2639,11 @@ polls during a signaling window, which answer 204 in about 196 bytes of
 headers when nothing is pending. `orphan` is separately capped at one
 every 3 s per player.
 
-What the rate DOES have is a BURST term, and 4.4 addresses it in both
-places it appears: `after_ms` staggers the follow-up calls a pushed event
-provokes, and the 100 ms gap spaces a client's own. Neither saves bytes. Both
-cut how many requests land in the same instant, which on this host is the
-thing that actually costs - see Pacing.
+What the rate DOES have is a BURST term, and the contract addresses it
+in both places it appears: `after_ms` staggers the follow-up calls a
+pushed event provokes, and the 100 ms gap spaces a client's own. Neither
+saves bytes. Both cut how many requests land in the same instant, which
+on this host is the thing that actually costs - see Pacing.
 
 None of this includes the match itself or the spectator feeds: those are
 peer-to-peer and never reach the server (see Spectating).
@@ -2768,6 +2652,7 @@ peer-to-peer and never reach the server (see Spectating).
 
     400  invalid id / action / tid / outcome / score / mid, and
          invalid tid/code when a join names neither
+    401  bad token (see Identity token)
     403  host only (start, continue); not a participant; not your match
          (result)
     404  no such tournament; no such node
@@ -2775,7 +2660,8 @@ peer-to-peer and never reach the server (see Spectating).
          not current (a result for a node that is not the one in flight);
          too early (continue before the board has been up `wait` ms,
          with retry_ms)
-    429  create cooldown (with retry_after, seconds)
+    429  create cooldown (with retry_after, seconds); too many attempts
+         (wrong identity tokens, with retry_after, see Identity token)
     503  no join code available; tournaments unavailable (the server has
          no shared memory to hold a tournament in - see below); busy (a
          transition is already in flight; simply ask again)
@@ -2795,7 +2681,7 @@ still be read back, and an abandoned one after
 bracket to come back to. After that the tid is simply unknown, and `state`
 answers 404.
 
-## Events (4.14)
+## Events
 
 An EVENT is a room an operator opens on the server: a LAN party, a club
 night, a stand at a fair. A player gets in by scanning its QR code -
@@ -2816,31 +2702,12 @@ An event tournament is an ORDINARY tournament: same lifecycle, same
 bracket, same deadlines, same caps, same requests (see Tournament mode).
 `eid` on it is a tag and a membership check on the way in, nothing more.
 
-CHANGED IN 4.14, and it is the only change since 4.13: THE MONITOR IS A
-SPECTATOR OF THE EVENT'S TOURNAMENT, invisibly - the roles sheet names it
-in `monitor` so every client grants it a feed, and it receives the
-tournament's `tourney` signals like a seat would, while being in none of
-the sheet's lists and taking no tree slot. See The monitor as a spectator.
-
-CHANGED IN 4.13: THE PRINTED KEY
-JOINS AN EVENT THAT HAS NOT STARTED. A scan of an `upcoming` event's key
-now admits exactly as it does on an active one - a member row at an open
-door, a pending one at a closed door - and the answer carries `starts`, so
-a client knows what it is waiting for. A PASS still does not: it is minted
-from the clock by a member, and an upcoming event mints none. The
-achievement waits for the start too. `paused` and `ended` are unchanged and
-still refuse both codes.
-
-The reason is the poster. The key is long-lived and printed, it goes on a
-wall days ahead, and somebody walking past it had no way to accept before -
-they were told to come back and remember to scan again.
-
 ### Identifiers
 
     eid     4 chars: the digits 0-9 and the letters of the poster
             alphabet below (no I, L, O). An eid the server assigns
             stays within that alphabet; one an operator NAMED may
-            carry a 0 or a 1 (4.16), so a client accepts [0-9A-Z]{4}
+            carry a 0 or a 1, so a client accepts [0-9A-Z]{4}
             wherever it checks the shape of one. The event's public
             name on the wire. It grants NOTHING on its own: every
             action but `join` answers 404 for a caller with no row,
@@ -2862,9 +2729,9 @@ next read and finds the new one in `events`. After the start the eid
 never changes - passes, the achievement id and the tournament tag
 carry it.
 
-`key` and `pass` are both called `code` on the wire and the server tells
-them apart by LENGTH (16 or 6). A client never has to know which it
-scanned.
+`key` and `pass` both travel as `code` on the wire - a pass as
+`<eid>.<pass>`, exactly as its QR carries it - and the server tells them
+apart by the dot. A client never has to know which it scanned.
 
 ### The URL a QR carries
 
@@ -3132,7 +2999,7 @@ be: it is answered by taking it, or by 409 `monitor taken`.
                             "pending": 3,         who is waiting to be
                             "online": 9,          of the members, how many
                                                   are here now - a count,
-                                                  never who (4.15 re-release)
+                                                  never who
                             "reserved": true,     this event names its screen
                             "archive": [...],     as `state` answers it
                             "tourney": {...}}     see below, or null
@@ -3151,13 +3018,11 @@ ordinary `watch` signal and the feed is peer to peer, exactly as it is for
 a tournament spectator. No match traffic passes through the server for a
 monitor either.
 
-### The monitor as a spectator (4.14)
+### The monitor as a spectator
 
-Before 4.14 a monitor learned that a match was up only from its own
-`monitor` read, on whatever cadence it asked - so it joined every round
-late, and a player who had made their duels private refused its feed,
-nothing ever having granted it. Two additions close that, and both are
-INVISIBLE to everyone else:
+A monitor follows an event tournament as it moves, not on the cadence of
+its own `monitor` read, and a player whose duels are private still feeds
+it. Two things do that, and both are INVISIBLE to everyone else:
 
 - THE SHEET NAMES IT. `roles` and `roles-patch` carry `monitor`: the
   event's monitor holder at the moment the sheet is built - whoever holds
@@ -3201,8 +3066,7 @@ TWO WAYS THE SLOT IS HELD:
   a stand-in already holding it keeps renewing until the reserved screen
   asks; that call displaces the stand-in, which is sent an `event` signal
   `{"event": "monitor", "eid": ...}` and answers 409 `monitor taken` at
-  its next renewal. (A 4.15 re-release: before it the reservation was a
-  hold, and a dark reserved screen blocked the seat for everyone.)
+  its next renewal.
 
 A stand-in reads exactly like a free holder: `you.state` is `member`,
 and `reserved` says the seat has an owner it is keeping warm for.
@@ -3226,8 +3090,7 @@ nobody left to approve it. From then on:
 - it may call `state`, `monitor` and `pass` and NOTHING else - and scan
   its own event again, since `join` answers a repeat as it answered the
   first. Every other action answers 403 `monitor only`. `pass` is what
-  puts the live code on the wall between tournaments (a 4.15 re-release;
-  before it a monitor was refused there too).
+  puts the live code on the wall between tournaments.
 
 Errors:
 
@@ -3241,6 +3104,7 @@ Errors:
 ### Errors
 
     400  bad input (unknown action, malformed id, eid or code)
+    401  "bad token"         see Identity token
     403  "banned"            the caller's row is banned
     403  "not the organizer" an organizer-only action
     403  "the organizer"     `leave`, from the organizer: they cannot
@@ -3259,8 +3123,9 @@ Errors:
     403  "no monitor"        the event offers no monitor
     403  "monitor only"      a monitor tried anything but state, monitor
                              or pass
-    429  "too many attempts" too many wrong codes; `retry_after` is
-                             seconds
+    429  "too many attempts" too many wrong codes, or wrong identity
+                             tokens (see Identity token); `retry_after`
+                             is seconds
 
 A wrong code is throttled per player id, not per event: a client that
 mistypes or scans something stale a few times is fine, a client walking
@@ -3270,7 +3135,7 @@ is there so the attempt is on record.
 ### On hello and poll
 
     hello body   "events": true
-    poll query   ev=1
+    poll body    "ev": 1
 
 Either one adds the caller's own event rows to the answer:
 
@@ -3338,7 +3203,7 @@ whole difference is:
 - `join` by tid OR by code refuses a non-member with 403 `not in the
   event`. That is the entire secrecy: the code is no use to somebody
   who is not in the room.
-- The local announce (hello `tourneys`, poll `tl=1`) carries an event's
+- The local announce (hello `tourneys`, poll `"tl": 1`) carries an event's
   open lobbies to its AUDIENCE regardless of network, so an event
   tournament shows up on the normal tournament screen too. To everyone
   else it does not exist.

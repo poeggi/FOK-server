@@ -16,7 +16,7 @@
 # knockout fold) is unit-tested in test/unit.php against Bracket directly.
 # What only real HTTP can show is what this file checks: the wire.
 
-# The head of a group on a remote run: bind the ids (API 4.20, see lib.sh).
+# The head of a group on a remote run: bind the ids (see lib.sh).
 bound "$ID1" "$ID2"
 
 # The tournament helpers (tourney, tcode, tfield, act, result, hellot) live

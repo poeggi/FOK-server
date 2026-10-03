@@ -7,7 +7,7 @@ instructed otherwise.
 Read README.md for what this is; read docs/API.md before touching any
 endpoint - it is the contract the FOK-snake client is built against.
 The measurements and decisions behind the rules below are in
-.claude/rules/project_fok_server.md.
+.claude/rules/, one file per topic.
 
 ## Hard rules
 
@@ -30,7 +30,7 @@ The measurements and decisions behind the rules below are in
 - Shared hosting: Apache + PHP-FPM only. No daemons, no WebSockets, no
   cron. Real-time is client-polled HTTP or peer-to-peer WebRTC; the
   server forwards SDP/ICE signaling and mints credentials for
-  Cloudflare's TURN relay (src/Turn.php, .claude/rules/project_fok_turn.md);
+  Cloudflare's TURN relay (src/Turn.php, .claude/rules/turn.md);
   it runs no relay of its own. The deprecated HTTP relay sits in
   deprecated/relay/ for reference: outside public/, so never deployed,
   and nothing under public/ may require it.
@@ -43,7 +43,7 @@ The measurements and decisions behind the rules below are in
 - The clock source api/t.txt is a STATIC file stamped by mod_headers %t
   in public/.htaccess - never PHP, so it never queues for a worker. It
   protects the stamp, not the round trip: a client anchors its clock
-  when the wire is quiet (API 4.4). It must stay no-store and its header
+  when the wire is quiet (docs/API.md). It must stay no-store and its header
   in Access-Control-Expose-Headers. The same block stamps X-Request-Start
   into a REQUEST header, which PHP subtracts from REQUEST_TIME_FLOAT for
   the queue wait (Load::queueUs); it must stay "set" (overwrites, so a
@@ -84,13 +84,12 @@ The measurements and decisions behind the rules below are in
   live data; never edit an existing step.
 - Player IDs are 8 lowercase hex chars, validated with Util::isValidId.
   Public identities, not secrets. What proves the caller owns one is the
-  identity token (src/Ident.php, API 4.20): every player-facing endpoint
+  identity token (src/Ident.php): every player-facing endpoint
   calls Ident::require right after the id is validated, hello calls
   Ident::hello AFTER every input is validated (it binds). Nothing runs
   for a refused request. The token is in no log line and no admin
-  payload; only its hash is stored. Every pre-token path is tagged
-  TEMPORARY(ident) and closes on Ident::LEGACY_UNTIL (2026-10-01);
-  .claude/rules/project_fok_identity.md has the states.
+  payload; only its hash is stored. .claude/rules/identity.md has the
+  states and the pair throttle.
 - Score entries keep field parity with the FOK-snake local top-10 entry:
   name (max 15), score, level, diff, color, shopItems, date (DD.MM.YY).
   Submissions store seed + inputs verbatim; validated stays 0 until
@@ -119,7 +118,7 @@ The measurements and decisions behind the rules below are in
 Update all four together: the endpoint, docs/API.md, README.md's sketch,
 and the tests (test/unit.php for logic, test/smoke.sh for HTTP - a
 runner sourcing test/smoke/*.sh; locally in order against one php -S,
-against staging as THREE PARALLEL GROUPS that share nothing, then
+against staging as FOUR PARALLEL GROUPS that share nothing, then
 09_sweep and 06_admin in sequence). A NEW part goes in a group whose ids
 and settings it does not touch; what the tail reads from it goes through
 the env hand-off in smoke.sh. Shared helpers live in lib.sh.

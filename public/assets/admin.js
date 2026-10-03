@@ -635,9 +635,8 @@ function renderClientBody(body, overlay, d, reload) {
     // whoever sends it, which is why the reset is a deliberate step.
     sec('Identity');
     if (c.ident) {
-        kv('Token', c.ident.bound_ip === ''
-            ? 'held by the client since ' + fmtTime(c.ident.bound_at) + ', not yet confirmed on a hello'
-            : 'bound ' + fmtTime(c.ident.bound_at) + ' from ' + c.ident.bound_ip);
+        kv('Token', 'bound ' + fmtTime(c.ident.bound_at)
+            + (c.ident.bound_ip === '' ? '' : ' from ' + c.ident.bound_ip));
         const r = el('tr');
         const v = el('td', 'kv-v');
         const rst = el('button', 'small', 'reset token');
@@ -2598,7 +2597,7 @@ const TURN_BADGE = { '': 'playing', unconfigured: 'ended', off: 'ended', cap: 'd
 // credential, who took the most, and the revoke-all. Runs on the stats
 // card's interval, like the gauge popups.
 // "4.5.12 ios" for a row carrying client and platform (see Clients); a
-// client from before 4.23 named neither and reads '-'.
+// client that named neither reads '-'.
 function buildOf(c) {
     if (!c.client && !c.platform) return '-';
     return (c.client || '?') + (c.platform ? ' ' + c.platform : '');
@@ -2861,11 +2860,8 @@ function renderUsers(box, d) {
         const online = d.now - u.last_seen <= d.online_window;
         const r = el('tr');
         if (online) r.classList.add('online');
-        // When the id was bound to its token (see Ident); a tilde marks a
-        // token copied off the vault that no hello has presented yet.
-        const bound = el('td', '', u.bound_at === null ? '-'
-            : (u.bound_ip === '' ? '~' : '') + fmtTime(u.bound_at));
-        if (u.bound_at !== null && u.bound_ip === '') bound.title = 'held by the client, not yet confirmed on a hello';
+        // When the id was bound to its token (see Ident).
+        const bound = el('td', '', u.bound_at === null ? '-' : fmtTime(u.bound_at));
         r.append(idCell(u.id), el('td', '', u.name === null ? '-' : u.name),
             el('td', '', fmtTime(u.first_seen)), el('td', '', fmtTime(u.last_seen)), bound,
             el('td', '', u.hello_count), el('td', '', u.latency === null ? '-' : u.latency + ' ms'),
@@ -2993,8 +2989,8 @@ const MODULES = [
                     tip: 'Online clients by the address family their last request came in over.' },
                 { label: 'Playing 1vs1', value: d.counts.playing },
                 { label: 'Tournaments', value: d.tourneys },
-                { label: 'Users registered | bound', value: d.counts.registered + ' | ' + d.bound,
-                    tip: 'Registered ids, and how many of them are bound to an identity token.' },
+                { label: 'User accounts', value: d.bound,
+                    tip: 'Ids bound to an identity token.' },
                 // Who holds a TURN credential right now, and how many were
                 // handed out in the last 30 days - the figure the cap counts.
                 // The cap itself and the lifetime total are in the popup
@@ -3658,10 +3654,10 @@ async function loadSettings() {
     for (const s of (await api('settings')).settings) settings[s.key] = s.value;
 }
 
-// ONE clock for the whole dashboard. Every card used to carry its own
-// setInterval, and two cards shared a request only when their timers happened
-// to fall in the same turn of the event loop - which stops being true as soon
-// as their intervals differ or a timer drifts. A single tick decides who is
+// ONE clock for the whole dashboard. Timers of their own would share a
+// request only when they happened to fall in the same turn of the event
+// loop - which stops being true as soon as their intervals differ or a
+// timer drifts. A single tick decides who is
 // due, so everything due is asked for in one turn and the batcher has
 // something to batch (see api). Intervals still live in the server settings:
 // they survive a reload and are editable in the settings view. 0 is off.
