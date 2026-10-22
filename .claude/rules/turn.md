@@ -155,8 +155,8 @@ README says what it is, how it was wired in, and why it went.
   answers 404 locally and that invite-relay / accept-relay are refused
   as `invalid type` everywhere.
 - No test runs the relay code and none should. It is not maintained.
-- The withdrawal did not move the API; the contract's Versioning section
-  records it.
+- The withdrawal did not move the API. docs/API.md names no relay at
+  all; the two signal types fall under its `invalid type` rule.
 - A relay that scales needs an event loop (one socket per connection).
   Shared PHP-FPM holds one worker per long poll from a pool of ~20, so
   do not rebuild a relay on this host.

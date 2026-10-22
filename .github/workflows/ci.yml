@@ -13,8 +13,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The host runs one of the two, so both must pass.
-        php: ['8.4', '8.5']
+        # Nothing runs below FOK_PHP_MIN (public/src/Config.php).
+        php: ['8.5']
     steps:
       - uses: actions/checkout@v7
 
@@ -27,6 +27,8 @@ jobs:
           # the php -S smoke run both need it enabled off the web SAPI too.
           ini-values: apc.enable_cli=1
           coverage: none
+          # The floor is a patch release: always the newest patch.
+          update: true
 
       - name: Checks (syntax, ASCII, secrets, consistency, unit, smoke)
         run: bash test/checks.sh

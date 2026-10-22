@@ -9,7 +9,7 @@ require_once __DIR__ . '/../src/Scores.php';
 
 /**
  * GET (optional ?limit=1..100) -> {"ok": true, "scores": [top entries]}
- * POST {"id", "name", "score", "level", "diff", "color"?, "shopItems"?,
+ * POST {"id", "tok", "name", "score", "level", "diff", "color"?, "shopItems"?,
  *       "seed"?, "inputs"?, "completed"?, "platform"?, "pts"?}
  * completed marks a run that cleared the FINAL level (finished the game), as
  * opposed to merely reaching that level; the client asserts it.

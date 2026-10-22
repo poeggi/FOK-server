@@ -4226,6 +4226,20 @@ ok(str_contains($qrSvg, '<rect'), 'drawn as rects, with no image library anywher
 ok(substr_count($qrSvg, '<rect') < 29 * 29,
     'one rect per dark run rather than per module');
 
+// The PHP floor. This run already passed it; the refusal runs in a child,
+// on a copy of Config.php whose floor no PHP meets.
+$floorCopy = $tmp . '/floor-Config.php';
+file_put_contents($floorCopy, preg_replace("/^const FOK_PHP_MIN = '[^']+';/m",
+    "const FOK_PHP_MIN = '99.0.0';",
+    (string)file_get_contents(__DIR__ . '/../public/src/Config.php'), -1, $floorHits));
+ok($floorHits === 1, 'the floor is one constant in Config.php');
+exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($floorCopy), $floorOut, $floorCode);
+ok($floorCode === 1, 'a PHP below the floor exits 1');
+ok(json_decode(implode("\n", $floorOut), true) === ['ok' => false, 'error' => 'php older than 99.0.0'],
+    'and answers the refusal, naming the floor only');
+ok(str_contains($logTail(), 'FOK error php: ' . PHP_VERSION . ' is older than the floor 99.0.0'),
+    'the log line names both versions');
+
 // Cleanup. The session is written at shutdown, which is after this, so it
 // is closed here first and its file goes with the rest.
 session_write_close();

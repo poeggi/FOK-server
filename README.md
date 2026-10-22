@@ -235,7 +235,8 @@ a player id carries the identity token that proves it.
                       (-Staging for the staging data dir)
 
 CI (.github/workflows/ci.yml) runs test/checks.sh on every push and PR,
-on PHP 8.4 and 8.5: the host runs one of the two. Run the same checks before every commit via the hook (once per clone):
+on the newest PHP 8.5. Run the same checks before every commit via the
+hook (once per clone):
 
     git config core.hooksPath .githooks
 
@@ -246,7 +247,9 @@ It is never part of this repo and the deploy never touches it.
 
 ## Local development and tests
 
-Requires the php CLI (with sqlite3). Everything honors the FOK_DATA_DIR
+Requires the php CLI (with sqlite3), at least FOK_PHP_MIN in
+public/src/Config.php. Below it the server refuses to run: every request
+answers 503 and a CLI run exits 1. Everything honors the FOK_DATA_DIR
 env var, so nothing touches real data:
 
     bash test/checks.sh                 all checks, same as CI

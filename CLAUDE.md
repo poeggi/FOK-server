@@ -134,8 +134,11 @@ the env hand-off in smoke.sh. Shared helpers live in lib.sh.
   cached immutably.
 - bash test/checks.sh runs everything CI runs (needs php CLI; the
   pre-commit hook in .githooks/ does it and skips without php). CI runs
-  it on PHP 8.4 and 8.5, the two the host may run, and one deprecation
-  fails it (test/deprecations.php).
+  it on the newest PHP 8.5, and one deprecation fails it
+  (test/deprecations.php).
+- Nothing runs below FOK_PHP_MIN (src/Config.php): every request answers
+  503, a CLI run exits 1, the local suite included. Raise it only to a
+  version the host already runs (.claude/rules/host.md).
 - .htaccess behavior exists only on the real Apache; staging verifies it.
 - One-time server maintenance: upload a temporary PHP script via FTPS,
   invoke it once over HTTPS, delete it immediately.

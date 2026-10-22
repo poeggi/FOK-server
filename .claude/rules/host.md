@@ -4,6 +4,12 @@
 
 Shared hosting: Apache + PHP-FPM (fpm-fcgi via mod_proxy_fcgi).
 
+- PHP has a FLOOR, FOK_PHP_MIN in src/Config.php. Below it every request
+  answers 503 `php older than <floor>` and the log line names the running
+  version; the answer never does. The admin page is refused too, so the
+  log over FTPS is where to read it. Raise the floor only to a version
+  the Properties card shows the host already runs: a host below it fails
+  the staging smoke and pins live at the last green commit.
 - opcache, fastcgi_finish_request and APCu are present. APCu is shared
   across worker pids: a real IPC bus. src/Caps.php assesses once per
   FOK_SERVER_VERSION; the admin Performance tab forces a re-check. Do not

@@ -178,9 +178,10 @@ binding) - and never retry in a loop; what re-opens the wire is a hello
 that is answered, after the player restored the right file, reset the id,
 or an operator reset the binding.
 
-Wrong tokens are counted per (id, address) pair in a one-minute window
-and put on the server log. Past `ident_fails_per_min` (an operator
-setting, default 10) a wrong token from that pair answers **429**
+Wrong tokens are counted per (id, address) pair in a one-minute window;
+the count reaching `ident_fails_per_min` (an operator setting, default
+10) writes one line to the server log. Past it a wrong token from that
+pair answers **429**
 `{"ok":false,"error":"too many attempts","retry_after":60}` instead of
 401. The right token is never refused, from any address. A client backs
 off by `retry_after` and never retries in a loop.
@@ -1041,7 +1042,7 @@ only carries the bit.
 
 POST only; any other method is 405 `POST only`. A flag (`aa`, `fl`,
 `tl`, `ev`, `db`) is `0`, `1`, `true` or `false`; `wait` and `fs` are
-JSON integers. Anything else in one of them is a 400. A POST costs one
+non-negative JSON integers. Anything else in one of them is a 400. A POST costs one
 preflight per Max-Age, answered by Apache without a worker, and the poll
 is one fixed URL. `tok` is the identity token: a bound id without it, or
 with a wrong one, is answered 401 (429 past the pair cap, see Identity

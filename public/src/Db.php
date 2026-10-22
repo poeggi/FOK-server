@@ -894,8 +894,7 @@ final class Db
             // Its own table because the token is PROPERTY, not presence:
             // Presence::forget drops the players row and keeps what the
             // player owns, and the binding belongs with those. bound_ip is
-            // '' for a row copied from the vault (below) until the owner's
-            // client presents the token on a hello (Ident::confirm).
+            // '' for a row copied from the vault (below).
             $pdo->exec("CREATE TABLE IF NOT EXISTS ident (
                 id TEXT PRIMARY KEY,
                 tok_hash TEXT NOT NULL,

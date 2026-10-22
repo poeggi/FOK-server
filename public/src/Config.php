@@ -2,7 +2,10 @@
 declare(strict_types=1);
 
 // Implementation version: bumps with every release.
-const FOK_SERVER_VERSION = '2.0.1';
+const FOK_SERVER_VERSION = '2.0.2';
+// The oldest PHP this release runs on, raised by hand. Below it nothing
+// runs (see the refusal under the log pin).
+const FOK_PHP_MIN = '8.5.12';
 // Contract version, MAJOR.MINOR (see docs/API.md Versioning). The MAJOR
 // bumps only on breaking changes (removed fields, changed semantics):
 // clients gate on it and disable online play when the server's major is
@@ -60,6 +63,19 @@ define('FOK_SESSION_DIR', FOK_DATA_DIR . '/sessions');
 // what lets the admin Logs tab read it.
 define('FOK_ERROR_LOG', FOK_DATA_DIR . '/php-error.log');
 ini_set('error_log', FOK_ERROR_LOG);
+
+// Every entry script loads this file first, so a PHP below the floor runs
+// none of the rest: a request answers 503, a CLI run exits 1. The running
+// version goes to the log only, never into the answer.
+if (version_compare(PHP_VERSION, FOK_PHP_MIN, '<')) {
+    error_log('FOK error php: ' . PHP_VERSION . ' is older than the floor ' . FOK_PHP_MIN);
+    http_response_code(503);
+    header('Cache-Control: no-store');
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => false, 'error' => 'php older than ' . FOK_PHP_MIN]);
+    exit(1);
+}
+
 // The Logs tab reads at most this much of the log's tail (newest entry
 // first), so an unrotated log is never loaded whole.
 const FOK_LOG_TAIL_BYTES = 131072;
